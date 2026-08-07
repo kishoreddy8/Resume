@@ -94,6 +94,9 @@ export async function scrapeCareerPageDetailed(careerPageUrl: string): Promise<S
       url: link.href,
       descriptionHtml: null,
       descriptionText: null,
+      employmentType: null,
+      workplaceType: null,
+      salaryText: null,
       postedAt: null,
       raw: link,
     }));

@@ -132,8 +132,10 @@ export function upsertJob(params: {
   sourceType: SourceType;
   dedupeKey: string;
   job: NormalizedJob;
+  descriptionSections: string | null;
   sponsorshipMentioned: boolean;
   sponsorshipPolarity: SponsorshipPolarity;
+  sponsorshipSnippet: string | null;
   h1bCombinedSignal: H1bCombinedSignal;
 }): "inserted" | "updated" {
   const db = getDb();
@@ -151,10 +153,15 @@ export function upsertJob(params: {
     url: params.job.url,
     descriptionHtml: params.job.descriptionHtml,
     descriptionText: params.job.descriptionText,
+    descriptionSections: params.descriptionSections,
+    employmentType: params.job.employmentType,
+    workplaceType: params.job.workplaceType,
+    salaryText: params.job.salaryText,
     postedAt: params.job.postedAt,
     dedupeKey: params.dedupeKey,
     sponsorshipMentioned: params.sponsorshipMentioned ? 1 : 0,
     sponsorshipPolarity: params.sponsorshipPolarity,
+    sponsorshipSnippet: params.sponsorshipSnippet,
     h1bCombinedSignal: params.h1bCombinedSignal,
     rawJson: JSON.stringify(params.job.raw ?? null),
   };
@@ -168,11 +175,16 @@ export function upsertJob(params: {
         url = @url,
         description_html = @descriptionHtml,
         description_text = @descriptionText,
+        description_sections = @descriptionSections,
+        employment_type = @employmentType,
+        workplace_type = @workplaceType,
+        salary_text = @salaryText,
         posted_at = @postedAt,
         last_seen_at = datetime('now'),
         is_active = 1,
         sponsorship_mentioned = @sponsorshipMentioned,
         sponsorship_polarity = @sponsorshipPolarity,
+        sponsorship_snippet = @sponsorshipSnippet,
         h1b_combined_signal = @h1bCombinedSignal,
         raw_json = @rawJson,
         updated_at = datetime('now')
@@ -184,12 +196,14 @@ export function upsertJob(params: {
   db.prepare(
     `INSERT INTO jobs (
       company_id, source_type, external_id, title, location, department, url,
-      description_html, description_text, posted_at, dedupe_key,
-      sponsorship_mentioned, sponsorship_polarity, h1b_combined_signal, raw_json
+      description_html, description_text, description_sections,
+      employment_type, workplace_type, salary_text, posted_at, dedupe_key,
+      sponsorship_mentioned, sponsorship_polarity, sponsorship_snippet, h1b_combined_signal, raw_json
     ) VALUES (
       @companyId, @sourceType, @externalId, @title, @location, @department, @url,
-      @descriptionHtml, @descriptionText, @postedAt, @dedupeKey,
-      @sponsorshipMentioned, @sponsorshipPolarity, @h1bCombinedSignal, @rawJson
+      @descriptionHtml, @descriptionText, @descriptionSections,
+      @employmentType, @workplaceType, @salaryText, @postedAt, @dedupeKey,
+      @sponsorshipMentioned, @sponsorshipPolarity, @sponsorshipSnippet, @h1bCombinedSignal, @rawJson
     )`
   ).run(row);
   return "inserted";

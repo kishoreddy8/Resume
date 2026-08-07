@@ -5,6 +5,7 @@ import { dedupeKeyForAts, dedupeKeyForCareerLink } from "@/lib/dedupe";
 import { combineH1bSignal } from "@/lib/h1b/combineSignal";
 import { scanSponsorshipLanguage } from "@/lib/h1b/keywordScan";
 import { fetchJobsForCompany } from "@/lib/normalize";
+import { parseDescriptionSections } from "@/lib/parseSections";
 import type { Company, NormalizedJob, ScanResult, ScanSummary } from "@/types";
 
 const ATS_CONCURRENCY = 6;
@@ -45,16 +46,19 @@ async function scanCompany(company: Company): Promise<ScanResult> {
           : dedupeKeyForAts(company.source_type, company.id, job.externalId ?? job.url);
       seenDedupeKeys.push(dedupeKey);
 
-      const { mentioned, polarity } = scanSponsorshipLanguage(job.descriptionText);
+      const { mentioned, polarity, snippet } = scanSponsorshipLanguage(job.descriptionText);
       const h1bCombinedSignal = combineH1bSignal(company.h1b_signal, polarity);
+      const sections = parseDescriptionSections(job.descriptionHtml);
 
       const outcome = upsertJob({
         companyId: company.id,
         sourceType: company.source_type,
         dedupeKey,
         job,
+        descriptionSections: sections ? JSON.stringify(sections) : null,
         sponsorshipMentioned: mentioned,
         sponsorshipPolarity: polarity,
+        sponsorshipSnippet: snippet,
         h1bCombinedSignal,
       });
       if (outcome === "inserted") jobsNew++;

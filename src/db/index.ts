@@ -20,6 +20,27 @@ declare global {
   var __careerOpsDb: Database.Database | undefined;
 }
 
+// Columns added after the initial schema. schema.sql's CREATE TABLE IF NOT EXISTS only covers
+// fresh databases — existing ones need an additive ALTER TABLE for each new column.
+const JOBS_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
+  { name: "description_sections", ddl: "ALTER TABLE jobs ADD COLUMN description_sections TEXT" },
+  { name: "employment_type", ddl: "ALTER TABLE jobs ADD COLUMN employment_type TEXT" },
+  { name: "workplace_type", ddl: "ALTER TABLE jobs ADD COLUMN workplace_type TEXT" },
+  { name: "salary_text", ddl: "ALTER TABLE jobs ADD COLUMN salary_text TEXT" },
+  { name: "sponsorship_snippet", ddl: "ALTER TABLE jobs ADD COLUMN sponsorship_snippet TEXT" },
+];
+
+function runAdditiveMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((c) => c.name)
+  );
+  for (const column of JOBS_ADDITIVE_COLUMNS) {
+    if (!existingColumns.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+}
+
 function createConnection(): Database.Database {
   ensureDataDirs();
   const db = new Database(DB_PATH);
@@ -30,6 +51,7 @@ function createConnection(): Database.Database {
     "utf-8"
   );
   db.exec(schema);
+  runAdditiveMigrations(db);
   return db;
 }
 

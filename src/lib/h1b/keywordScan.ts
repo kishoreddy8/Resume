@@ -20,17 +20,33 @@ const POSITIVE_PATTERNS = [
   /open\s+to\s+sponsor(ing|ship)/i,
 ];
 
-export function scanSponsorshipLanguage(text: string | null | undefined): {
+const SNIPPET_CONTEXT_CHARS = 100;
+
+function extractSnippet(text: string, match: RegExpExecArray): string {
+  const start = Math.max(0, match.index - SNIPPET_CONTEXT_CHARS);
+  const end = Math.min(text.length, match.index + match[0].length + SNIPPET_CONTEXT_CHARS);
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < text.length ? "…" : "";
+  return `${prefix}${text.slice(start, end).trim()}${suffix}`;
+}
+
+export interface SponsorshipScanResult {
   mentioned: boolean;
   polarity: SponsorshipPolarity;
-} {
-  if (!text) return { mentioned: false, polarity: "none" };
+  /** The matched sentence/phrase with surrounding context, for display and transparency. */
+  snippet: string | null;
+}
+
+export function scanSponsorshipLanguage(text: string | null | undefined): SponsorshipScanResult {
+  if (!text) return { mentioned: false, polarity: "none", snippet: null };
 
   for (const pattern of NEGATIVE_PATTERNS) {
-    if (pattern.test(text)) return { mentioned: true, polarity: "negative" };
+    const match = pattern.exec(text);
+    if (match) return { mentioned: true, polarity: "negative", snippet: extractSnippet(text, match) };
   }
   for (const pattern of POSITIVE_PATTERNS) {
-    if (pattern.test(text)) return { mentioned: true, polarity: "positive" };
+    const match = pattern.exec(text);
+    if (match) return { mentioned: true, polarity: "positive", snippet: extractSnippet(text, match) };
   }
-  return { mentioned: false, polarity: "none" };
+  return { mentioned: false, polarity: "none", snippet: null };
 }

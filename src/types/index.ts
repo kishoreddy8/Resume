@@ -29,6 +29,14 @@ export interface Company {
   updated_at: string;
 }
 
+export interface DescriptionSections {
+  responsibilities?: string;
+  qualifications?: string;
+  niceToHave?: string;
+  skills?: string;
+  benefits?: string;
+}
+
 export interface Job {
   id: number;
   company_id: number;
@@ -40,6 +48,12 @@ export interface Job {
   url: string;
   description_html: string | null;
   description_text: string | null;
+  /** JSON-encoded DescriptionSections, best-effort heading-based extraction. */
+  description_sections: string | null;
+  employment_type: string | null;
+  workplace_type: string | null;
+  salary_text: string | null;
+  sponsorship_snippet: string | null;
   posted_at: string | null;
   first_seen_at: string;
   last_seen_at: string;
@@ -82,6 +96,9 @@ export interface NormalizedJob {
   url: string;
   descriptionHtml: string | null;
   descriptionText: string | null;
+  employmentType: string | null;
+  workplaceType: string | null;
+  salaryText: string | null;
   postedAt: string | null;
   raw: unknown;
 }

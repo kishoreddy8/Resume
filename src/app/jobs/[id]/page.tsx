@@ -6,11 +6,28 @@ import { use } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
-import type { JobWithCompany } from "@/types";
+import type { DescriptionSections, JobWithCompany } from "@/types";
 
 interface JobDetailResponse {
   job: JobWithCompany;
   generatedFiles: string[];
+}
+
+const SECTION_LABELS: Record<keyof DescriptionSections, string> = {
+  responsibilities: "Responsibilities",
+  qualifications: "Qualifications",
+  niceToHave: "Nice to have",
+  skills: "Skills",
+  benefits: "Benefits",
+};
+
+function parseSections(json: string | null): DescriptionSections | null {
+  if (!json) return null;
+  try {
+    return JSON.parse(json) as DescriptionSections;
+  } catch {
+    return null;
+  }
 }
 
 function TailoringToggle({ jobId, initial }: { jobId: number; initial: boolean }) {
@@ -94,6 +111,13 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
   if (notFound || !data) return <p className="text-sm text-zinc-500">Job not found.</p>;
 
   const { job, generatedFiles } = data;
+  const sections = parseSections(job.description_sections);
+  const facts = [
+    job.location,
+    job.employment_type,
+    job.workplace_type,
+    job.salary_text,
+  ].filter(Boolean);
 
   return (
     <div className="flex flex-col gap-6">
@@ -105,9 +129,21 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
           <div>
             <h1 className="text-xl font-semibold">{job.title}</h1>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              {job.company_name} · {job.location ?? "Location unspecified"} · {job.source_type}
+              {job.company_name} · {job.source_type}
               {!job.is_active && " · closed"}
             </p>
+            {facts.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {facts.map((fact, i) => (
+                  <span
+                    key={i}
+                    className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+                  >
+                    {fact}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <a
             href={job.url}
@@ -122,17 +158,46 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="space-y-4">
+          {sections && (
+            <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+              <h2 className="mb-3 text-sm font-semibold">At a glance</h2>
+              <p className="mb-3 text-xs text-zinc-500">
+                Best-effort extraction from the full description below — always verify against it.
+              </p>
+              <div className="space-y-3">
+                {(Object.keys(SECTION_LABELS) as (keyof DescriptionSections)[])
+                  .filter((key) => sections[key])
+                  .map((key) => (
+                    <div key={key}>
+                      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                        {SECTION_LABELS[key]}
+                      </h3>
+                      <p className="whitespace-pre-line text-sm text-zinc-700 dark:text-zinc-300">
+                        {sections[key]}
+                      </p>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
           <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <h2 className="mb-2 text-sm font-semibold">Description</h2>
+            <h2 className="mb-2 text-sm font-semibold">Full description</h2>
             {job.description_html ? (
               <div
                 className="prose prose-sm dark:prose-invert max-w-none text-sm"
                 dangerouslySetInnerHTML={{ __html: sanitizeJobHtml(job.description_html) }}
               />
+            ) : job.description_text ? (
+              <p className="whitespace-pre-line text-sm text-zinc-700 dark:text-zinc-300">
+                {job.description_text}
+              </p>
             ) : (
               <p className="text-sm text-zinc-500">
-                No description text captured for this posting (common for career-link scrapes).
-                View the original posting for details.
+                No description text captured for this posting (common for career-link scrapes, since
+                that scraper only extracts links/titles). View the original posting for details, or
+                add this company as a proper Greenhouse/Ashby/Lever entry on the Companies page if
+                available — see the note there if one was auto-detected.
               </p>
             )}
           </div>
@@ -162,6 +227,11 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
               </li>
               <li>Combined signal: {job.h1b_combined_signal}</li>
             </ul>
+            {job.sponsorship_snippet && (
+              <blockquote className="mt-2 rounded border-l-2 border-zinc-300 bg-zinc-50 px-2 py-1.5 text-xs italic text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400">
+                &ldquo;{job.sponsorship_snippet}&rdquo;
+              </blockquote>
+            )}
             <p className="mt-2 text-xs text-zinc-500">
               Company-level signal comes from DOL H1B LCA history; posting text can override it up
               (&quot;Likely&quot;) or down (&quot;Unlikely&quot;). See the Companies page for the

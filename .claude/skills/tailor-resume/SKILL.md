@@ -21,10 +21,18 @@ raw API call.
    ```bash
    sqlite3 -json data/app.db "SELECT j.*, c.name AS company_name FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.id = <job-id>"
    ```
-   Use `description_text` (and `description_html` if you need the original formatting/structure)
-   as the job description. If `description_text` is empty (common for career-link scrapes with no
-   captured description), ask the user to paste the JD text before proceeding — never tailor
-   against a title alone.
+   Use `description_text` as the full job description for keyword extraction and ATS matching —
+   this is the complete posting text for Greenhouse/Ashby/Lever jobs, not a summary. `description_sections`
+   (JSON, when present) is a best-effort split into `responsibilities`/`qualifications`/`niceToHave`/
+   `skills`/`benefits` — useful for quickly identifying the dominant tech stack and required vs.
+   preferred skills, but always cross-check against the full `description_text` since the split is
+   heuristic and can miss or misfile content. `employment_type`, `workplace_type`, and `salary_text`
+   give structured facts (full-time/contract, remote/hybrid/onsite, comp range) worth reflecting in
+   the cover letter/outreach tone. `sponsorship_snippet` is the exact posting text that drove the
+   dashboard's H1B signal, if any — read it before assuming anything about sponsorship.
+   If `description_text` is empty (career-link scrapes without a matched embedded ATS board only
+   capture link/title, no description), ask the user to paste the JD text before proceeding — never
+   tailor against a title alone.
 
 ## Output
 
