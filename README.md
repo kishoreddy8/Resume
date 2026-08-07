@@ -1,36 +1,89 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# career-ops-project
 
-## Getting Started
+A personal job-search pipeline: scans company ATS boards (Greenhouse/Ashby/Lever) and your own
+manually-added career page links, tracks postings through a pipeline, flags likely H1B sponsors,
+and hands off resume tailoring to Claude Code via a project skill. Runs entirely locally — no
+hosting, no external database, no LLM API key required for the app itself.
 
-First, run the development server:
+Inspired by [santifer/career-ops](https://github.com/santifer/career-ops).
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npx playwright install chromium
+npm run migrate   # creates data/app.db and its tables
+npm run dev        # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Requires Node 20+.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Day-to-day workflow
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **Add companies** on `/companies` — either a Greenhouse/Ashby/Lever board (token/slug only,
+   found in the board's own URL, e.g. `boards.greenhouse.io/<token>`), or a plain company career
+   page URL as a "career link" for companies without one of those three ATS platforms.
+2. **Scan** — click "Scan now" on `/jobs`, or run `npm run scan` from the CLI. Career-link scrapes
+   are best-effort (link/title only, no descriptions) and never auto-close postings; ATS-backed
+   companies get full descriptions and postings that disappear from the board get marked closed.
+   If a career link turns out to be a themed wrapper around a Greenhouse/Lever/Ashby board (common),
+   the scan detects it and leaves a note on the company suggesting you add it as a proper ATS entry
+   for full descriptions.
+3. **Filter and triage** on `/jobs` — by pipeline status, H1B signal, company, source, keyword
+   search. Update pipeline status inline or from the `/pipeline` kanban board.
+4. **H1B signal** — combines two sources: historical DOL H-1B LCA sponsorship data (see below) and
+   live keyword scanning of posting text for explicit sponsorship language. A posting saying "no
+   sponsorship" always overrides to `Unlikely` regardless of company history; "sponsorship
+   available" overrides up to `Likely`. Otherwise it falls back to the company's historical signal.
+5. **Upload your master files** on `/master-files` — Master Resume and Master Skills Inventory
+   (`.docx`, `.md`, or `.txt`). Re-uploading archives the previous version instead of overwriting
+   it; nothing here is ever touched programmatically outside this upload flow.
+6. **Tailor a resume** — mark a job for tailoring (checkbox on `/jobs` or the job detail page),
+   then in a Claude Code session in this project directory, run:
+   ```
+   /tailor-resume job=<job-id>
+   ```
+   This reads your master files and the job's stored description, follows the full tailoring
+   instructions and guardrails in [`.claude/skills/tailor-resume/SKILL.md`](.claude/skills/tailor-resume/SKILL.md)
+   exactly, and writes the tailored resume/cover letter to `data/generated/<job-id>/`. The app
+   itself never calls an LLM — this step only happens inside Claude Code.
 
-## Learn More
+## H1B data ingestion (optional but recommended)
 
-To learn more about Next.js, take a look at the following resources:
+The H1B filter works without this step (every company just shows `Unknown` until matched), but for
+real signal:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Download an H-1B LCA disclosure file from the DOL's public performance data page
+   (dol.gov/agencies/eta/foreign-labor/performance, LCA Programs section) — it's a large file
+   (tens to hundreds of MB), one per fiscal year. Convert to CSV if you only have `.xlsx`.
+2. Ingest it:
+   ```bash
+   npm run ingest-h1b -- --file /path/to/LCA_Disclosure_Data_FY2024.csv --fiscal-year 2024
+   ```
+3. Match it against your companies:
+   ```bash
+   npm run match-h1b
+   ```
+   This also runs automatically for any single company right when you add it, if sponsor data has
+   already been ingested.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Re-run `ingest-h1b` for additional fiscal years as you find them — sponsor counts accumulate
+across runs.
 
-## Deploy on Vercel
+## Project structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `src/app/` — dashboard pages and API routes (Next.js App Router)
+- `src/lib/ats/` — Greenhouse/Ashby/Lever fetchers + the generic Playwright career-link scraper
+- `src/lib/h1b/` — employer name normalization, fuzzy matching, keyword scanning, signal combining
+- `src/db/` — SQLite schema and query layer (`better-sqlite3`)
+- `scripts/` — CLI entry points (`scan`, `ingest-h1b`, `match-h1b`)
+- `data/` — gitignored: `app.db`, `master/` (your resume files), `generated/` (tailored output),
+  `h1b/` (raw downloaded DOL files)
+- `.claude/skills/tailor-resume/` — the resume tailoring skill and its guardrails
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Notes
+
+- All scanning uses each ATS's public JSON API — no auth, no scraping needed for Greenhouse/Ashby/Lever.
+- The generic career-link scraper is intentionally approximate; review what it finds.
+- Nothing here auto-applies to anything or sends any message — it's a filter and tracker, you
+  still do the applying.

@@ -1,0 +1,109 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Company, JobWithCompany, ScanSummary } from "@/types";
+import { DEFAULT_FILTERS, JobFilterSidebar, type JobFilterState } from "./JobFilterSidebar";
+import { JobList } from "./JobList";
+
+function buildQuery(filters: JobFilterState): string {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.companyId) params.set("companyId", String(filters.companyId));
+  if (filters.sourceType) params.set("sourceType", filters.sourceType);
+  if (filters.search) params.set("search", filters.search);
+  if (filters.activeOnly) params.set("activeOnly", "true");
+
+  const signals = filters.hideUnlikely
+    ? filters.h1bSignal.filter((s) => s !== "Unlikely")
+    : filters.h1bSignal;
+  if (filters.hideUnlikely && filters.h1bSignal.length === 0) {
+    for (const s of ["Likely", "High", "Medium", "Low", "Unknown"]) params.append("h1bSignal", s);
+  } else {
+    for (const s of signals) params.append("h1bSignal", s);
+  }
+
+  return params.toString();
+}
+
+export default function JobsPage() {
+  const [filters, setFilters] = useState<JobFilterState>(DEFAULT_FILTERS);
+  const [jobs, setJobs] = useState<JobWithCompany[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<ScanSummary | null>(null);
+
+  const query = useMemo(() => buildQuery(filters), [filters]);
+
+  const loadJobs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/jobs?${query}`);
+      const data = await res.json();
+      setJobs(data.jobs ?? []);
+    } finally {
+      setLoading(false);
+    }
+  }, [query]);
+
+  useEffect(() => {
+    fetch("/api/companies")
+      .then((r) => r.json())
+      .then((d) => setCompanies(d.companies ?? []));
+  }, []);
+
+  useEffect(() => {
+    // Intentional: fetch-on-mount/filter-change with a loading flag, not a render loop.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadJobs();
+  }, [loadJobs]);
+
+  async function runScan() {
+    setScanning(true);
+    setScanResult(null);
+    try {
+      const res = await fetch("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const summary = (await res.json()) as ScanSummary;
+      setScanResult(summary);
+      await loadJobs();
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold">Jobs</h1>
+        <div className="flex items-center gap-3">
+          {scanResult && (
+            <span className="text-xs text-zinc-500">
+              +{scanResult.jobsNew} new · {scanResult.jobsUpdated} updated ·{" "}
+              {scanResult.jobsClosed} closed
+              {scanResult.errors > 0 && ` · ${scanResult.errors} errors`}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={runScan}
+            disabled={scanning}
+            className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          >
+            {scanning ? "Scanning…" : "Scan now"}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-4 lg:flex-row">
+        <JobFilterSidebar filters={filters} onChange={setFilters} companies={companies} />
+        <div className="flex-1">
+          {loading ? (
+            <p className="text-sm text-zinc-500">Loading…</p>
+          ) : (
+            <JobList jobs={jobs} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
