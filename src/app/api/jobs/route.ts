@@ -18,7 +18,7 @@ const VALID_H1B: H1bCombinedSignal[] = [
   "Likely",
   "Unlikely",
 ];
-const VALID_SOURCES: SourceType[] = ["greenhouse", "ashby", "lever", "career_link"];
+const VALID_SOURCES: SourceType[] = ["greenhouse", "ashby", "lever", "workday", "career_link"];
 
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;

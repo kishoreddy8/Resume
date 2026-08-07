@@ -30,7 +30,7 @@ const STATUSES: PipelineStatus[] = [
   "Rejected",
   "Offer",
 ];
-const SOURCES: SourceType[] = ["greenhouse", "ashby", "lever", "career_link"];
+const SOURCES: SourceType[] = ["greenhouse", "ashby", "lever", "workday", "career_link"];
 const H1B_SIGNALS: H1bCombinedSignal[] = ["Likely", "High", "Medium", "Low", "Unknown", "Unlikely"];
 
 export function JobFilterSidebar({

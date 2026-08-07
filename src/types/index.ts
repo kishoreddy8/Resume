@@ -1,4 +1,4 @@
-export type SourceType = "greenhouse" | "ashby" | "lever" | "career_link";
+export type SourceType = "greenhouse" | "ashby" | "lever" | "workday" | "career_link";
 export type H1bSignal = "High" | "Medium" | "Low" | "Unknown";
 export type H1bCombinedSignal = H1bSignal | "Likely" | "Unlikely";
 export type SponsorshipPolarity = "positive" | "negative" | "none";

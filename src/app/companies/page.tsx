@@ -4,15 +4,149 @@ import { useEffect, useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import type { Company, SourceType } from "@/types";
 
-const ATS_SOURCES: { value: SourceType; label: string; placeholder: string }[] = [
+const PROVIDER_LABELS: Record<SourceType, string> = {
+  greenhouse: "Greenhouse",
+  ashby: "Ashby",
+  lever: "Lever",
+  workday: "Workday",
+  career_link: "generic career page",
+};
+
+const ADVANCED_ATS_SOURCES: { value: Exclude<SourceType, "career_link">; label: string; placeholder: string }[] = [
   { value: "greenhouse", label: "Greenhouse", placeholder: "board token, e.g. gitlab" },
   { value: "ashby", label: "Ashby", placeholder: "board name, e.g. linear" },
   { value: "lever", label: "Lever", placeholder: "company slug, e.g. palantir" },
+  { value: "workday", label: "Workday", placeholder: "tenant|host|site, e.g. hp|wd5|ExternalCareerSite" },
 ];
 
-function AtsCompanyForm({ onAdded }: { onAdded: () => void }) {
+function useDebouncedDetection(url: string) {
+  const [detected, setDetected] = useState<SourceType | null | undefined>(undefined); // undefined = not yet checked
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    if (!url || !/^https?:\/\/.+\..+/.test(url)) {
+      // Intentional: resetting detection state as the debounced url prop changes, not a render loop.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDetected(undefined);
+      return;
+    }
+    let cancelled = false;
+    setChecking(true);
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/companies/detect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        if (cancelled) return;
+        if (res.ok) {
+          const data = await res.json();
+          setDetected(data.detected ?? null);
+        } else {
+          setDetected(null);
+        }
+      } catch {
+        if (!cancelled) setDetected(null);
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    }, 500);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [url]);
+
+  return { detected, checking };
+}
+
+function AddCompanyForm({ onAdded }: { onAdded: () => void }) {
   const [name, setName] = useState("");
-  const [sourceType, setSourceType] = useState<SourceType>("greenhouse");
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const { detected, checking } = useDebouncedDetection(url);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, url }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(JSON.stringify(data.error));
+      }
+      setName("");
+      setUrl("");
+      onAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add company");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={submit}
+      className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
+    >
+      <h2 className="text-sm font-semibold">Add a company</h2>
+      <p className="text-xs text-zinc-500">
+        Paste the company&apos;s careers page URL — the board&apos;s own Greenhouse/Ashby/Lever/Workday
+        URL, or their regular careers page if it embeds one of those. The ATS is detected
+        automatically; if none is found, it falls back to a best-effort generic scrape.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <input
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Company name"
+          className="min-w-[160px] flex-1 rounded border border-zinc-300 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        />
+        <input
+          required
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://company.com/careers"
+          className="min-w-[220px] flex-1 rounded border border-zinc-300 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        />
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          Add
+        </button>
+      </div>
+      <div className="text-xs text-zinc-500">
+        {checking && "Checking…"}
+        {!checking && detected !== undefined && detected !== null && (
+          <span className="text-emerald-700 dark:text-emerald-400">
+            Detected: {PROVIDER_LABELS[detected]}
+          </span>
+        )}
+        {!checking && detected === null && (
+          <span>No known ATS detected — will be added as a generic career-page scrape.</span>
+        )}
+      </div>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+    </form>
+  );
+}
+
+function AdvancedManualForm({ onAdded }: { onAdded: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [sourceType, setSourceType] = useState<Exclude<SourceType, "career_link">>("greenhouse");
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -41,11 +175,35 @@ function AtsCompanyForm({ onAdded }: { onAdded: () => void }) {
     }
   }
 
-  const current = ATS_SOURCES.find((s) => s.value === sourceType)!;
+  const current = ADVANCED_ATS_SOURCES.find((s) => s.value === sourceType)!;
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-xs text-zinc-500 underline hover:text-zinc-800 dark:hover:text-zinc-200"
+      >
+        Advanced: add by exact board token instead
+      </button>
+    );
+  }
 
   return (
-    <form onSubmit={submit} className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 className="text-sm font-semibold">Add ATS company</h2>
+    <form
+      onSubmit={submit}
+      className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 text-sm dark:border-zinc-800 dark:bg-zinc-900"
+    >
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold">Advanced: add by board token</h2>
+        <button type="button" onClick={() => setOpen(false)} className="text-xs text-zinc-500 underline">
+          Hide
+        </button>
+      </div>
+      <p className="text-xs text-zinc-500">
+        Use this when you already know the exact board identifier, or auto-detection picked the
+        wrong thing.
+      </p>
       <div className="flex flex-wrap gap-2">
         <input
           required
@@ -56,10 +214,10 @@ function AtsCompanyForm({ onAdded }: { onAdded: () => void }) {
         />
         <select
           value={sourceType}
-          onChange={(e) => setSourceType(e.target.value as SourceType)}
+          onChange={(e) => setSourceType(e.target.value as Exclude<SourceType, "career_link">)}
           className="rounded border border-zinc-300 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
         >
-          {ATS_SOURCES.map((s) => (
+          {ADVANCED_ATS_SOURCES.map((s) => (
             <option key={s.value} value={s.value}>
               {s.label}
             </option>
@@ -70,73 +228,7 @@ function AtsCompanyForm({ onAdded }: { onAdded: () => void }) {
           value={token}
           onChange={(e) => setToken(e.target.value)}
           placeholder={current.placeholder}
-          className="min-w-[180px] flex-1 rounded border border-zinc-300 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        />
-        <button
-          type="submit"
-          disabled={saving}
-          className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-        >
-          Add
-        </button>
-      </div>
-      {error && <p className="text-xs text-red-600">{error}</p>}
-    </form>
-  );
-}
-
-function CareerLinkForm({ onAdded }: { onAdded: () => void }) {
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setSaving(true);
-    try {
-      const res = await fetch("/api/companies", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, source_type: "career_link", career_page_url: url }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(JSON.stringify(data.error));
-      }
-      setName("");
-      setUrl("");
-      onAdded();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add career link");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 className="text-sm font-semibold">Add career page link</h2>
-      <p className="text-xs text-zinc-500">
-        For companies without a Greenhouse/Ashby/Lever board. Scraped best-effort via a headless
-        browser — link/title only, no job descriptions, and it won&apos;t auto-close postings.
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <input
-          required
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Company name"
-          className="min-w-[160px] flex-1 rounded border border-zinc-300 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        />
-        <input
-          required
-          type="url"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://company.com/careers"
-          className="min-w-[220px] flex-1 rounded border border-zinc-300 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+          className="min-w-[200px] flex-1 rounded border border-zinc-300 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
         />
         <button
           type="submit"
@@ -201,6 +293,16 @@ function CompanyRow({ company, onChanged }: { company: Company; onChanged: () =>
           {company.source_type}
           {company.ats_board_token ? `:${company.ats_board_token}` : ""}
         </div>
+        {company.career_page_url && (
+          <a
+            href={company.career_page_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-zinc-400 hover:underline"
+          >
+            {company.career_page_url}
+          </a>
+        )}
       </td>
       <td className="px-3 py-2">
         <H1bBadge signal={company.h1b_signal} />
@@ -264,9 +366,9 @@ export default function CompaniesPage() {
     <div className="flex flex-col gap-6">
       <h1 className="text-lg font-semibold">Companies &amp; career links</h1>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <AtsCompanyForm onAdded={load} />
-        <CareerLinkForm onAdded={load} />
+      <div className="space-y-2">
+        <AddCompanyForm onAdded={load} />
+        <AdvancedManualForm onAdded={load} />
       </div>
 
       {loading ? (

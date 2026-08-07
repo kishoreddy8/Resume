@@ -3,7 +3,9 @@
 CREATE TABLE IF NOT EXISTS companies (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
-  source_type TEXT NOT NULL CHECK (source_type IN ('greenhouse','ashby','lever','career_link')),
+  -- No CHECK enum here on purpose: the provider list keeps growing (see src/lib/ats/), and
+  -- app-layer zod validation in the API routes already enforces the valid SourceType set.
+  source_type TEXT NOT NULL,
   ats_board_token TEXT,
   career_page_url TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
