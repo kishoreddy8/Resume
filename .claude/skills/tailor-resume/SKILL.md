@@ -10,56 +10,359 @@ skill is the tailoring step that dashboard deliberately does **not** automate �
 Claude Code, so every tailored document gets full reasoning and guardrail-checking rather than a
 raw API call.
 
-## Inputs
+**Deep rewrite, not light editing.** Swapping keywords into the Master Resume's existing sentences
+is not acceptable output. Every run rewrites the Professional Summary from scratch, rewrites every
+selected experience bullet, reorders bullets within each role by relevance to *this* JD, and
+reorders technical-skill groups by relevance to *this* JD. Two resumes tailored for two different
+jobs must read as two different documents, not two light edits of the same one. Every fact must
+still trace back to the Master Resume / Master Skills Inventory — rewriting is about presentation,
+ordering, and emphasis, never about invention.
 
-1. **Master files** — `data/master/manifest.json` lists the current master resume and master
-   skills inventory filenames (stored alongside it in `data/master/`). Read both in full before
-   doing anything else. If either is missing, stop and tell the user to upload it on the
-   `/master-files` page first — never fabricate a master resume or skills list.
-2. **The job** — invoked as `/tailor-resume job=<job-id>` (matches a `jobs.id` in the dashboard),
-   or with a job description pasted directly. For a job id, fetch the full record with:
-   ```bash
-   sqlite3 -json data/app.db "SELECT j.*, c.name AS company_name FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.id = <job-id>"
-   ```
-   Use `description_text` as the full job description for keyword extraction and ATS matching —
-   this is the complete posting text for Greenhouse/Ashby/Lever jobs, not a summary. `description_sections`
-   (JSON, when present) is a best-effort split into `responsibilities`/`qualifications`/`niceToHave`/
-   `skills`/`benefits` — useful for quickly identifying the dominant tech stack and required vs.
-   preferred skills, but always cross-check against the full `description_text` since the split is
-   heuristic and can miss or misfile content. `employment_type`, `workplace_type`, and `salary_text`
-   give structured facts (full-time/contract, remote/hybrid/onsite, comp range) worth reflecting in
-   the cover letter/outreach tone. `sponsorship_snippet` is the exact posting text that drove the
-   dashboard's H1B signal, if any — read it before assuming anything about sponsorship.
-   If `description_text` is empty (career-link scrapes without a matched embedded ATS board only
-   capture link/title, no description), ask the user to paste the JD text before proceeding — never
-   tailor against a title alone.
+## The pipeline
+
+```
+MASTER SOURCES + JOB DESCRIPTION
+  → FACT / EVIDENCE MODEL            (this skill's reasoning — see "Evidence discipline")
+  → JOB & COMPANY ANALYSIS           (this skill's reasoning — see "JD analysis")
+  → TAILORING DECISION (scoring, selection, ordering, rewriting) (this skill's reasoning)
+  → STRUCTURED RESUME CONTENT        (JSON matching engine/types.ts — the handoff point)
+  → TRUTHFULNESS / LANGUAGE VALIDATION (this skill's reasoning — see "Validation gate")
+  → DOCX RENDERING                   (engine/resume-template.ts, engine/cover-letter-template.ts)
+  → LAYOUT VALIDATION                (engine/validate-docx.ts, runs automatically in generate.ts)
+  → FINAL OUTPUTS
+```
+
+The renderer never decides what claims to make — it only lays out the `ResumeContent` /
+`CoverLetterContent` JSON it's given. This skill never hand-rolls document XML or manipulates Word
+layout directly — it writes content decisions, then calls the engine. If a layout bug shows up in
+output, the fix belongs in `.claude/skills/tailor-resume/engine/`, not in one run's content.
+
+## Sources of truth (in precedence order)
+
+1. **Master Resume** — `data/master/manifest.json` names the current file, stored alongside it in
+   `data/master/`. Controls employers, titles, dates, education, certifications, accomplishments,
+   responsibilities, quantified results, and which technologies are attributable to which employer.
+2. **Master Skills Inventory** — same manifest/directory. Proves the candidate genuinely knows a
+   technology — it does **not** by itself prove employer-level usage. See "Attribution rule" below.
+3. **Resume Track** — not yet a distinct artifact in this project; the Master Resume's Professional
+   Experience section covers this role today. If you intend something more specific (e.g. a running
+   accomplishments/metrics log kept separately from the resume), say so and it can be added as its
+   own upload slot — don't have me guess at a file format for it.
+4. **Full Job Description** — `description_text` (complete posting) plus the structured fields
+   below. Never tailor against a title or snippet alone.
+5. **Resume Tailoring Instructions / Project Guardrails** — the verbatim block below this section.
+6. **Previously generated resumes** — style reference only, optional, never a factual source. Never
+   copy content from a prior tailored resume into a new one; always re-derive from (1) and (2) so
+   nothing drifts across applications.
+
+Read (1) and (2) in full before doing anything else. If either is missing, stop and tell the user
+to upload it on the `/master-files` page first — never fabricate a master resume or skills list.
+
+### Attribution rule
+
+A technology in the Master Skills Inventory but not tied to a specific employer in the Master
+Resume may appear in **Technical Skills** and may inform general positioning (e.g. "working
+knowledge of X" in the summary). It must **never** be attributed to a specific employer,
+responsibility, or accomplishment bullet unless the Master Resume actually supports that.
+
+> Example: GitHub Actions is in the Skills Inventory; Comerica's real experience only documents
+> Azure DevOps. Allowed: list GitHub Actions under Technical Skills. Not allowed: "Built GitHub
+> Actions pipelines at Comerica."
+
+**The job (4):** invoked as `/tailor-resume job=<job-id>` (matches `jobs.id` in the dashboard), or
+with a JD pasted directly. For a job id, fetch the full record with:
+```bash
+sqlite3 -json data/app.db "SELECT j.*, c.name AS company_name FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.id = <job-id>"
+```
+Use `description_text` as the full JD for keyword extraction and ATS matching — the complete
+posting text, not a summary. `description_sections` (JSON, when present) is a best-effort split
+into `responsibilities`/`qualifications`/`niceToHave`/`skills`/`benefits` — useful for quickly
+spotting the dominant stack and required-vs-preferred skills, but always cross-check against the
+full `description_text` since the split is heuristic. `employment_type`, `workplace_type`, and
+`salary_text` are structured facts worth reflecting in tone. `sponsorship_snippet` is the exact
+text that drove the dashboard's H1B signal — read it before assuming anything about sponsorship.
+If `description_text` is empty, ask the user to paste the JD before proceeding.
+
+## Evidence discipline
+
+Before rewriting anything, build an internal evidence inventory — for every fact you plan to use,
+know its source (which employer/project), what it claims, and whether employer attribution is
+supported or it's skills-inventory-only knowledge (see Attribution rule). Every sentence in the
+final resume must trace back to something in this inventory.
+
+**Never infer or invent:** years using a technology, employer-specific technology usage beyond what
+the Master Resume states, leadership scope, team size, monetary impact, architecture ownership
+beyond what's documented, scale, business domain experience the candidate doesn't have,
+certifications, relocation willingness, visa/sponsorship status, security clearance, or production
+usage of a tool. If evidence is insufficient for a claim, don't write the claim — use a qualitative
+statement instead, or omit it.
+
+## JD & company analysis (do this explicitly, write it down)
+
+Determine and write into `ATS_Report.md` (not just reason silently): hiring priorities, required
+technologies, preferred technologies, business domain, seniority level, architecture focus, and
+leadership/collaboration expectations. For the company, use only information already available in
+this project or public information explicitly retrieved for this purpose — industry, product,
+likely purpose of the role. **Unknown is preferable to fabrication** — do not invent culture,
+architecture, size, or strategy the JD doesn't state.
+
+Classify the role (family, seniority, primary/secondary specialization — e.g. "Azure Data
+Engineer" vs. "Databricks/Spark Engineer" vs. "AI/GenAI Engineer") and use all of this to decide
+bullet order, summary content, skill-group order, and technology emphasis — never keep the Master
+Resume's original ordering just because it was already there.
+
+## Scoring, selecting, and writing content
+
+For every usable Master Resume bullet/fact, independently score it (per employer, not globally) on:
+must-have relevance, required/preferred-technology relevance, architecture relevance, domain
+relevance, measurable impact, recency, seniority signal, uniqueness, and interview defensibility.
+Select the strongest, most differentiated evidence for *this* JD — remove or de-emphasize duplicate
+ideas, generic responsibilities, and weak bullets, but never delete required factual context merely
+to force a keyword. Use relevance-based bullet counts, not mechanical preservation of every Master
+Resume bullet:
+
+- Current/most relevant role: 5-8 strongest bullets
+- Next most relevant role: 4-6 bullets
+- Older roles: 2-5 bullets
+
+Adjust when the evidence genuinely requires it; never pad with filler to hit a number.
+
+**For every selected bullet:** understand the fact first, then write a new sentence — don't
+synonym-swap the old one or preserve its syntax automatically. Vary sentence structure naturally;
+don't force every bullet into the same "Verb + Tech + Purpose + Scale + Result" template, though
+that's a reasonable pattern to reach for. Prefer architecture, engineering decisions, ownership,
+and measurable impact over "Responsible for" / "Worked on" / "Helped with" / vague duties. Don't
+start more than two consecutive bullets in the same role with the same verb, and don't overuse
+Built/Developed/Implemented/Designed/Created — vary verb choice. Don't reach for
+Architected/Led/Owned/Drove unless the evidence actually justifies that level of scope. One primary
+technology per bullet — a coherent pipeline bullet, a separate IaC/CI-CD bullet, a separate
+governance bullet, not a keyword-soup bullet listing eight unrelated tools. Target roughly 18-32
+words per bullet (1-2 rendered lines) where practical; never truncate a real fact just to hit that
+target. No duplicate bullets, no duplicate bullet phrasing/structure across employers even when the
+underlying work was genuinely similar — vary the framing.
+
+**Professional Summary:** rewritten from scratch every run — never reused from the Master Resume's
+summary or any previous tailored resume. Establish professional identity, years/seniority when
+accurate, 2-4 strongest role-relevant competencies, scale/architecture when supported, 1-2 strongest
+measurable outcomes, and domain relevance when useful. No first person, no "results-driven" /
+"highly motivated" / "seasoned professional" / generic AI-style language, no unsupported claims.
+
+**Technical Skills:** rebuilt every run, ranked required → preferred → strong supporting →
+secondary, grouped by coherent ecosystem (Cloud & Data Platform, Data Processing, Orchestration,
+Warehousing, Databases, Programming, Infrastructure & DevOps, Governance & Security, Observability,
+AI/GenAI, Reporting — don't invent unnecessary categories). Known-but-not-employer-proven
+technologies belong here, per the Attribution rule. Never list a JD skill absent from both the
+Master Resume and Skills Inventory.
+
+**JD keyword integration:** use the employer's own terminology when a truthful equivalent concept
+exists (JD says "incremental processing," the fact is "CDC pipelines" → "CDC-driven incremental
+processing" is fine). Never change the underlying architecture to gain a keyword — don't turn Azure
+into AWS, ADF into Airflow, Azure DevOps into GitHub Actions, or Snowflake into Databricks inside an
+employer's real experience unless the Master Resume actually documents that substitution/migration.
+
+**Tense:** previous general guidance on this project was "past tense throughout, including the
+current role" (confirmed by the user 2026-08-07). The more detailed rule below refines that — apply
+it, but if you notice the two are in tension for a given resume, say so rather than silently
+picking one:
+- Current role, ongoing/recurring responsibility ("Maintain...", "Support..."): present tense.
+- Current role, a completed initiative or measurable achievement ("Reduced...", "Migrated...",
+  "Implemented..."): past tense.
+- Every prior role: past tense throughout, no exceptions.
+- Never mix tenses within describing the *same* accomplishment, and never convert an explicitly
+  historical Master Resume bullet to present tense just because the employer is current.
+
+**Quantification:** preserve supported metrics exactly (formatting changes for grammar only).
+Never invent or estimate a number — cost savings, performance gains, scale, records, latency, team
+size, revenue, users. No metric available → write a strong qualitative outcome instead.
+
+**Architecture integrity:** maintain ecosystem consistency within each employer (per the verbatim
+guardrails below) — deep rewriting works *within* those constraints, it never loosens them. If an
+employer is Azure-based in the Master Resume, don't inject AWS tooling into its bullets. If
+Snowflake experience belongs to one role, don't move it to another.
+
+## Job-fit classification
+
+Don't force every job toward a high score. Classify honestly: **STRONG APPLY / APPLY / STRETCH /
+LOW MATCH**, based on how many mandatory JD requirements the candidate's real evidence covers. This
+classification never blocks generation when the user has explicitly asked for a resume — it's
+reported, not gate-kept.
 
 ## Output
 
-Write generated files to `data/generated/<job-id>/`, using exactly the filenames the instructions
-below specify (`Saikishore_Resume.docx`, `Saikishore_CoverLetter.docx`). Never write to
-`data/master/` — that directory is only ever touched by the dashboard's upload route, which
-archives previous versions automatically. If you're tailoring against a pasted JD with no job id,
-ask the user which job this is for (or whether to create one on the dashboard first) rather than
-inventing a folder name.
+Five files per tailoring run, under `data/generated/<company-slug>/<job-id>/`:
 
-Generate the two `.docx` files using the `docx` skill (available in this environment) rather than
-hand-rolling document XML — it handles the plain, ATS-safe, one-column formatting these guardrails
-require. Black font throughout, standard fonts (Calibri/Arial/Times New Roman/Georgia) and bullet
-characters only, per the Font and ATS Parseability guardrail below.
+- `Resume.docx`
+- `CoverLetter.docx`
+- `ATS_Report.md`
+- `Recruiter_Report.md`
+- `ColdFollowupEmail.md`
+
+`<company-slug>` is the job's company name slugified (lowercase, non-alphanumeric runs collapsed to
+`-`) — the dashboard resolves the same slug when listing generated files on the job detail page, so
+don't invent a different naming scheme. If tailoring against a pasted JD with no job id, ask the
+user which job this is for (or whether to create one on the dashboard first) rather than inventing
+a folder name.
+
+**Generate the two `.docx` files with the project's own rendering engine, not hand-rolled per-run
+document code:**
+
+1. Write the fully-rewritten, fully-reordered content as JSON matching
+   `.claude/skills/tailor-resume/engine/types.ts` (`ResumeContent` / `CoverLetterContent`) —
+   `{ company, jobId, resume, coverLetter }`.
+2. Run:
+   ```bash
+   npx tsx .claude/skills/tailor-resume/engine/generate.ts <path-to-content.json>
+   ```
+   This renders both `.docx` files with the full formatting spec (Calibri, 20-22pt name, 12-13pt
+   bold section headings, 10.5-11pt role headers, 10.5-11pt body, 0.55-0.65in margins, hanging-
+   indent bullets, company-left/dates-right tab stops via a real `<w:tab/>` element, keepNext/
+   keepLines/widowControl pagination hints, clickable email/LinkedIn hyperlinks) already baked into
+   `resume-template.ts` / `cover-letter-template.ts` — **then automatically validates both files**
+   against `validate-docx.ts` (page size/margins, font, divider width, tab-stop math, bullet
+   hanging indent, no tables/text-boxes/frames/header-footer content, hyperlinks present) and
+   **fails the run (non-zero exit) if any check fails**, printing exactly which rule was violated.
+   Never write a one-off docx-generation script per job, and never hand-patch a generated `.docx` —
+   if formatting needs to change, change the engine so every future run inherits the fix.
+3. Recommended after any change to the engine templates, and worth doing for any run whose layout
+   you're unsure about: visually spot-check the render —
+   ```bash
+   node .claude/skills/tailor-resume/engine/visual-check/screenshot.mjs <path-to-Resume.docx> <output.png>
+   ```
+   This renders the actual `.docx` client-side (docx-preview, no LibreOffice needed) and
+   screenshots it via Playwright — this is how the one real layout bug found during hardening (a
+   literal tab character instead of a proper OOXML tab element, which broke date right-alignment)
+   was actually caught; the raw XML and generated code both looked correct without it. **Known
+   limitation:** docx-preview renders continuously rather than truly paginating, so the page count
+   it reports is a height-based *estimate*, not verified real Word pagination — say so if you cite
+   it, don't claim a verified page count. If this script isn't run for a given tailoring pass, say
+   so plainly rather than implying a visual check happened.
+4. Write `ATS_Report.md`, `Recruiter_Report.md`, and `ColdFollowupEmail.md` directly (plain
+   markdown) into the same output directory — see the required sections below.
+
+Never write to `data/master/` — that directory is only ever touched by the dashboard's upload
+route, which archives previous versions automatically.
 
 After generating the files, if a job id was given, mark the job as tailored in the dashboard:
 ```bash
 curl -s -X PATCH "http://localhost:3000/api/jobs/<job-id>" -H "Content-Type: application/json" -d '{"markedForTailoring": true}'
 ```
-(Only if the dev server is running — this is a nice-to-have sync, not a hard requirement; the
-files on disk are the source of truth regardless.)
+(Only if the dev server is running — nice-to-have sync, not a hard requirement; files on disk are
+the source of truth regardless.)
+
+### ATS_Report.md — required sections (per section 45 of the production-hardening spec)
+Role / Company / Job ID · Job-fit classification (STRONG APPLY / APPLY / STRETCH / LOW MATCH) ·
+JD analysis (hiring priorities / required tech / preferred tech / business domain / seniority /
+architecture focus / leadership expectations) · Internal Estimated Match — **explicitly labeled**
+`INTERNAL ESTIMATE — NOT AN ATS VENDOR SCORE` with reasoning, never a bare number implying a real
+vendor score · Required qualification coverage % · Preferred qualification coverage % · Keyword
+coverage (exact-match terms and semantic/transferable matches, listed separately — don't count a
+Skills-Inventory-only technology as "matched" unless it was actually included in the generated
+resume) · Missing required skills · Missing preferred skills (both: genuinely absent from Master
+Resume + Skills Inventory, never fabricated to fill the gap) · Parsing Confidence: High/Medium/Low
+· Formatting checks (delegate to `validate-docx.ts`'s pass/fail, don't re-derive by hand) · Risks.
+
+### Recruiter_Report.md — required sections (per section 46)
+Target positioning · hiring-manager priorities · recruiter priorities · bullet ranking rationale ·
+summary strategy · skill-ordering strategy · business-impact emphasis · omitted/de-emphasized
+material and why · Rewritten Bullets (before/after, so changes are auditable) · Reordered Bullets
+(what moved and why) · interview-defensibility warnings · factual guardrail decisions (e.g. a JD
+skill that was deliberately left out because it's not in the Master Skills Inventory). Concise
+decision summaries only — don't dump private chain-of-thought reasoning into the file.
+
+### CoverLetter.docx
+Factual, not a restatement of resume bullets — why this role, 2-3 strongest matching capabilities,
+relevant measurable evidence, alignment with the job/company. Never invent passion, company
+familiarity, relocation preference, or personal history. ~250-400 words unless the user says
+otherwise.
+
+### ColdFollowupEmail.md
+~80-150 words: role, strongest 1-2 relevant facts, a polite call to action. Not a second cover
+letter. Never fabricate a recruiter's name. Consistent with the resume and cover letter on every
+fact (Cross-Document Consistency Lock guardrail below applies here too).
+
+## ATS Optimization checklist
+
+Format for compatibility with Workday, Greenhouse, Lever, Ashby, SmartRecruiters, iCIMS, Taleo,
+Oracle Recruiting Cloud, SAP SuccessFactors, UKG, BambooHR, Jobvite, and Workable — one column, no
+tables, no text boxes, no floating elements, no icons/graphics, standard fonts, parsable dates,
+parsable employers/titles, parsable contact info. The engine's templates make tables/text-
+boxes/graphics/icons structurally impossible to introduce by accident, and `generate.ts` verifies
+this automatically on every run — confirm the validation passed in `ATS_Report.md` rather than
+re-deriving it from scratch by hand. Never claim a guaranteed ATS score — report Compatibility /
+Keyword Coverage / Parsing Confidence / Recruiter Readability as estimates with stated reasoning.
+
+## Language quality pass
+
+Before finalizing, read the summary and every bullet once more looking specifically for: repeated
+verbs, repeated sentence structures, AI-sounding phrasing, unnecessary adjectives, awkward
+transitions, grammar errors, inconsistent tense, overuse of em-dashes or semicolons, vague claims,
+keyword stuffing. It should read like a strong engineer represented by an experienced recruiter —
+not like an LLM.
+
+## Simulated recruiter review
+
+Before finalizing, answer honestly: is the target role obvious within ~10 seconds? Are the JD's top
+requirements visible on page 1, ideally in its top third? Is the strongest evidence near the top?
+Does every bullet earn its place / provide distinct value? Is measurable impact visible? Does the
+resume feel written for *this* role specifically? Is any sentence hard to defend in an interview?
+Does anything read as keyword stuffing? Is anything important buried? Revise if any answer is no.
+
+## Failure behavior
+
+Never silently produce a questionable resume. If the Master Resume is missing, the Skills Inventory
+is missing, the JD is incomplete, `generate.ts`'s validation fails, or there's an unresolved
+evidence conflict (e.g. the JD implies something the Master Resume doesn't support and there's no
+honest way to phrase around it) — stop and say exactly what's blocking, in plain language. Don't
+fabricate around a missing input.
+
+## Testing & regression (after any engine change)
+
+```bash
+npx tsc --noEmit -p tsconfig.json   # typecheck
+npm run lint                         # lint
+npm run build                        # production build — confirms dashboard unaffected
+npx tsx .claude/skills/tailor-resume/engine/fixtures/run-fixtures.ts   # engine regression fixtures
+```
+The fixtures directory has synthetic `ResumeContent` inputs across a few different role families
+(not real scraped jobs — deterministic, no LLM calls, no token cost) that exercise the renderer and
+validator against structurally different content, so a template change can't accidentally only be
+tested against one lucky shape of input. This tests the *engine* (rendering + validation
+correctness), not tailoring judgment — content-quality differentiation across real JDs is
+inherently a reasoning task, checked via the Simulated Recruiter Review above, not a fixture.
+
+## Final quality gates — do not report a run successful until every applicable item is true
+
+Content: Master Resume read · Skills Inventory read · full JD read · evidence model built (every
+claim traceable) · hiring priorities identified · ATS terminology mapped · recruiter priorities
+identified · business outcomes identified · bullets scored, selected, deeply rewritten, and
+reordered · summary rewritten from scratch · skills reordered · employer architecture integrity
+preserved · tense validated · metrics validated (no invented numbers) · no fabricated experience,
+employer-specific skill usage, or skills · no keyword stuffing · grammar and readability validated.
+
+Layout (enforced automatically by `generate.ts` → `validate-docx.ts`, confirm it actually ran and
+passed rather than assuming): full-width section dividers · full text width · right-aligned dates
+via a real tab stop · hanging bullet indent · no tables/text boxes/shapes · consistent typography ·
+page-flow controls present · DOCX package integrity.
+
+Output: `Resume.docx`, `CoverLetter.docx`, `ATS_Report.md`, `Recruiter_Report.md`,
+`ColdFollowupEmail.md` all written to `data/generated/<company-slug>/<job-id>/` · dashboard
+resolves them (spot-check `GET /api/jobs/<job-id>` returns all five in `generatedFiles`).
+
+Engineering: typecheck, lint, and build clean · existing scanning/H1B/company-management/pipeline
+functionality unaffected.
+
+If any applicable gate fails, fix it and re-check — don't report the run as done with a known gap.
 
 ## The instructions
 
 Everything below this line is Saikishore's Resume Tailoring System Instructions, verbatim. Follow
 every rule and guardrail exactly as written — they take priority over general resume-writing
-instincts, especially the architecture-integrity and no-contradicting-technologies guardrails.
+instincts, especially the architecture-integrity and no-contradicting-technologies guardrails. The
+OUTPUT FORMAT section below describes the original chat-response structure; for this project, the
+file-based deliverables above are authoritative — cover the same substance (ATS/keyword scores,
+missing keywords, rewritten summary/skills/experience, cover letter, cold email) across
+`ATS_Report.md`, `Recruiter_Report.md`, `Resume.docx`, `CoverLetter.docx`, and
+`ColdFollowupEmail.md` instead of retyping all of it into the chat reply.
 
 ---
 
@@ -323,7 +626,7 @@ Keep the total resume to 1–2 pages. Cap bullets per role so tailoring never le
 ⸻
 
 GUARDRAIL — VERB TENSE CONSISTENCY
-Use past-tense action verbs (Design, Build, Develop, Automate, Partner) for the current/past role only. Use past-tense action verbs (Designed, Built, Developed, Engineered, Automated) for every prior role. Never mix tenses within the same job's bullet list.
+Use past-tense action verbs (Designed, Built, Developed, Engineered, Automated, Partnered) for every role, including the current role — bullets describe completed accomplishments, not ongoing duties, regardless of end date. Never mix tenses within the same job's bullet list. (Clarified 2026-08-07: the original wording listed base-form verbs — Design, Build, Develop — under a "past-tense" label for the current role, which is self-contradictory; past tense throughout is the confirmed intent.)
 
 ⸻
 

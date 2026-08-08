@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<script src="jszip.min.js"></script>
+<script src="docx-preview.min.js"></script>
+<style>
+  body { margin: 0; background: #888; }
+  .docx-wrapper { background: #888; padding: 20px; }
+  .docx { background: white; box-shadow: 0 0 5px rgba(0,0,0,0.3); }
+</style>
+</head>
+<body>
+<div id="container"></div>
+<script>
+  window.renderDone = false;
+  fetch("target.docx").then(r => r.blob()).then(blob => {
+    return docx.renderAsync(blob, document.getElementById("container"), null, {
+      inWrapper: true,
+      ignoreWidth: false,
+      ignoreHeight: false,
+      breakPages: true,
+      experimental: true,
+    });
+  }).then(() => { window.renderDone = true; }).catch(e => {
+    window.renderError = String(e && e.stack || e);
+    window.renderDone = true;
+  });
+</script>
+</body></html>
