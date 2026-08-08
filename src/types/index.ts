@@ -1,6 +1,21 @@
 export type SourceType = "greenhouse" | "ashby" | "lever" | "workday" | "career_link";
-export type H1bSignal = "High" | "Medium" | "Low" | "Unknown";
-export type H1bCombinedSignal = H1bSignal | "Likely" | "Unlikely";
+
+/**
+ * Company-level H1B sponsorship confidence, derived purely from historical DOL H1B/LCA filing data
+ * (see src/lib/h1b/fuzzyMatch.ts). Deliberately excludes "Not Sponsoring" — DOL data is positive
+ * evidence only (filings that happened); it never asserts a company categorically won't sponsor.
+ * "Not Sponsoring" only ever appears at the job level, driven by explicit JD language.
+ */
+export type H1bCompanyConfidence = "Very High" | "High" | "Medium" | "Low" | "Unknown";
+
+/** Job-level confidence: company confidence combined with this posting's own JD sponsorship
+ *  language, which always overrides when present — see src/lib/h1b/combineSignal.ts. */
+export type H1bJobConfidence = H1bCompanyConfidence | "Not Sponsoring";
+
+/** Which layer of the matcher resolved a company to a DOL sponsor record — see the layered
+ *  matching algorithm in src/lib/h1b/fuzzyMatch.ts. Never surfaced without also surfacing evidence. */
+export type H1bMatchTier = "exact" | "alias" | "fuzzy";
+
 export type SponsorshipPolarity = "positive" | "negative" | "none";
 /**
  * "Not Interested" is deliberately not a member of this type — it's an action, not a persisted
@@ -23,10 +38,21 @@ export interface Company {
   career_page_url: string | null;
   is_active: 0 | 1;
   notes: string | null;
+  /** The raw DOL employer name actually matched (whichever tier resolved it). */
   h1b_match_employer_name: string | null;
+  /** The normalized identity actually matched against — the alias target when tier is "alias". */
+  h1b_match_normalized: string | null;
+  h1b_match_tier: H1bMatchTier | null;
+  /** 100 for exact/alias tiers; the fuzzball similarity score (0-100) for fuzzy. */
   h1b_match_score: number | null;
-  h1b_signal: H1bSignal;
+  h1b_confidence: H1bCompanyConfidence;
+  /** Total certified LCAs across every fiscal year on file for the matched employer. */
   h1b_lca_count: number;
+  h1b_latest_fiscal_year: number | null;
+  /** Human-readable justification for h1b_confidence — tier, filing volume, recency. */
+  h1b_confidence_evidence: string | null;
+  /** When h1b_confidence was last (re)computed — distinct from the generic updated_at. */
+  h1b_updated_at: string | null;
   last_scanned_at: string | null;
   last_scan_status: string | null;
   last_scan_error: string | null;
@@ -66,7 +92,7 @@ export interface Job {
   dedupe_key: string;
   sponsorship_mentioned: 0 | 1;
   sponsorship_polarity: SponsorshipPolarity;
-  h1b_combined_signal: H1bCombinedSignal;
+  h1b_combined_confidence: H1bJobConfidence;
   pipeline_status: PipelineStatus;
   pipeline_updated_at: string | null;
   marked_for_tailoring: 0 | 1;
@@ -90,6 +116,14 @@ export interface Job {
 
 export interface JobWithCompany extends Job {
   company_name: string;
+  /** The company's own historical H1B confidence — the "Historical Sponsor" the job detail page
+   *  shows alongside this job's own (possibly JD-overridden) h1b_combined_confidence. */
+  company_h1b_confidence: H1bCompanyConfidence;
+  company_h1b_confidence_evidence: string | null;
+  company_h1b_match_employer_name: string | null;
+  company_h1b_match_tier: H1bMatchTier | null;
+  company_h1b_lca_count: number;
+  company_h1b_latest_fiscal_year: number | null;
 }
 
 /** Age band computed live from posted_at (preferred) or first_seen_at — never persisted, never
@@ -121,6 +155,8 @@ export interface JobStatusHistoryEntry {
   changed_at: string;
 }
 
+/** Rollup/summary row — fully recomputed from H1bSponsorFiling rows after every ingest, never
+ *  hand-edited. What matching queries actually read; see src/db/queries/h1bSponsors.ts. */
 export interface H1bSponsor {
   id: number;
   employer_name_raw: string;
@@ -132,6 +168,48 @@ export interface H1bSponsor {
   most_recent_fiscal_year: number | null;
   source_file: string | null;
   ingested_at: string;
+}
+
+/** Durable, idempotent per-(employer, fiscal year) source-of-truth fact — the source data
+ *  h1b_sponsors is derived from. One row per employer per fiscal year; re-ingesting the same year
+ *  replaces this row rather than accumulating on top of it. */
+export interface H1bSponsorFiling {
+  id: number;
+  employer_name_raw: string;
+  employer_name_normalized: string;
+  fiscal_year: number;
+  certified: number;
+  denied: number;
+  withdrawn: number;
+  source_file: string | null;
+  ingested_at: string;
+}
+
+/** Approved alias mapping for the matcher's alias tier — deliberately never seeded with hardcoded
+ *  companies; empty until a user/admin curates one. */
+export interface H1bEmployerAlias {
+  id: number;
+  alias_normalized: string;
+  employer_name_normalized: string;
+  notes: string | null;
+  created_at: string;
+}
+
+/** Result of matchCompanyToSponsor's layered lookup — the tier plus enough of the matched sponsor
+ *  to score confidence and build an evidence string from. */
+export interface H1bMatchResult {
+  tier: H1bMatchTier;
+  sponsor: H1bSponsor;
+  /** 100 for exact/alias; the fuzzball similarity score (0-100) for fuzzy. */
+  score: number;
+  /** The normalized identity actually matched against (== sponsor.employer_name_normalized for
+   *  exact/fuzzy; the alias's target for alias tier — kept explicit for evidence text). */
+  matchedNormalized: string;
+}
+
+export interface H1bCompanyConfidenceResult {
+  confidence: H1bCompanyConfidence;
+  evidence: string;
 }
 
 export interface NormalizedJob {

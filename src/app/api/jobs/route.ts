@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listJobs } from "@/db/queries/jobs";
-import type { H1bCombinedSignal, PipelineStatus, SourceType } from "@/types";
+import type { H1bJobConfidence, PipelineStatus, SourceType } from "@/types";
 
 const VALID_STATUSES: PipelineStatus[] = [
   "New",
@@ -10,13 +10,13 @@ const VALID_STATUSES: PipelineStatus[] = [
   "Offer",
   "Employer Rejected",
 ];
-const VALID_H1B: H1bCombinedSignal[] = [
+const VALID_H1B: H1bJobConfidence[] = [
+  "Very High",
   "High",
   "Medium",
   "Low",
   "Unknown",
-  "Likely",
-  "Unlikely",
+  "Not Sponsoring",
 ];
 const VALID_SOURCES: SourceType[] = ["greenhouse", "ashby", "lever", "workday", "career_link"];
 
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   const activeOnly = params.get("activeOnly");
   const markedForTailoring = params.get("markedForTailoring");
   const archived = params.get("archived");
-  const h1bSignalParam = params.getAll("h1bSignal");
+  const h1bConfidenceParam = params.getAll("h1bConfidence");
 
   if (status && !VALID_STATUSES.includes(status as PipelineStatus)) {
     return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 });
@@ -38,8 +38,8 @@ export async function GET(req: NextRequest) {
   if (sourceType && !VALID_SOURCES.includes(sourceType as SourceType)) {
     return NextResponse.json({ error: `Invalid sourceType: ${sourceType}` }, { status: 400 });
   }
-  const h1bSignal = h1bSignalParam.filter((s): s is H1bCombinedSignal =>
-    VALID_H1B.includes(s as H1bCombinedSignal)
+  const h1bConfidence = h1bConfidenceParam.filter((s): s is H1bJobConfidence =>
+    VALID_H1B.includes(s as H1bJobConfidence)
   );
 
   const jobs = listJobs({
@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
     activeOnly: activeOnly === "true",
     markedForTailoring: markedForTailoring === "true",
     archived: archived === "true",
-    h1bSignal: h1bSignal.length > 0 ? h1bSignal : undefined,
+    h1bConfidence: h1bConfidence.length > 0 ? h1bConfidence : undefined,
   });
 
   return NextResponse.json({ jobs });

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test src/lib/__tests__/*.test.ts src/db/queries/__tests__/*.test.ts",
+    "test": "tsx --test src/lib/__tests__/*.test.ts src/lib/h1b/__tests__/*.test.ts src/db/queries/__tests__/*.test.ts",
     "migrate": "tsx src/db/migrate.ts",
     "scan": "tsx scripts/scan.ts",
     "ingest-h1b": "tsx scripts/ingest-h1b.ts",

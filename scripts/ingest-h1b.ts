@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse } from "csv-parse";
-import { normalizeEmployerName } from "../src/lib/h1b/normalizeEmployerName";
-import { upsertSponsor } from "../src/db/queries/h1bSponsors";
 import { getDb } from "../src/db";
+import { recomputeAllSponsorSummaries, upsertSponsorFiling } from "../src/db/queries/h1bSponsors";
+import { clearNormalizeCache, normalizeEmployerNameCached } from "../src/lib/h1b/normalizeEmployerName";
 
 /**
  * Ingests a DOL OFLC H-1B LCA disclosure CSV (public data, no auth — download manually from
@@ -12,6 +12,13 @@ import { getDb } from "../src/db";
  *
  * DOL has renamed columns across fiscal years, so this looks up each field by a list of known
  * aliases (case-insensitive) rather than assuming one fixed header row.
+ *
+ * Idempotent + incremental: writes one row per (employer, fiscal year) to h1b_sponsor_filings —
+ * re-running the same fiscal year's file REPLACES that year's counts rather than adding on top, so
+ * running this twice on the same file is always safe. Ingesting a different fiscal year's file for
+ * an employer already on file is a genuine incremental update — h1b_sponsors (the fast-lookup
+ * rollup matching reads from) is recomputed as a SUM across every fiscal year on record, in one
+ * bulk pass at the end.
  *
  * Usage: npm run ingest-h1b -- --file /path/to/LCA_Disclosure_Data_FY2024.csv [--fiscal-year 2024]
  */
@@ -78,6 +85,9 @@ async function main() {
 
   console.log(`Ingesting ${filePath}...`);
 
+  // Aggregated per employer WITHIN this one file/fiscal-year before writing — one upsert per
+  // unique employer for this year, not one per raw CSV row (a disclosure file can have well over a
+  // million rows for a modest number of unique employers).
   const aggregates = new Map<string, Aggregate>();
   let columnMap: Record<string, number> | null = null;
   let rowsSeen = 0;
@@ -118,7 +128,7 @@ async function main() {
       continue;
     }
 
-    const normalized = normalizeEmployerName(employerRaw);
+    const normalized = normalizeEmployerNameCached(employerRaw);
     if (!normalized) continue;
 
     let agg = aggregates.get(normalized);
@@ -135,6 +145,7 @@ async function main() {
       console.log(`  ...${rowsSeen} rows scanned, ${aggregates.size} unique employers so far`);
     }
   }
+  clearNormalizeCache(); // scoped to this run; no reason to hold it past ingestion
 
   console.log(
     `Parsed ${rowsSeen} rows (${h1bRowsSeen} H-1B), ${aggregates.size} unique employers. Writing to DB...`
@@ -143,7 +154,7 @@ async function main() {
   const db = getDb();
   const writeAll = db.transaction(() => {
     for (const [normalized, agg] of aggregates) {
-      upsertSponsor({
+      upsertSponsorFiling({
         employerNameRaw: agg.raw,
         employerNameNormalized: normalized,
         certified: agg.certified,
@@ -155,6 +166,9 @@ async function main() {
     }
   });
   writeAll();
+
+  console.log("Recomputing sponsor summaries...");
+  recomputeAllSponsorSummaries();
 
   if (skippedMissingColumns > 0) {
     console.log(`Skipped ${skippedMissingColumns} H-1B rows with a blank employer name.`);

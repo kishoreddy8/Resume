@@ -101,7 +101,7 @@ export default function ArchivedJobsPage() {
                     </div>
                   </td>
                   <td className="px-3 py-2">
-                    <H1bBadge signal={job.h1b_combined_signal} />
+                    <H1bBadge confidence={job.h1b_combined_confidence} />
                   </td>
                   <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{job.pipeline_status}</td>
                   <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">

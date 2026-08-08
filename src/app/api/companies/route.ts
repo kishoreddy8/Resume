@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createCompany, listCompanies, updateCompanyH1bSignal } from "@/db/queries/companies";
+import { createCompany, listCompanies, updateCompanyH1bConfidence } from "@/db/queries/companies";
 import { detectAtsFromUrl } from "@/lib/ats/detect";
-import { matchCompanyToSponsor } from "@/lib/h1b/fuzzyMatch";
+import { matchCompanyToSponsor, scoreCompanyConfidence } from "@/lib/h1b/fuzzyMatch";
 import type { Company, SourceType } from "@/types";
 
 const EXPLICIT_SCHEMA = z
@@ -27,17 +27,21 @@ const AUTO_DETECT_SCHEMA = z.object({
 });
 
 function finalizeCompany(company: Company) {
-  // Run the H1B match inline so the company shows a signal immediately, not just after next scan.
+  // Run the H1B match inline so the company shows a confidence immediately, not just after the
+  // next `npm run match-h1b`. Always writes (even a plain "Unknown" with its evidence) so the
+  // company profile is never left with stale defaults.
   const match = matchCompanyToSponsor(company.name);
-  if (match) {
-    updateCompanyH1bSignal(
-      company.id,
-      match.signal,
-      match.sponsor.employer_name_raw,
-      match.score,
-      match.sponsor.total_lca_certified
-    );
-  }
+  const { confidence, evidence } = scoreCompanyConfidence(match);
+  updateCompanyH1bConfidence(company.id, {
+    confidence,
+    matchEmployerName: match?.sponsor.employer_name_raw ?? null,
+    matchNormalized: match?.matchedNormalized ?? null,
+    matchTier: match?.tier ?? null,
+    matchScore: match?.score ?? null,
+    lcaCount: match?.sponsor.total_lca_certified ?? 0,
+    latestFiscalYear: match?.sponsor.most_recent_fiscal_year ?? null,
+    evidence,
+  });
 }
 
 export async function GET() {

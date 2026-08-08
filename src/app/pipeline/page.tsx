@@ -63,7 +63,7 @@ export default function PipelinePage() {
                     </Link>
                     <div className="mt-0.5 text-xs text-zinc-500">{job.company_name}</div>
                     <div className="mt-2 flex items-center justify-between gap-2">
-                      <H1bBadge signal={job.h1b_combined_signal} />
+                      <H1bBadge confidence={job.h1b_combined_confidence} />
                       <PipelineStatusSelect
                         jobId={job.id}
                         value={job.pipeline_status}

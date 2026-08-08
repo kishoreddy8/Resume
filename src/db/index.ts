@@ -231,6 +231,188 @@ function migrateJobsPipelineStatusCheck(db: Database.Database, schemaSql: string
   }
 }
 
+// --- H1B Sponsor Intelligence migrations ---------------------------------------------------
+
+// New, purely-additive company columns (see schema.sql for what each means).
+const COMPANIES_H1B_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
+  { name: "h1b_match_normalized", ddl: "ALTER TABLE companies ADD COLUMN h1b_match_normalized TEXT" },
+  { name: "h1b_match_tier", ddl: "ALTER TABLE companies ADD COLUMN h1b_match_tier TEXT" },
+  { name: "h1b_latest_fiscal_year", ddl: "ALTER TABLE companies ADD COLUMN h1b_latest_fiscal_year INTEGER" },
+  { name: "h1b_confidence_evidence", ddl: "ALTER TABLE companies ADD COLUMN h1b_confidence_evidence TEXT" },
+  { name: "h1b_updated_at", ddl: "ALTER TABLE companies ADD COLUMN h1b_updated_at TEXT" },
+];
+
+function runAdditiveCompaniesMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(companies)").all() as { name: string }[]).map((c) => c.name)
+  );
+  for (const column of COMPANIES_H1B_ADDITIVE_COLUMNS) {
+    if (!existingColumns.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+}
+
+// companies' full column set as it exists on a live DB just before this rebuild (h1b_signal, the
+// old name) vs. just after (h1b_confidence). Built once, not shared with migrateCompaniesSourceTypeCheck's
+// own COMPANIES_COLUMNS above — that function's guard targets an already-migrated-away CHECK on any
+// database this project has touched, and its list must keep reflecting the shape a database looked
+// like at THAT migration's moment in history, not this one.
+const COMPANIES_H1B_COLUMNS_OLD = [
+  "id", "name", "source_type", "ats_board_token", "career_page_url", "is_active", "notes",
+  "h1b_match_employer_name", "h1b_match_normalized", "h1b_match_tier", "h1b_match_score",
+  "h1b_signal", "h1b_lca_count", "h1b_latest_fiscal_year", "h1b_confidence_evidence",
+  "h1b_updated_at", "last_scanned_at", "last_scan_status", "last_scan_error", "created_at", "updated_at",
+];
+const COMPANIES_H1B_COLUMNS_NEW = COMPANIES_H1B_COLUMNS_OLD.map((c) =>
+  c === "h1b_signal" ? "h1b_confidence" : c
+);
+
+/**
+ * companies.h1b_signal had a CHECK(... IN ('High','Medium','Low','Unknown')) — H1B Sponsor
+ * Intelligence renames it to h1b_confidence and adds 'Very High' to the vocabulary (company-level
+ * confidence never includes 'Not Sponsoring' — DOL data is purely positive evidence of sponsorship,
+ * it never asserts a company won't sponsor; that's job-level-only, from JD language). Same
+ * precedent as source_type/pipeline_status above: the CHECK is dropped rather than rebuilt with a
+ * longer allowed-list. Idempotent: only runs if the old CHECK is still present.
+ *
+ * Must run after runAdditiveCompaniesMigrations, so the live table already has every new H1B
+ * column before the rebuild copies it (only h1b_signal itself needs a name change, not a backfill).
+ *
+ * Same danger/same fix as migrateCompaniesSourceTypeCheck: companies is referenced by
+ * jobs.company_id AND suppressed_jobs.company_id (added since), so this must never rename the live
+ * `companies` table itself mid-migration — build the replacement under a temp name, DROP the OLD
+ * `companies`, RENAME the new table INTO `companies`, so neither referencing table's FK text is
+ * ever touched.
+ */
+function migrateCompaniesH1bConfidenceCheck(db: Database.Database, schemaSql: string) {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'companies'")
+    .get() as { sql: string } | undefined;
+  if (!row || !row.sql.includes("CHECK (h1b_signal IN")) return;
+
+  const bodyMatch = schemaSql.match(/CREATE TABLE IF NOT EXISTS companies \(([\s\S]*?)\n\);/);
+  if (!bodyMatch) {
+    throw new Error("Could not extract companies table definition from schema.sql for migration");
+  }
+  const tempTableSql = `CREATE TABLE companies_h1b_intel_migration_new (${bodyMatch[1]}\n)`;
+
+  const selectList = COMPANIES_H1B_COLUMNS_OLD.join(", ");
+  const insertList = COMPANIES_H1B_COLUMNS_NEW.join(", ");
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.exec(tempTableSql);
+      db.exec(
+        `INSERT INTO companies_h1b_intel_migration_new (${insertList}) SELECT ${selectList} FROM companies`
+      );
+      db.exec("DROP TABLE companies");
+      db.exec("ALTER TABLE companies_h1b_intel_migration_new RENAME TO companies");
+      db.exec(schemaSql);
+    })();
+    for (const child of ["jobs", "suppressed_jobs"]) {
+      const violations = db.pragma(`foreign_key_check(${child})`) as unknown[];
+      if (violations.length > 0) {
+        throw new Error(`Post-migration integrity check failed on ${child}: ${JSON.stringify(violations)}`);
+      }
+      const fkTarget = db
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(child) as { sql: string } | undefined;
+      if (fkTarget && !fkTarget.sql.includes('REFERENCES "companies"') && !fkTarget.sql.includes("REFERENCES companies")) {
+        throw new Error(`Post-migration check failed: ${child}.company_id no longer references companies`);
+      }
+    }
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
+// jobs' full column set just before (h1b_combined_signal) vs. just after (h1b_combined_confidence)
+// this rebuild — a fresh, independent list from JOBS_COLUMNS above for the same reason
+// COMPANIES_H1B_COLUMNS_OLD is independent of migrateCompaniesSourceTypeCheck's list.
+const JOBS_H1B_COLUMNS_OLD = [
+  "id", "company_id", "source_type", "external_id", "title", "location", "department", "url",
+  "description_html", "description_text", "description_sections", "employment_type",
+  "workplace_type", "salary_text", "sponsorship_snippet", "posted_at", "first_seen_at",
+  "last_seen_at", "is_active", "dedupe_key", "sponsorship_mentioned", "sponsorship_polarity",
+  "h1b_combined_signal", "pipeline_status", "pipeline_updated_at", "marked_for_tailoring",
+  "tailoring_marked_at", "closed_at", "missed_scan_count", "is_archived", "archived_at",
+  "archived_reason", "pinned", "notes", "tags", "raw_json", "created_at", "updated_at",
+];
+const JOBS_H1B_COLUMNS_NEW = JOBS_H1B_COLUMNS_OLD.map((c) =>
+  c === "h1b_combined_signal" ? "h1b_combined_confidence" : c
+);
+
+/**
+ * jobs.h1b_combined_signal had a CHECK(... IN ('High','Medium','Low','Unknown','Likely','Unlikely'))
+ * — H1B Sponsor Intelligence renames it to h1b_combined_confidence with the vocabulary Very High/
+ * High/Medium/Low/Unknown/Not Sponsoring (Likely -> Very High, Unlikely -> Not Sponsoring is the
+ * closest-meaning remap: both were the JD-override tier, now expressed on the same unified scale
+ * used everywhere else). Idempotent: only runs if the old CHECK is still present.
+ *
+ * Same danger/same fix as migrateJobsPipelineStatusCheck: jobs is referenced by
+ * job_status_history.job_id, so this must never rename the live `jobs` table itself mid-migration.
+ */
+function migrateJobsH1bConfidenceCheck(db: Database.Database, schemaSql: string) {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'")
+    .get() as { sql: string } | undefined;
+  if (!row || !row.sql.includes("CHECK (h1b_combined_signal IN")) return;
+
+  const bodyMatch = schemaSql.match(/CREATE TABLE IF NOT EXISTS jobs \(([\s\S]*?)\n\);/);
+  if (!bodyMatch) {
+    throw new Error("Could not extract jobs table definition from schema.sql for migration");
+  }
+  const tempTableSql = `CREATE TABLE jobs_h1b_intel_migration_new (${bodyMatch[1]}\n)`;
+
+  const selectList = JOBS_H1B_COLUMNS_OLD.map((col) =>
+    col === "h1b_combined_signal"
+      ? "CASE h1b_combined_signal WHEN 'Likely' THEN 'Very High' WHEN 'Unlikely' THEN 'Not Sponsoring' ELSE h1b_combined_signal END"
+      : col
+  ).join(", ");
+  const insertList = JOBS_H1B_COLUMNS_NEW.join(", ");
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.exec(tempTableSql);
+      db.exec(
+        `INSERT INTO jobs_h1b_intel_migration_new (${insertList}) SELECT ${selectList} FROM jobs`
+      );
+      db.exec("DROP TABLE jobs");
+      db.exec("ALTER TABLE jobs_h1b_intel_migration_new RENAME TO jobs");
+      db.exec(schemaSql);
+    })();
+    const historyViolations = db.pragma("foreign_key_check(job_status_history)") as unknown[];
+    if (historyViolations.length > 0) {
+      throw new Error(`Post-migration integrity check failed: ${JSON.stringify(historyViolations)}`);
+    }
+    const jobsViolations = db.pragma("foreign_key_check(jobs)") as unknown[];
+    if (jobsViolations.length > 0) {
+      throw new Error(`Post-migration integrity check failed: ${JSON.stringify(jobsViolations)}`);
+    }
+    const historyFkTarget = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'job_status_history'")
+      .get() as { sql: string } | undefined;
+    if (
+      historyFkTarget &&
+      !historyFkTarget.sql.includes('REFERENCES "jobs"') &&
+      !historyFkTarget.sql.includes("REFERENCES jobs")
+    ) {
+      throw new Error("Post-migration check failed: job_status_history.job_id no longer references jobs");
+    }
+    const remaining = db
+      .prepare("SELECT COUNT(*) AS n FROM jobs WHERE h1b_combined_confidence IN ('Likely', 'Unlikely')")
+      .get() as { n: number };
+    if (remaining.n > 0) {
+      throw new Error(`Post-migration check failed: ${remaining.n} row(s) still have an old-style h1b_combined_confidence`);
+    }
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
 function createConnection(): Database.Database {
   ensureDataDirs();
   const db = new Database(DB_PATH);
@@ -243,7 +425,10 @@ function createConnection(): Database.Database {
   db.exec(schema);
   migrateCompaniesSourceTypeCheck(db, schema);
   runAdditiveMigrations(db);
+  runAdditiveCompaniesMigrations(db);
   migrateJobsPipelineStatusCheck(db, schema);
+  migrateCompaniesH1bConfidenceCheck(db, schema);
+  migrateJobsH1bConfidenceCheck(db, schema);
   ensureJobsIndexes(db);
   return db;
 }

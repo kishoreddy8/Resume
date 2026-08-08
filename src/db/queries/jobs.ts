@@ -4,7 +4,7 @@ import { canArchive, getJobAgeBand, getJobAgeDays, isLifecycleProtected } from "
 import type {
   AgeSweepResult,
   DeletedJobRef,
-  H1bCombinedSignal,
+  H1bJobConfidence,
   Job,
   JobHistoryChangeType,
   JobStatusHistoryEntry,
@@ -17,7 +17,7 @@ import type {
 
 export interface JobFilters {
   status?: PipelineStatus;
-  h1bSignal?: H1bCombinedSignal[];
+  h1bConfidence?: H1bJobConfidence[];
   companyId?: number;
   sourceType?: SourceType;
   search?: string;
@@ -45,6 +45,19 @@ function recordHistory(
   ).run({ jobId, changeType, oldValue, newValue, reason: reason ?? null });
 }
 
+// Shared by listJobs/getJob — brings each job's own h1b_combined_confidence together with its
+// company's historical H1B confidence ("Historical Sponsor" on the job detail page), so callers
+// never need a second round-trip to show both.
+const JOB_WITH_COMPANY_SELECT = `
+  j.*, c.name AS company_name,
+  c.h1b_confidence AS company_h1b_confidence,
+  c.h1b_confidence_evidence AS company_h1b_confidence_evidence,
+  c.h1b_match_employer_name AS company_h1b_match_employer_name,
+  c.h1b_match_tier AS company_h1b_match_tier,
+  c.h1b_lca_count AS company_h1b_lca_count,
+  c.h1b_latest_fiscal_year AS company_h1b_latest_fiscal_year
+`;
+
 export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
   const clauses: string[] = [];
   const params: Record<string, unknown> = {};
@@ -71,10 +84,10 @@ export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
     clauses.push("(j.title LIKE @search OR j.description_text LIKE @search OR c.name LIKE @search)");
     params.search = `%${filters.search}%`;
   }
-  if (filters.h1bSignal && filters.h1bSignal.length > 0) {
-    const placeholders = filters.h1bSignal.map((_, i) => `@h1b${i}`).join(", ");
-    clauses.push(`j.h1b_combined_signal IN (${placeholders})`);
-    filters.h1bSignal.forEach((sig, i) => {
+  if (filters.h1bConfidence && filters.h1bConfidence.length > 0) {
+    const placeholders = filters.h1bConfidence.map((_, i) => `@h1b${i}`).join(", ");
+    clauses.push(`j.h1b_combined_confidence IN (${placeholders})`);
+    filters.h1bConfidence.forEach((sig, i) => {
       params[`h1b${i}`] = sig;
     });
   }
@@ -84,7 +97,7 @@ export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
 
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   const sql = `
-    SELECT j.*, c.name AS company_name
+    SELECT ${JOB_WITH_COMPANY_SELECT}
     FROM jobs j
     JOIN companies c ON c.id = j.company_id
     ${where}
@@ -96,7 +109,7 @@ export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
 export function getJob(id: number): JobWithCompany | undefined {
   return getDb()
     .prepare(
-      `SELECT j.*, c.name AS company_name FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.id = ?`
+      `SELECT ${JOB_WITH_COMPANY_SELECT} FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.id = ?`
     )
     .get(id) as JobWithCompany | undefined;
 }
@@ -188,7 +201,7 @@ export function upsertJob(params: {
   sponsorshipMentioned: boolean;
   sponsorshipPolarity: SponsorshipPolarity;
   sponsorshipSnippet: string | null;
-  h1bCombinedSignal: H1bCombinedSignal;
+  h1bCombinedConfidence: H1bJobConfidence;
 }): "inserted" | "updated" | "suppressed" {
   const db = getDb();
   const existing = db
@@ -214,7 +227,7 @@ export function upsertJob(params: {
     sponsorshipMentioned: params.sponsorshipMentioned ? 1 : 0,
     sponsorshipPolarity: params.sponsorshipPolarity,
     sponsorshipSnippet: params.sponsorshipSnippet,
-    h1bCombinedSignal: params.h1bCombinedSignal,
+    h1bCombinedConfidence: params.h1bCombinedConfidence,
     rawJson: JSON.stringify(params.job.raw ?? null),
   };
 
@@ -242,7 +255,7 @@ export function upsertJob(params: {
         sponsorship_mentioned = @sponsorshipMentioned,
         sponsorship_polarity = @sponsorshipPolarity,
         sponsorship_snippet = @sponsorshipSnippet,
-        h1b_combined_signal = @h1bCombinedSignal,
+        h1b_combined_confidence = @h1bCombinedConfidence,
         raw_json = @rawJson,
         updated_at = datetime('now')
        WHERE id = @id`
@@ -269,12 +282,12 @@ export function upsertJob(params: {
       company_id, source_type, external_id, title, location, department, url,
       description_html, description_text, description_sections,
       employment_type, workplace_type, salary_text, posted_at, dedupe_key,
-      sponsorship_mentioned, sponsorship_polarity, sponsorship_snippet, h1b_combined_signal, raw_json
+      sponsorship_mentioned, sponsorship_polarity, sponsorship_snippet, h1b_combined_confidence, raw_json
     ) VALUES (
       @companyId, @sourceType, @externalId, @title, @location, @department, @url,
       @descriptionHtml, @descriptionText, @descriptionSections,
       @employmentType, @workplaceType, @salaryText, @postedAt, @dedupeKey,
-      @sponsorshipMentioned, @sponsorshipPolarity, @sponsorshipSnippet, @h1bCombinedSignal, @rawJson
+      @sponsorshipMentioned, @sponsorshipPolarity, @sponsorshipSnippet, @h1bCombinedConfidence, @rawJson
     )`
   ).run(row);
   return "inserted";

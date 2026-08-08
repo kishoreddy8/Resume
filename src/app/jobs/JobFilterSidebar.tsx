@@ -1,6 +1,6 @@
 "use client";
 
-import type { Company, H1bCombinedSignal, PipelineStatus, SourceType } from "@/types";
+import type { Company, H1bJobConfidence, PipelineStatus, SourceType } from "@/types";
 
 export interface JobFilterState {
   status: PipelineStatus | "";
@@ -8,8 +8,8 @@ export interface JobFilterState {
   sourceType: SourceType | "";
   search: string;
   activeOnly: boolean;
-  hideUnlikely: boolean;
-  h1bSignal: H1bCombinedSignal[];
+  hideNotSponsoring: boolean;
+  h1bConfidence: H1bJobConfidence[];
 }
 
 export const DEFAULT_FILTERS: JobFilterState = {
@@ -18,8 +18,8 @@ export const DEFAULT_FILTERS: JobFilterState = {
   sourceType: "",
   search: "",
   activeOnly: true,
-  hideUnlikely: false,
-  h1bSignal: [],
+  hideNotSponsoring: false,
+  h1bConfidence: [],
 };
 
 const STATUSES: PipelineStatus[] = [
@@ -31,7 +31,28 @@ const STATUSES: PipelineStatus[] = [
   "Employer Rejected",
 ];
 const SOURCES: SourceType[] = ["greenhouse", "ashby", "lever", "workday", "career_link"];
-const H1B_SIGNALS: H1bCombinedSignal[] = ["Likely", "High", "Medium", "Low", "Unknown", "Unlikely"];
+const H1B_CONFIDENCE_LEVELS: H1bJobConfidence[] = [
+  "Very High",
+  "High",
+  "Medium",
+  "Low",
+  "Unknown",
+  "Not Sponsoring",
+];
+
+// Named quick-filter presets: one click sets the exact chip combination each label implies. Power
+// users can still fine-tune individual chips afterward — presets and raw chips share the same
+// underlying h1bConfidence selection, they're just two ways to set it.
+const H1B_PRESETS: { label: string; values: H1bJobConfidence[] }[] = [
+  { label: "Likely Sponsor", values: ["Very High", "High", "Medium"] },
+  { label: "High Confidence", values: ["Very High", "High"] },
+  { label: "Unknown", values: ["Unknown"] },
+  { label: "Not Sponsoring", values: ["Not Sponsoring"] },
+];
+
+function sameValues(a: H1bJobConfidence[], b: H1bJobConfidence[]): boolean {
+  return a.length === b.length && a.every((v) => b.includes(v));
+}
 
 export function JobFilterSidebar({
   filters,
@@ -46,11 +67,17 @@ export function JobFilterSidebar({
     onChange({ ...filters, [key]: value });
   }
 
-  function toggleH1bSignal(signal: H1bCombinedSignal) {
-    const set = new Set(filters.h1bSignal);
-    if (set.has(signal)) set.delete(signal);
-    else set.add(signal);
-    update("h1bSignal", Array.from(set));
+  function toggleH1bConfidence(level: H1bJobConfidence) {
+    const set = new Set(filters.h1bConfidence);
+    if (set.has(level)) set.delete(level);
+    else set.add(level);
+    update("h1bConfidence", Array.from(set));
+  }
+
+  function applyPreset(values: H1bJobConfidence[]) {
+    // Clicking an already-active preset clears it back to "show everything", same toggle
+    // ergonomics as the individual chips below.
+    update("h1bConfidence", sameValues(values, filters.h1bConfidence) ? [] : values);
   }
 
   return (
@@ -123,29 +150,45 @@ export function JobFilterSidebar({
         <label className="mb-2 flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
           <input
             type="checkbox"
-            checked={filters.hideUnlikely}
-            onChange={(e) => update("hideUnlikely", e.target.checked)}
+            checked={filters.hideNotSponsoring}
+            onChange={(e) => update("hideNotSponsoring", e.target.checked)}
           />
-          Hide &quot;Unlikely&quot; sponsors
+          Hide &quot;Not Sponsoring&quot;
         </label>
-        <div className="flex flex-wrap gap-1.5">
-          {H1B_SIGNALS.map((signal) => (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {H1B_PRESETS.map((preset) => (
             <button
-              key={signal}
+              key={preset.label}
               type="button"
-              onClick={() => toggleH1bSignal(signal)}
+              onClick={() => applyPreset(preset.values)}
+              className={`rounded border px-2 py-0.5 text-xs ${
+                sameValues(preset.values, filters.h1bConfidence)
+                  ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                  : "border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              }`}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {H1B_CONFIDENCE_LEVELS.map((level) => (
+            <button
+              key={level}
+              type="button"
+              onClick={() => toggleH1bConfidence(level)}
               className={`rounded-full border px-2 py-0.5 text-xs ${
-                filters.h1bSignal.includes(signal)
+                filters.h1bConfidence.includes(level)
                   ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
                   : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400"
               }`}
             >
-              {signal}
+              {level}
             </button>
           ))}
         </div>
         <p className="mt-1 text-xs text-zinc-500">
-          Selecting none shows all signals. Selecting some shows only those.
+          Selecting none shows all levels. Selecting some shows only those.
         </p>
       </div>
 

@@ -3,7 +3,7 @@ import { updateCompany, updateCompanyScanStatus } from "@/db/queries/companies";
 import { closeStaleJobs, runAgeBasedSweep, upsertJob } from "@/db/queries/jobs";
 import { dedupeKeyForAts, dedupeKeyForCareerLink } from "@/lib/dedupe";
 import { deleteGeneratedFiles } from "@/lib/generatedFiles";
-import { combineH1bSignal } from "@/lib/h1b/combineSignal";
+import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { scanSponsorshipLanguage } from "@/lib/h1b/keywordScan";
 import { fetchJobsForCompany } from "@/lib/normalize";
 import { parseDescriptionSections } from "@/lib/parseSections";
@@ -49,7 +49,7 @@ async function scanCompany(company: Company): Promise<ScanResult> {
       seenDedupeKeys.push(dedupeKey);
 
       const { mentioned, polarity, snippet } = scanSponsorshipLanguage(job.descriptionText);
-      const h1bCombinedSignal = combineH1bSignal(company.h1b_signal, polarity);
+      const { confidence: h1bCombinedConfidence } = combineH1bConfidence(company.h1b_confidence, polarity);
       const sections = parseDescriptionSections(job.descriptionHtml);
 
       const outcome = upsertJob({
@@ -61,7 +61,7 @@ async function scanCompany(company: Company): Promise<ScanResult> {
         sponsorshipMentioned: mentioned,
         sponsorshipPolarity: polarity,
         sponsorshipSnippet: snippet,
-        h1bCombinedSignal,
+        h1bCombinedConfidence,
       });
       if (outcome === "inserted") jobsNew++;
       else if (outcome === "updated") jobsUpdated++;

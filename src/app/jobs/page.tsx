@@ -13,13 +13,13 @@ function buildQuery(filters: JobFilterState): string {
   if (filters.search) params.set("search", filters.search);
   if (filters.activeOnly) params.set("activeOnly", "true");
 
-  const signals = filters.hideUnlikely
-    ? filters.h1bSignal.filter((s) => s !== "Unlikely")
-    : filters.h1bSignal;
-  if (filters.hideUnlikely && filters.h1bSignal.length === 0) {
-    for (const s of ["Likely", "High", "Medium", "Low", "Unknown"]) params.append("h1bSignal", s);
+  const levels = filters.hideNotSponsoring
+    ? filters.h1bConfidence.filter((s) => s !== "Not Sponsoring")
+    : filters.h1bConfidence;
+  if (filters.hideNotSponsoring && filters.h1bConfidence.length === 0) {
+    for (const s of ["Very High", "High", "Medium", "Low", "Unknown"]) params.append("h1bConfidence", s);
   } else {
-    for (const s of signals) params.append("h1bSignal", s);
+    for (const s of levels) params.append("h1bConfidence", s);
   }
 
   return params.toString();

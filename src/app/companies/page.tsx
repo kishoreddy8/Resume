@@ -304,12 +304,24 @@ function CompanyRow({ company, onChanged }: { company: Company; onChanged: () =>
           </a>
         )}
       </td>
-      <td className="px-3 py-2">
-        <H1bBadge signal={company.h1b_signal} />
+      <td className="px-3 py-2 max-w-xs">
+        <H1bBadge confidence={company.h1b_confidence} />
         {company.h1b_match_employer_name && (
           <div className="mt-0.5 text-xs text-zinc-500">
-            matched &quot;{company.h1b_match_employer_name}&quot; ({company.h1b_lca_count} LCAs)
+            {company.h1b_match_tier} match: &quot;{company.h1b_match_employer_name}&quot;
+            {company.h1b_match_tier === "fuzzy" && ` (${company.h1b_match_score}% similarity)`}
+            {" · "}
+            {company.h1b_lca_count} certified LCA{company.h1b_lca_count === 1 ? "" : "s"}
+            {company.h1b_latest_fiscal_year && ` · latest FY${company.h1b_latest_fiscal_year}`}
           </div>
+        )}
+        {company.h1b_confidence_evidence && (
+          <div className="mt-0.5 text-xs text-zinc-400" title={company.h1b_confidence_evidence}>
+            {company.h1b_confidence_evidence}
+          </div>
+        )}
+        {company.h1b_updated_at && (
+          <div className="mt-0.5 text-[10px] text-zinc-400">Updated {company.h1b_updated_at}</div>
         )}
       </td>
       <td className="px-3 py-2 text-xs text-zinc-500">
@@ -383,7 +395,7 @@ export default function CompaniesPage() {
             <thead className="bg-zinc-100 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
               <tr>
                 <th className="px-3 py-2 font-medium">Company</th>
-                <th className="px-3 py-2 font-medium">H1B signal</th>
+                <th className="px-3 py-2 font-medium">H1B confidence</th>
                 <th className="px-3 py-2 font-medium">Last scan</th>
                 <th className="px-3 py-2 font-medium"></th>
               </tr>

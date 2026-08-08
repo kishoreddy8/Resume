@@ -1,6 +1,6 @@
-import { listCompanies, updateCompanyH1bSignal } from "../src/db/queries/companies";
+import { listCompanies, updateCompanyH1bConfidence } from "../src/db/queries/companies";
 import { countSponsors } from "../src/db/queries/h1bSponsors";
-import { matchCompanyToSponsor } from "../src/lib/h1b/fuzzyMatch";
+import { matchCompanyToSponsor, scoreCompanyConfidence } from "../src/lib/h1b/fuzzyMatch";
 
 async function main() {
   const sponsorCount = countSponsors();
@@ -13,21 +13,24 @@ async function main() {
   const companies = listCompanies();
   let matched = 0;
   for (const company of companies) {
-    const result = matchCompanyToSponsor(company.name);
-    if (result) {
-      updateCompanyH1bSignal(
-        company.id,
-        result.signal,
-        result.sponsor.employer_name_raw,
-        result.score,
-        result.sponsor.total_lca_certified
-      );
-      console.log(
-        `  ${company.name} -> ${result.signal} (matched "${result.sponsor.employer_name_raw}", score ${result.score}, ${result.sponsor.total_lca_certified} certified LCAs)`
-      );
+    const match = matchCompanyToSponsor(company.name);
+    const { confidence, evidence } = scoreCompanyConfidence(match);
+
+    updateCompanyH1bConfidence(company.id, {
+      confidence,
+      matchEmployerName: match?.sponsor.employer_name_raw ?? null,
+      matchNormalized: match?.matchedNormalized ?? null,
+      matchTier: match?.tier ?? null,
+      matchScore: match?.score ?? null,
+      lcaCount: match?.sponsor.total_lca_certified ?? 0,
+      latestFiscalYear: match?.sponsor.most_recent_fiscal_year ?? null,
+      evidence,
+    });
+
+    if (match) {
+      console.log(`  ${company.name} -> ${confidence} [${match.tier}] (${evidence})`);
       matched++;
     } else {
-      updateCompanyH1bSignal(company.id, "Unknown", null, null, 0);
       console.log(`  ${company.name} -> Unknown (no confident match)`);
     }
   }

@@ -101,7 +101,7 @@ export function JobList({ jobs }: { jobs: JobWithCompany[] }) {
                 {formatDate(job.posted_at)}
               </td>
               <td className="px-3 py-2">
-                <H1bBadge signal={job.h1b_combined_signal} />
+                <H1bBadge confidence={job.h1b_combined_confidence} />
               </td>
               <td className="px-3 py-2">
                 <PipelineStatusSelect jobId={job.id} value={job.pipeline_status} />

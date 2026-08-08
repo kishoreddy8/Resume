@@ -100,7 +100,7 @@ function seedJob(companyId: number, dedupeKey: string, overrides: Partial<Normal
     sponsorshipMentioned: false,
     sponsorshipPolarity: "none",
     sponsorshipSnippet: null,
-    h1bCombinedSignal: "Unknown",
+    h1bCombinedConfidence: "Unknown",
   });
 }
 

@@ -1,5 +1,5 @@
 import { getDb } from "@/db";
-import type { Company, H1bSignal, SourceType } from "@/types";
+import type { Company, H1bCompanyConfidence, H1bMatchTier, SourceType } from "@/types";
 
 export function listCompanies(): Company[] {
   return getDb()
@@ -99,22 +99,35 @@ export function updateCompanyScanStatus(
     .run({ id, status, error: error ?? null });
 }
 
-export function updateCompanyH1bSignal(
-  id: number,
-  signal: H1bSignal,
-  matchEmployerName: string | null,
-  matchScore: number | null,
-  lcaCount: number
-): void {
+export interface UpdateCompanyH1bConfidenceInput {
+  confidence: H1bCompanyConfidence;
+  matchEmployerName: string | null;
+  matchNormalized: string | null;
+  matchTier: H1bMatchTier | null;
+  matchScore: number | null;
+  lcaCount: number;
+  latestFiscalYear: number | null;
+  evidence: string | null;
+}
+
+/** Writes the result of matching a company against imported DOL H1B/LCA data — see
+ *  src/lib/h1b/fuzzyMatch.ts. h1b_updated_at marks specifically when this H1B recompute happened,
+ *  distinct from updated_at (which changes on any company edit). */
+export function updateCompanyH1bConfidence(id: number, input: UpdateCompanyH1bConfidenceInput): void {
   getDb()
     .prepare(
       `UPDATE companies SET
-        h1b_signal = @signal,
+        h1b_confidence = @confidence,
         h1b_match_employer_name = @matchEmployerName,
+        h1b_match_normalized = @matchNormalized,
+        h1b_match_tier = @matchTier,
         h1b_match_score = @matchScore,
         h1b_lca_count = @lcaCount,
+        h1b_latest_fiscal_year = @latestFiscalYear,
+        h1b_confidence_evidence = @evidence,
+        h1b_updated_at = datetime('now'),
         updated_at = datetime('now')
        WHERE id = @id`
     )
-    .run({ id, signal, matchEmployerName, matchScore, lcaCount });
+    .run({ id, ...input });
 }

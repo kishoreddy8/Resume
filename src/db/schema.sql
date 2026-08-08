@@ -10,10 +10,26 @@ CREATE TABLE IF NOT EXISTS companies (
   career_page_url TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
   notes TEXT,
+  -- H1B Sponsor Intelligence (see src/lib/h1b/). No CHECK enum here on purpose (same reasoning as
+  -- source_type above): confidence vocabulary is Very High/High/Medium/Low/Unknown at the company
+  -- level (Not Sponsoring is job-level only — DOL data is purely positive evidence, it never
+  -- asserts a company won't sponsor). App-layer zod validation enforces the valid set instead.
   h1b_match_employer_name TEXT,
+  -- The normalized form actually matched against (raw DOL employer_name_normalized, or the alias
+  -- target if matched via the alias table) — kept distinct from the company's own normalized name
+  -- so "what did we match against" stays visible even if match tiers disagree.
+  h1b_match_normalized TEXT,
+  h1b_match_tier TEXT, -- 'exact' | 'alias' | 'fuzzy' | NULL (no match)
   h1b_match_score REAL,
-  h1b_signal TEXT NOT NULL DEFAULT 'Unknown' CHECK (h1b_signal IN ('High','Medium','Low','Unknown')),
+  h1b_confidence TEXT NOT NULL DEFAULT 'Unknown',
   h1b_lca_count INTEGER NOT NULL DEFAULT 0,
+  h1b_latest_fiscal_year INTEGER,
+  -- Human-readable justification for h1b_confidence — which tier matched, filing volume, recency.
+  -- Distinct from a job's sponsorship_snippet, which is JD-specific evidence, not company history.
+  h1b_confidence_evidence TEXT,
+  -- When h1b_confidence was last (re)computed — distinct from the generic updated_at, which
+  -- changes on any company edit, not specifically an H1B rematch.
+  h1b_updated_at TEXT,
   last_scanned_at TEXT,
   last_scan_status TEXT,
   last_scan_error TEXT,
@@ -50,8 +66,11 @@ CREATE TABLE IF NOT EXISTS jobs (
   dedupe_key TEXT NOT NULL,
   sponsorship_mentioned INTEGER NOT NULL DEFAULT 0,
   sponsorship_polarity TEXT NOT NULL DEFAULT 'none' CHECK (sponsorship_polarity IN ('positive','negative','none')),
-  h1b_combined_signal TEXT NOT NULL DEFAULT 'Unknown'
-    CHECK (h1b_combined_signal IN ('High','Medium','Low','Unknown','Likely','Unlikely')),
+  -- H1B Sponsor Intelligence, job level: company h1b_confidence combined with this posting's own
+  -- JD sponsorship language (sponsorship_mentioned/polarity/snippet above), which always wins when
+  -- present — see src/lib/h1b/combineSignal.ts. No CHECK enum on purpose (same reasoning as
+  -- pipeline_status below): Very High/High/Medium/Low/Unknown/Not Sponsoring, app-layer validated.
+  h1b_combined_confidence TEXT NOT NULL DEFAULT 'Unknown',
   -- No CHECK enum here on purpose (same reasoning as companies.source_type above): the status set
   -- has already changed once (Interview -> Interviewing, Rejected -> Employer Rejected, in the
   -- age-based lifecycle policy) and may again. 'Not Interested' is deliberately NOT a value that
@@ -93,7 +112,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_dedupe ON jobs(dedupe_key);
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_pipeline ON jobs(pipeline_status);
-CREATE INDEX IF NOT EXISTS idx_jobs_h1b ON jobs(h1b_combined_signal);
+CREATE INDEX IF NOT EXISTS idx_jobs_h1b ON jobs(h1b_combined_confidence);
 CREATE INDEX IF NOT EXISTS idx_jobs_active ON jobs(is_active);
 -- idx_jobs_archived is NOT declared here: on an existing database, is_archived doesn't exist until
 -- runAdditiveMigrations() adds it (this CREATE TABLE IF NOT EXISTS is a no-op there), and this
@@ -135,6 +154,31 @@ CREATE TABLE IF NOT EXISTS suppressed_jobs (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_suppressed_jobs_dedupe ON suppressed_jobs(dedupe_key);
 
+-- Durable, idempotent source of truth for imported DOL H1B/LCA data: one row per
+-- (employer, fiscal year). Re-ingesting the same fiscal year's file REPLACES that year's numbers
+-- (upsert on the unique key below) rather than adding to them, so re-running an import is always
+-- safe; ingesting a *different* fiscal year for the same employer is a genuine incremental update,
+-- naturally additive when h1b_sponsors (below) is recomputed from this table. See
+-- src/db/queries/h1bSponsors.ts's upsertSponsorFiling / recomputeAllSponsorSummaries and
+-- scripts/ingest-h1b.ts.
+CREATE TABLE IF NOT EXISTS h1b_sponsor_filings (
+  id INTEGER PRIMARY KEY,
+  employer_name_raw TEXT NOT NULL,
+  employer_name_normalized TEXT NOT NULL,
+  fiscal_year INTEGER NOT NULL,
+  certified INTEGER NOT NULL DEFAULT 0,
+  denied INTEGER NOT NULL DEFAULT 0,
+  withdrawn INTEGER NOT NULL DEFAULT 0,
+  source_file TEXT,
+  ingested_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_h1b_filings_employer_year
+  ON h1b_sponsor_filings(employer_name_normalized, fiscal_year);
+
+-- Fast-lookup rollup, fully recomputed from h1b_sponsor_filings after every ingest (never
+-- hand-edited) — matching queries read only from here, never need to aggregate filings at request
+-- time. total_lca_certified etc. are SUMs across every fiscal year on file for that employer.
 CREATE TABLE IF NOT EXISTS h1b_sponsors (
   id INTEGER PRIMARY KEY,
   employer_name_raw TEXT NOT NULL,
@@ -149,3 +193,19 @@ CREATE TABLE IF NOT EXISTS h1b_sponsors (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_h1b_employer_norm ON h1b_sponsors(employer_name_normalized);
+
+-- Approved alias tier for matching (see src/lib/h1b/fuzzyMatch.ts's layered matcher): maps a name
+-- variant that normalization alone can't bridge (a former legal name, a common brand name that
+-- differs from the DOL filing name, an acquired subsidiary, etc.) to the normalized identity it
+-- should resolve to. Deliberately empty by default — approved aliases are curated (by the user, or
+-- an admin process), never hardcoded or auto-generated, so this tier never introduces a false
+-- positive on its own.
+CREATE TABLE IF NOT EXISTS h1b_employer_aliases (
+  id INTEGER PRIMARY KEY,
+  alias_normalized TEXT NOT NULL,
+  employer_name_normalized TEXT NOT NULL,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_h1b_aliases_alias ON h1b_employer_aliases(alias_normalized);

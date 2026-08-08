@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { use } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
+import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { getJobAgeBand, getJobAgeDays } from "@/lib/jobLifecycle";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
 import type { DescriptionSections, JobStatusHistoryEntry, JobWithCompany } from "@/types";
@@ -422,6 +423,72 @@ function HistoryCard({ jobId, refreshKey }: { jobId: number; refreshKey: number 
   );
 }
 
+/**
+ * H1B Sponsor Intelligence — Job Detail Page requirements: Confidence, Evidence, Historical
+ * Sponsor, JD Override, Reason. job.h1b_combined_confidence is the value actually stored (computed
+ * once at scan time); combineH1bConfidence is recomputed here purely to recover the "overridden"
+ * flag and human-readable reason, which aren't themselves persisted columns — it's a pure function
+ * of company_h1b_confidence + sponsorship_polarity, so it always reproduces the same result.
+ */
+function H1bIntelligenceCard({ job }: { job: JobWithCompany }) {
+  const { overridden, reason } = combineH1bConfidence(job.company_h1b_confidence, job.sponsorship_polarity);
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 className="mb-2 text-sm font-semibold">H1B sponsor intelligence</h2>
+
+      <div className="mb-3">
+        <div className="mb-1 text-xs font-medium text-zinc-500">Confidence</div>
+        <H1bBadge confidence={job.h1b_combined_confidence} />
+      </div>
+
+      {job.sponsorship_snippet && (
+        <div className="mb-3">
+          <div className="mb-1 text-xs font-medium text-zinc-500">Evidence (from this posting)</div>
+          <blockquote className="rounded border-l-2 border-zinc-300 bg-zinc-50 px-2 py-1.5 text-xs italic text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400">
+            &ldquo;{job.sponsorship_snippet}&rdquo;
+          </blockquote>
+        </div>
+      )}
+
+      <div className="mb-3">
+        <div className="mb-1 text-xs font-medium text-zinc-500">Historical sponsor (company)</div>
+        <div className="mb-1 flex items-center gap-2">
+          <H1bBadge confidence={job.company_h1b_confidence} />
+          {job.company_h1b_match_tier && (
+            <span className="text-xs text-zinc-500">{job.company_h1b_match_tier} match</span>
+          )}
+        </div>
+        {job.company_h1b_confidence_evidence ? (
+          <p className="text-xs text-zinc-600 dark:text-zinc-400">{job.company_h1b_confidence_evidence}</p>
+        ) : (
+          <p className="text-xs text-zinc-500">
+            No DOL H1B/LCA history imported or matched for this company yet.
+          </p>
+        )}
+      </div>
+
+      <div className="mb-1">
+        <div className="mb-1 text-xs font-medium text-zinc-500">JD override</div>
+        <p className="text-xs text-zinc-600 dark:text-zinc-400">
+          {overridden ? (
+            <span className="font-medium text-amber-700 dark:text-amber-500">
+              Yes — this posting&apos;s language changed the outcome from the company&apos;s historical confidence.
+            </span>
+          ) : (
+            "No — showing the company's historical confidence as-is."
+          )}
+        </p>
+      </div>
+
+      <div>
+        <div className="mb-1 text-xs font-medium text-zinc-500">Reason</div>
+        <p className="text-xs text-zinc-600 dark:text-zinc-400">{reason}</p>
+      </div>
+    </div>
+  );
+}
+
 export default function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [data, setData] = useState<JobDetailResponse | null>(null);
@@ -581,29 +648,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 
           <NotesTagsCard job={job} onChanged={load} />
 
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <h2 className="mb-2 text-sm font-semibold">H1B signal</h2>
-            <div className="mb-2">
-              <H1bBadge signal={job.h1b_combined_signal} />
-            </div>
-            <ul className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
-              <li>
-                Posting text sponsorship mention:{" "}
-                {job.sponsorship_mentioned ? job.sponsorship_polarity : "none found"}
-              </li>
-              <li>Combined signal: {job.h1b_combined_signal}</li>
-            </ul>
-            {job.sponsorship_snippet && (
-              <blockquote className="mt-2 rounded border-l-2 border-zinc-300 bg-zinc-50 px-2 py-1.5 text-xs italic text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400">
-                &ldquo;{job.sponsorship_snippet}&rdquo;
-              </blockquote>
-            )}
-            <p className="mt-2 text-xs text-zinc-500">
-              Company-level signal comes from DOL H1B LCA history; posting text can override it up
-              (&quot;Likely&quot;) or down (&quot;Unlikely&quot;). See the Companies page for the
-              underlying match.
-            </p>
-          </div>
+          <H1bIntelligenceCard job={job} />
 
           <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
             <h2 className="mb-2 text-sm font-semibold">Resume tailoring</h2>
