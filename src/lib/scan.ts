@@ -2,7 +2,7 @@ import pLimit from "p-limit";
 import { updateCompany, updateCompanyScanStatus } from "@/db/queries/companies";
 import { closeStaleJobs, getJobIdByDedupeKey, runAgeBasedSweep, upsertJob } from "@/db/queries/jobs";
 import { upsertJobIntel } from "@/db/queries/jobIntel";
-import { dedupeKeyForAts, dedupeKeyForCareerLink } from "@/lib/dedupe";
+import { dedupeKeyForAts, dedupeKeyForCareerLink, normalizeJobUrl } from "@/lib/dedupe";
 import { deleteGeneratedFiles } from "@/lib/generatedFiles";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { scanSponsorshipLanguage } from "@/lib/h1b/keywordScan";
@@ -46,8 +46,8 @@ async function scanCompany(company: Company): Promise<ScanResult> {
     for (const job of jobs) {
       const dedupeKey =
         company.source_type === "career_link"
-          ? dedupeKeyForCareerLink(company.id, job.title, job.url)
-          : dedupeKeyForAts(company.source_type, company.id, job.externalId ?? job.url);
+          ? dedupeKeyForCareerLink(company.id, job)
+          : dedupeKeyForAts(company.source_type, company.id, job.externalId ?? normalizeJobUrl(job.url));
       seenDedupeKeys.push(dedupeKey);
 
       const { mentioned, polarity, snippet } = scanSponsorshipLanguage(job.descriptionText);
