@@ -33,14 +33,33 @@ export const TIER_MAX_COST_RESERVATION_USD: Record<ModelTier, number> = {
   standard: 0.1,
 };
 
-/** Placeholder per-tier pricing (USD per 1K tokens) — deliberately approximate, replace with real
- *  provider pricing once a vendor is chosen. Used only to compute estimated_cost_usd for usage
- *  logging after a call actually completes; the pre-call budget check below uses the fixed
- *  reservation ceiling above instead, since real per-token pricing is provider-specific and unknown
- *  until a vendor is chosen. */
+/**
+ * Per-tier OpenAI pricing (USD per 1K tokens), standard short-context rate — GPT-5.6 family.
+ *
+ * SOURCE: OpenAI official API docs (developers.openai.com/api/docs/pricing and the dedicated
+ *   /api/docs/models/gpt-5.6-luna and /api/docs/models/gpt-5.6-terra model pages — platform.openai.com
+ *   redirects to developers.openai.com as of this writing).
+ * DATE VERIFIED: 2026-08-08.
+ * These are OPERATIONAL CONFIGURATION, not architecture — OpenAI can change them at any time.
+ * Re-verify against the official docs before trusting budget enforcement long-term.
+ *
+ * Cached-input pricing exists (Luna $0.02/1M, Terra $0.20/1M) but is deliberately NOT modeled in
+ * V1 — every input token is charged at the full (non-cached) rate below, per the standing V1
+ * decision to conservatively overestimate spend rather than track the cached/uncached split.
+ *
+ * Both models also carry a long-context multiplier (2x input / 1.5x output) above 272K input
+ * tokens per request, per the same official pages — also NOT modeled here. Enrich-with-AI requests
+ * (a bounded JD + summary, well under that threshold by design — see
+ * src/lib/ai/tasks/jobDetailEnrichment.ts's PROVIDER_INPUT_CHAR_BUDGET) never approach it, so using
+ * the standard rate unconditionally is correct for this feature; a future task with much larger
+ * inputs would need its own accounting, not silently inherit this estimate.
+ *
+ * V1 also intentionally uses only STANDARD API processing — Fast/Priority/Regional processing
+ * tiers (if OpenAI offers them) are never opted into, so no alternate pricing tier applies here.
+ */
 const TIER_PRICING_USD_PER_1K_TOKENS: Record<ModelTier, { input: number; output: number }> = {
-  lightweight: { input: 0.0002, output: 0.0006 },
-  standard: { input: 0.003, output: 0.015 },
+  lightweight: { input: 0.0002, output: 0.0012 }, // Luna: $0.20/1M in, $1.20/1M out
+  standard: { input: 0.002, output: 0.012 }, // Terra: $2.00/1M in, $12.00/1M out
 };
 
 export function estimateCostUsd(tier: ModelTier, inputTokens: number, outputTokens: number): number {

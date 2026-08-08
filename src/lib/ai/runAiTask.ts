@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { recordAiAuditEvent } from "@/db/queries/aiAudit";
 import { recordAiUsage } from "@/db/queries/aiUsage";
 import { estimateCostUsd, checkBudget, recordSessionCall } from "./budget";
@@ -6,6 +7,11 @@ import { buildConfidence } from "./confidence";
 import { categorizeThrownAiError, type AiErrorCategory } from "./errors";
 import { resolveProvider } from "./provider";
 import { callProviderWithRetry } from "./retry";
+// Side-effect imports: register every known task and every known (credentialed) provider adapter
+// (see tasks/index.ts and providers/index.ts's own doc comments) before any call below can execute,
+// regardless of which route/feature happens to import runAiTask first.
+import "./tasks";
+import "./providers";
 import { getTask } from "./tasks/registry";
 import type { AiConfidence, AiConfidenceBand, AiEntityRef, AiResult, AiUnavailableReason } from "./types";
 
@@ -53,7 +59,7 @@ export async function runAiTask<TOutput = unknown>(
 ): Promise<AiResult<TOutput>> {
   const task = getTask(taskId);
   if (!task) {
-    throw new Error(`Unknown AI task id: "${taskId}" — register it in src/lib/ai/tasks/registry.ts first`);
+    throw new Error(`Unknown AI task id: "${taskId}" — register it in src/lib/ai/tasks/index.ts first`);
   }
 
   const resolution = resolveProvider();
@@ -120,7 +126,7 @@ export async function runAiTask<TOutput = unknown>(
       hit.confidence_value !== null && hit.confidence_band !== null
         ? { value: hit.confidence_value, band: hit.confidence_band as AiConfidenceBand }
         : undefined;
-    return { status: "ok", data: JSON.parse(hit.output_json) as TOutput, confidence, cached: true };
+    return { status: "ok", enrichmentId: hit.id, data: JSON.parse(hit.output_json) as TOutput, confidence, cached: true };
   }
 
   const budgetCheck = checkBudget(task.modelTier);
@@ -142,11 +148,22 @@ export async function runAiTask<TOutput = unknown>(
 
   const providerInput = task.toProviderInput(input);
   const prompt = task.buildPrompt(providerInput);
+  // Built once via Zod v4's own native toJSONSchema — never a vendor-SDK Zod helper (e.g. OpenAI's
+  // zodTextFormat, which is incompatible with Zod 4 as of this writing: it depends on the
+  // unmaintained zod-to-json-schema package internally and mis-converts schemas under Zod 4). This
+  // keeps the shared infra genuinely provider-neutral: any provider that supports schema-constrained
+  // generation gets a real JSON Schema; one that doesn't simply ignores this field.
+  const outputJsonSchema = { name: taskId, schema: z.toJSONSchema(task.outputSchema) };
 
   recordSessionCall();
   const callT0 = Date.now();
 
-  const firstAttempt = await callProviderWithRetry(provider, { prompt, tier: task.modelTier, timeoutMs: DEFAULT_TIMEOUT_MS })
+  const firstAttempt = await callProviderWithRetry(provider, {
+    prompt,
+    tier: task.modelTier,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    outputJsonSchema,
+  })
     .then((result) => ({ ok: true as const, result }))
     .catch((err: unknown) => ({ ok: false as const, err }));
 
@@ -180,6 +197,7 @@ export async function runAiTask<TOutput = unknown>(
       prompt: repairPrompt,
       tier: task.modelTier,
       timeoutMs: DEFAULT_TIMEOUT_MS,
+      outputJsonSchema,
     })
       .then((result) => ({ ok: true as const, result }))
       .catch((err: unknown) => ({ ok: false as const, err }));
@@ -265,5 +283,5 @@ export async function runAiTask<TOutput = unknown>(
   });
   recordAiAuditEvent(row.id, "generated");
 
-  return { status: "ok", data: output, confidence, cached: false };
+  return { status: "ok", enrichmentId: row.id, data: output, confidence, cached: false };
 }

@@ -25,6 +25,7 @@ let getJob: typeof import("../../../db/queries/jobs").getJob;
 let listJobs: typeof import("../../../db/queries/jobs").listJobs;
 let dedupeKeyForAts: typeof import("../../../lib/dedupe").dedupeKeyForAts;
 let getAiEnrichment: typeof import("../../../db/queries/aiEnrichments").getAiEnrichment;
+let getAiEnrichmentById: typeof import("../../../db/queries/aiEnrichments").getAiEnrichmentById;
 let listAiEnrichmentsForEntity: typeof import("../../../db/queries/aiEnrichments").listAiEnrichmentsForEntity;
 let getAiUsageSummary: typeof import("../../../db/queries/aiUsage").getAiUsageSummary;
 let toSqliteUtcTimestamp: typeof import("../../../db/queries/aiUsage").toSqliteUtcTimestamp;
@@ -45,7 +46,7 @@ before(async () => {
   ({ createCompany } = await import("../../../db/queries/companies"));
   ({ upsertJob, getJob, listJobs } = await import("../../../db/queries/jobs"));
   ({ dedupeKeyForAts } = await import("../../../lib/dedupe"));
-  ({ getAiEnrichment, listAiEnrichmentsForEntity } = await import("../../../db/queries/aiEnrichments"));
+  ({ getAiEnrichment, getAiEnrichmentById, listAiEnrichmentsForEntity } = await import("../../../db/queries/aiEnrichments"));
   ({ recordAiUsage: recordAiUsageDirect, getAiUsageSummary, toSqliteUtcTimestamp } = await import("../../../db/queries/aiUsage"));
   ({ registerProvider, clearProviders } = await import("../provider"));
   ({ registerTask, clearTasksForTests } = await import("../tasks/registry"));
@@ -204,6 +205,7 @@ test("provider success: returns validated output with confidence, persists an en
   assert.equal(stored!.output_json, JSON.stringify({ summary: "great role" }));
   assert.equal(stored!.entity_id, 101, "entity_id is stored as convenience metadata");
   assert.equal(stored!.entity_key, "job:dedupe:101", "entity_key is the row's real identity");
+  assert.equal(result.enrichmentId, stored!.id, "the returned enrichmentId must match the exact row that was persisted");
 });
 
 test("cache hit: an identical second call never reaches the provider again", async () => {
@@ -221,9 +223,10 @@ test("cache hit: an identical second call never reaches the provider again", asy
 
   const second = await runAiTask<FakeTaskOutput>("fake_task", entity, input);
   assert.equal(second.status, "ok");
-  if (second.status === "ok") {
+  if (second.status === "ok" && first.status === "ok") {
     assert.equal(second.cached, true);
     assert.equal(second.data.summary, "cached");
+    assert.equal(second.enrichmentId, first.enrichmentId, "a cache hit must return the SAME enrichmentId as the original generation, never a new one");
   }
   assert.equal(provider.callCount, 1, "a cache hit must never call the provider again");
 });
@@ -466,6 +469,53 @@ test("identity safety: AI history stays associated with the original job even af
   const newHistory = listAiEnrichmentsForEntity("job", replacement.dedupeKey);
   assert.equal(newHistory.length, 1);
   assert.equal(newHistory[0].output_json, JSON.stringify({ summary: "belongs to the NEW, unrelated job" }));
+
+  delete process.env.CAREER_OPS_AI_ENABLED;
+  delete process.env.CAREER_OPS_AI_PROVIDER;
+});
+
+// --- enrichmentId correlation survives everything that could otherwise make "latest for this
+// entity" ambiguous: a JD change, a different provider, and a later enrichment being generated ----
+
+test("enrichmentId correctly distinguishes two generations for the SAME entity across a content change and a provider change, even after a third is generated", async () => {
+  const entity = { type: "job" as const, id: 200, key: "job:dedupe:200" };
+
+  const providerA = new FakeProvider({ name: "provider-a", steps: [{ raw: { summary: "generation A" } }] });
+  registerProvider(providerA);
+  process.env.CAREER_OPS_AI_ENABLED = "true";
+  process.env.CAREER_OPS_AI_PROVIDER = "provider-a";
+  const genA = await runAiTask<FakeTaskOutput>("fake_task", entity, { title: "x", descriptionText: "version 1" });
+  assert.equal(genA.status, "ok");
+
+  // A different provider (simulating a later config change) generates a second result for the
+  // SAME entity, with different content — a genuinely distinct row.
+  const providerB = new FakeProvider({ name: "provider-b", steps: [{ raw: { summary: "generation B" } }] });
+  registerProvider(providerB);
+  process.env.CAREER_OPS_AI_PROVIDER = "provider-b";
+  const genB = await runAiTask<FakeTaskOutput>("fake_task", entity, { title: "x", descriptionText: "version 2 - JD changed" });
+  assert.equal(genB.status, "ok");
+
+  // A third generation happens later still.
+  const providerC = new FakeProvider({ name: "provider-c", steps: [{ raw: { summary: "generation C" } }] });
+  registerProvider(providerC);
+  process.env.CAREER_OPS_AI_PROVIDER = "provider-c";
+  const genC = await runAiTask<FakeTaskOutput>("fake_task", entity, { title: "x", descriptionText: "version 3 - JD changed again" });
+  assert.equal(genC.status, "ok");
+
+  if (genA.status !== "ok" || genB.status !== "ok" || genC.status !== "ok") return;
+
+  // All three enrichmentIds are distinct.
+  const ids = new Set([genA.enrichmentId, genB.enrichmentId, genC.enrichmentId]);
+  assert.equal(ids.size, 3, "three genuinely different generations must produce three distinct enrichmentIds");
+
+  // An "accept" action captured against genA's id (the exact result a hypothetical user saw at that
+  // moment) must be resolvable back to exactly generation A's content — never "latest for this
+  // entity" (which would now be generation C).
+  const rowA = getAiEnrichmentById(genA.enrichmentId);
+  assert.equal(JSON.parse(rowA!.output_json).summary, "generation A");
+  const rowLatest = getAiEnrichmentById(genC.enrichmentId);
+  assert.equal(JSON.parse(rowLatest!.output_json).summary, "generation C");
+  assert.notEqual(genA.enrichmentId, genC.enrichmentId, "acting on genA's captured id must never accidentally resolve to the latest generation");
 
   delete process.env.CAREER_OPS_AI_ENABLED;
   delete process.env.CAREER_OPS_AI_PROVIDER;

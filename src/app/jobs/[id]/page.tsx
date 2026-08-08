@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { use } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
+import { AiInsightsCard } from "./AiInsightsCard";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
@@ -872,6 +873,8 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
           <NotesTagsCard job={job} onChanged={load} />
 
           <H1bIntelligenceCard job={job} />
+
+          <AiInsightsCard jobId={job.id} />
 
           <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
             <h2 className="mb-2 text-sm font-semibold">Resume tailoring</h2>

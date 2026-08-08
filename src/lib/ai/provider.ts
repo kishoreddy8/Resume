@@ -13,6 +13,16 @@ export interface AiGenerateRequest {
   prompt: string;
   tier: ModelTier;
   timeoutMs: number;
+  /**
+   * Optional JSON-Schema description of the expected output, for providers that support
+   * constraining generation to a schema (e.g. OpenAI Structured Outputs). Generic and provider-
+   * agnostic on purpose — a provider that doesn't support this may ignore it and rely on prompt
+   * instructions alone. `schema` is a plain JSON-Schema object (built via Zod v4's native
+   * z.toJSONSchema() in runAiTask.ts, never a vendor-SDK-specific helper — see runAiTask.ts's doc
+   * comment for why). Zod validation of the actual response in runAiTask remains the sole authority
+   * regardless of whether a provider honors this or how well.
+   */
+  outputJsonSchema?: { name: string; schema: unknown };
 }
 
 export interface AiGenerateResult {

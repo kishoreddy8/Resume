@@ -75,9 +75,18 @@ export type AiUnavailableReason =
   | "provider_error"
   | "invalid_response";
 
-/** runAiTask's return shape. There is no third, exceptional path — see runAiTask.ts's doc comment. */
+/**
+ * runAiTask's return shape. There is no third, exceptional path — see runAiTask.ts's doc comment.
+ *
+ * `enrichmentId` is the exact `ai_enrichments.id` row backing this result — present on both a fresh
+ * generation and a cache hit. Callers that need to correlate a later action (e.g. an accept/reject
+ * decision) back to the EXACT result the user saw must capture this id at view time and pass it
+ * back explicitly — never re-derive it by querying "latest enrichment for this entity," which would
+ * silently target the wrong row the moment the JD changes, the task version bumps, a different
+ * provider/model runs, or a later enrichment is generated for the same entity.
+ */
 export type AiResult<T> =
-  | { status: "ok"; data: T; confidence?: AiConfidence; cached: boolean }
+  | { status: "ok"; enrichmentId: number; data: T; confidence?: AiConfidence; cached: boolean }
   | { status: "unavailable"; reason: AiUnavailableReason };
 
 /** Cost/latency tier a task requests, resolved to a concrete model by the active provider — see
