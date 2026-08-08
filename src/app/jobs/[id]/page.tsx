@@ -6,11 +6,34 @@ import { use } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
-import type { DescriptionSections, JobWithCompany } from "@/types";
+import type { DescriptionSections, JobStatusHistoryEntry, JobWithCompany } from "@/types";
 
 interface JobDetailResponse {
   job: JobWithCompany;
   generatedFiles: string[];
+}
+
+function formatDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function parseTags(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed.filter((t) => typeof t === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 const SECTION_LABELS: Record<keyof DescriptionSections, string> = {
@@ -77,11 +100,214 @@ function CopyPromptButton({ job }: { job: JobWithCompany }) {
   );
 }
 
+/**
+ * Archive/restore + a plain-language summary of where the job stands in the lifecycle (live,
+ * closed-but-not-archived, or archived). archiveJob() on the server is the source of truth for the
+ * Applied/Interview guardrail — this just surfaces its rejection message rather than re-deriving
+ * the rule client-side, so the two can never disagree.
+ */
+function LifecycleCard({ job, onChanged }: { job: JobWithCompany; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function archive() {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/archive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(typeof data.error === "string" ? data.error : "Failed to archive job");
+      }
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to archive job");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restore() {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/restore`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to restore job");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to restore job");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const state = job.is_archived === 1 ? "Archived" : job.is_active === 1 ? "Active" : "Closed";
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 className="mb-2 text-sm font-semibold">Lifecycle</h2>
+      <div className="mb-2 text-sm">
+        <span
+          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+            state === "Active"
+              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+              : state === "Closed"
+              ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+              : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+          }`}
+        >
+          {state}
+        </span>
+      </div>
+      <ul className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+        {job.closed_at && <li>Closed: {formatDateTime(job.closed_at)}</li>}
+        {job.missed_scan_count > 0 && (
+          <li>Missed scans in a row: {job.missed_scan_count}</li>
+        )}
+        {job.is_archived === 1 && (
+          <>
+            <li>Archived: {formatDateTime(job.archived_at)}</li>
+            {job.archived_reason && <li>Reason: {job.archived_reason}</li>}
+          </>
+        )}
+      </ul>
+      <div className="mt-3">
+        {job.is_archived === 1 ? (
+          <button
+            disabled={busy}
+            onClick={restore}
+            className="rounded border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            {busy ? "Restoring…" : "Restore job"}
+          </button>
+        ) : (
+          <button
+            disabled={busy}
+            onClick={archive}
+            className="rounded border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            {busy ? "Archiving…" : "Archive job"}
+          </button>
+        )}
+      </div>
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function NotesTagsCard({ job, onChanged }: { job: JobWithCompany; onChanged: () => void }) {
+  const [notes, setNotes] = useState(job.notes ?? "");
+  const [tagsInput, setTagsInput] = useState(parseTags(job.tags).join(", "));
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    setSaved(false);
+    try {
+      const tags = tagsInput
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      await fetch(`/api/jobs/${job.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: notes.trim() === "" ? null : notes, tags }),
+      });
+      setSaved(true);
+      onChanged();
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 className="mb-2 text-sm font-semibold">Notes &amp; tags</h2>
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        rows={3}
+        placeholder="Private notes about this job…"
+        className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+      />
+      <input
+        value={tagsInput}
+        onChange={(e) => setTagsInput(e.target.value)}
+        placeholder="Tags, comma-separated (e.g. remote, referral)"
+        className="mt-2 w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+      />
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          disabled={saving}
+          onClick={save}
+          className="rounded bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {saved && <span className="text-xs text-emerald-700 dark:text-emerald-400">Saved</span>}
+      </div>
+    </div>
+  );
+}
+
+function describeHistoryEntry(entry: JobStatusHistoryEntry): string {
+  if (entry.change_type === "pipeline_status") {
+    return `Pipeline: ${entry.old_value ?? "—"} → ${entry.new_value ?? "—"}`;
+  }
+  if (entry.change_type === "lifecycle") {
+    return `${entry.old_value ?? "—"} → ${entry.new_value ?? "—"}${entry.reason ? ` (${entry.reason})` : ""}`;
+  }
+  return `${entry.old_value ?? "—"} → ${entry.new_value ?? "—"}`;
+}
+
+function HistoryCard({ jobId, refreshKey }: { jobId: number; refreshKey: number }) {
+  const [history, setHistory] = useState<JobStatusHistoryEntry[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/jobs/${jobId}/history`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setHistory(d.history ?? []);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, refreshKey]);
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 className="mb-2 text-sm font-semibold">History</h2>
+      {history === null ? (
+        <p className="text-xs text-zinc-500">Loading…</p>
+      ) : history.length === 0 ? (
+        <p className="text-xs text-zinc-500">No status changes recorded yet.</p>
+      ) : (
+        <ul className="space-y-2 text-xs">
+          {history.map((entry) => (
+            <li key={entry.id} className="border-l-2 border-zinc-200 pl-2 dark:border-zinc-800">
+              <div className="text-zinc-700 dark:text-zinc-300">{describeHistoryEntry(entry)}</div>
+              <div className="text-zinc-400">{formatDateTime(entry.changed_at)}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [data, setData] = useState<JobDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [historyKey, setHistoryKey] = useState(0);
 
   async function load() {
     setLoading(true);
@@ -130,7 +356,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
             <h1 className="text-xl font-semibold">{job.title}</h1>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               {job.company_name} · {job.source_type}
-              {!job.is_active && " · closed"}
+              {job.is_archived === 1 ? " · archived" : !job.is_active && " · closed"}
             </p>
             {facts.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -209,11 +435,28 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
             <div className="space-y-3">
               <div>
                 <div className="mb-1 text-xs text-zinc-500">Status</div>
-                <PipelineStatusSelect jobId={job.id} value={job.pipeline_status} />
+                <PipelineStatusSelect
+                  jobId={job.id}
+                  value={job.pipeline_status}
+                  onChanged={() => {
+                    load();
+                    setHistoryKey((k) => k + 1);
+                  }}
+                />
               </div>
               <TailoringToggle jobId={job.id} initial={job.marked_for_tailoring === 1} />
             </div>
           </div>
+
+          <LifecycleCard
+            job={job}
+            onChanged={() => {
+              load();
+              setHistoryKey((k) => k + 1);
+            }}
+          />
+
+          <NotesTagsCard job={job} onChanged={load} />
 
           <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
             <h2 className="mb-2 text-sm font-semibold">H1B signal</h2>
@@ -263,6 +506,8 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
               )}
             </div>
           </div>
+
+          <HistoryCard jobId={job.id} refreshKey={historyKey} />
         </div>
       </div>
     </div>

@@ -57,6 +57,20 @@ CREATE TABLE IF NOT EXISTS jobs (
   pipeline_updated_at TEXT,
   marked_for_tailoring INTEGER NOT NULL DEFAULT 0,
   tailoring_marked_at TEXT,
+  -- Lifecycle management: "closed" (is_active=0) means not found in the latest scan of a live ATS
+  -- board; "archived" is a separate, terminal state reached after missed_scan_count consecutive
+  -- scans without the job reappearing. Archiving never deletes the row (or its generated resume
+  -- files on disk) — it only hides the job from the default jobs view. See src/lib/jobLifecycle.ts
+  -- for the threshold and the Applied/Interview protection guardrail.
+  closed_at TEXT,
+  missed_scan_count INTEGER NOT NULL DEFAULT 0,
+  is_archived INTEGER NOT NULL DEFAULT 0,
+  archived_at TEXT,
+  archived_reason TEXT,
+  notes TEXT,
+  -- JSON array of strings, e.g. '["remote","high-priority"]'. Stored as raw TEXT (same convention
+  -- as description_sections) rather than a separate table since tags are simple per-job labels.
+  tags TEXT,
   raw_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -67,6 +81,24 @@ CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_pipeline ON jobs(pipeline_status);
 CREATE INDEX IF NOT EXISTS idx_jobs_h1b ON jobs(h1b_combined_signal);
 CREATE INDEX IF NOT EXISTS idx_jobs_active ON jobs(is_active);
+-- idx_jobs_archived is NOT declared here: on an existing database, is_archived doesn't exist until
+-- runAdditiveMigrations() adds it (this CREATE TABLE IF NOT EXISTS is a no-op there), and this
+-- whole file runs as one db.exec() before that migration step. src/db/index.ts creates that index
+-- explicitly after the additive migrations instead. See its comment for the full explanation.
+
+-- Full audit trail of pipeline-status changes and lifecycle transitions (Active/Closed/Archived),
+-- so "why did this get archived" and "when did this move to Applied" are always answerable.
+CREATE TABLE IF NOT EXISTS job_status_history (
+  id INTEGER PRIMARY KEY,
+  job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  change_type TEXT NOT NULL CHECK (change_type IN ('pipeline_status', 'lifecycle', 'tailoring')),
+  old_value TEXT,
+  new_value TEXT,
+  reason TEXT,
+  changed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_status_history_job ON job_status_history(job_id, changed_at DESC);
 
 CREATE TABLE IF NOT EXISTS h1b_sponsors (
   id INTEGER PRIMARY KEY,

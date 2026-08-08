@@ -29,6 +29,7 @@ export async function GET(req: NextRequest) {
   const search = params.get("search");
   const activeOnly = params.get("activeOnly");
   const markedForTailoring = params.get("markedForTailoring");
+  const archived = params.get("archived");
   const h1bSignalParam = params.getAll("h1bSignal");
 
   if (status && !VALID_STATUSES.includes(status as PipelineStatus)) {
@@ -48,6 +49,7 @@ export async function GET(req: NextRequest) {
     search: search ?? undefined,
     activeOnly: activeOnly === "true",
     markedForTailoring: markedForTailoring === "true",
+    archived: archived === "true",
     h1bSignal: h1bSignal.length > 0 ? h1bSignal : undefined,
   });
 

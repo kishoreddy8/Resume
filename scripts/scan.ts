@@ -14,7 +14,7 @@ async function main() {
   for (const r of summary.results) {
     if (r.status === "ok") {
       console.log(
-        `  [ok]    ${r.companyName} (${r.sourceType}): +${r.jobsNew} new, ${r.jobsUpdated} updated, ${r.jobsClosed} closed`
+        `  [ok]    ${r.companyName} (${r.sourceType}): +${r.jobsNew} new, ${r.jobsUpdated} updated, ${r.jobsClosed} closed, ${r.jobsArchived} archived`
       );
     } else {
       console.log(`  [error] ${r.companyName} (${r.sourceType}): ${r.error}`);
@@ -22,7 +22,7 @@ async function main() {
   }
 
   console.log(
-    `\nDone. ${summary.jobsNew} new, ${summary.jobsUpdated} updated, ${summary.jobsClosed} closed, ${summary.errors} errors.`
+    `\nDone. ${summary.jobsNew} new, ${summary.jobsUpdated} updated, ${summary.jobsClosed} closed, ${summary.jobsArchived} archived, ${summary.errors} errors.`
   );
   process.exit(summary.errors > 0 ? 1 : 0);
 }

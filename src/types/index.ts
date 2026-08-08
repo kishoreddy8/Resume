@@ -66,6 +66,16 @@ export interface Job {
   pipeline_updated_at: string | null;
   marked_for_tailoring: 0 | 1;
   tailoring_marked_at: string | null;
+  /** When is_active last flipped to 0 (not found in the latest scan of a live ATS board). */
+  closed_at: string | null;
+  /** Consecutive scans this job has gone unseen; resets to 0 the moment it reappears. */
+  missed_scan_count: number;
+  is_archived: 0 | 1;
+  archived_at: string | null;
+  archived_reason: string | null;
+  notes: string | null;
+  /** JSON-encoded string array, e.g. '["remote","referral"]'. */
+  tags: string | null;
   raw_json: string | null;
   created_at: string;
   updated_at: string;
@@ -73,6 +83,18 @@ export interface Job {
 
 export interface JobWithCompany extends Job {
   company_name: string;
+}
+
+export type JobHistoryChangeType = "pipeline_status" | "lifecycle" | "tailoring";
+
+export interface JobStatusHistoryEntry {
+  id: number;
+  job_id: number;
+  change_type: JobHistoryChangeType;
+  old_value: string | null;
+  new_value: string | null;
+  reason: string | null;
+  changed_at: string;
 }
 
 export interface H1bSponsor {
@@ -112,6 +134,7 @@ export interface ScanResult {
   jobsNew: number;
   jobsUpdated: number;
   jobsClosed: number;
+  jobsArchived: number;
   /** Set when a career_link scrape found most links funnel through one embedded ATS board. */
   detectedAts?: { source: string; token: string };
 }
@@ -121,5 +144,6 @@ export interface ScanSummary {
   jobsNew: number;
   jobsUpdated: number;
   jobsClosed: number;
+  jobsArchived: number;
   errors: number;
 }

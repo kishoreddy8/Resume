@@ -1,7 +1,11 @@
+import type Database from "better-sqlite3";
 import { getDb } from "@/db";
+import { ARCHIVE_AFTER_MISSED_SCANS, canArchive } from "@/lib/jobLifecycle";
 import type {
   H1bCombinedSignal,
   Job,
+  JobHistoryChangeType,
+  JobStatusHistoryEntry,
   JobWithCompany,
   NormalizedJob,
   PipelineStatus,
@@ -17,6 +21,26 @@ export interface JobFilters {
   search?: string;
   activeOnly?: boolean;
   markedForTailoring?: boolean;
+  /** true = only archived jobs. Omitted/false = the default jobs view, which excludes archived
+   *  jobs entirely so "Show Archived Jobs separately" holds without every existing caller having
+   *  to opt in. */
+  archived?: boolean;
+}
+
+/** Appends one row to job_status_history. Internal — all lifecycle/pipeline mutations in this file
+ *  route through here so the audit trail can't drift from what actually changed. */
+function recordHistory(
+  db: Database.Database,
+  jobId: number,
+  changeType: JobHistoryChangeType,
+  oldValue: string | null,
+  newValue: string | null,
+  reason?: string | null
+): void {
+  db.prepare(
+    `INSERT INTO job_status_history (job_id, change_type, old_value, new_value, reason)
+     VALUES (@jobId, @changeType, @oldValue, @newValue, @reason)`
+  ).run({ jobId, changeType, oldValue, newValue, reason: reason ?? null });
 }
 
 export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
@@ -52,6 +76,9 @@ export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
       params[`h1b${i}`] = sig;
     });
   }
+  // Archived jobs are excluded from every normal listing by default — the Archived Jobs page is
+  // the only caller that passes archived: true to see them.
+  clauses.push(filters.archived ? "j.is_archived = 1" : "j.is_archived = 0");
 
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   const sql = `
@@ -74,7 +101,13 @@ export function getJob(id: number): JobWithCompany | undefined {
 
 export function updateJobPipeline(
   id: number,
-  updates: { pipelineStatus?: PipelineStatus; markedForTailoring?: boolean }
+  updates: {
+    pipelineStatus?: PipelineStatus;
+    markedForTailoring?: boolean;
+    notes?: string | null;
+    /** Plain string array; stored JSON-encoded. Omit the field entirely to leave tags untouched. */
+    tags?: string[];
+  }
 ): Job | undefined {
   const db = getDb();
   const existing = db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job | undefined;
@@ -87,6 +120,8 @@ export function updateJobPipeline(
       : updates.markedForTailoring
       ? 1
       : 0;
+  const notes = updates.notes === undefined ? existing.notes : updates.notes;
+  const tags = updates.tags === undefined ? existing.tags : JSON.stringify(updates.tags);
 
   db.prepare(
     `UPDATE jobs SET
@@ -94,6 +129,8 @@ export function updateJobPipeline(
       pipeline_updated_at = CASE WHEN @pipelineStatus != @oldStatus THEN datetime('now') ELSE pipeline_updated_at END,
       marked_for_tailoring = @markedForTailoring,
       tailoring_marked_at = CASE WHEN @markedForTailoring = 1 AND @oldMarked = 0 THEN datetime('now') ELSE tailoring_marked_at END,
+      notes = @notes,
+      tags = @tags,
       updated_at = datetime('now')
      WHERE id = @id`
   ).run({
@@ -102,7 +139,13 @@ export function updateJobPipeline(
     oldStatus: existing.pipeline_status,
     markedForTailoring,
     oldMarked: existing.marked_for_tailoring,
+    notes,
+    tags,
   });
+
+  if (pipelineStatus !== existing.pipeline_status) {
+    recordHistory(db, id, "pipeline_status", existing.pipeline_status, pipelineStatus);
+  }
 
   return db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job;
 }
@@ -124,8 +167,15 @@ export function countJobsByStatus(): Record<PipelineStatus, number> {
 }
 
 /**
- * Upserts a normalized job by dedupe_key. Preserves pipeline_status/marked_for_tailoring
- * on update (a rescan must never reset a job the user has already triaged).
+ * Upserts a normalized job by dedupe_key. Preserves pipeline_status/marked_for_tailoring/notes/tags
+ * on update (a rescan must never reset a job the user has already triaged) — this is also how
+ * "refresh existing jobs instead of creating duplicates" holds: the dedupe_key unique index means
+ * a job that reappears in a scan always resolves to the same row, never a new one.
+ *
+ * A job found in a scan is, by definition, live right now — so this always clears any prior
+ * closed/archived state (and logs why in job_status_history) rather than requiring the caller to
+ * reason about it. closeStaleJobs (called separately, after all of a company's upsertJob calls)
+ * is the only place that *sets* closed/archived state, for jobs that were NOT seen this scan.
  */
 export function upsertJob(params: {
   companyId: number;
@@ -140,8 +190,8 @@ export function upsertJob(params: {
 }): "inserted" | "updated" {
   const db = getDb();
   const existing = db
-    .prepare("SELECT id FROM jobs WHERE dedupe_key = ?")
-    .get(params.dedupeKey) as { id: number } | undefined;
+    .prepare("SELECT id, is_active, is_archived FROM jobs WHERE dedupe_key = ?")
+    .get(params.dedupeKey) as { id: number; is_active: 0 | 1; is_archived: 0 | 1 } | undefined;
 
   const row = {
     companyId: params.companyId,
@@ -182,6 +232,11 @@ export function upsertJob(params: {
         posted_at = @postedAt,
         last_seen_at = datetime('now'),
         is_active = 1,
+        closed_at = NULL,
+        missed_scan_count = 0,
+        is_archived = 0,
+        archived_at = NULL,
+        archived_reason = NULL,
         sponsorship_mentioned = @sponsorshipMentioned,
         sponsorship_polarity = @sponsorshipPolarity,
         sponsorship_snippet = @sponsorshipSnippet,
@@ -190,6 +245,12 @@ export function upsertJob(params: {
         updated_at = datetime('now')
        WHERE id = @id`
     ).run({ ...row, id: existing.id });
+
+    if (existing.is_archived === 1) {
+      recordHistory(db, existing.id, "lifecycle", "Archived", "Active", "Auto-restored: reappeared in scan");
+    } else if (existing.is_active === 0) {
+      recordHistory(db, existing.id, "lifecycle", "Closed", "Active", "Reappeared in scan");
+    }
     return "updated";
   }
 
@@ -209,23 +270,138 @@ export function upsertJob(params: {
   return "inserted";
 }
 
-/** Marks ATS-sourced jobs for a company not present in the latest scan as closed. */
-export function closeStaleJobs(companyId: number, seenDedupeKeys: string[]): number {
+export interface CloseStaleJobsResult {
+  jobsClosed: number;
+  jobsArchived: number;
+}
+
+/**
+ * Job Lifecycle Management: for a company's jobs not present in the latest scan (seenDedupeKeys),
+ * closes them (is_active=0) the first time they go missing, and archives them once they've been
+ * missing for ARCHIVE_AFTER_MISSED_SCANS consecutive scans in a row — unless canArchive() blocks it
+ * because the job is marked Applied or Interview, in which case it stays closed-but-not-archived
+ * indefinitely (missed_scan_count keeps incrementing, so if the pipeline status later moves off
+ * Applied/Interview, the very next scan miss archives it immediately using the count already
+ * accumulated, rather than waiting through another full X-scan window).
+ *
+ * Already-archived jobs are excluded from consideration here — they're a terminal state until
+ * restoreJob() (or reappearing in a scan, handled by upsertJob) brings them back.
+ */
+export function closeStaleJobs(companyId: number, seenDedupeKeys: string[]): CloseStaleJobsResult {
   const db = getDb();
-  if (seenDedupeKeys.length === 0) {
-    const result = db
-      .prepare("UPDATE jobs SET is_active = 0, updated_at = datetime('now') WHERE company_id = ? AND is_active = 1")
-      .run(companyId);
-    return result.changes;
-  }
-  const placeholders = seenDedupeKeys.map((_, i) => `@k${i}`).join(", ");
-  const params: Record<string, unknown> = { companyId };
-  seenDedupeKeys.forEach((k, i) => (params[`k${i}`] = k));
-  const result = db
+  const seen = new Set(seenDedupeKeys);
+
+  const candidates = db
     .prepare(
-      `UPDATE jobs SET is_active = 0, updated_at = datetime('now')
-       WHERE company_id = @companyId AND is_active = 1 AND dedupe_key NOT IN (${placeholders})`
+      `SELECT id, dedupe_key, is_active, missed_scan_count, pipeline_status
+       FROM jobs WHERE company_id = ? AND is_archived = 0`
     )
-    .run(params);
-  return result.changes;
+    .all(companyId) as {
+    id: number;
+    dedupe_key: string;
+    is_active: 0 | 1;
+    missed_scan_count: number;
+    pipeline_status: PipelineStatus;
+  }[];
+
+  const missing = candidates.filter((job) => !seen.has(job.dedupe_key));
+  if (missing.length === 0) return { jobsClosed: 0, jobsArchived: 0 };
+
+  const closeStmt = db.prepare(
+    `UPDATE jobs SET is_active = 0, closed_at = datetime('now'), missed_scan_count = @missedCount, updated_at = datetime('now')
+     WHERE id = @id`
+  );
+  const bumpMissedStmt = db.prepare(
+    `UPDATE jobs SET missed_scan_count = @missedCount, updated_at = datetime('now') WHERE id = @id`
+  );
+  const archiveStmt = db.prepare(
+    `UPDATE jobs SET is_archived = 1, archived_at = datetime('now'), archived_reason = @reason, updated_at = datetime('now')
+     WHERE id = @id`
+  );
+
+  let jobsClosed = 0;
+  let jobsArchived = 0;
+
+  const process = db.transaction(() => {
+    for (const job of missing) {
+      const missedCount = job.missed_scan_count + 1;
+
+      if (job.is_active === 1) {
+        closeStmt.run({ id: job.id, missedCount });
+        recordHistory(db, job.id, "lifecycle", "Active", "Closed", "Not found in latest scan");
+        jobsClosed++;
+      } else {
+        bumpMissedStmt.run({ id: job.id, missedCount });
+      }
+
+      if (missedCount >= ARCHIVE_AFTER_MISSED_SCANS && canArchive(job.pipeline_status)) {
+        const reason = `Not seen for ${missedCount} consecutive scans`;
+        archiveStmt.run({ id: job.id, reason });
+        recordHistory(db, job.id, "lifecycle", "Closed", "Archived", reason);
+        jobsArchived++;
+      }
+    }
+  });
+  process();
+
+  return { jobsClosed, jobsArchived };
+}
+
+/**
+ * Manually archives a job. Refuses (canArchive() = false) while pipeline_status is Applied or
+ * Interview — this is the same guardrail closeStaleJobs enforces for automatic archiving, so the
+ * "never archive Applied/Interview" rule holds for both paths. A no-op (not an error) if the job
+ * is already archived.
+ */
+export function archiveJob(
+  id: number,
+  reason?: string
+): { ok: true; job: Job } | { ok: false; blockedReason: string } {
+  const db = getDb();
+  const existing = db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job | undefined;
+  if (!existing) return { ok: false, blockedReason: "Job not found" };
+  if (existing.is_archived === 1) return { ok: true, job: existing };
+  if (!canArchive(existing.pipeline_status)) {
+    return {
+      ok: false,
+      blockedReason: `Cannot archive a job marked "${existing.pipeline_status}" — change its pipeline status first.`,
+    };
+  }
+
+  const finalReason = reason?.trim() || "Manually archived";
+  db.prepare(
+    `UPDATE jobs SET is_archived = 1, archived_at = datetime('now'), archived_reason = @reason, updated_at = datetime('now')
+     WHERE id = @id`
+  ).run({ id, reason: finalReason });
+  recordHistory(db, id, "lifecycle", existing.is_active === 1 ? "Active" : "Closed", "Archived", finalReason);
+
+  return { ok: true, job: db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job };
+}
+
+/**
+ * Restores an archived job to the active jobs view. Also clears is_active/closed_at back to "live"
+ * and resets missed_scan_count to 0 — a restored job gets a fresh grace period before the next scan
+ * could re-close/re-archive it, rather than being one miss away from immediately re-archiving.
+ */
+export function restoreJob(id: number): Job | undefined {
+  const db = getDb();
+  const existing = db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job | undefined;
+  if (!existing) return undefined;
+
+  db.prepare(
+    `UPDATE jobs SET
+      is_archived = 0, archived_at = NULL, archived_reason = NULL,
+      is_active = 1, closed_at = NULL, missed_scan_count = 0,
+      updated_at = datetime('now')
+     WHERE id = @id`
+  ).run({ id });
+  recordHistory(db, id, "lifecycle", "Archived", "Active", "Manually restored");
+
+  return db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job;
+}
+
+export function getJobHistory(jobId: number): JobStatusHistoryEntry[] {
+  return getDb()
+    .prepare("SELECT * FROM job_status_history WHERE job_id = ? ORDER BY changed_at DESC")
+    .all(jobId) as JobStatusHistoryEntry[];
 }

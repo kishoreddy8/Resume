@@ -11,6 +11,8 @@ const PATCH_SCHEMA = z.object({
     .enum(["New", "Interested", "Applied", "Interview", "Rejected", "Offer"])
     .optional(),
   markedForTailoring: z.boolean().optional(),
+  notes: z.string().nullable().optional(),
+  tags: z.array(z.string()).optional(),
 });
 
 /** Tailored output lives at data/generated/<company-slug>/<job-id>/ — written by the tailor-resume
@@ -54,6 +56,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const job = updateJobPipeline(jobId, {
     pipelineStatus: parsed.data.pipelineStatus as PipelineStatus | undefined,
     markedForTailoring: parsed.data.markedForTailoring,
+    notes: parsed.data.notes,
+    tags: parsed.data.tags,
   });
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 

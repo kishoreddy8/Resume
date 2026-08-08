@@ -65,9 +65,13 @@ async function scanCompany(company: Company): Promise<ScanResult> {
       else jobsUpdated++;
     }
 
-    // Career-link scraping is best-effort/partial by nature — never auto-close those jobs.
-    const jobsClosed =
-      company.source_type === "career_link" ? 0 : closeStaleJobs(company.id, seenDedupeKeys);
+    // Career-link scraping is best-effort/partial by nature — never auto-close/archive those jobs
+    // (see closeStaleJobs's own doc comment for the closed->archived lifecycle rules that DO apply
+    // to every ATS-sourced company).
+    const { jobsClosed, jobsArchived } =
+      company.source_type === "career_link"
+        ? { jobsClosed: 0, jobsArchived: 0 }
+        : closeStaleJobs(company.id, seenDedupeKeys);
 
     updateCompanyScanStatus(company.id, "ok");
     return {
@@ -78,6 +82,7 @@ async function scanCompany(company: Company): Promise<ScanResult> {
       jobsNew,
       jobsUpdated,
       jobsClosed,
+      jobsArchived,
       detectedAts,
     };
   } catch (err) {
@@ -92,6 +97,7 @@ async function scanCompany(company: Company): Promise<ScanResult> {
       jobsNew: 0,
       jobsUpdated: 0,
       jobsClosed: 0,
+      jobsArchived: 0,
     };
   }
 }
@@ -113,6 +119,7 @@ export async function runScan(companies: Company[]): Promise<ScanSummary> {
     jobsNew: results.reduce((sum, r) => sum + r.jobsNew, 0),
     jobsUpdated: results.reduce((sum, r) => sum + r.jobsUpdated, 0),
     jobsClosed: results.reduce((sum, r) => sum + r.jobsClosed, 0),
+    jobsArchived: results.reduce((sum, r) => sum + r.jobsArchived, 0),
     errors: results.filter((r) => r.status === "error").length,
   };
 }

@@ -3,7 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "app.db");
+// Override lets integration tests point at an isolated temp file instead of the real database —
+// unset in normal app/script usage, so production behavior is unchanged.
+const DB_PATH = process.env.CAREER_OPS_DB_PATH ?? path.join(DATA_DIR, "app.db");
 
 function ensureDataDirs() {
   for (const dir of [
@@ -11,6 +13,7 @@ function ensureDataDirs() {
     path.join(DATA_DIR, "master", "history"),
     path.join(DATA_DIR, "generated"),
     path.join(DATA_DIR, "h1b"),
+    path.dirname(DB_PATH),
   ]) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -28,6 +31,15 @@ const JOBS_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
   { name: "workplace_type", ddl: "ALTER TABLE jobs ADD COLUMN workplace_type TEXT" },
   { name: "salary_text", ddl: "ALTER TABLE jobs ADD COLUMN salary_text TEXT" },
   { name: "sponsorship_snippet", ddl: "ALTER TABLE jobs ADD COLUMN sponsorship_snippet TEXT" },
+  // Job Lifecycle Management (closed/archived tracking, notes, tags) — see schema.sql for the
+  // fresh-install column definitions these mirror.
+  { name: "closed_at", ddl: "ALTER TABLE jobs ADD COLUMN closed_at TEXT" },
+  { name: "missed_scan_count", ddl: "ALTER TABLE jobs ADD COLUMN missed_scan_count INTEGER NOT NULL DEFAULT 0" },
+  { name: "is_archived", ddl: "ALTER TABLE jobs ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0" },
+  { name: "archived_at", ddl: "ALTER TABLE jobs ADD COLUMN archived_at TEXT" },
+  { name: "archived_reason", ddl: "ALTER TABLE jobs ADD COLUMN archived_reason TEXT" },
+  { name: "notes", ddl: "ALTER TABLE jobs ADD COLUMN notes TEXT" },
+  { name: "tags", ddl: "ALTER TABLE jobs ADD COLUMN tags TEXT" },
 ];
 
 function runAdditiveMigrations(db: Database.Database) {
@@ -39,6 +51,13 @@ function runAdditiveMigrations(db: Database.Database) {
       db.exec(column.ddl);
     }
   }
+  // Must run after the loop above, not from schema.sql's single db.exec(schema) call: on an
+  // existing database is_archived doesn't exist until the ADD COLUMN above runs, so an index on it
+  // declared inside schema.sql would fail with "no such column" every time (schema.sql's own
+  // CREATE TABLE IF NOT EXISTS jobs is a no-op there, since the table already exists without that
+  // column). Safe to run unconditionally — IF NOT EXISTS makes it a no-op on fresh installs where
+  // schema.sql's CREATE TABLE already included the column from the start.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_archived ON jobs(is_archived)");
 }
 
 const COMPANIES_COLUMNS = [
