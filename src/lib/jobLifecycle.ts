@@ -26,6 +26,23 @@ export const FRESH_MAX_DAYS = 3;
 export const ACTIVE_MAX_DAYS = 7;
 export const ARCHIVE_MAX_DAYS = 10; // 8-10 inclusive is the archive window; >10 is delete-eligible
 
+/** Configurable equivalent of the three constants above — see src/lib/settings.ts's
+ *  lifecycle.freshDays/archiveAfterDays/deleteAfterDays, which map onto these one-to-one
+ *  (archiveAfterDays == activeMaxDays, deleteAfterDays == archiveMaxDays; the settings names
+ *  describe the day a job *becomes* archive/delete-eligible, these describe the last day of the
+ *  preceding band — same boundary, named from the other side). */
+export interface LifecycleThresholds {
+  freshMaxDays: number;
+  activeMaxDays: number;
+  archiveMaxDays: number;
+}
+
+const DEFAULT_THRESHOLDS: LifecycleThresholds = {
+  freshMaxDays: FRESH_MAX_DAYS,
+  activeMaxDays: ACTIVE_MAX_DAYS,
+  archiveMaxDays: ARCHIVE_MAX_DAYS,
+};
+
 export const PROTECTED_PIPELINE_STATUSES: readonly PipelineStatus[] = [
   "Applied",
   "Interviewing",
@@ -82,9 +99,12 @@ export function getJobAgeDays(job: JobAgeInput, now: Date = new Date()): number 
   return Math.max(0, Math.floor((now.getTime() - date.getTime()) / DAY_MS));
 }
 
-export function getJobAgeBand(ageDays: number): JobAgeBand {
-  if (ageDays <= FRESH_MAX_DAYS) return "fresh";
-  if (ageDays <= ACTIVE_MAX_DAYS) return "active";
-  if (ageDays <= ARCHIVE_MAX_DAYS) return "aging";
+/** `thresholds` defaults to the module constants above — every existing caller (UI age badges,
+ *  pure unit tests) that doesn't pass one keeps today's exact behavior. Callers that read the
+ *  configured Settings values (src/db/queries/jobs.ts's runAgeBasedSweep) pass them explicitly. */
+export function getJobAgeBand(ageDays: number, thresholds: LifecycleThresholds = DEFAULT_THRESHOLDS): JobAgeBand {
+  if (ageDays <= thresholds.freshMaxDays) return "fresh";
+  if (ageDays <= thresholds.activeMaxDays) return "active";
+  if (ageDays <= thresholds.archiveMaxDays) return "aging";
   return "stale";
 }

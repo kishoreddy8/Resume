@@ -83,3 +83,14 @@ test("age bands: 2-day Fresh, 5-day Active, 8/10-day aging (archive window), 11-
   assert.equal(getJobAgeBand(11), "stale");
   assert.equal(getJobAgeBand(365), "stale");
 });
+
+test("getJobAgeBand honors custom thresholds (Settings > Lifecycle) instead of the module defaults", () => {
+  const thresholds = { freshMaxDays: 1, activeMaxDays: 2, archiveMaxDays: 3 };
+  assert.equal(getJobAgeBand(1, thresholds), "fresh");
+  assert.equal(getJobAgeBand(2, thresholds), "active");
+  assert.equal(getJobAgeBand(3, thresholds), "aging");
+  assert.equal(getJobAgeBand(4, thresholds), "stale");
+  // Age 5 is "stale" under these tightened thresholds but would be "active" under the defaults —
+  // proves the thresholds parameter actually drives the result, not just accepted and ignored.
+  assert.equal(getJobAgeBand(5), "active");
+});

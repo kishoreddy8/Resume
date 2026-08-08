@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
-import { getJobAgeBand, getJobAgeDays } from "@/lib/jobLifecycle";
+import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import type { JobWithCompany } from "@/types";
 
 function formatDate(iso: string | null): string {
@@ -14,11 +14,12 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-/** Fresh (0-3 days old) is the age-based lifecycle policy's "highlight as high priority" band —
- *  computed live from posted_at/first_seen_at, never persisted. See src/lib/jobLifecycle.ts. */
-function FreshBadge({ job }: { job: JobWithCompany }) {
+/** Fresh is the age-based lifecycle policy's "highlight as high priority" band — computed live from
+ *  posted_at/first_seen_at, never persisted. `thresholds` comes from Settings > Lifecycle (see
+ *  useLifecycleThresholds) so this always agrees with what the automated sweep will actually do. */
+function FreshBadge({ job, thresholds }: { job: JobWithCompany; thresholds: LifecycleThresholds }) {
   const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at });
-  if (getJobAgeBand(ageDays) !== "fresh") return null;
+  if (getJobAgeBand(ageDays, thresholds) !== "fresh") return null;
   return (
     <span
       className="ml-1.5 inline-flex items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
@@ -60,7 +61,7 @@ function TailoringCheckbox({ jobId, initial }: { jobId: number; initial: boolean
   );
 }
 
-export function JobList({ jobs }: { jobs: JobWithCompany[] }) {
+export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; thresholds: LifecycleThresholds }) {
   if (jobs.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
@@ -90,7 +91,7 @@ export function JobList({ jobs }: { jobs: JobWithCompany[] }) {
                 <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">
                   {job.title}
                 </Link>
-                <FreshBadge job={job} />
+                <FreshBadge job={job} thresholds={thresholds} />
                 <div className="text-xs text-zinc-500">
                   {job.company_name} · {job.source_type}
                   {!job.is_active && " · closed"}

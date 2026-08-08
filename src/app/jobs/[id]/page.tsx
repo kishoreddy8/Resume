@@ -7,9 +7,10 @@ import { use } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
-import { getJobAgeBand, getJobAgeDays } from "@/lib/jobLifecycle";
+import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
 import type { DescriptionSections, JobCertification, JobSkill, JobStatusHistoryEntry, JobWithCompany } from "@/types";
+import { useLifecycleThresholds } from "../useLifecycleThresholds";
 
 interface JobDetailResponse {
   job: JobWithCompany;
@@ -55,11 +56,12 @@ const AGE_BAND_STYLES = {
   stale: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
 } as const;
 
-/** Fresh (0-3 days old) is the policy's "highlight as high priority" band — computed live from
- *  posted_at/first_seen_at, never persisted. See src/lib/jobLifecycle.ts. */
-function AgeBadge({ job }: { job: JobWithCompany }) {
+/** Fresh is the policy's "highlight as high priority" band — computed live from posted_at/
+ *  first_seen_at, never persisted. `thresholds` comes from Settings > Lifecycle (see
+ *  useLifecycleThresholds) so this always agrees with what the automated sweep will actually do. */
+function AgeBadge({ job, thresholds }: { job: JobWithCompany; thresholds: LifecycleThresholds }) {
   const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at });
-  const band = getJobAgeBand(ageDays);
+  const band = getJobAgeBand(ageDays, thresholds);
   return (
     <span
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${AGE_BAND_STYLES[band]}`}
@@ -144,7 +146,15 @@ function CopyPromptButton({ job }: { job: JobWithCompany }) {
  * of truth for the protected-status/pinned guardrail — this just surfaces its rejection message
  * rather than re-deriving the rule client-side, so the two can never disagree.
  */
-function LifecycleCard({ job, onChanged }: { job: JobWithCompany; onChanged: () => void }) {
+function LifecycleCard({
+  job,
+  thresholds,
+  onChanged,
+}: {
+  job: JobWithCompany;
+  thresholds: LifecycleThresholds;
+  onChanged: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -203,7 +213,7 @@ function LifecycleCard({ job, onChanged }: { job: JobWithCompany; onChanged: () 
 
   const state = job.is_archived === 1 ? "Archived" : job.is_active === 1 ? "Active" : "Closed";
   const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at });
-  const ageBand = getJobAgeBand(ageDays);
+  const ageBand = getJobAgeBand(ageDays, thresholds);
 
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
@@ -220,7 +230,7 @@ function LifecycleCard({ job, onChanged }: { job: JobWithCompany; onChanged: () 
         >
           {state}
         </span>
-        <AgeBadge job={job} />
+        <AgeBadge job={job} thresholds={thresholds} />
         {job.pinned === 1 && (
           <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-900/40 dark:text-violet-300">
             Pinned
@@ -238,12 +248,14 @@ function LifecycleCard({ job, onChanged }: { job: JobWithCompany; onChanged: () 
         {job.pinned === 1 && <li>Pinned — never auto-archived or auto-deleted, regardless of age.</li>}
         {ageBand === "aging" && job.pinned !== 1 && job.is_archived === 0 && (
           <li className="text-amber-700 dark:text-amber-500">
-            8–10 days old and unapplied — will archive automatically unless pinned or moved past New/Interested.
+            {thresholds.activeMaxDays + 1}–{thresholds.archiveMaxDays} days old and unapplied — will archive
+            automatically unless pinned or moved past New/Interested.
           </li>
         )}
         {ageBand === "stale" && job.pinned !== 1 && (
           <li className="text-orange-700 dark:text-orange-500">
-            Over 10 days old and unapplied — will be permanently deleted on the next scan unless pinned or applied to.
+            Over {thresholds.archiveMaxDays} days old and unapplied — will be permanently deleted on the next
+            scan unless pinned or applied to.
           </li>
         )}
       </ul>
@@ -725,6 +737,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
+  const { thresholds, loaded: thresholdsLoaded } = useLifecycleThresholds();
 
   async function load() {
     setLoading(true);
@@ -750,7 +763,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  if (loading) return <p className="text-sm text-zinc-500">Loading…</p>;
+  if (loading || !thresholdsLoaded) return <p className="text-sm text-zinc-500">Loading…</p>;
   if (notFound || !data) return <p className="text-sm text-zinc-500">Job not found.</p>;
 
   const { job, generatedFiles, skills, certifications } = data;
@@ -772,7 +785,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold">{job.title}</h1>
-              {job.is_archived === 0 && <AgeBadge job={job} />}
+              {job.is_archived === 0 && <AgeBadge job={job} thresholds={thresholds} />}
             </div>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               {job.company_name} · {job.source_type}
@@ -849,6 +862,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 
           <LifecycleCard
             job={job}
+            thresholds={thresholds}
             onChanged={() => {
               load();
               setHistoryKey((k) => k + 1);

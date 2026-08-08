@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Company, JobWithCompany, ScanSummary } from "@/types";
 import { DEFAULT_FILTERS, JobFilterSidebar, type JobFilterState } from "./JobFilterSidebar";
 import { JobList } from "./JobList";
+import { useLifecycleThresholds } from "./useLifecycleThresholds";
 
 function buildQuery(filters: JobFilterState): string {
   const params = new URLSearchParams();
@@ -37,6 +38,7 @@ export default function JobsPage() {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<ScanSummary | null>(null);
+  const { thresholds, loaded: thresholdsLoaded } = useLifecycleThresholds();
 
   const query = useMemo(() => buildQuery(filters), [filters]);
 
@@ -103,10 +105,10 @@ export default function JobsPage() {
       <div className="flex flex-col gap-4 lg:flex-row">
         <JobFilterSidebar filters={filters} onChange={setFilters} companies={companies} />
         <div className="flex-1">
-          {loading ? (
+          {loading || !thresholdsLoaded ? (
             <p className="text-sm text-zinc-500">Loading…</p>
           ) : (
-            <JobList jobs={jobs} />
+            <JobList jobs={jobs} thresholds={thresholds} />
           )}
         </div>
       </div>

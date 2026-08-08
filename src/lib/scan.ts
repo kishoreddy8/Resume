@@ -3,6 +3,7 @@ import { recordScanFailure, recordScanPartial, recordScanSuccess, updateCompany,
 import { closeStaleJobs, getJobByDedupeKey, getJobIdByDedupeKey, runAgeBasedSweep, upsertJob } from "@/db/queries/jobs";
 import { upsertJobIntel } from "@/db/queries/jobIntel";
 import { recordScanRun } from "@/db/queries/scanRuns";
+import { getAppSettings } from "@/db/queries/settings";
 import { dedupeKeyForAts, dedupeKeyForCareerLink, normalizeJobUrl } from "@/lib/dedupe";
 import { deleteGeneratedFiles } from "@/lib/generatedFiles";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
@@ -12,13 +13,16 @@ import { fetchJobsForCompany } from "@/lib/normalize";
 import { parseDescriptionSections } from "@/lib/parseSections";
 import { categorizeThrownError } from "@/lib/scan/errors";
 import { canRunLifecycleActions, determineScanStatus, hasContentChanged } from "@/lib/scan/status";
+import type { AppSettings } from "@/lib/settings";
 import type { Company, ErrorCategory, NormalizedJob, ScanResult, ScanSummary } from "@/types";
 
-const ATS_CONCURRENCY = 6;
+// Not settings-driven: it's specific to the best-effort career_link/Playwright path (a much heavier
+// per-unit cost than an ATS API call), not the general "how many companies scan in parallel" knob
+// Settings > Scanner > Concurrency controls (that's ATS_CONCURRENCY's replacement — see runScan).
 const CAREER_LINK_CONCURRENCY = 2;
 const ATS_DETECTED_NOTE_PREFIX = "Detected embedded ATS:";
 
-async function scanCompany(company: Company): Promise<ScanResult> {
+async function scanCompany(company: Company, settings: AppSettings): Promise<ScanResult> {
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
   let retryCount = 0;
@@ -45,7 +49,13 @@ async function scanCompany(company: Company): Promise<ScanResult> {
         }
       }
     } else {
-      jobs = await fetchJobsForCompany(company, { onRetry });
+      jobs = await fetchJobsForCompany(company, {
+        onRetry,
+        timeoutMs: settings.scanner.timeoutMs,
+        maxAttempts: settings.scanner.maxAttempts,
+        baseDelayMs: settings.scanner.baseDelayMs,
+        maxDelayMs: settings.scanner.maxDelayMs,
+      });
     }
 
     const seenDedupeKeys: string[] = [];
@@ -223,14 +233,17 @@ async function scanCompany(company: Company): Promise<ScanResult> {
 }
 
 export async function runScan(companies: Company[]): Promise<ScanSummary> {
-  const atsLimit = pLimit(ATS_CONCURRENCY);
+  // Read once per runScan call (not per company) — Settings > Scanner governs this whole run
+  // uniformly, and avoids a settings-table read per company.
+  const settings = getAppSettings();
+  const atsLimit = pLimit(settings.scanner.concurrency);
   const careerLinkLimit = pLimit(CAREER_LINK_CONCURRENCY);
 
   const results = await Promise.all(
     companies.map((company) =>
       company.source_type === "career_link"
-        ? careerLinkLimit(() => scanCompany(company))
-        : atsLimit(() => scanCompany(company))
+        ? careerLinkLimit(() => scanCompany(company, settings))
+        : atsLimit(() => scanCompany(company, settings))
     )
   );
 

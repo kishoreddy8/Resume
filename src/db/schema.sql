@@ -275,3 +275,15 @@ CREATE TABLE IF NOT EXISTS scan_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scan_runs_company ON scan_runs(company_id, started_at DESC);
+
+-- Settings: durable key-value store for user-configurable Lifecycle/Suppression/Scanner values
+-- (see src/lib/settings.ts for the typed shape/defaults/validation and src/db/queries/settings.ts
+-- for the loader). One row per leaf setting (e.g. 'lifecycle.fresh_days'); a missing key falls back
+-- to that setting's default, so an empty table reproduces today's hardcoded behavior exactly. A
+-- brand-new table, not an ALTER of any existing one — safe to add via plain CREATE TABLE IF NOT
+-- EXISTS on both a fresh install and an existing database.
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -1,0 +1,237 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import type { AppSettings } from "@/lib/settings";
+
+interface FieldSpec {
+  key: string;
+  label: string;
+  hint: string;
+  min?: number;
+  max?: number;
+}
+
+const LIFECYCLE_FIELDS: FieldSpec[] = [
+  { key: "freshDays", label: "Fresh days", hint: "Jobs at or under this age are highlighted as high priority.", min: 0 },
+  { key: "archiveAfterDays", label: "Archive after days", hint: "Jobs older than this (and unapplied/unpinned) become archive-eligible.", min: 0 },
+  { key: "deleteAfterDays", label: "Delete after days", hint: "Jobs older than this (and unapplied/unpinned) are permanently deleted.", min: 0 },
+];
+
+const SUPPRESSION_FIELDS: FieldSpec[] = [
+  {
+    key: "expiredJobSuppressionDays",
+    label: "Expired job suppression (days)",
+    hint: "How long a system-deleted, aged-out job is kept from reappearing if the same posting resurfaces in a scan. Does not apply to jobs you mark Not Interested — those are suppressed permanently and cannot reappear.",
+    min: 1,
+    max: 3650,
+  },
+];
+
+const SCANNER_FIELDS: FieldSpec[] = [
+  { key: "timeoutMs", label: "Timeout (ms)", hint: "Per-attempt fetch timeout for ATS connectors.", min: 1000, max: 120_000 },
+  { key: "maxAttempts", label: "Max attempts", hint: "Total attempts (1 initial + retries) before a fetch fails.", min: 1, max: 10 },
+  { key: "baseDelayMs", label: "Base retry delay (ms)", hint: "Starting backoff delay between retries.", min: 0, max: 10_000 },
+  { key: "maxDelayMs", label: "Max retry delay (ms)", hint: "Backoff delay ceiling; must be ≥ base retry delay.", min: 100, max: 60_000 },
+  { key: "concurrency", label: "Concurrency", hint: "How many ATS companies scan in parallel.", min: 1, max: 20 },
+];
+
+type GroupKey = keyof AppSettings;
+
+interface ApiError {
+  path: string;
+  message: string;
+}
+
+function SettingsGroup({
+  title,
+  description,
+  group,
+  fields,
+  values,
+  onChange,
+  errors,
+}: {
+  title: string;
+  description: string;
+  group: GroupKey;
+  fields: FieldSpec[];
+  values: AppSettings[GroupKey];
+  onChange: (group: GroupKey, key: string, value: number) => void;
+  errors: ApiError[];
+}) {
+  return (
+    <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <div>
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <p className="text-xs text-zinc-500">{description}</p>
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {fields.map((field) => {
+          const fieldErrors = errors.filter((e) => e.path === `${group}.${field.key}`);
+          return (
+            <label key={field.key} className="flex flex-col gap-1 text-sm">
+              <span className="font-medium">{field.label}</span>
+              <input
+                type="number"
+                min={field.min}
+                max={field.max}
+                value={(values as unknown as Record<string, number>)[field.key]}
+                onChange={(e) => onChange(group, field.key, Number(e.target.value))}
+                className="rounded border border-zinc-300 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              />
+              <span className="text-xs text-zinc-500">{field.hint}</span>
+              {fieldErrors.map((e, i) => (
+                <span key={i} className="text-xs text-red-600">
+                  {e.message}
+                </span>
+              ))}
+            </label>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+export default function SettingsPage() {
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [defaults, setDefaults] = useState<AppSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [errors, setErrors] = useState<ApiError[]>([]);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/settings");
+      const data = await res.json();
+      setSettings(data.settings);
+      setDefaults(data.defaults);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    // Intentional: fetch-on-mount with a loading flag, not a render loop.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load();
+  }, []);
+
+  function handleChange(group: GroupKey, key: string, value: number) {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      return { ...prev, [group]: { ...prev[group], [key]: value } };
+    });
+    setSavedAt(null);
+  }
+
+  async function save() {
+    if (!settings) return;
+    setSaving(true);
+    setErrors([]);
+    setFormError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrors(data.details ?? []);
+        setFormError(data.error ?? "Failed to save settings");
+        return;
+      }
+      setSettings(data.settings);
+      setSavedAt(Date.now());
+    } catch {
+      setFormError("Failed to save settings");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resetToDefaults() {
+    if (!confirm("Reset all settings to their safe defaults?")) return;
+    setResetting(true);
+    setErrors([]);
+    setFormError(null);
+    try {
+      const res = await fetch("/api/settings/reset", { method: "POST" });
+      const data = await res.json();
+      setSettings(data.settings);
+      setSavedAt(Date.now());
+    } finally {
+      setResetting(false);
+    }
+  }
+
+  if (loading || !settings || !defaults) {
+    return <p className="text-sm text-zinc-500">Loading…</p>;
+  }
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold">Settings</h1>
+          <p className="text-xs text-zinc-500">
+            Configure Lifecycle, Suppression, and Scanner behavior. Defaults reproduce today&apos;s
+            existing behavior — changes here take effect on the next scan or sweep.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={resetToDefaults}
+            disabled={saving || resetting}
+            className="rounded border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Reset to Defaults
+          </button>
+          <button
+            onClick={save}
+            disabled={saving || resetting}
+            className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+
+      {formError && <p className="text-sm text-red-600">{formError}</p>}
+      {savedAt && !formError && <p className="text-xs text-emerald-700 dark:text-emerald-400">Saved.</p>}
+
+      <SettingsGroup
+        title="Lifecycle"
+        description="Age-based archive/delete thresholds. Applied/Interviewing/Offer/Employer Rejected and pinned jobs are never affected, regardless of these values."
+        group="lifecycle"
+        fields={LIFECYCLE_FIELDS}
+        values={settings.lifecycle}
+        onChange={handleChange}
+        errors={errors}
+      />
+      <SettingsGroup
+        title="Suppression"
+        description="How long a system-deleted, aged-out job is kept from silently reappearing if the same posting resurfaces in a scan. Explicit Not Interested rejections are always permanent and are not configurable here."
+        group="suppression"
+        fields={SUPPRESSION_FIELDS}
+        values={settings.suppression}
+        onChange={handleChange}
+        errors={errors}
+      />
+      <SettingsGroup
+        title="Scanner"
+        description="Per-attempt timeout, retry/backoff, and how many companies scan in parallel. A failed or partial scan never performs destructive actions, regardless of these values."
+        group="scanner"
+        fields={SCANNER_FIELDS}
+        values={settings.scanner}
+        onChange={handleChange}
+        errors={errors}
+      />
+    </div>
+  );
+}

@@ -1,6 +1,8 @@
 import type Database from "better-sqlite3";
 import { getDb } from "@/db";
+import { getAppSettings } from "@/db/queries/settings";
 import { canArchive, getJobAgeBand, getJobAgeDays, isLifecycleProtected } from "@/lib/jobLifecycle";
+import { isSuppressionActive } from "@/lib/settings";
 import type {
   AgeSweepResult,
   DeletedJobRef,
@@ -319,11 +321,16 @@ export function upsertJob(params: {
 
   // Deduplication: a job whose exact identity (dedupe_key — ATS provider + external job ID for
   // ATS-sourced postings, a title+URL hash for career-link scrapes; see src/lib/dedupe.ts) was
-  // previously deleted (Not Interested, or aged out unapplied past 10 days) must not silently
-  // reappear as "new" on a later scan. A genuinely different requisition — a different external ID,
-  // hence a different dedupe_key — is unaffected and is inserted normally.
-  const suppressed = db.prepare("SELECT 1 FROM suppressed_jobs WHERE dedupe_key = ?").get(params.dedupeKey);
-  if (suppressed) return "suppressed";
+  // previously deleted must not silently reappear as "new" on a later scan. Two different policies,
+  // both enforced by isSuppressionActive (src/lib/settings.ts): an explicit "Not Interested"
+  // rejection is suppressed PERMANENTLY, with no expiry; a system-generated aged-out fingerprint
+  // expires after the configured Settings > Suppression retention window. A genuinely different
+  // requisition — a different external ID, hence a different dedupe_key — is unaffected and is
+  // inserted normally.
+  const suppressedRow = db
+    .prepare("SELECT reason, suppressed_at FROM suppressed_jobs WHERE dedupe_key = ?")
+    .get(params.dedupeKey) as { reason: string; suppressed_at: string } | undefined;
+  if (suppressedRow && isSuppressionActive(suppressedRow, getAppSettings().suppression)) return "suppressed";
 
   db.prepare(
     `INSERT INTO jobs (
@@ -540,6 +547,12 @@ export function markNotInterested(jobId: number): DeletedJobRef | undefined {
  */
 export function runAgeBasedSweep(now: Date = new Date()): AgeSweepResult {
   const db = getDb();
+  const { lifecycle } = getAppSettings();
+  const thresholds = {
+    freshMaxDays: lifecycle.freshDays,
+    activeMaxDays: lifecycle.archiveAfterDays,
+    archiveMaxDays: lifecycle.deleteAfterDays,
+  };
   const rows = db
     .prepare(
       `SELECT j.id, j.company_id, j.dedupe_key, j.title, j.posted_at, j.first_seen_at,
@@ -573,7 +586,7 @@ export function runAgeBasedSweep(now: Date = new Date()): AgeSweepResult {
       if (isLifecycleProtected({ pipelineStatus: job.pipeline_status, pinned: job.pinned })) continue;
 
       const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at }, now);
-      const band = getJobAgeBand(ageDays);
+      const band = getJobAgeBand(ageDays, thresholds);
 
       if (band === "stale") {
         suppressAndDeleteJob(db, job, `Aged out: ${ageDays} days unapplied`);

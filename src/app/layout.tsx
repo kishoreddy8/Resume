@@ -25,6 +25,7 @@ const NAV_LINKS = [
   { href: "/jobs/archived", label: "Archived" },
   { href: "/master-files", label: "Master Files" },
   { href: "/scanner", label: "Scanner" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
