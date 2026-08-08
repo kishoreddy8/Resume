@@ -52,21 +52,35 @@ CREATE TABLE IF NOT EXISTS jobs (
   sponsorship_polarity TEXT NOT NULL DEFAULT 'none' CHECK (sponsorship_polarity IN ('positive','negative','none')),
   h1b_combined_signal TEXT NOT NULL DEFAULT 'Unknown'
     CHECK (h1b_combined_signal IN ('High','Medium','Low','Unknown','Likely','Unlikely')),
-  pipeline_status TEXT NOT NULL DEFAULT 'New'
-    CHECK (pipeline_status IN ('New','Interested','Applied','Interview','Rejected','Offer')),
+  -- No CHECK enum here on purpose (same reasoning as companies.source_type above): the status set
+  -- has already changed once (Interview -> Interviewing, Rejected -> Employer Rejected, in the
+  -- age-based lifecycle policy) and may again. 'Not Interested' is deliberately NOT a value that
+  -- ever persists here — see src/db/queries/jobs.ts's markNotInterested(), which deletes the row
+  -- instead. App-layer zod validation in the API routes enforces the valid PipelineStatus set.
+  pipeline_status TEXT NOT NULL DEFAULT 'New',
   pipeline_updated_at TEXT,
   marked_for_tailoring INTEGER NOT NULL DEFAULT 0,
   tailoring_marked_at TEXT,
-  -- Lifecycle management: "closed" (is_active=0) means not found in the latest scan of a live ATS
-  -- board; "archived" is a separate, terminal state reached after missed_scan_count consecutive
-  -- scans without the job reappearing. Archiving never deletes the row (or its generated resume
-  -- files on disk) — it only hides the job from the default jobs view. See src/lib/jobLifecycle.ts
-  -- for the threshold and the Applied/Interview protection guardrail.
+  -- Lifecycle management (see src/lib/jobLifecycle.ts for the full policy). Three independent
+  -- facts, not a single state machine:
+  --   is_active/closed_at   — whether the posting was found in the most recent scan of a live ATS
+  --                           board (career-link scrapes never set this; they're not authoritative).
+  --   is_archived/archived_at/archived_reason — hidden from the default jobs view. Reached either
+  --                           immediately when an unapplied/unpinned job's posting closes, or via
+  --                           the age-based sweep (8-10 days old, posted_at/first_seen_at derived,
+  --                           never last_seen_at). Rows past 10 days old are deleted outright
+  --                           instead (see suppressed_jobs below) rather than staying archived.
+  --   pinned                 — manual override: never auto-archived or auto-deleted regardless of
+  --                           age or pipeline_status, same protection as Applied/Interviewing/
+  --                           Offer/Employer Rejected.
+  -- missed_scan_count is retained as diagnostic metadata (how many scans in a row a protected job's
+  -- posting has been gone) — it no longer gates archiving; the policy is purely age/status based.
   closed_at TEXT,
   missed_scan_count INTEGER NOT NULL DEFAULT 0,
   is_archived INTEGER NOT NULL DEFAULT 0,
   archived_at TEXT,
   archived_reason TEXT,
+  pinned INTEGER NOT NULL DEFAULT 0,
   notes TEXT,
   -- JSON array of strings, e.g. '["remote","high-priority"]'. Stored as raw TEXT (same convention
   -- as description_sections) rather than a separate table since tags are simple per-job labels.
@@ -84,10 +98,13 @@ CREATE INDEX IF NOT EXISTS idx_jobs_active ON jobs(is_active);
 -- idx_jobs_archived is NOT declared here: on an existing database, is_archived doesn't exist until
 -- runAdditiveMigrations() adds it (this CREATE TABLE IF NOT EXISTS is a no-op there), and this
 -- whole file runs as one db.exec() before that migration step. src/db/index.ts creates that index
--- explicitly after the additive migrations instead. See its comment for the full explanation.
+-- explicitly after migrations instead (see its comment for the full explanation) — same reasoning
+-- covers pinned, which is why there's no idx_jobs_pinned declared here either.
 
 -- Full audit trail of pipeline-status changes and lifecycle transitions (Active/Closed/Archived),
--- so "why did this get archived" and "when did this move to Applied" are always answerable.
+-- so "why did this get archived" and "when did this move to Applied" are always answerable. Rows
+-- cascade-delete with their job — once a job is deleted (Not Interested, or aged past 10 days
+-- unapplied), its history is gone too; suppressed_jobs below is what survives instead.
 CREATE TABLE IF NOT EXISTS job_status_history (
   id INTEGER PRIMARY KEY,
   job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -99,6 +116,24 @@ CREATE TABLE IF NOT EXISTS job_status_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_job_status_history_job ON job_status_history(job_id, changed_at DESC);
+
+-- Lightweight fingerprint kept after a job record is deleted (Not Interested, or the age-based
+-- sweep deleting an unapplied posting older than 10 days), so the exact same requisition never
+-- silently reappears and gets re-inserted as "new" on a later scan. Keyed on dedupe_key, which
+-- already encodes the project's identity preference order for a given job (ATS provider + external
+-- job ID for ATS-sourced postings, a title+URL hash for career-link scrapes) — see src/lib/dedupe.ts.
+-- A genuinely different requisition (different external ID / different dedupe_key) for the same
+-- role at the same company is NOT suppressed by this — only an exact identity match is.
+CREATE TABLE IF NOT EXISTS suppressed_jobs (
+  id INTEGER PRIMARY KEY,
+  dedupe_key TEXT NOT NULL,
+  company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+  title TEXT,
+  reason TEXT NOT NULL,
+  suppressed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_suppressed_jobs_dedupe ON suppressed_jobs(dedupe_key);
 
 CREATE TABLE IF NOT EXISTS h1b_sponsors (
   id INTEGER PRIMARY KEY,

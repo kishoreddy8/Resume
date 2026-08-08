@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
+import { getJobAgeBand, getJobAgeDays } from "@/lib/jobLifecycle";
 import type { JobWithCompany } from "@/types";
 
 function formatDate(iso: string | null): string {
@@ -11,6 +12,21 @@ function formatDate(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** Fresh (0-3 days old) is the age-based lifecycle policy's "highlight as high priority" band —
+ *  computed live from posted_at/first_seen_at, never persisted. See src/lib/jobLifecycle.ts. */
+function FreshBadge({ job }: { job: JobWithCompany }) {
+  const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at });
+  if (getJobAgeBand(ageDays) !== "fresh") return null;
+  return (
+    <span
+      className="ml-1.5 inline-flex items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
+      title={`Posted ${ageDays} day${ageDays === 1 ? "" : "s"} ago — high priority`}
+    >
+      Fresh
+    </span>
+  );
 }
 
 function TailoringCheckbox({ jobId, initial }: { jobId: number; initial: boolean }) {
@@ -74,6 +90,7 @@ export function JobList({ jobs }: { jobs: JobWithCompany[] }) {
                 <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">
                   {job.title}
                 </Link>
+                <FreshBadge job={job} />
                 <div className="text-xs text-zinc-500">
                   {job.company_name} · {job.source_type}
                   {!job.is_active && " · closed"}

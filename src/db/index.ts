@@ -40,6 +40,9 @@ const JOBS_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
   { name: "archived_reason", ddl: "ALTER TABLE jobs ADD COLUMN archived_reason TEXT" },
   { name: "notes", ddl: "ALTER TABLE jobs ADD COLUMN notes TEXT" },
   { name: "tags", ddl: "ALTER TABLE jobs ADD COLUMN tags TEXT" },
+  // Age-based lifecycle policy (see src/lib/jobLifecycle.ts) — manual override, never auto-archived
+  // or auto-deleted regardless of age or pipeline_status.
+  { name: "pinned", ddl: "ALTER TABLE jobs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0" },
 ];
 
 function runAdditiveMigrations(db: Database.Database) {
@@ -51,13 +54,19 @@ function runAdditiveMigrations(db: Database.Database) {
       db.exec(column.ddl);
     }
   }
-  // Must run after the loop above, not from schema.sql's single db.exec(schema) call: on an
-  // existing database is_archived doesn't exist until the ADD COLUMN above runs, so an index on it
-  // declared inside schema.sql would fail with "no such column" every time (schema.sql's own
-  // CREATE TABLE IF NOT EXISTS jobs is a no-op there, since the table already exists without that
-  // column). Safe to run unconditionally — IF NOT EXISTS makes it a no-op on fresh installs where
-  // schema.sql's CREATE TABLE already included the column from the start.
+}
+
+/**
+ * Indexes on columns that don't exist on a fresh checkout of an existing database until the
+ * additive migrations (or the pipeline_status rebuild, which drops and recreates the table) run —
+ * declaring them in schema.sql would fail with "no such column" the first time db.exec(schema)
+ * runs against an existing DB. Safe to call unconditionally and repeatedly (IF NOT EXISTS); called
+ * at the very end of createConnection so it's correct whether or not a rebuild just happened
+ * (DROP TABLE removes a table's indexes along with it).
+ */
+function ensureJobsIndexes(db: Database.Database) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_archived ON jobs(is_archived)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_pinned ON jobs(pinned)");
 }
 
 const COMPANIES_COLUMNS = [
@@ -126,6 +135,102 @@ function migrateCompaniesSourceTypeCheck(db: Database.Database, schemaSql: strin
   }
 }
 
+// Full current jobs column list, in schema.sql's declared order. Used by migrateJobsPipelineStatusCheck
+// to rebuild the table explicitly (never SELECT * across a rebuild — column order/count drifting
+// between the old and new table shape would silently misalign data).
+const JOBS_COLUMNS = [
+  "id", "company_id", "source_type", "external_id", "title", "location", "department", "url",
+  "description_html", "description_text", "description_sections", "employment_type",
+  "workplace_type", "salary_text", "sponsorship_snippet", "posted_at", "first_seen_at",
+  "last_seen_at", "is_active", "dedupe_key", "sponsorship_mentioned", "sponsorship_polarity",
+  "h1b_combined_signal", "pipeline_status", "pipeline_updated_at", "marked_for_tailoring",
+  "tailoring_marked_at", "closed_at", "missed_scan_count", "is_archived", "archived_at",
+  "archived_reason", "pinned", "notes", "tags", "raw_json", "created_at", "updated_at",
+];
+
+/**
+ * jobs.pipeline_status originally had a CHECK(... IN ('New','Interested','Applied','Interview',
+ * 'Rejected','Offer')) — the age-based lifecycle policy renames two of those (Interview ->
+ * Interviewing, Rejected -> Employer Rejected) and, like companies.source_type before it, drops the
+ * CHECK entirely going forward (schema.sql's CREATE TABLE IF NOT EXISTS already omits it for fresh
+ * installs). Idempotent: only runs if the old CHECK is still present in the live schema.
+ *
+ * Must run AFTER runAdditiveMigrations — by the time this executes, the live `jobs` table already
+ * has every column in JOBS_COLUMNS (pinned included), so the rebuild only needs to transform one
+ * column's values, not backfill missing ones.
+ *
+ * Same danger as migrateCompaniesSourceTypeCheck, mirrored the same way: `jobs` is a table other
+ * tables reference by name (job_status_history.job_id REFERENCES jobs(id) ON DELETE CASCADE), so
+ * this must never rename the live `jobs` table itself mid-migration — that would silently rewrite
+ * job_status_history's stored FK text to point at the temporary name. Build the new table under a
+ * temp name, DROP the OLD `jobs`, then RENAME the new table INTO `jobs` — the name other tables'
+ * FK text refers to is never itself renamed, so it's never rewritten.
+ */
+function migrateJobsPipelineStatusCheck(db: Database.Database, schemaSql: string) {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'")
+    .get() as { sql: string } | undefined;
+  if (!row || !row.sql.includes("CHECK (pipeline_status IN")) return;
+
+  const bodyMatch = schemaSql.match(/CREATE TABLE IF NOT EXISTS jobs \(([\s\S]*?)\n\);/);
+  if (!bodyMatch) {
+    throw new Error("Could not extract jobs table definition from schema.sql for migration");
+  }
+  const tempTableSql = `CREATE TABLE jobs_lifecycle_v2_migration_new (${bodyMatch[1]}\n)`;
+
+  const selectList = JOBS_COLUMNS.map((col) =>
+    col === "pipeline_status"
+      ? "CASE pipeline_status WHEN 'Interview' THEN 'Interviewing' WHEN 'Rejected' THEN 'Employer Rejected' ELSE pipeline_status END"
+      : col
+  ).join(", ");
+  const insertList = JOBS_COLUMNS.join(", ");
+
+  // CRITICAL: foreign_keys must be OFF for this rebuild — DROP TABLE jobs while
+  // job_status_history.job_id has ON DELETE CASCADE would otherwise cascade-delete every history
+  // row. PRAGMA foreign_keys also cannot be changed inside a transaction (SQLite silently ignores
+  // it), so it's toggled outside, with try/finally to guarantee it's restored even on failure.
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.exec(tempTableSql);
+      db.exec(
+        `INSERT INTO jobs_lifecycle_v2_migration_new (${insertList}) SELECT ${selectList} FROM jobs`
+      );
+      db.exec("DROP TABLE jobs");
+      db.exec("ALTER TABLE jobs_lifecycle_v2_migration_new RENAME TO jobs");
+      // Indexes/other tables don't carry over from the dropped table — re-running the full schema
+      // recreates jobs' own indexes and is a no-op (IF NOT EXISTS) for everything else.
+      db.exec(schemaSql);
+    })();
+    const historyViolations = db.pragma("foreign_key_check(job_status_history)") as unknown[];
+    if (historyViolations.length > 0) {
+      throw new Error(`Post-migration integrity check failed: ${JSON.stringify(historyViolations)}`);
+    }
+    const jobsViolations = db.pragma("foreign_key_check(jobs)") as unknown[];
+    if (jobsViolations.length > 0) {
+      throw new Error(`Post-migration integrity check failed: ${JSON.stringify(jobsViolations)}`);
+    }
+    const historyFkTarget = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'job_status_history'")
+      .get() as { sql: string } | undefined;
+    if (
+      historyFkTarget &&
+      !historyFkTarget.sql.includes('REFERENCES "jobs"') &&
+      !historyFkTarget.sql.includes("REFERENCES jobs")
+    ) {
+      throw new Error("Post-migration check failed: job_status_history.job_id no longer references jobs");
+    }
+    const remaining = db
+      .prepare("SELECT COUNT(*) AS n FROM jobs WHERE pipeline_status IN ('Interview', 'Rejected')")
+      .get() as { n: number };
+    if (remaining.n > 0) {
+      throw new Error(`Post-migration check failed: ${remaining.n} row(s) still have an old-style pipeline_status`);
+    }
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
 function createConnection(): Database.Database {
   ensureDataDirs();
   const db = new Database(DB_PATH);
@@ -138,6 +243,8 @@ function createConnection(): Database.Database {
   db.exec(schema);
   migrateCompaniesSourceTypeCheck(db, schema);
   runAdditiveMigrations(db);
+  migrateJobsPipelineStatusCheck(db, schema);
+  ensureJobsIndexes(db);
   return db;
 }
 

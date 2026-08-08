@@ -6,9 +6,9 @@ const VALID_STATUSES: PipelineStatus[] = [
   "New",
   "Interested",
   "Applied",
-  "Interview",
-  "Rejected",
+  "Interviewing",
   "Offer",
+  "Employer Rejected",
 ];
 const VALID_H1B: H1bCombinedSignal[] = [
   "High",

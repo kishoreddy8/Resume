@@ -79,7 +79,8 @@ export default function JobsPage() {
           {scanResult && (
             <span className="text-xs text-zinc-500">
               +{scanResult.jobsNew} new · {scanResult.jobsUpdated} updated ·{" "}
-              {scanResult.jobsClosed} closed · {scanResult.jobsArchived} archived
+              {scanResult.jobsClosed} closed · {scanResult.jobsArchived} archived ·{" "}
+              {scanResult.jobsSuppressed} suppressed · {scanResult.jobsDeletedByAge} aged out
               {scanResult.errors > 0 && ` · ${scanResult.errors} errors`}
             </span>
           )}

@@ -2,13 +2,18 @@ export type SourceType = "greenhouse" | "ashby" | "lever" | "workday" | "career_
 export type H1bSignal = "High" | "Medium" | "Low" | "Unknown";
 export type H1bCombinedSignal = H1bSignal | "Likely" | "Unlikely";
 export type SponsorshipPolarity = "positive" | "negative" | "none";
+/**
+ * "Not Interested" is deliberately not a member of this type — it's an action, not a persisted
+ * status: marking a job Not Interested deletes its record immediately (see markNotInterested in
+ * src/db/queries/jobs.ts), so a row's pipeline_status never actually holds that value.
+ */
 export type PipelineStatus =
   | "New"
   | "Interested"
   | "Applied"
-  | "Interview"
-  | "Rejected"
-  | "Offer";
+  | "Interviewing"
+  | "Offer"
+  | "Employer Rejected";
 
 export interface Company {
   id: number;
@@ -68,11 +73,13 @@ export interface Job {
   tailoring_marked_at: string | null;
   /** When is_active last flipped to 0 (not found in the latest scan of a live ATS board). */
   closed_at: string | null;
-  /** Consecutive scans this job has gone unseen; resets to 0 the moment it reappears. */
+  /** Diagnostic only under the age-based policy — no longer gates archiving. */
   missed_scan_count: number;
   is_archived: 0 | 1;
   archived_at: string | null;
   archived_reason: string | null;
+  /** Manual override: never auto-archived or auto-deleted regardless of age or pipeline_status. */
+  pinned: 0 | 1;
   notes: string | null;
   /** JSON-encoded string array, e.g. '["remote","referral"]'. */
   tags: string | null;
@@ -83,6 +90,23 @@ export interface Job {
 
 export interface JobWithCompany extends Job {
   company_name: string;
+}
+
+/** Age band computed live from posted_at (preferred) or first_seen_at — never persisted, never
+ *  derived from last_seen_at. See src/lib/jobLifecycle.ts. */
+export type JobAgeBand = "fresh" | "active" | "aging" | "stale";
+
+/** Identifies a job that was deleted (Not Interested, or aged out unapplied) for the caller to
+ *  clean up its generated-files directory — the DB layer never touches the filesystem itself. */
+export interface DeletedJobRef {
+  jobId: number;
+  companyName: string;
+  dedupeKey: string;
+}
+
+export interface AgeSweepResult {
+  archived: number;
+  deleted: DeletedJobRef[];
 }
 
 export type JobHistoryChangeType = "pipeline_status" | "lifecycle" | "tailoring";
@@ -135,6 +159,9 @@ export interface ScanResult {
   jobsUpdated: number;
   jobsClosed: number;
   jobsArchived: number;
+  /** Postings whose exact identity (dedupe_key) was previously deleted (Not Interested, or aged
+   *  out unapplied) and so were not re-inserted as "new" this scan. */
+  jobsSuppressed: number;
   /** Set when a career_link scrape found most links funnel through one embedded ATS board. */
   detectedAts?: { source: string; token: string };
 }
@@ -145,5 +172,9 @@ export interface ScanSummary {
   jobsUpdated: number;
   jobsClosed: number;
   jobsArchived: number;
+  jobsSuppressed: number;
+  /** Jobs the age-based sweep deleted this run (unapplied/unpinned, older than 10 days). Sweep
+   *  runs once per runScan() call, across all companies, not per-company. */
+  jobsDeletedByAge: number;
   errors: number;
 }

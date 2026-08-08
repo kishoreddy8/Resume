@@ -26,9 +26,9 @@ const STATUSES: PipelineStatus[] = [
   "New",
   "Interested",
   "Applied",
-  "Interview",
-  "Rejected",
+  "Interviewing",
   "Offer",
+  "Employer Rejected",
 ];
 const SOURCES: SourceType[] = ["greenhouse", "ashby", "lever", "workday", "career_link"];
 const H1B_SIGNALS: H1bCombinedSignal[] = ["Likely", "High", "Medium", "Low", "Unknown", "Unlikely"];

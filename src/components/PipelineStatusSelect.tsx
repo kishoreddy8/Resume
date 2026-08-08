@@ -7,9 +7,9 @@ const STATUSES: PipelineStatus[] = [
   "New",
   "Interested",
   "Applied",
-  "Interview",
-  "Rejected",
+  "Interviewing",
   "Offer",
+  "Employer Rejected",
 ];
 
 export function PipelineStatusSelect({

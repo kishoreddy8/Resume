@@ -10,9 +10,9 @@ const COLUMNS: PipelineStatus[] = [
   "New",
   "Interested",
   "Applied",
-  "Interview",
+  "Interviewing",
   "Offer",
-  "Rejected",
+  "Employer Rejected",
 ];
 
 export default function PipelinePage() {

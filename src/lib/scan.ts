@@ -1,7 +1,8 @@
 import pLimit from "p-limit";
 import { updateCompany, updateCompanyScanStatus } from "@/db/queries/companies";
-import { closeStaleJobs, upsertJob } from "@/db/queries/jobs";
+import { closeStaleJobs, runAgeBasedSweep, upsertJob } from "@/db/queries/jobs";
 import { dedupeKeyForAts, dedupeKeyForCareerLink } from "@/lib/dedupe";
+import { deleteGeneratedFiles } from "@/lib/generatedFiles";
 import { combineH1bSignal } from "@/lib/h1b/combineSignal";
 import { scanSponsorshipLanguage } from "@/lib/h1b/keywordScan";
 import { fetchJobsForCompany } from "@/lib/normalize";
@@ -38,6 +39,7 @@ async function scanCompany(company: Company): Promise<ScanResult> {
     const seenDedupeKeys: string[] = [];
     let jobsNew = 0;
     let jobsUpdated = 0;
+    let jobsSuppressed = 0;
 
     for (const job of jobs) {
       const dedupeKey =
@@ -62,7 +64,8 @@ async function scanCompany(company: Company): Promise<ScanResult> {
         h1bCombinedSignal,
       });
       if (outcome === "inserted") jobsNew++;
-      else jobsUpdated++;
+      else if (outcome === "updated") jobsUpdated++;
+      else jobsSuppressed++;
     }
 
     // Career-link scraping is best-effort/partial by nature — never auto-close/archive those jobs
@@ -83,9 +86,14 @@ async function scanCompany(company: Company): Promise<ScanResult> {
       jobsUpdated,
       jobsClosed,
       jobsArchived,
+      jobsSuppressed,
       detectedAts,
     };
   } catch (err) {
+    // Never treat a failed scan as evidence that jobs closed: closeStaleJobs/upsertJob are only
+    // reached above, inside the try block, after jobs were successfully fetched — a thrown fetch
+    // (network error, ATS API down, bad Workday token, etc.) skips straight here without touching
+    // any job's lifecycle state at all.
     const message = err instanceof Error ? err.message : String(err);
     updateCompanyScanStatus(company.id, "error", message);
     return {
@@ -98,6 +106,7 @@ async function scanCompany(company: Company): Promise<ScanResult> {
       jobsUpdated: 0,
       jobsClosed: 0,
       jobsArchived: 0,
+      jobsSuppressed: 0,
     };
   }
 }
@@ -114,12 +123,27 @@ export async function runScan(companies: Company[]): Promise<ScanSummary> {
     )
   );
 
+  // Age-based sweep runs once per runScan call, over every job in the database (not just the
+  // companies scanned this run, and not gated on any company's fetch having succeeded) — it's a
+  // calendar-time check ("how old is this job"), independent of scan results. Deliberately outside
+  // the per-company try/catch above: a fetch failure for one company must never block the sweep
+  // from running for everyone else's jobs.
+  const ageSweep = runAgeBasedSweep();
+  // The query layer (runAgeBasedSweep) only touches the DB — deleting a job's generated-output
+  // directory is a filesystem side effect and stays here, same separation as markNotInterested's
+  // API route caller. Best-effort: a missing/already-cleaned directory is not an error.
+  for (const job of ageSweep.deleted) {
+    deleteGeneratedFiles(job.companyName, job.jobId);
+  }
+
   return {
     results,
     jobsNew: results.reduce((sum, r) => sum + r.jobsNew, 0),
     jobsUpdated: results.reduce((sum, r) => sum + r.jobsUpdated, 0),
     jobsClosed: results.reduce((sum, r) => sum + r.jobsClosed, 0),
-    jobsArchived: results.reduce((sum, r) => sum + r.jobsArchived, 0),
+    jobsArchived: results.reduce((sum, r) => sum + r.jobsArchived, 0) + ageSweep.archived,
+    jobsSuppressed: results.reduce((sum, r) => sum + r.jobsSuppressed, 0),
+    jobsDeletedByAge: ageSweep.deleted.length,
     errors: results.filter((r) => r.status === "error").length,
   };
 }

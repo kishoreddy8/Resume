@@ -1,24 +1,24 @@
 import fs from "node:fs";
-import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getJob, updateJobPipeline } from "@/db/queries/jobs";
-import { slugify } from "@/lib/slugify";
+import { getJob, setJobPinned, updateJobPipeline } from "@/db/queries/jobs";
+import { generatedFilesDir } from "@/lib/generatedFiles";
 import type { PipelineStatus } from "@/types";
 
 const PATCH_SCHEMA = z.object({
   pipelineStatus: z
-    .enum(["New", "Interested", "Applied", "Interview", "Rejected", "Offer"])
+    .enum(["New", "Interested", "Applied", "Interviewing", "Offer", "Employer Rejected"])
     .optional(),
   markedForTailoring: z.boolean().optional(),
   notes: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
+  pinned: z.boolean().optional(),
 });
 
 /** Tailored output lives at data/generated/<company-slug>/<job-id>/ — written by the tailor-resume
  * skill's engine (.claude/skills/tailor-resume/engine/generate.ts), not by this app. */
 function listGeneratedFiles(companyName: string, jobId: number): string[] {
-  const dir = path.join(process.cwd(), "data", "generated", slugify(companyName), String(jobId));
+  const dir = generatedFilesDir(companyName, jobId);
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
@@ -53,13 +53,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const job = updateJobPipeline(jobId, {
+  let job = updateJobPipeline(jobId, {
     pipelineStatus: parsed.data.pipelineStatus as PipelineStatus | undefined,
     markedForTailoring: parsed.data.markedForTailoring,
     notes: parsed.data.notes,
     tags: parsed.data.tags,
   });
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+
+  if (parsed.data.pinned !== undefined) {
+    job = setJobPinned(jobId, parsed.data.pinned) ?? job;
+  }
 
   return NextResponse.json({ job });
 }

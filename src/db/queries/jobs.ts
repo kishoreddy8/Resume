@@ -1,7 +1,9 @@
 import type Database from "better-sqlite3";
 import { getDb } from "@/db";
-import { ARCHIVE_AFTER_MISSED_SCANS, canArchive } from "@/lib/jobLifecycle";
+import { canArchive, getJobAgeBand, getJobAgeDays, isLifecycleProtected } from "@/lib/jobLifecycle";
 import type {
+  AgeSweepResult,
+  DeletedJobRef,
   H1bCombinedSignal,
   Job,
   JobHistoryChangeType,
@@ -158,9 +160,9 @@ export function countJobsByStatus(): Record<PipelineStatus, number> {
     New: 0,
     Interested: 0,
     Applied: 0,
-    Interview: 0,
-    Rejected: 0,
+    Interviewing: 0,
     Offer: 0,
+    "Employer Rejected": 0,
   };
   for (const row of rows) base[row.pipeline_status] = row.count;
   return base;
@@ -187,7 +189,7 @@ export function upsertJob(params: {
   sponsorshipPolarity: SponsorshipPolarity;
   sponsorshipSnippet: string | null;
   h1bCombinedSignal: H1bCombinedSignal;
-}): "inserted" | "updated" {
+}): "inserted" | "updated" | "suppressed" {
   const db = getDb();
   const existing = db
     .prepare("SELECT id, is_active, is_archived FROM jobs WHERE dedupe_key = ?")
@@ -254,6 +256,14 @@ export function upsertJob(params: {
     return "updated";
   }
 
+  // Deduplication: a job whose exact identity (dedupe_key — ATS provider + external job ID for
+  // ATS-sourced postings, a title+URL hash for career-link scrapes; see src/lib/dedupe.ts) was
+  // previously deleted (Not Interested, or aged out unapplied past 10 days) must not silently
+  // reappear as "new" on a later scan. A genuinely different requisition — a different external ID,
+  // hence a different dedupe_key — is unaffected and is inserted normally.
+  const suppressed = db.prepare("SELECT 1 FROM suppressed_jobs WHERE dedupe_key = ?").get(params.dedupeKey);
+  if (suppressed) return "suppressed";
+
   db.prepare(
     `INSERT INTO jobs (
       company_id, source_type, external_id, title, location, department, url,
@@ -276,16 +286,18 @@ export interface CloseStaleJobsResult {
 }
 
 /**
- * Job Lifecycle Management: for a company's jobs not present in the latest scan (seenDedupeKeys),
- * closes them (is_active=0) the first time they go missing, and archives them once they've been
- * missing for ARCHIVE_AFTER_MISSED_SCANS consecutive scans in a row — unless canArchive() blocks it
- * because the job is marked Applied or Interview, in which case it stays closed-but-not-archived
- * indefinitely (missed_scan_count keeps incrementing, so if the pipeline status later moves off
- * Applied/Interview, the very next scan miss archives it immediately using the count already
- * accumulated, rather than waiting through another full X-scan window).
+ * CLOSED JOBS policy: for a company's jobs not present in the latest scan of an authoritative ATS
+ * board (seenDedupeKeys) — career_link scrapes are never passed here; see scan.ts — closes them
+ * (is_active=0) the moment they first go missing, and in that same moment archives them too, but
+ * ONLY if canArchive() allows it (unapplied and unpinned). A protected job (Applied, Interviewing,
+ * Offer, Employer Rejected, or pinned) just stays closed-but-not-archived indefinitely: "keep
+ * record and mark posting closed." This only fires on the Active->Closed transition itself, not on
+ * every subsequent scan a job is still missing — a protected job that later becomes unprotected is
+ * still covered, just via runAgeBasedSweep instead (age keeps accumulating from posted_at/
+ * first_seen_at regardless of is_active).
  *
- * Already-archived jobs are excluded from consideration here — they're a terminal state until
- * restoreJob() (or reappearing in a scan, handled by upsertJob) brings them back.
+ * Already-archived jobs are excluded from consideration — they're end-state until restoreJob()
+ * (or reappearing in a scan, handled by upsertJob) brings them back.
  */
 export function closeStaleJobs(companyId: number, seenDedupeKeys: string[]): CloseStaleJobsResult {
   const db = getDb();
@@ -293,7 +305,7 @@ export function closeStaleJobs(companyId: number, seenDedupeKeys: string[]): Clo
 
   const candidates = db
     .prepare(
-      `SELECT id, dedupe_key, is_active, missed_scan_count, pipeline_status
+      `SELECT id, dedupe_key, is_active, missed_scan_count, pipeline_status, pinned
        FROM jobs WHERE company_id = ? AND is_archived = 0`
     )
     .all(companyId) as {
@@ -302,6 +314,7 @@ export function closeStaleJobs(companyId: number, seenDedupeKeys: string[]): Clo
     is_active: 0 | 1;
     missed_scan_count: number;
     pipeline_status: PipelineStatus;
+    pinned: 0 | 1;
   }[];
 
   const missing = candidates.filter((job) => !seen.has(job.dedupe_key));
@@ -325,20 +338,21 @@ export function closeStaleJobs(companyId: number, seenDedupeKeys: string[]): Clo
   const process = db.transaction(() => {
     for (const job of missing) {
       const missedCount = job.missed_scan_count + 1;
+      const wasActive = job.is_active === 1;
 
-      if (job.is_active === 1) {
+      if (wasActive) {
         closeStmt.run({ id: job.id, missedCount });
-        recordHistory(db, job.id, "lifecycle", "Active", "Closed", "Not found in latest scan");
+        recordHistory(db, job.id, "lifecycle", "Active", "Closed", "Not found in latest scan (posting closed)");
         jobsClosed++;
+
+        if (canArchive({ pipelineStatus: job.pipeline_status, pinned: job.pinned })) {
+          const reason = "Posting closed upstream (unapplied)";
+          archiveStmt.run({ id: job.id, reason });
+          recordHistory(db, job.id, "lifecycle", "Closed", "Archived", reason);
+          jobsArchived++;
+        }
       } else {
         bumpMissedStmt.run({ id: job.id, missedCount });
-      }
-
-      if (missedCount >= ARCHIVE_AFTER_MISSED_SCANS && canArchive(job.pipeline_status)) {
-        const reason = `Not seen for ${missedCount} consecutive scans`;
-        archiveStmt.run({ id: job.id, reason });
-        recordHistory(db, job.id, "lifecycle", "Closed", "Archived", reason);
-        jobsArchived++;
       }
     }
   });
@@ -348,10 +362,10 @@ export function closeStaleJobs(companyId: number, seenDedupeKeys: string[]): Clo
 }
 
 /**
- * Manually archives a job. Refuses (canArchive() = false) while pipeline_status is Applied or
- * Interview — this is the same guardrail closeStaleJobs enforces for automatic archiving, so the
- * "never archive Applied/Interview" rule holds for both paths. A no-op (not an error) if the job
- * is already archived.
+ * Manually archives a job. Refuses (canArchive() = false) while the job is protected — Applied,
+ * Interviewing, Offer, Employer Rejected, or pinned — the same guardrail every automatic archive
+ * path (closeStaleJobs, runAgeBasedSweep) enforces, so "never archive a protected job" holds
+ * regardless of trigger. A no-op (not an error) if the job is already archived.
  */
 export function archiveJob(
   id: number,
@@ -361,10 +375,11 @@ export function archiveJob(
   const existing = db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job | undefined;
   if (!existing) return { ok: false, blockedReason: "Job not found" };
   if (existing.is_archived === 1) return { ok: true, job: existing };
-  if (!canArchive(existing.pipeline_status)) {
+  if (!canArchive({ pipelineStatus: existing.pipeline_status, pinned: existing.pinned })) {
+    const why = existing.pinned === 1 ? "it is pinned" : `it is marked "${existing.pipeline_status}"`;
     return {
       ok: false,
-      blockedReason: `Cannot archive a job marked "${existing.pipeline_status}" — change its pipeline status first.`,
+      blockedReason: `Cannot archive this job — ${why}. Unpin it or change its pipeline status first.`,
     };
   }
 
@@ -376,6 +391,142 @@ export function archiveJob(
   recordHistory(db, id, "lifecycle", existing.is_active === 1 ? "Active" : "Closed", "Archived", finalReason);
 
   return { ok: true, job: db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job };
+}
+
+/** Pins/unpins a job — a manual override that protects it from every auto-archive/auto-delete path
+ *  regardless of age or pipeline_status, same protection tier as Applied/Interviewing/Offer/
+ *  Employer Rejected. Does not itself archive/restore/delete anything. */
+export function setJobPinned(id: number, pinned: boolean): Job | undefined {
+  const db = getDb();
+  const existing = db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job | undefined;
+  if (!existing) return undefined;
+
+  const next = pinned ? 1 : 0;
+  db.prepare("UPDATE jobs SET pinned = @pinned, updated_at = datetime('now') WHERE id = @id").run({ id, pinned: next });
+  if (existing.pinned !== next) {
+    recordHistory(
+      db,
+      id,
+      "lifecycle",
+      existing.pinned === 1 ? "Pinned" : "Unpinned",
+      next === 1 ? "Pinned" : "Unpinned",
+      next === 1 ? "Manually pinned" : "Manually unpinned"
+    );
+  }
+
+  return db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job;
+}
+
+/**
+ * Writes a suppression fingerprint (see suppressed_jobs in schema.sql) and deletes the job row in
+ * one transaction-scoped step. Internal — used by both markNotInterested (immediate, any age) and
+ * runAgeBasedSweep (age > 10 days, unapplied/unpinned). job_status_history rows for this job
+ * cascade-delete with it (ON DELETE CASCADE) — the reason is preserved on the suppression row
+ * instead, since history dies with the job by design.
+ */
+function suppressAndDeleteJob(
+  db: Database.Database,
+  job: { id: number; company_id: number; dedupe_key: string; title: string },
+  reason: string
+): void {
+  db.prepare(
+    `INSERT INTO suppressed_jobs (dedupe_key, company_id, title, reason)
+     VALUES (@dedupeKey, @companyId, @title, @reason)
+     ON CONFLICT(dedupe_key) DO UPDATE SET reason = excluded.reason, suppressed_at = datetime('now')`
+  ).run({ dedupeKey: job.dedupe_key, companyId: job.company_id, title: job.title, reason });
+  db.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
+}
+
+/**
+ * "Not Interested" is an action, not a persisted pipeline_status (see the PipelineStatus doc
+ * comment in src/types/index.ts) — this immediately deletes the job record and writes a
+ * suppression fingerprint so the exact same requisition never silently reappears, regardless of
+ * age, pipeline_status, or pinned. The caller (API route) is responsible for deleting the job's
+ * generated-files directory via src/lib/generatedFiles.ts — this function only touches the DB.
+ */
+export function markNotInterested(jobId: number): DeletedJobRef | undefined {
+  const db = getDb();
+  const job = db
+    .prepare(
+      `SELECT j.id, j.company_id, j.dedupe_key, j.title, c.name AS company_name
+       FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.id = ?`
+    )
+    .get(jobId) as
+    | { id: number; company_id: number; dedupe_key: string; title: string; company_name: string }
+    | undefined;
+  if (!job) return undefined;
+
+  db.transaction(() => {
+    suppressAndDeleteJob(db, job, "Not Interested");
+  })();
+
+  return { jobId: job.id, companyName: job.company_name, dedupeKey: job.dedupe_key };
+}
+
+/**
+ * Age-based sweep, independent of any single company's scan: evaluates every job's current age
+ * (getJobAgeDays — posted_at when reliable, else first_seen_at, never last_seen_at) against the
+ * Fresh/Active/Archived/Delete policy, for jobs of ANY source_type (unlike closeStaleJobs, this
+ * isn't about a posting closing upstream — it's purely "how long has this sat unactioned," which
+ * applies to career-link jobs too). Protected jobs (isLifecycleProtected: Applied, Interviewing,
+ * Offer, Employer Rejected, or pinned) are skipped entirely, at any age.
+ *
+ *   8-10 days old, unapplied/unpinned, not yet archived -> archived.
+ *   >10 days old, unapplied/unpinned (regardless of current archived state) -> permanently
+ *     deleted, with a suppression fingerprint written so it can't silently reappear.
+ *
+ * Called once per runScan() in src/lib/scan.ts — not tied to which companies were scanned this run.
+ */
+export function runAgeBasedSweep(now: Date = new Date()): AgeSweepResult {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT j.id, j.company_id, j.dedupe_key, j.title, j.posted_at, j.first_seen_at,
+              j.is_active, j.is_archived, j.pipeline_status, j.pinned, c.name AS company_name
+       FROM jobs j JOIN companies c ON c.id = j.company_id`
+    )
+    .all() as {
+    id: number;
+    company_id: number;
+    dedupe_key: string;
+    title: string;
+    posted_at: string | null;
+    first_seen_at: string;
+    is_active: 0 | 1;
+    is_archived: 0 | 1;
+    pipeline_status: PipelineStatus;
+    pinned: 0 | 1;
+    company_name: string;
+  }[];
+
+  const archiveStmt = db.prepare(
+    `UPDATE jobs SET is_archived = 1, archived_at = datetime('now'), archived_reason = @reason, updated_at = datetime('now')
+     WHERE id = @id`
+  );
+
+  let archived = 0;
+  const deleted: DeletedJobRef[] = [];
+
+  db.transaction(() => {
+    for (const job of rows) {
+      if (isLifecycleProtected({ pipelineStatus: job.pipeline_status, pinned: job.pinned })) continue;
+
+      const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at }, now);
+      const band = getJobAgeBand(ageDays);
+
+      if (band === "stale") {
+        suppressAndDeleteJob(db, job, `Aged out: ${ageDays} days unapplied`);
+        deleted.push({ jobId: job.id, companyName: job.company_name, dedupeKey: job.dedupe_key });
+      } else if (band === "aging" && job.is_archived === 0) {
+        const reason = `Aged out: ${ageDays} days unapplied`;
+        archiveStmt.run({ id: job.id, reason });
+        recordHistory(db, job.id, "lifecycle", job.is_active === 1 ? "Active" : "Closed", "Archived", reason);
+        archived++;
+      }
+    }
+  })();
+
+  return { archived, deleted };
 }
 
 /**

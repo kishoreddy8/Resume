@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { use } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
+import { getJobAgeBand, getJobAgeDays } from "@/lib/jobLifecycle";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
 import type { DescriptionSections, JobStatusHistoryEntry, JobWithCompany } from "@/types";
 
@@ -34,6 +36,35 @@ function parseTags(json: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+const AGE_BAND_LABELS = {
+  fresh: "Fresh",
+  active: "Active",
+  aging: "Aging",
+  stale: "Stale",
+} as const;
+
+const AGE_BAND_STYLES = {
+  fresh: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  active: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+  aging: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  stale: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
+} as const;
+
+/** Fresh (0-3 days old) is the policy's "highlight as high priority" band — computed live from
+ *  posted_at/first_seen_at, never persisted. See src/lib/jobLifecycle.ts. */
+function AgeBadge({ job }: { job: JobWithCompany }) {
+  const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at });
+  const band = getJobAgeBand(ageDays);
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${AGE_BAND_STYLES[band]}`}
+      title={`${ageDays} day${ageDays === 1 ? "" : "s"} old`}
+    >
+      {AGE_BAND_LABELS[band]} · {ageDays}d
+    </span>
+  );
 }
 
 const SECTION_LABELS: Record<keyof DescriptionSections, string> = {
@@ -101,10 +132,11 @@ function CopyPromptButton({ job }: { job: JobWithCompany }) {
 }
 
 /**
- * Archive/restore + a plain-language summary of where the job stands in the lifecycle (live,
- * closed-but-not-archived, or archived). archiveJob() on the server is the source of truth for the
- * Applied/Interview guardrail — this just surfaces its rejection message rather than re-deriving
- * the rule client-side, so the two can never disagree.
+ * Archive/restore/pin + a plain-language summary of where the job stands in the lifecycle (live,
+ * closed-but-not-archived, or archived), plus the age band driving the automatic policy. The
+ * server (archiveJob/canArchive in src/db/queries/jobs.ts + src/lib/jobLifecycle.ts) is the source
+ * of truth for the protected-status/pinned guardrail — this just surfaces its rejection message
+ * rather than re-deriving the rule client-side, so the two can never disagree.
  */
 function LifecycleCard({ job, onChanged }: { job: JobWithCompany; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -145,12 +177,32 @@ function LifecycleCard({ job, onChanged }: { job: JobWithCompany; onChanged: () 
     }
   }
 
+  async function togglePinned() {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinned: job.pinned !== 1 }),
+      });
+      if (!res.ok) throw new Error("Failed to update pin");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update pin");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const state = job.is_archived === 1 ? "Archived" : job.is_active === 1 ? "Active" : "Closed";
+  const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at });
+  const ageBand = getJobAgeBand(ageDays);
 
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
       <h2 className="mb-2 text-sm font-semibold">Lifecycle</h2>
-      <div className="mb-2 text-sm">
+      <div className="mb-2 flex flex-wrap items-center gap-1.5 text-sm">
         <span
           className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
             state === "Active"
@@ -162,20 +214,34 @@ function LifecycleCard({ job, onChanged }: { job: JobWithCompany; onChanged: () 
         >
           {state}
         </span>
+        <AgeBadge job={job} />
+        {job.pinned === 1 && (
+          <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-900/40 dark:text-violet-300">
+            Pinned
+          </span>
+        )}
       </div>
       <ul className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
         {job.closed_at && <li>Closed: {formatDateTime(job.closed_at)}</li>}
-        {job.missed_scan_count > 0 && (
-          <li>Missed scans in a row: {job.missed_scan_count}</li>
-        )}
         {job.is_archived === 1 && (
           <>
             <li>Archived: {formatDateTime(job.archived_at)}</li>
             {job.archived_reason && <li>Reason: {job.archived_reason}</li>}
           </>
         )}
+        {job.pinned === 1 && <li>Pinned — never auto-archived or auto-deleted, regardless of age.</li>}
+        {ageBand === "aging" && job.pinned !== 1 && job.is_archived === 0 && (
+          <li className="text-amber-700 dark:text-amber-500">
+            8–10 days old and unapplied — will archive automatically unless pinned or moved past New/Interested.
+          </li>
+        )}
+        {ageBand === "stale" && job.pinned !== 1 && (
+          <li className="text-orange-700 dark:text-orange-500">
+            Over 10 days old and unapplied — will be permanently deleted on the next scan unless pinned or applied to.
+          </li>
+        )}
       </ul>
-      <div className="mt-3">
+      <div className="mt-3 flex flex-wrap gap-2">
         {job.is_archived === 1 ? (
           <button
             disabled={busy}
@@ -193,7 +259,61 @@ function LifecycleCard({ job, onChanged }: { job: JobWithCompany; onChanged: () 
             {busy ? "Archiving…" : "Archive job"}
           </button>
         )}
+        <button
+          disabled={busy}
+          onClick={togglePinned}
+          className="rounded border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        >
+          {job.pinned === 1 ? "Unpin" : "Pin (never auto-archive/delete)"}
+        </button>
       </div>
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+/** Irreversible — deletes the job record, its generated files, and leaves a suppression
+ *  fingerprint so the exact same requisition never reappears (src/db/queries/jobs.ts's
+ *  markNotInterested). Unlike Archive, there is no Restore. */
+function NotInterestedButton({ job }: { job: JobWithCompany }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function markNotInterested() {
+    if (
+      !confirm(
+        `Mark "${job.title}" as Not Interested? This permanently deletes the job record and any generated resume files — this can't be undone.`
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/not-interested`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to mark as Not Interested");
+      router.push("/jobs");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to mark as Not Interested");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/40 dark:bg-red-950/20">
+      <h2 className="mb-1 text-sm font-semibold text-red-800 dark:text-red-300">Not interested</h2>
+      <p className="mb-3 text-xs text-red-700/80 dark:text-red-400/80">
+        Permanently deletes this job and its generated files, and prevents this exact posting from
+        reappearing on future scans.
+      </p>
+      <button
+        disabled={busy}
+        onClick={markNotInterested}
+        className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/30"
+      >
+        {busy ? "Deleting…" : "Not interested — delete"}
+      </button>
       {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
     </div>
   );
@@ -353,7 +473,10 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
         </Link>
         <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold">{job.title}</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-semibold">{job.title}</h1>
+              {job.is_archived === 0 && <AgeBadge job={job} />}
+            </div>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               {job.company_name} · {job.source_type}
               {job.is_archived === 1 ? " · archived" : !job.is_active && " · closed"}
@@ -508,6 +631,8 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
           </div>
 
           <HistoryCard jobId={job.id} refreshKey={historyKey} />
+
+          <NotInterestedButton job={job} />
         </div>
       </div>
     </div>
