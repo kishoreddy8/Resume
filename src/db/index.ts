@@ -483,6 +483,37 @@ function ensureStructuredIntelIndexes(db: Database.Database) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_salary_min ON jobs(salary_min)");
 }
 
+// --- Scanner Reliability & Observability ----------------------------------------------------
+
+// New, purely-additive company columns (see schema.sql's scan_runs table doc comment and
+// src/db/queries/companies.ts's recordScanSuccess/recordScanPartial/recordScanFailure for what
+// writes each). All nullable/defaulted, no CHECK constraints — plain ALTER TABLE ADD COLUMN.
+const COMPANIES_SCAN_HEALTH_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
+  { name: "last_successful_scan_at", ddl: "ALTER TABLE companies ADD COLUMN last_successful_scan_at TEXT" },
+  { name: "last_failed_scan_at", ddl: "ALTER TABLE companies ADD COLUMN last_failed_scan_at TEXT" },
+  {
+    name: "consecutive_failures",
+    ddl: "ALTER TABLE companies ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
+  },
+  { name: "last_error_category", ddl: "ALTER TABLE companies ADD COLUMN last_error_category TEXT" },
+  { name: "last_error_message", ddl: "ALTER TABLE companies ADD COLUMN last_error_message TEXT" },
+  {
+    name: "connector_health",
+    ddl: "ALTER TABLE companies ADD COLUMN connector_health TEXT NOT NULL DEFAULT 'unknown'",
+  },
+];
+
+function runScanHealthMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(companies)").all() as { name: string }[]).map((c) => c.name)
+  );
+  for (const column of COMPANIES_SCAN_HEALTH_ADDITIVE_COLUMNS) {
+    if (!existingColumns.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+}
+
 function createConnection(): Database.Database {
   ensureDataDirs();
   const db = new Database(DB_PATH);
@@ -502,6 +533,7 @@ function createConnection(): Database.Database {
   ensureJobsIndexes(db);
   runStructuredIntelMigrations(db);
   ensureStructuredIntelIndexes(db);
+  runScanHealthMigrations(db);
   return db;
 }
 

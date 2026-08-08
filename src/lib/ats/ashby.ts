@@ -1,4 +1,6 @@
 import { extractSalaryText } from "@/lib/extractSalary";
+import type { FetchWithRetryOptions } from "@/lib/scan/retry";
+import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
 import { stripHtml } from "@/lib/stripHtml";
 import type { NormalizedJob } from "@/types";
 
@@ -26,13 +28,13 @@ interface AshbyResponse {
   jobs: AshbyJob[];
 }
 
-export async function fetchAshbyJobs(boardName: string): Promise<NormalizedJob[]> {
+export async function fetchAshbyJobs(
+  boardName: string,
+  options: FetchWithRetryOptions = {}
+): Promise<NormalizedJob[]> {
   const url = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(boardName)}?includeCompensation=true`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(`Ashby API returned ${res.status} for board "${boardName}"`);
-  }
-  const data = (await res.json()) as AshbyResponse;
+  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, options);
+  const data = await parseJsonOrThrow<AshbyResponse>(res, url);
   return data.jobs.map((job) => {
     // Ashby doesn't reliably include full descriptions on the list endpoint for every board.
     const descriptionText = job.descriptionPlain || stripHtml(job.descriptionHtml) || "";

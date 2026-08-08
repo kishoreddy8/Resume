@@ -243,3 +243,35 @@ CREATE TABLE IF NOT EXISTS job_certifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_job_certifications_job ON job_certifications(job_id);
+
+-- Scanner Reliability & Observability: one row per company-scan attempt (see src/lib/scan.ts).
+-- Both timestamps are already known when the row is written (scanCompany runs to completion, one
+-- way or another, before this is ever inserted) so there's no intermediate "running" state to model.
+-- No CHECK on status/error_category (same reasoning as companies.source_type above) — the error
+-- taxonomy in src/lib/scan/errors.ts may grow, app-layer validated instead.
+CREATE TABLE IF NOT EXISTS scan_runs (
+  id INTEGER PRIMARY KEY,
+  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  status TEXT NOT NULL, -- 'success' | 'partial' | 'failed'
+  jobs_discovered INTEGER NOT NULL DEFAULT 0,
+  jobs_added INTEGER NOT NULL DEFAULT 0,
+  jobs_updated INTEGER NOT NULL DEFAULT 0,
+  jobs_unchanged INTEGER NOT NULL DEFAULT 0,
+  duplicates_skipped INTEGER NOT NULL DEFAULT 0,
+  jobs_closed INTEGER NOT NULL DEFAULT 0,
+  jobs_archived INTEGER NOT NULL DEFAULT 0,
+  -- Always 0 at this per-company level today: deletion only happens via the global,
+  -- company-independent runAgeBasedSweep() in src/db/queries/jobs.ts, which isn't attributed back
+  -- to any one scan_run. Kept as a column for the full field set this feature was asked to track.
+  jobs_deleted INTEGER NOT NULL DEFAULT 0,
+  description_failures INTEGER NOT NULL DEFAULT 0,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  error_category TEXT,
+  error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_runs_company ON scan_runs(company_id, started_at DESC);

@@ -152,6 +152,16 @@ export function getJobIdByDedupeKey(dedupeKey: string): number | undefined {
   return row?.id;
 }
 
+/** Full row lookup by dedupe_key — read-only, does not participate in upsertJob's own logic. Used
+ *  by src/lib/scan.ts to snapshot a job's content fields immediately before calling upsertJob, so
+ *  it can diff before/after and report "unchanged" vs. "updated" for scan_runs metrics without
+ *  upsertJob itself needing to expose that distinction (see the Scanner Reliability & Observability
+ *  design note: upsertJob's "inserted"|"updated"|"suppressed" return contract is asserted verbatim
+ *  by existing dedupe/lifecycle tests and is intentionally left untouched). */
+export function getJobByDedupeKey(dedupeKey: string): Job | undefined {
+  return getDb().prepare("SELECT * FROM jobs WHERE dedupe_key = ?").get(dedupeKey) as Job | undefined;
+}
+
 export function updateJobPipeline(
   id: number,
   updates: {

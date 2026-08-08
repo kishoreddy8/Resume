@@ -1,5 +1,7 @@
 import pLimit from "p-limit";
 import { extractSalaryText } from "@/lib/extractSalary";
+import type { FetchWithRetryOptions } from "@/lib/scan/retry";
+import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
 import { stripHtml } from "@/lib/stripHtml";
 import type { NormalizedJob } from "@/types";
 
@@ -28,12 +30,14 @@ export function decodeWorkdayToken(token: string): WorkdayIdentifier {
   return { tenant, host, site };
 }
 
-function siteBaseUrl(id: WorkdayIdentifier): string {
-  return `https://${id.tenant}.${id.host}.myworkdayjobs.com/${id.site}`;
+function siteBaseUrl(id: WorkdayIdentifier, hostOverride?: string): string {
+  const origin = hostOverride ?? `https://${id.tenant}.${id.host}.myworkdayjobs.com`;
+  return `${origin}/${id.site}`;
 }
 
-function cxsBaseUrl(id: WorkdayIdentifier): string {
-  return `https://${id.tenant}.${id.host}.myworkdayjobs.com/wday/cxs/${id.tenant}/${id.site}`;
+function cxsBaseUrl(id: WorkdayIdentifier, hostOverride?: string): string {
+  const origin = hostOverride ?? `https://${id.tenant}.${id.host}.myworkdayjobs.com`;
+  return `${origin}/wday/cxs/${id.tenant}/${id.site}`;
 }
 
 interface WorkdayListJob {
@@ -61,45 +65,67 @@ interface WorkdayDetailResponse {
   jobPostingInfo: WorkdayJobPostingInfo;
 }
 
-async function fetchListPage(cxsBase: string, offset: number): Promise<WorkdayListResponse> {
-  const res = await fetch(`${cxsBase}/jobs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ appliedFacets: {}, limit: PAGE_SIZE, offset, searchText: "" }),
-  });
-  if (!res.ok) {
-    throw new Error(`Workday jobs list returned ${res.status} at offset ${offset}`);
-  }
-  return (await res.json()) as WorkdayListResponse;
+async function fetchListPage(
+  cxsBase: string,
+  offset: number,
+  options: FetchWithRetryOptions
+): Promise<WorkdayListResponse> {
+  const url = `${cxsBase}/jobs`;
+  const res = await fetchWithRetry(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ appliedFacets: {}, limit: PAGE_SIZE, offset, searchText: "" }),
+    },
+    options
+  );
+  return parseJsonOrThrow<WorkdayListResponse>(res, url);
 }
 
-async function fetchAllListings(cxsBase: string): Promise<WorkdayListJob[]> {
-  const first = await fetchListPage(cxsBase, 0);
+async function fetchAllListings(
+  cxsBase: string,
+  options: FetchWithRetryOptions
+): Promise<WorkdayListJob[]> {
+  const first = await fetchListPage(cxsBase, 0, options);
   const all = [...first.jobPostings];
 
   // Sequential paging (mirrors Workday's own frontend) — a company's board is a handful of pages
   // at most in practice, so this isn't a meaningful latency concern and is gentler on the API.
   for (let offset = PAGE_SIZE; offset < first.total; offset += PAGE_SIZE) {
-    const page = await fetchListPage(cxsBase, offset);
+    const page = await fetchListPage(cxsBase, offset, options);
     all.push(...page.jobPostings);
   }
   return all;
 }
 
-async function fetchDetail(cxsBase: string, externalPath: string): Promise<WorkdayJobPostingInfo> {
-  const res = await fetch(`${cxsBase}${externalPath}`, { headers: { Accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(`Workday job detail returned ${res.status} for ${externalPath}`);
-  }
-  const data = (await res.json()) as WorkdayDetailResponse;
+async function fetchDetail(
+  cxsBase: string,
+  externalPath: string,
+  options: FetchWithRetryOptions
+): Promise<WorkdayJobPostingInfo> {
+  const url = `${cxsBase}${externalPath}`;
+  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, options);
+  const data = await parseJsonOrThrow<WorkdayDetailResponse>(res, url);
   return data.jobPostingInfo;
 }
 
-export async function fetchWorkdayJobs(token: string): Promise<NormalizedJob[]> {
+export interface FetchWorkdayJobsOptions extends FetchWithRetryOptions {
+  /** Testing-only: overrides the `https://{tenant}.{host}.myworkdayjobs.com` origin both the list
+   *  and detail requests are built from, so tests can point a real Workday token shape at a local
+   *  HTTP server instead of the real host. Production callers never pass this. */
+  hostOverride?: string;
+}
+
+export async function fetchWorkdayJobs(
+  token: string,
+  options: FetchWorkdayJobsOptions = {}
+): Promise<NormalizedJob[]> {
+  const { hostOverride, ...retryOptions } = options;
   const identifier = decodeWorkdayToken(token);
-  const cxsBase = cxsBaseUrl(identifier);
-  const siteBase = siteBaseUrl(identifier);
-  const listings = await fetchAllListings(cxsBase);
+  const cxsBase = cxsBaseUrl(identifier, hostOverride);
+  const siteBase = siteBaseUrl(identifier, hostOverride);
+  const listings = await fetchAllListings(cxsBase, retryOptions);
 
   const limit = pLimit(DETAIL_CONCURRENCY);
   return Promise.all(
@@ -107,7 +133,7 @@ export async function fetchWorkdayJobs(token: string): Promise<NormalizedJob[]> 
       limit(async (): Promise<NormalizedJob> => {
         const fallbackUrl = `${siteBase}${listing.externalPath}`;
         try {
-          const info = await fetchDetail(cxsBase, listing.externalPath);
+          const info = await fetchDetail(cxsBase, listing.externalPath, retryOptions);
           const descriptionText = stripHtml(info.jobDescription);
           return {
             externalId: info.jobReqId ?? listing.externalPath,

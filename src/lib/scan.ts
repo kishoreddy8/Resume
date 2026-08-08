@@ -1,7 +1,8 @@
 import pLimit from "p-limit";
-import { updateCompany, updateCompanyScanStatus } from "@/db/queries/companies";
-import { closeStaleJobs, getJobIdByDedupeKey, runAgeBasedSweep, upsertJob } from "@/db/queries/jobs";
+import { recordScanFailure, recordScanPartial, recordScanSuccess, updateCompany, updateCompanyScanStatus } from "@/db/queries/companies";
+import { closeStaleJobs, getJobByDedupeKey, getJobIdByDedupeKey, runAgeBasedSweep, upsertJob } from "@/db/queries/jobs";
 import { upsertJobIntel } from "@/db/queries/jobIntel";
+import { recordScanRun } from "@/db/queries/scanRuns";
 import { dedupeKeyForAts, dedupeKeyForCareerLink, normalizeJobUrl } from "@/lib/dedupe";
 import { deleteGeneratedFiles } from "@/lib/generatedFiles";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
@@ -9,13 +10,22 @@ import { scanSponsorshipLanguage } from "@/lib/h1b/keywordScan";
 import { extractJobIntel } from "@/lib/jobIntel/extractJobIntel";
 import { fetchJobsForCompany } from "@/lib/normalize";
 import { parseDescriptionSections } from "@/lib/parseSections";
-import type { Company, NormalizedJob, ScanResult, ScanSummary } from "@/types";
+import { categorizeThrownError } from "@/lib/scan/errors";
+import { canRunLifecycleActions, determineScanStatus, hasContentChanged } from "@/lib/scan/status";
+import type { Company, ErrorCategory, NormalizedJob, ScanResult, ScanSummary } from "@/types";
 
 const ATS_CONCURRENCY = 6;
 const CAREER_LINK_CONCURRENCY = 2;
 const ATS_DETECTED_NOTE_PREFIX = "Detected embedded ATS:";
 
 async function scanCompany(company: Company): Promise<ScanResult> {
+  const startedAt = new Date().toISOString();
+  const t0 = Date.now();
+  let retryCount = 0;
+  const onRetry = () => {
+    retryCount++;
+  };
+
   try {
     let jobs: NormalizedJob[];
     let detectedAts: { source: string; token: string } | undefined;
@@ -35,13 +45,20 @@ async function scanCompany(company: Company): Promise<ScanResult> {
         }
       }
     } else {
-      jobs = await fetchJobsForCompany(company);
+      jobs = await fetchJobsForCompany(company, { onRetry });
     }
 
     const seenDedupeKeys: string[] = [];
     let jobsNew = 0;
     let jobsUpdated = 0;
     let jobsSuppressed = 0;
+    // Finer-grained counters for scan_runs only — jobsNew/jobsUpdated/jobsSuppressed above (and the
+    // ScanResult returned below) keep their exact pre-existing meaning and values. Every
+    // outcome==="updated" case falls into exactly one of jobsTrulyUpdated/jobsUnchanged, so their
+    // sum always equals jobsUpdated.
+    let jobsTrulyUpdated = 0;
+    let jobsUnchanged = 0;
+    let descriptionFailures = 0;
 
     for (const job of jobs) {
       const dedupeKey =
@@ -49,6 +66,12 @@ async function scanCompany(company: Company): Promise<ScanResult> {
           ? dedupeKeyForCareerLink(company.id, job)
           : dedupeKeyForAts(company.source_type, company.id, job.externalId ?? normalizeJobUrl(job.url));
       seenDedupeKeys.push(dedupeKey);
+
+      if (!job.descriptionText) descriptionFailures++;
+
+      // Snapshotted before upsertJob so an "updated" outcome can be split into "content genuinely
+      // changed" vs. "re-seen, nothing changed" for scan_runs — read-only, does not affect upsertJob.
+      const before = getJobByDedupeKey(dedupeKey);
 
       const { mentioned, polarity, snippet } = scanSponsorshipLanguage(job.descriptionText);
       const { confidence: h1bCombinedConfidence } = combineH1bConfidence(company.h1b_confidence, polarity);
@@ -66,8 +89,11 @@ async function scanCompany(company: Company): Promise<ScanResult> {
         h1bCombinedConfidence,
       });
       if (outcome === "inserted") jobsNew++;
-      else if (outcome === "updated") jobsUpdated++;
-      else jobsSuppressed++;
+      else if (outcome === "updated") {
+        jobsUpdated++;
+        if (before && !hasContentChanged(before, job)) jobsUnchanged++;
+        else jobsTrulyUpdated++;
+      } else jobsSuppressed++;
 
       // Structured Job Intelligence: additive, best-effort, and deliberately non-fatal to the scan
       // itself — reuses the sponsorship polarity/snippet already computed above rather than
@@ -97,13 +123,44 @@ async function scanCompany(company: Company): Promise<ScanResult> {
       }
     }
 
-    // Career-link scraping is best-effort/partial by nature — never auto-close/archive those jobs
-    // (see closeStaleJobs's own doc comment for the closed->archived lifecycle rules that DO apply
-    // to every ATS-sourced company).
-    const { jobsClosed, jobsArchived } =
-      company.source_type === "career_link"
-        ? { jobsClosed: 0, jobsArchived: 0 }
-        : closeStaleJobs(company.id, seenDedupeKeys);
+    // SAFETY RULE: a partial scan (list complete, but ≥1 job's description permanently failed —
+    // see determineScanStatus) never closes/archives jobs, same as the pre-existing career_link
+    // exclusion below (best-effort scrapes are never authoritative). Only a fully successful ATS
+    // scan may act on "this job disappeared" — see canRunLifecycleActions's doc comment.
+    const scanStatus = determineScanStatus(descriptionFailures);
+    const { jobsClosed, jobsArchived } = canRunLifecycleActions(scanStatus, company.source_type)
+      ? closeStaleJobs(company.id, seenDedupeKeys)
+      : { jobsClosed: 0, jobsArchived: 0 };
+
+    const finishedAt = new Date().toISOString();
+    const durationMs = Date.now() - t0;
+    const partialErrorMessage =
+      scanStatus === "partial" ? `${descriptionFailures} job description(s) failed to fetch after retries` : null;
+
+    recordScanRun({
+      companyId: company.id,
+      provider: company.source_type,
+      startedAt,
+      finishedAt,
+      durationMs,
+      status: scanStatus,
+      jobsDiscovered: jobs.length,
+      jobsAdded: jobsNew,
+      jobsUpdated: jobsTrulyUpdated,
+      jobsUnchanged,
+      duplicatesSkipped: jobsSuppressed,
+      jobsClosed,
+      jobsArchived,
+      descriptionFailures,
+      retryCount,
+      errorCategory: null,
+      errorMessage: partialErrorMessage,
+    });
+    if (scanStatus === "success") {
+      recordScanSuccess(company.id);
+    } else {
+      recordScanPartial(company.id, { errorCategory: null, errorMessage: partialErrorMessage });
+    }
 
     updateCompanyScanStatus(company.id, "ok");
     return {
@@ -124,6 +181,31 @@ async function scanCompany(company: Company): Promise<ScanResult> {
     // (network error, ATS API down, bad Workday token, etc.) skips straight here without touching
     // any job's lifecycle state at all.
     const message = err instanceof Error ? err.message : String(err);
+    const category: ErrorCategory = categorizeThrownError(err);
+    const finishedAt = new Date().toISOString();
+    const durationMs = Date.now() - t0;
+
+    recordScanRun({
+      companyId: company.id,
+      provider: company.source_type,
+      startedAt,
+      finishedAt,
+      durationMs,
+      status: "failed",
+      jobsDiscovered: 0,
+      jobsAdded: 0,
+      jobsUpdated: 0,
+      jobsUnchanged: 0,
+      duplicatesSkipped: 0,
+      jobsClosed: 0,
+      jobsArchived: 0,
+      descriptionFailures: 0,
+      retryCount,
+      errorCategory: category,
+      errorMessage: message,
+    });
+    recordScanFailure(company.id, { errorCategory: category, errorMessage: message });
+
     updateCompanyScanStatus(company.id, "error", message);
     return {
       companyId: company.id,

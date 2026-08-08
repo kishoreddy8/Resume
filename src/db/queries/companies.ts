@@ -1,5 +1,6 @@
 import { getDb } from "@/db";
-import type { Company, H1bCompanyConfidence, H1bMatchTier, SourceType } from "@/types";
+import { computeConnectorHealth } from "@/lib/scan/health";
+import type { Company, ErrorCategory, H1bCompanyConfidence, H1bMatchTier, SourceType } from "@/types";
 
 export function listCompanies(): Company[] {
   return getDb()
@@ -97,6 +98,77 @@ export function updateCompanyScanStatus(
        WHERE id = @id`
     )
     .run({ id, status, error: error ?? null });
+}
+
+// --- Scanner Reliability & Observability (additive; see src/lib/scan.ts) ----------------------
+// These run alongside (never replacing) the existing updateCompanyScanStatus call above, so the
+// Companies page's existing last_scanned_at/last_scan_status/last_scan_error display is untouched.
+
+/** A clean scan: resets the failure streak and marks the connector healthy. Does not touch
+ *  last_error_category/last_error_message — those stay as a historical "most recent error ever"
+ *  breadcrumb even once the connector has recovered, which is what a health dashboard wants to
+ *  show ("last error: rate_limited, 3 runs ago") rather than erasing the trail on the first success. */
+export function recordScanSuccess(id: number): void {
+  getDb()
+    .prepare(
+      `UPDATE companies SET
+        last_successful_scan_at = datetime('now'),
+        consecutive_failures = 0,
+        connector_health = 'healthy',
+        updated_at = datetime('now')
+       WHERE id = @id`
+    )
+    .run({ id });
+}
+
+/** A partial scan (job list fetched completely; some job description fetches permanently failed)
+ *  is neither a clean success nor a failure — consecutive_failures is deliberately left untouched
+ *  (see src/lib/scan/status.ts's determineScanStatus doc comment), while connector_health still
+ *  reflects the degradation immediately rather than waiting for a run that fully fails. */
+export function recordScanPartial(
+  id: number,
+  input: { errorCategory: ErrorCategory | null; errorMessage: string | null }
+): void {
+  getDb()
+    .prepare(
+      `UPDATE companies SET
+        connector_health = 'degraded',
+        last_error_category = @errorCategory,
+        last_error_message = @errorMessage,
+        updated_at = datetime('now')
+       WHERE id = @id`
+    )
+    .run({ id, ...input });
+}
+
+/** A failed scan: bumps the failure streak and recomputes connector_health from it (see
+ *  src/lib/scan/health.ts's computeConnectorHealth) — a single blip reads 'degraded', a sustained
+ *  streak reads 'down'. */
+export function recordScanFailure(
+  id: number,
+  input: { errorCategory: ErrorCategory | null; errorMessage: string | null }
+): void {
+  const db = getDb();
+  const existing = db.prepare("SELECT consecutive_failures FROM companies WHERE id = ?").get(id) as
+    | { consecutive_failures: number }
+    | undefined;
+  const consecutiveFailures = (existing?.consecutive_failures ?? 0) + 1;
+
+  db.prepare(
+    `UPDATE companies SET
+      last_failed_scan_at = datetime('now'),
+      consecutive_failures = @consecutiveFailures,
+      connector_health = @connectorHealth,
+      last_error_category = @errorCategory,
+      last_error_message = @errorMessage,
+      updated_at = datetime('now')
+     WHERE id = @id`
+  ).run({
+    id,
+    consecutiveFailures,
+    connectorHealth: computeConnectorHealth(consecutiveFailures),
+    ...input,
+  });
 }
 
 export interface UpdateCompanyH1bConfidenceInput {

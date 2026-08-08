@@ -1,4 +1,6 @@
 import { extractSalaryText } from "@/lib/extractSalary";
+import type { FetchWithRetryOptions } from "@/lib/scan/retry";
+import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
 import { decodeHtmlEntities, stripHtml } from "@/lib/stripHtml";
 import type { NormalizedJob } from "@/types";
 
@@ -16,13 +18,13 @@ interface GreenhouseResponse {
   jobs: GreenhouseJob[];
 }
 
-export async function fetchGreenhouseJobs(boardToken: string): Promise<NormalizedJob[]> {
+export async function fetchGreenhouseJobs(
+  boardToken: string,
+  options: FetchWithRetryOptions = {}
+): Promise<NormalizedJob[]> {
   const url = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(boardToken)}/jobs?content=true`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(`Greenhouse API returned ${res.status} for board "${boardToken}"`);
-  }
-  const data = (await res.json()) as GreenhouseResponse;
+  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, options);
+  const data = await parseJsonOrThrow<GreenhouseResponse>(res, url);
   return data.jobs.map((job) => {
     const descriptionText = stripHtml(job.content);
     return {

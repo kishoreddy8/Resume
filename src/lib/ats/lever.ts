@@ -1,4 +1,6 @@
 import { extractSalaryText } from "@/lib/extractSalary";
+import type { FetchWithRetryOptions } from "@/lib/scan/retry";
+import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
 import { stripHtml } from "@/lib/stripHtml";
 import type { NormalizedJob } from "@/types";
 
@@ -14,13 +16,13 @@ interface LeverJob {
   createdAt?: number;
 }
 
-export async function fetchLeverJobs(companySlug: string): Promise<NormalizedJob[]> {
+export async function fetchLeverJobs(
+  companySlug: string,
+  options: FetchWithRetryOptions = {}
+): Promise<NormalizedJob[]> {
   const url = `https://api.lever.co/v0/postings/${encodeURIComponent(companySlug)}?mode=json`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(`Lever API returned ${res.status} for company "${companySlug}"`);
-  }
-  const jobs = (await res.json()) as LeverJob[];
+  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, options);
+  const jobs = await parseJsonOrThrow<LeverJob[]>(res, url);
   return jobs.map((job) => {
     const descriptionText = job.descriptionPlain ?? stripHtml(job.description);
     // Lever has no structured salary field; check the main description and the "additional"

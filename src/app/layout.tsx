@@ -24,6 +24,7 @@ const NAV_LINKS = [
   { href: "/pipeline", label: "Pipeline" },
   { href: "/jobs/archived", label: "Archived" },
   { href: "/master-files", label: "Master Files" },
+  { href: "/scanner", label: "Scanner" },
 ];
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

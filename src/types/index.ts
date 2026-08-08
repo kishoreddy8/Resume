@@ -30,6 +30,29 @@ export type PipelineStatus =
   | "Offer"
   | "Employer Rejected";
 
+/**
+ * Scanner Reliability & Observability (see src/lib/scan/): categorized cause of a scan-run/company
+ * failure, used both by the retry layer (which categories are worth retrying — see
+ * src/lib/scan/retry.ts) and by the dashboard (src/app/scanner/page.tsx). No CHECK enum on the
+ * scan_runs/companies columns that store this (same reasoning as SourceType above) — the taxonomy
+ * may grow; app-layer only.
+ */
+export type ErrorCategory =
+  | "timeout"
+  | "rate_limited"
+  | "network"
+  | "provider_5xx"
+  | "parse_error"
+  | "invalid_config"
+  | "blocked"
+  | "unknown";
+
+export type ScanRunStatus = "success" | "partial" | "failed";
+
+/** Rollup label derived from a company's consecutive_failures — see
+ *  src/lib/scan/health.ts's computeConnectorHealth. */
+export type ConnectorHealth = "healthy" | "degraded" | "down" | "unknown";
+
 export interface Company {
   id: number;
   name: string;
@@ -56,8 +79,47 @@ export interface Company {
   last_scanned_at: string | null;
   last_scan_status: string | null;
   last_scan_error: string | null;
+  // --- Scanner Reliability & Observability (additive; see src/db/queries/companies.ts's
+  // recordScanSuccess/recordScanPartial/recordScanFailure) ------------------------------------
+  last_successful_scan_at: string | null;
+  last_failed_scan_at: string | null;
+  /** Resets to 0 on a successful scan; untouched by a partial scan (not a clean success, but not
+   *  a failure either); increments on a failed scan. */
+  consecutive_failures: number;
+  last_error_category: ErrorCategory | null;
+  last_error_message: string | null;
+  connector_health: ConnectorHealth;
   created_at: string;
   updated_at: string;
+}
+
+/** One row per company-scan attempt — see src/db/queries/scanRuns.ts and src/lib/scan.ts. Written
+ *  once, after the attempt finishes one way or another (no intermediate "running" row). */
+export interface ScanRun {
+  id: number;
+  company_id: number;
+  provider: SourceType;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  status: ScanRunStatus;
+  jobs_discovered: number;
+  jobs_added: number;
+  jobs_updated: number;
+  jobs_unchanged: number;
+  duplicates_skipped: number;
+  jobs_closed: number;
+  jobs_archived: number;
+  /** Always 0 today — see the jobs_deleted column comment in schema.sql. */
+  jobs_deleted: number;
+  description_failures: number;
+  retry_count: number;
+  error_category: ErrorCategory | null;
+  error_message: string | null;
+}
+
+export interface ScanRunWithCompany extends ScanRun {
+  company_name: string;
 }
 
 export interface DescriptionSections {
