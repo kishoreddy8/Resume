@@ -287,3 +287,121 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- AI Infrastructure (see src/lib/ai/): shared, reusable foundation for future AI-assisted features
+-- (job-intel enrichment, H1B alias suggestion, sponsorship-language fallback, match scoring, etc.).
+-- Deliberately generic across future tasks rather than one table per feature — see
+-- src/lib/ai/types.ts's AiTaskDefinition doc comment for why a single shared result table beats
+-- both a table-per-task design and an unstructured blob. No feature reads or writes these tables yet
+-- (infrastructure-only phase); Phase 1's deterministic pipeline (scan/dedupe/lifecycle/suppression/
+-- H1B/jobIntel) never calls into src/lib/ai/ and is completely unaffected by its presence. Three
+-- brand-new tables, not an ALTER of any existing one — safe via plain CREATE TABLE IF NOT EXISTS on
+-- both a fresh install and an existing database, same as settings above.
+
+-- Immutable per exact (entity, task, task_version, content_hash, provider, model) identity — once a
+-- row exists for that exact key, it is NEVER updated (see src/lib/ai/runAiTask.ts): a re-run with
+-- identical inputs/task-version/provider/model is always a cache hit, never a rewrite. `status` is
+-- the one exception — metadata-only bookkeeping (current vs. superseded/expired, for a future
+-- history view), set independently of the row's own generated content and never touching
+-- output_json/confidence_value/confidence_band. No CHECK on entity_type/status (same "app-layer
+-- validated, taxonomy may grow" precedent as companies.source_type/jobs.pipeline_status above).
+--
+-- IDENTITY SAFETY (entity_key vs. entity_id): jobs.id/companies.id are plain SQLite INTEGER PRIMARY
+-- KEY columns without AUTOINCREMENT, so a numeric id CAN be reused by a later, unrelated row once
+-- the original is deleted (Not Interested / aged out — see jobLifecycle.ts). entity_id alone would
+-- therefore be unsafe as this table's identity: a stale AI result keyed only on entity_id could
+-- silently appear to belong to a brand-new, unrelated entity that happens to reuse the same id.
+-- entity_key is the fix — a stable identity SNAPSHOT the calling feature copies from Phase 1's own
+-- already-authoritative identity (jobs.dedupe_key for a job; a caller-constructed key from
+-- companies' existing unique identity — source_type+ats_board_token, or career_page_url — for a
+-- company) at write time, and is what every lookup/uniqueness check actually uses (see
+-- idx_ai_enrichments_key below). AI never computes, changes, or influences that identity — it only
+-- copies it. entity_id is kept purely as convenient current-row metadata (a breadcrumb of "what
+-- numeric row this pointed at when written") — NEVER used for lookup or uniqueness, since it's
+-- exactly the piece that can become ambiguous after a delete+reuse.
+CREATE TABLE IF NOT EXISTS ai_enrichments (
+  id INTEGER PRIMARY KEY,
+  entity_type TEXT NOT NULL, -- 'job' | 'company'
+  -- Stable identity snapshot — see the IDENTITY SAFETY comment above. This, not entity_id, is what
+  -- idx_ai_enrichments_key enforces uniqueness on and what every cache lookup filters by.
+  entity_key TEXT NOT NULL,
+  -- Convenience metadata only — the numeric row id at write time. No FK (SQLite can't conditionally
+  -- reference one of two parent tables by a discriminator column anyway), and deliberately never
+  -- part of any lookup/uniqueness check — see the IDENTITY SAFETY comment above for why.
+  entity_id INTEGER NOT NULL,
+  task TEXT NOT NULL,
+  -- Also serves as the output-schema version by convention: any change to that task's output shape
+  -- requires bumping this, so a stored row's output_json always matches what the current code
+  -- expects for that exact (task, task_version) pair — same discipline as jobs.structured_extraction_version.
+  task_version INTEGER NOT NULL,
+  -- sha256 of the task's cache-key projection only (src/lib/ai/types.ts's toCacheKeyInput) —
+  -- independent of what was actually sent to the provider (toProviderInput/buildPrompt).
+  content_hash TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  -- Written only after passing that task's own Zod output schema — never an unvalidated blob. Every
+  -- other AI-relevant fact (task, version, provider, model, hash, timestamp) lives as its own typed
+  -- column precisely so nothing load-bearing is buried inside this JSON.
+  output_json TEXT NOT NULL,
+  confidence_value REAL,
+  confidence_band TEXT, -- 'low' | 'review' | 'high'
+  status TEXT NOT NULL DEFAULT 'active', -- 'active' | 'superseded' | 'expired' — see comment above
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- entity_key, not entity_id, carries identity here — see the table's IDENTITY SAFETY comment above.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_enrichments_key
+  ON ai_enrichments(entity_type, entity_key, task, task_version, content_hash, provider, model_id);
+CREATE INDEX IF NOT EXISTS idx_ai_enrichments_entity ON ai_enrichments(entity_type, entity_key);
+-- Convenience/debug only — NOT used by any lookup that needs correctness (entity_id can be
+-- ambiguous after a delete+reuse; entity_key above is authoritative). Useful for spotting an id-reuse
+-- collision itself (two different entity_key values sharing one entity_id) if that's ever needed.
+CREATE INDEX IF NOT EXISTS idx_ai_enrichments_entity_id_debug ON ai_enrichments(entity_type, entity_id);
+
+-- Append-only usage/cost ledger — one row per orchestration attempt, including cache hits (logged at
+-- exactly zero cost/tokens) and every pre-call short-circuit (disabled/missing credentials/budget
+-- exceeded, logged with NULL token/cost fields since no request was ever sent). A response that
+-- failed Zod validation still logs its REAL token/cost numbers: the call happened and cost real
+-- money even though the output was unusable — see src/lib/ai/runAiTask.ts.
+CREATE TABLE IF NOT EXISTS ai_usage_log (
+  id INTEGER PRIMARY KEY,
+  task TEXT NOT NULL,
+  provider TEXT,
+  model_id TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  estimated_cost_usd REAL,
+  cache_hit INTEGER NOT NULL DEFAULT 0,
+  success INTEGER NOT NULL,
+  error_category TEXT,
+  latency_ms INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_usage_log_task_time ON ai_usage_log(task, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_log_time ON ai_usage_log(created_at DESC);
+
+-- Append-only suggestion lifecycle trail. Deliberately separate from job_status_history (that table
+-- is the authoritative record of what actually happened to a job; this is the record of what AI
+-- suggested and what a human decided, which may never become an authoritative fact at all). Every
+-- event is tied to a real, already-generated enrichment row (a failed generation attempt has no
+-- suggestion to have a lifecycle, and is instead fully captured by ai_usage_log's success=0 row —
+-- see its comment above); this keeps ai_enrichment_id NOT NULL rather than nullable-with-no-other-
+-- identifying-context. No ON DELETE CASCADE on purpose: an enrichment row is never deleted by this
+-- infrastructure (see ai_enrichments' own comment), and if a future retention feature ever considers
+-- pruning one, this FK (SQLite's default NO ACTION, with foreign_keys=ON already set in
+-- src/db/index.ts) forces that delete to fail rather than silently destroying audit history — an
+-- audit trail must outlive its subject, not cascade away with it.
+CREATE TABLE IF NOT EXISTS ai_audit_log (
+  id INTEGER PRIMARY KEY,
+  ai_enrichment_id INTEGER NOT NULL REFERENCES ai_enrichments(id),
+  event TEXT NOT NULL CHECK (event IN ('generated', 'shown', 'accepted', 'rejected', 'superseded', 'expired')),
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Ordered by id, not created_at: SQLite's datetime('now') has only whole-second resolution, so
+-- several events recorded in rapid succession can share an identical timestamp — id (autoincrement)
+-- is the reliable ordering column, both here and in src/db/queries/aiAudit.ts's getAuditTrail.
+CREATE INDEX IF NOT EXISTS idx_ai_audit_log_enrichment ON ai_audit_log(ai_enrichment_id, id DESC);

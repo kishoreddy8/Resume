@@ -514,6 +514,41 @@ function runScanHealthMigrations(db: Database.Database) {
   }
 }
 
+// --- AI Infrastructure: entity_key identity-safety fix ---------------------------------------
+
+/**
+ * Adds ai_enrichments.entity_key (see schema.sql's IDENTITY SAFETY comment on that table) to a
+ * database that already has the table from before this fix, and rebuilds idx_ai_enrichments_key /
+ * idx_ai_enrichments_entity to filter on entity_key instead of the reuse-prone entity_id.
+ *
+ * A plain ALTER TABLE ADD COLUMN can't declare NOT NULL without a default, so the column is added
+ * nullable here; src/db/queries/aiEnrichments.ts never inserts a null value regardless, so this
+ * never weakens what the application actually writes.
+ *
+ * Both pre-existing index NAMES are reused by schema.sql's current (entity_key-based) definitions,
+ * so schema.sql's own CREATE INDEX IF NOT EXISTS — already run once at the top of createConnection,
+ * before this function executes — silently no-ops against the OLD (entity_id-based) index bodies
+ * still sitting under those names on an existing database; they must be dropped explicitly before
+ * schema.sql's current definitions can ever actually take effect. Re-running the (idempotent) full
+ * schema afterward recreates both under their current bodies and also picks up
+ * idx_ai_enrichments_entity_id_debug, a brand-new index name that needed no drop.
+ *
+ * Safe regardless of row count: ai_enrichments is new, additive infrastructure with no feature
+ * writing to it yet, and this only ever adds a nullable column and rebuilds indexes — it never
+ * drops or transforms a column that could hold real data.
+ */
+function migrateAiEnrichmentsEntityKey(db: Database.Database, schemaSql: string) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(ai_enrichments)").all() as { name: string }[]).map((c) => c.name)
+  );
+  if (existingColumns.has("entity_key")) return;
+
+  db.exec("ALTER TABLE ai_enrichments ADD COLUMN entity_key TEXT");
+  db.exec("DROP INDEX IF EXISTS idx_ai_enrichments_key");
+  db.exec("DROP INDEX IF EXISTS idx_ai_enrichments_entity");
+  db.exec(schemaSql);
+}
+
 function createConnection(): Database.Database {
   ensureDataDirs();
   const db = new Database(DB_PATH);
@@ -534,6 +569,7 @@ function createConnection(): Database.Database {
   runStructuredIntelMigrations(db);
   ensureStructuredIntelIndexes(db);
   runScanHealthMigrations(db);
+  migrateAiEnrichmentsEntityKey(db, schema);
   return db;
 }
 
