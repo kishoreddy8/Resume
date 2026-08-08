@@ -1,6 +1,14 @@
 "use client";
 
-import type { Company, H1bJobConfidence, PipelineStatus, SourceType } from "@/types";
+import type {
+  Company,
+  EmploymentTypeNormalized,
+  H1bJobConfidence,
+  PipelineStatus,
+  Seniority,
+  SourceType,
+  WorkplaceTypeNormalized,
+} from "@/types";
 
 export interface JobFilterState {
   status: PipelineStatus | "";
@@ -10,6 +18,12 @@ export interface JobFilterState {
   activeOnly: boolean;
   hideNotSponsoring: boolean;
   h1bConfidence: H1bJobConfidence[];
+  // --- Structured Job Intelligence filters (additive; see src/lib/jobIntel/) -------------------
+  workplaceType: WorkplaceTypeNormalized | "";
+  employmentType: EmploymentTypeNormalized | "";
+  seniority: Seniority | "";
+  salaryAvailable: boolean;
+  clearanceRequired: boolean;
 }
 
 export const DEFAULT_FILTERS: JobFilterState = {
@@ -20,6 +34,11 @@ export const DEFAULT_FILTERS: JobFilterState = {
   activeOnly: true,
   hideNotSponsoring: false,
   h1bConfidence: [],
+  workplaceType: "",
+  employmentType: "",
+  seniority: "",
+  salaryAvailable: false,
+  clearanceRequired: false,
 };
 
 const STATUSES: PipelineStatus[] = [
@@ -38,6 +57,27 @@ const H1B_CONFIDENCE_LEVELS: H1bJobConfidence[] = [
   "Low",
   "Unknown",
   "Not Sponsoring",
+];
+const WORKPLACE_TYPES: WorkplaceTypeNormalized[] = ["Remote", "Hybrid", "Onsite"];
+const EMPLOYMENT_TYPES: EmploymentTypeNormalized[] = [
+  "Full-Time",
+  "Part-Time",
+  "Contract",
+  "Temporary",
+  "Internship",
+  "Contract-to-Hire",
+];
+const SENIORITY_LEVELS: Seniority[] = [
+  "Intern",
+  "Entry",
+  "Junior",
+  "Mid",
+  "Senior",
+  "Staff",
+  "Principal",
+  "Lead",
+  "Manager",
+  "Director",
 ];
 
 // Named quick-filter presets: one click sets the exact chip combination each label implies. Power
@@ -144,8 +184,78 @@ export function JobFilterSidebar({
       </div>
 
       <div>
+        <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">
+          Work arrangement
+        </label>
+        <select
+          value={filters.workplaceType}
+          onChange={(e) => update("workplaceType", e.target.value as WorkplaceTypeNormalized | "")}
+          className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        >
+          <option value="">All</option>
+          {WORKPLACE_TYPES.map((w) => (
+            <option key={w} value={w}>
+              {w}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">
+          Employment type
+        </label>
+        <select
+          value={filters.employmentType}
+          onChange={(e) => update("employmentType", e.target.value as EmploymentTypeNormalized | "")}
+          className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        >
+          <option value="">All</option>
+          {EMPLOYMENT_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">Seniority</label>
+        <select
+          value={filters.seniority}
+          onChange={(e) => update("seniority", e.target.value as Seniority | "")}
+          className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        >
+          <option value="">All</option>
+          {SENIORITY_LEVELS.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <label className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+        <input
+          type="checkbox"
+          checked={filters.salaryAvailable}
+          onChange={(e) => update("salaryAvailable", e.target.checked)}
+        />
+        Salary available
+      </label>
+
+      <label className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+        <input
+          type="checkbox"
+          checked={filters.clearanceRequired}
+          onChange={(e) => update("clearanceRequired", e.target.checked)}
+        />
+        Clearance required
+      </label>
+
+      <div>
         <label className="mb-1 flex items-center justify-between font-medium text-zinc-700 dark:text-zinc-300">
-          H1B sponsorship
+          Sponsorship state
         </label>
         <label className="mb-2 flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
           <input

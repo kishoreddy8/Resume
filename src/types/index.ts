@@ -68,6 +68,85 @@ export interface DescriptionSections {
   benefits?: string;
 }
 
+// --- Structured Job Intelligence (see src/lib/jobIntel/) ------------------------------------
+// Deterministic, rule-based extraction of structured metadata from each job's stored description.
+// Every field is nullable/"Unknown" by design — extraction never fabricates a value it can't find
+// evidence for. See src/lib/jobIntel/types.ts for the extractor's own working types; these are the
+// persisted (DB row) shapes.
+
+export type Seniority =
+  | "Intern"
+  | "Entry"
+  | "Junior"
+  | "Mid"
+  | "Senior"
+  | "Staff"
+  | "Principal"
+  | "Lead"
+  | "Manager"
+  | "Director"
+  | "Unknown";
+
+export type EmploymentTypeNormalized =
+  | "Full-Time"
+  | "Part-Time"
+  | "Contract"
+  | "Temporary"
+  | "Internship"
+  | "Contract-to-Hire"
+  | "Unknown";
+
+export type WorkplaceTypeNormalized = "Remote" | "Hybrid" | "Onsite" | "Unknown";
+
+/** Requirement level for a single extracted skill or certification. */
+export type RequirementLevel = "Required" | "Preferred";
+
+/** Tri-state used for clearance/citizenship/work-authorization: these are binary asks in real JDs
+ *  ("clearance required" or not) rather than a Required/Preferred spectrum like skills. */
+export type RequirementTriState = "Required" | "Not Required" | "Unknown";
+
+export const SKILL_CATEGORIES = [
+  "Programming Languages",
+  "Databases",
+  "Cloud Platforms",
+  "Data Engineering",
+  "Big Data",
+  "Warehousing",
+  "Orchestration",
+  "AI / ML",
+  "DevOps",
+  "Infrastructure",
+  "BI / Reporting",
+  "APIs",
+  "Governance",
+  "Security",
+  "Monitoring",
+  "Testing",
+  "Other",
+] as const;
+export type SkillCategory = (typeof SKILL_CATEGORIES)[number];
+
+export interface JobSkill {
+  id: number;
+  job_id: number;
+  skill_name: string;
+  category: SkillCategory;
+  requirement_level: RequirementLevel;
+  /** Shared across every skill in an "AWS or Azure"-style alternative; NULL if not alternated. */
+  alternative_group_id: string | null;
+  evidence_snippet: string | null;
+  created_at: string;
+}
+
+export interface JobCertification {
+  id: number;
+  job_id: number;
+  name: string;
+  requirement_level: RequirementLevel;
+  evidence_snippet: string | null;
+  created_at: string;
+}
+
 export interface Job {
   id: number;
   company_id: number;
@@ -112,6 +191,52 @@ export interface Job {
   raw_json: string | null;
   created_at: string;
   updated_at: string;
+
+  // --- Structured Job Intelligence (additive; see src/lib/jobIntel/) ------------------------
+  seniority: Seniority | null;
+  seniority_evidence: string | null;
+  /** Normalized vocabulary derived from the raw `employment_type` column above (ATS-native first,
+   *  JD text fallback) — the raw column is left untouched as the original source value. */
+  employment_type_normalized: EmploymentTypeNormalized | null;
+  /** Normalized vocabulary derived from the raw `workplace_type` column above. */
+  workplace_type_normalized: WorkplaceTypeNormalized | null;
+  workplace_office_days: string | null;
+  location_city: string | null;
+  location_state: string | null;
+  location_country: string | null;
+  /** JSON-encoded array of {city, state, country} for postings listing multiple locations. */
+  location_list_json: string | null;
+  location_relocation: string | null;
+  location_travel_pct: string | null;
+  experience_min_years: number | null;
+  experience_preferred_years: number | null;
+  /** JSON-encoded array of {technology, years}. */
+  experience_by_tech_json: string | null;
+  experience_evidence: string | null;
+  education_level: string | null;
+  education_field: string | null;
+  education_requirement: RequirementLevel | "Unknown" | null;
+  education_equivalent_experience_allowed: 0 | 1 | null;
+  education_evidence: string | null;
+  /** Structured, parsed from the existing salary_text column above — never a new raw-text scan. */
+  salary_min: number | null;
+  salary_max: number | null;
+  salary_currency: string | null;
+  salary_period: "annual" | "hourly" | null;
+  salary_bonus: string | null;
+  salary_commission: string | null;
+  salary_equity: string | null;
+  clearance_required: RequirementTriState | null;
+  clearance_level: string | null;
+  citizenship_required: RequirementTriState | null;
+  work_authorization_required: RequirementTriState | null;
+  clearance_evidence: string | null;
+  industry_domain: string | null;
+  industry_domain_evidence: string | null;
+  /** JSON-encoded string array of evidence-based flags, e.g. '["W2 Only","Clearance Required"]'. */
+  job_quality_flags: string | null;
+  structured_extraction_version: number | null;
+  structured_extracted_at: string | null;
 }
 
 export interface JobWithCompany extends Job {

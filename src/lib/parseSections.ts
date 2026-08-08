@@ -4,8 +4,11 @@ import type { DescriptionSections } from "@/types";
 /**
  * Converts HTML to plain text but keeps block-level boundaries as newlines (stripHtml collapses
  * everything to one line, which destroys the heading structure section-parsing depends on).
+ * Exported for reuse by src/lib/jobIntel/ — line-level structure is what several extractors
+ * (skills, experience, education) need for cue-word windowing, and duplicating this HTML→text
+ * conversion elsewhere would risk it drifting out of sync with section parsing.
  */
-function htmlToBlockText(html: string): string {
+export function htmlToBlockText(html: string): string {
   const decoded = decodeHtmlEntities(html);
   return decoded
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
@@ -44,11 +47,30 @@ const SECTION_RULES: SectionRule[] = [
 const MAX_HEADING_LENGTH = 60;
 const MAX_HEADING_WORDS = 8;
 
-/** A line is "heading-shaped" if it's short, has no sentence-ending punctuation, and isn't a bullet. */
+/**
+ * A line is "heading-shaped" if it's short, has no sentence-ending punctuation, and isn't a bullet.
+ *
+ * Two additional exclusions were added after real-JD auditing found short (<=60 char, <=8 word)
+ * ORDINARY content lines being misclassified as headings, which silently drops everything after
+ * them up to the next recognized heading (a "heading-shaped but unmatched" line resets the current
+ * section without capturing under any key — see parseDescriptionSections below):
+ *   - 2+ commas: real section labels in this codebase's own data are always comma-free ("What
+ *     You'll Do", "Technical requirements:"); a short requirement bullet that happens to fit the
+ *     length/word budget ("Deep expertise with schema design, evolution, and iteration") reliably
+ *     has 1+ commas from listing multiple things.
+ *   - starts with a digit or "$": genuine headings are prose labels, never data values — this
+ *     specifically fixes a recurring Workday salary-widget artifact ("$81,456.37-$112,002.51Pay
+ *     Type:") that otherwise orphans everything between it and the next real heading in ~most
+ *     Workday-sourced postings.
+ * Both exclusions were verified against every currently-recognized heading in the live dataset
+ * before adding (zero false negatives introduced).
+ */
 function looksLikeHeading(line: string): boolean {
   if (line.length === 0 || line.length > MAX_HEADING_LENGTH) return false;
   if (/[.!?,;]$/.test(line)) return false;
   if (/^[-•*]/.test(line)) return false;
+  if (/^[$0-9]/.test(line)) return false;
+  if ((line.match(/,/g) ?? []).length >= 2) return false;
   const wordCount = line.split(/\s+/).length;
   return wordCount <= MAX_HEADING_WORDS;
 }

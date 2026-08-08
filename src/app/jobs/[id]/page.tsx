@@ -9,11 +9,13 @@ import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { getJobAgeBand, getJobAgeDays } from "@/lib/jobLifecycle";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
-import type { DescriptionSections, JobStatusHistoryEntry, JobWithCompany } from "@/types";
+import type { DescriptionSections, JobCertification, JobSkill, JobStatusHistoryEntry, JobWithCompany } from "@/types";
 
 interface JobDetailResponse {
   job: JobWithCompany;
   generatedFiles: string[];
+  skills: JobSkill[];
+  certifications: JobCertification[];
 }
 
 function formatDateTime(iso: string | null): string {
@@ -68,11 +70,14 @@ function AgeBadge({ job }: { job: JobWithCompany }) {
   );
 }
 
-const SECTION_LABELS: Record<keyof DescriptionSections, string> = {
+// Relabeled to the Structured Job Intelligence terminology — qualifications -> Required
+// Qualifications, niceToHave -> Preferred Qualifications (see src/lib/jobIntel/sections.ts, which
+// does the same mapping for the extraction pipeline). "skills" is omitted here since its content is
+// now covered by the structured Required/Preferred Skills lists below, not shown as raw text twice.
+const SECTION_LABELS: Partial<Record<keyof DescriptionSections, string>> = {
   responsibilities: "Responsibilities",
-  qualifications: "Qualifications",
-  niceToHave: "Nice to have",
-  skills: "Skills",
+  qualifications: "Required Qualifications",
+  niceToHave: "Preferred Qualifications",
   benefits: "Benefits",
 };
 
@@ -489,6 +494,231 @@ function H1bIntelligenceCard({ job }: { job: JobWithCompany }) {
   );
 }
 
+// --- Structured Job Intelligence (see src/lib/jobIntel/) ------------------------------------
+// Deterministic, rule-based extraction of structured metadata from job.description_html/text.
+// Every field below is "Unknown"/omitted when extraction found no reliable evidence — never
+// fabricated. See src/db/index.ts's JOBS_STRUCTURED_INTEL_ADDITIVE_COLUMNS for the source columns.
+
+function formatLocation(job: JobWithCompany): string | null {
+  const parts = [job.location_city, job.location_state, job.location_country].filter(Boolean);
+  if (parts.length > 0) return parts.join(", ");
+  return job.location ?? null;
+}
+
+function parseLocationList(json: string | null): { city: string | null; state: string | null; country: string | null }[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function formatSalary(job: JobWithCompany): string | null {
+  if (job.salary_min !== null || job.salary_max !== null) {
+    const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    const range =
+      job.salary_min !== null && job.salary_max !== null
+        ? `${fmt(job.salary_min)} - ${fmt(job.salary_max)}`
+        : fmt((job.salary_min ?? job.salary_max)!);
+    const currency = job.salary_currency ?? "";
+    const period = job.salary_period === "hourly" ? "/hr" : job.salary_period === "annual" ? "/yr" : "";
+    return `${currency} ${range}${period}`.trim();
+  }
+  // Structured parsing found nothing — fall back to the raw extracted text rather than showing
+  // nothing, since it's still real evidence, just not broken into min/max.
+  return job.salary_text;
+}
+
+function formatExperience(job: JobWithCompany): string | null {
+  if (job.experience_min_years === null && job.experience_preferred_years === null) return null;
+  if (job.experience_min_years !== null && job.experience_preferred_years !== null && job.experience_preferred_years !== job.experience_min_years) {
+    return `${job.experience_min_years}-${job.experience_preferred_years} years`;
+  }
+  const years = job.experience_min_years ?? job.experience_preferred_years;
+  return `${years}+ years`;
+}
+
+function formatEducation(job: JobWithCompany): string | null {
+  if (!job.education_level) return null;
+  const field = job.education_field ? ` in ${job.education_field}` : "";
+  const equivalent = job.education_equivalent_experience_allowed === 1 ? " (or equivalent experience)" : "";
+  return `${job.education_level}${field}${equivalent}`;
+}
+
+function formatClearance(job: JobWithCompany): string | null {
+  if (job.clearance_required === "Required") {
+    return job.clearance_level ? `Required — ${job.clearance_level}` : "Required";
+  }
+  if (job.citizenship_required === "Required") return "U.S. citizenship required";
+  return null;
+}
+
+function Fact({ label, value, title }: { label: string; value: string | null; title?: string }) {
+  return (
+    <div>
+      <div className="text-xs font-medium text-zinc-500">{label}</div>
+      <div className="text-sm text-zinc-800 dark:text-zinc-200" title={title}>
+        {value ?? "Unknown"}
+      </div>
+    </div>
+  );
+}
+
+interface SkillGroup {
+  label: string;
+  category: string;
+  evidence: string | null;
+}
+
+/** Groups skills sharing an alternative_group_id ("AWS or Azure") into one displayed pill instead
+ *  of two independent required-skill rows — see src/lib/jobIntel/skills.ts's alternation grouping. */
+function groupSkillsForDisplay(skills: JobSkill[], level: "Required" | "Preferred"): SkillGroup[] {
+  const filtered = skills.filter((s) => s.requirement_level === level);
+  const groups = new Map<string, JobSkill[]>();
+  const ungrouped: JobSkill[] = [];
+  for (const skill of filtered) {
+    if (skill.alternative_group_id) {
+      const existing = groups.get(skill.alternative_group_id) ?? [];
+      existing.push(skill);
+      groups.set(skill.alternative_group_id, existing);
+    } else {
+      ungrouped.push(skill);
+    }
+  }
+  const result: SkillGroup[] = [];
+  for (const group of groups.values()) {
+    result.push({
+      label: group.map((s) => s.skill_name).join(" or "),
+      category: group[0].category,
+      evidence: group[0].evidence_snippet,
+    });
+  }
+  for (const skill of ungrouped) {
+    result.push({ label: skill.skill_name, category: skill.category, evidence: skill.evidence_snippet });
+  }
+  return result;
+}
+
+function SkillPillList({ groups }: { groups: SkillGroup[] }) {
+  if (groups.length === 0) return <p className="text-xs text-zinc-500">None extracted.</p>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {groups.map((g, i) => (
+        <span
+          key={i}
+          title={`${g.category}${g.evidence ? ` — "${g.evidence}"` : ""}`}
+          className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+        >
+          {g.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function CertificationList({ certifications, level }: { certifications: JobCertification[]; level: "Required" | "Preferred" }) {
+  const filtered = certifications.filter((c) => c.requirement_level === level);
+  if (filtered.length === 0) return null;
+  return (
+    <div>
+      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {level} Certifications
+      </h3>
+      <SkillPillList groups={filtered.map((c) => ({ label: c.name, category: "Certification", evidence: c.evidence_snippet }))} />
+    </div>
+  );
+}
+
+function AtAGlanceCard({
+  job,
+  sections,
+  skills,
+  certifications,
+}: {
+  job: JobWithCompany;
+  sections: DescriptionSections | null;
+  skills: JobSkill[];
+  certifications: JobCertification[];
+}) {
+  const locationList = parseLocationList(job.location_list_json);
+  const locationValue =
+    locationList.length > 1
+      ? `${formatLocation(job) ?? "Multiple locations"} (+${locationList.length - 1} more)`
+      : formatLocation(job);
+
+  const requiredSkills = groupSkillsForDisplay(skills, "Required");
+  const preferredSkills = groupSkillsForDisplay(skills, "Preferred");
+  const hasCerts = certifications.length > 0;
+
+  const sectionKeys = (Object.keys(SECTION_LABELS) as (keyof DescriptionSections)[]).filter(
+    (key) => sections?.[key]
+  );
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 className="mb-1 text-sm font-semibold">At a Glance</h2>
+      <p className="mb-3 text-xs text-zinc-500">
+        Deterministic, rule-based extraction from the full description below — always verify
+        against it. Fields left as &ldquo;Unknown&rdquo; had no reliable evidence in this posting.
+      </p>
+
+      <div className="mb-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+        <Fact label="Seniority" value={job.seniority} title={job.seniority_evidence ?? undefined} />
+        <Fact label="Employment Type" value={job.employment_type_normalized} />
+        <Fact
+          label="Work Arrangement"
+          value={job.workplace_type_normalized}
+          title={job.workplace_office_days ?? undefined}
+        />
+        <Fact label="Location" value={locationValue} />
+        <Fact label="Salary" value={formatSalary(job)} title={job.salary_bonus ?? job.salary_equity ?? undefined} />
+        <Fact label="Experience" value={formatExperience(job)} title={job.experience_evidence ?? undefined} />
+        <Fact label="Education" value={formatEducation(job)} title={job.education_evidence ?? undefined} />
+        <div>
+          <div className="text-xs font-medium text-zinc-500">Sponsorship</div>
+          <div className="mt-0.5">
+            <H1bBadge confidence={job.h1b_combined_confidence} />
+          </div>
+        </div>
+        <Fact label="Clearance" value={formatClearance(job)} title={job.clearance_evidence ?? undefined} />
+      </div>
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-2">
+        <div>
+          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Required Skills</h3>
+          <SkillPillList groups={requiredSkills} />
+        </div>
+        <div>
+          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Preferred Skills</h3>
+          <SkillPillList groups={preferredSkills} />
+        </div>
+      </div>
+
+      {hasCerts && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+          <CertificationList certifications={certifications} level="Required" />
+          <CertificationList certifications={certifications} level="Preferred" />
+        </div>
+      )}
+
+      {sectionKeys.length > 0 && (
+        <div className="space-y-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+          {sectionKeys.map((key) => (
+            <div key={key}>
+              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                {SECTION_LABELS[key]}
+              </h3>
+              <p className="whitespace-pre-line text-sm text-zinc-700 dark:text-zinc-300">{sections?.[key]}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [data, setData] = useState<JobDetailResponse | null>(null);
@@ -523,7 +753,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
   if (loading) return <p className="text-sm text-zinc-500">Loading…</p>;
   if (notFound || !data) return <p className="text-sm text-zinc-500">Job not found.</p>;
 
-  const { job, generatedFiles } = data;
+  const { job, generatedFiles, skills, certifications } = data;
   const sections = parseSections(job.description_sections);
   const facts = [
     job.location,
@@ -574,28 +804,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="space-y-4">
-          {sections && (
-            <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-              <h2 className="mb-3 text-sm font-semibold">At a glance</h2>
-              <p className="mb-3 text-xs text-zinc-500">
-                Best-effort extraction from the full description below — always verify against it.
-              </p>
-              <div className="space-y-3">
-                {(Object.keys(SECTION_LABELS) as (keyof DescriptionSections)[])
-                  .filter((key) => sections[key])
-                  .map((key) => (
-                    <div key={key}>
-                      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                        {SECTION_LABELS[key]}
-                      </h3>
-                      <p className="whitespace-pre-line text-sm text-zinc-700 dark:text-zinc-300">
-                        {sections[key]}
-                      </p>
-                    </div>
-                  ))}
-              </div>
-            </div>
-          )}
+          <AtAGlanceCard job={job} sections={sections} skills={skills} certifications={certifications} />
 
           <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
             <h2 className="mb-2 text-sm font-semibold">Full description</h2>

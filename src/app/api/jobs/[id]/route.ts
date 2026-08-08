@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getJob, setJobPinned, updateJobPipeline } from "@/db/queries/jobs";
+import { getJobCertifications, getJobSkills } from "@/db/queries/jobIntel";
 import { generatedFilesDir } from "@/lib/generatedFiles";
 import type { PipelineStatus } from "@/types";
 
@@ -37,7 +38,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const job = getJob(jobId);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
-  return NextResponse.json({ job, generatedFiles: listGeneratedFiles(job.company_name, jobId) });
+  return NextResponse.json({
+    job,
+    generatedFiles: listGeneratedFiles(job.company_name, jobId),
+    skills: getJobSkills(jobId),
+    certifications: getJobCertifications(jobId),
+  });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

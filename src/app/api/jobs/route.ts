@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listJobs } from "@/db/queries/jobs";
-import type { H1bJobConfidence, PipelineStatus, SourceType } from "@/types";
+import type {
+  EmploymentTypeNormalized,
+  H1bJobConfidence,
+  PipelineStatus,
+  Seniority,
+  SourceType,
+  WorkplaceTypeNormalized,
+} from "@/types";
 
 const VALID_STATUSES: PipelineStatus[] = [
   "New",
@@ -19,6 +26,27 @@ const VALID_H1B: H1bJobConfidence[] = [
   "Not Sponsoring",
 ];
 const VALID_SOURCES: SourceType[] = ["greenhouse", "ashby", "lever", "workday", "career_link"];
+const VALID_WORKPLACE_TYPES: WorkplaceTypeNormalized[] = ["Remote", "Hybrid", "Onsite"];
+const VALID_EMPLOYMENT_TYPES: EmploymentTypeNormalized[] = [
+  "Full-Time",
+  "Part-Time",
+  "Contract",
+  "Temporary",
+  "Internship",
+  "Contract-to-Hire",
+];
+const VALID_SENIORITY: Seniority[] = [
+  "Intern",
+  "Entry",
+  "Junior",
+  "Mid",
+  "Senior",
+  "Staff",
+  "Principal",
+  "Lead",
+  "Manager",
+  "Director",
+];
 
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;
@@ -31,12 +59,26 @@ export async function GET(req: NextRequest) {
   const markedForTailoring = params.get("markedForTailoring");
   const archived = params.get("archived");
   const h1bConfidenceParam = params.getAll("h1bConfidence");
+  const workplaceType = params.get("workplaceType");
+  const employmentType = params.get("employmentType");
+  const seniority = params.get("seniority");
+  const salaryAvailable = params.get("salaryAvailable");
+  const clearanceRequired = params.get("clearanceRequired");
 
   if (status && !VALID_STATUSES.includes(status as PipelineStatus)) {
     return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 });
   }
   if (sourceType && !VALID_SOURCES.includes(sourceType as SourceType)) {
     return NextResponse.json({ error: `Invalid sourceType: ${sourceType}` }, { status: 400 });
+  }
+  if (workplaceType && !VALID_WORKPLACE_TYPES.includes(workplaceType as WorkplaceTypeNormalized)) {
+    return NextResponse.json({ error: `Invalid workplaceType: ${workplaceType}` }, { status: 400 });
+  }
+  if (employmentType && !VALID_EMPLOYMENT_TYPES.includes(employmentType as EmploymentTypeNormalized)) {
+    return NextResponse.json({ error: `Invalid employmentType: ${employmentType}` }, { status: 400 });
+  }
+  if (seniority && !VALID_SENIORITY.includes(seniority as Seniority)) {
+    return NextResponse.json({ error: `Invalid seniority: ${seniority}` }, { status: 400 });
   }
   const h1bConfidence = h1bConfidenceParam.filter((s): s is H1bJobConfidence =>
     VALID_H1B.includes(s as H1bJobConfidence)
@@ -51,6 +93,11 @@ export async function GET(req: NextRequest) {
     markedForTailoring: markedForTailoring === "true",
     archived: archived === "true",
     h1bConfidence: h1bConfidence.length > 0 ? h1bConfidence : undefined,
+    workplaceType: (workplaceType as WorkplaceTypeNormalized) ?? undefined,
+    employmentType: (employmentType as EmploymentTypeNormalized) ?? undefined,
+    seniority: (seniority as Seniority) ?? undefined,
+    salaryAvailable: salaryAvailable === "true",
+    clearanceRequired: clearanceRequired === "true",
   });
 
   return NextResponse.json({ jobs });

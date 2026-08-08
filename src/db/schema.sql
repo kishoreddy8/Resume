@@ -209,3 +209,37 @@ CREATE TABLE IF NOT EXISTS h1b_employer_aliases (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_h1b_aliases_alias ON h1b_employer_aliases(alias_normalized);
+
+-- Structured Job Intelligence (see src/lib/jobIntel/): deterministic, rule-based extraction of
+-- skills/experience/education/certifications/seniority/location/compensation/clearance from each
+-- job's stored description. Scalar fields live as additive columns on jobs (see
+-- JOBS_STRUCTURED_INTEL_ADDITIVE_COLUMNS in src/db/index.ts); skills and certifications are
+-- naturally multi-row per job, so they get their own tables rather than a JSON blob.
+CREATE TABLE IF NOT EXISTS job_skills (
+  id INTEGER PRIMARY KEY,
+  job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  skill_name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  requirement_level TEXT NOT NULL, -- 'Required' | 'Preferred'
+  -- Shared across every skill in an "AWS or Azure"-style alternative — lets the UI render one OR
+  -- requirement instead of two independent required skills. NULL when the skill wasn't part of an
+  -- alternation.
+  alternative_group_id TEXT,
+  evidence_snippet TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_skills_job ON job_skills(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_skills_name ON job_skills(skill_name);
+CREATE INDEX IF NOT EXISTS idx_job_skills_requirement ON job_skills(requirement_level);
+
+CREATE TABLE IF NOT EXISTS job_certifications (
+  id INTEGER PRIMARY KEY,
+  job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  requirement_level TEXT NOT NULL, -- 'Required' | 'Preferred'
+  evidence_snippet TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_certifications_job ON job_certifications(job_id);

@@ -1,10 +1,12 @@
 import pLimit from "p-limit";
 import { updateCompany, updateCompanyScanStatus } from "@/db/queries/companies";
-import { closeStaleJobs, runAgeBasedSweep, upsertJob } from "@/db/queries/jobs";
+import { closeStaleJobs, getJobIdByDedupeKey, runAgeBasedSweep, upsertJob } from "@/db/queries/jobs";
+import { upsertJobIntel } from "@/db/queries/jobIntel";
 import { dedupeKeyForAts, dedupeKeyForCareerLink } from "@/lib/dedupe";
 import { deleteGeneratedFiles } from "@/lib/generatedFiles";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { scanSponsorshipLanguage } from "@/lib/h1b/keywordScan";
+import { extractJobIntel } from "@/lib/jobIntel/extractJobIntel";
 import { fetchJobsForCompany } from "@/lib/normalize";
 import { parseDescriptionSections } from "@/lib/parseSections";
 import type { Company, NormalizedJob, ScanResult, ScanSummary } from "@/types";
@@ -66,6 +68,33 @@ async function scanCompany(company: Company): Promise<ScanResult> {
       if (outcome === "inserted") jobsNew++;
       else if (outcome === "updated") jobsUpdated++;
       else jobsSuppressed++;
+
+      // Structured Job Intelligence: additive, best-effort, and deliberately non-fatal to the scan
+      // itself — reuses the sponsorship polarity/snippet already computed above rather than
+      // recomputing scanSponsorshipLanguage a second time. Skipped for "suppressed" outcomes (no
+      // job row was written to attach intel to). A failure here must never take down the rest of
+      // the scan, since it's purely additive metadata, not load-bearing for lifecycle/H1B/tailoring.
+      if (outcome !== "suppressed") {
+        try {
+          const jobId = getJobIdByDedupeKey(dedupeKey);
+          if (jobId) {
+            const intel = extractJobIntel({
+              title: job.title,
+              descriptionText: job.descriptionText,
+              descriptionHtml: job.descriptionHtml,
+              employmentTypeNative: job.employmentType,
+              workplaceTypeNative: job.workplaceType,
+              locationNative: job.location,
+              salaryTextNative: job.salaryText,
+              sponsorshipPolarity: polarity,
+              sponsorshipSnippet: snippet,
+            });
+            upsertJobIntel(jobId, intel);
+          }
+        } catch (err) {
+          console.error(`Structured Job Intelligence extraction failed for ${dedupeKey}:`, err);
+        }
+      }
     }
 
     // Career-link scraping is best-effort/partial by nature — never auto-close/archive those jobs

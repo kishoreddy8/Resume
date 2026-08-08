@@ -413,6 +413,76 @@ function migrateJobsH1bConfidenceCheck(db: Database.Database, schemaSql: string)
   }
 }
 
+// --- Structured Job Intelligence ------------------------------------------------------------
+
+// New, purely-additive job columns (see src/lib/jobIntel/ for what populates each). All nullable,
+// no CHECK constraints — nothing here needs a table rebuild, only ALTER TABLE ADD COLUMN.
+const JOBS_STRUCTURED_INTEL_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
+  { name: "seniority", ddl: "ALTER TABLE jobs ADD COLUMN seniority TEXT" },
+  { name: "seniority_evidence", ddl: "ALTER TABLE jobs ADD COLUMN seniority_evidence TEXT" },
+  { name: "employment_type_normalized", ddl: "ALTER TABLE jobs ADD COLUMN employment_type_normalized TEXT" },
+  { name: "workplace_type_normalized", ddl: "ALTER TABLE jobs ADD COLUMN workplace_type_normalized TEXT" },
+  { name: "workplace_office_days", ddl: "ALTER TABLE jobs ADD COLUMN workplace_office_days TEXT" },
+  { name: "location_city", ddl: "ALTER TABLE jobs ADD COLUMN location_city TEXT" },
+  { name: "location_state", ddl: "ALTER TABLE jobs ADD COLUMN location_state TEXT" },
+  { name: "location_country", ddl: "ALTER TABLE jobs ADD COLUMN location_country TEXT" },
+  { name: "location_list_json", ddl: "ALTER TABLE jobs ADD COLUMN location_list_json TEXT" },
+  { name: "location_relocation", ddl: "ALTER TABLE jobs ADD COLUMN location_relocation TEXT" },
+  { name: "location_travel_pct", ddl: "ALTER TABLE jobs ADD COLUMN location_travel_pct TEXT" },
+  { name: "experience_min_years", ddl: "ALTER TABLE jobs ADD COLUMN experience_min_years REAL" },
+  { name: "experience_preferred_years", ddl: "ALTER TABLE jobs ADD COLUMN experience_preferred_years REAL" },
+  { name: "experience_by_tech_json", ddl: "ALTER TABLE jobs ADD COLUMN experience_by_tech_json TEXT" },
+  { name: "experience_evidence", ddl: "ALTER TABLE jobs ADD COLUMN experience_evidence TEXT" },
+  { name: "education_level", ddl: "ALTER TABLE jobs ADD COLUMN education_level TEXT" },
+  { name: "education_field", ddl: "ALTER TABLE jobs ADD COLUMN education_field TEXT" },
+  { name: "education_requirement", ddl: "ALTER TABLE jobs ADD COLUMN education_requirement TEXT" },
+  {
+    name: "education_equivalent_experience_allowed",
+    ddl: "ALTER TABLE jobs ADD COLUMN education_equivalent_experience_allowed INTEGER",
+  },
+  { name: "education_evidence", ddl: "ALTER TABLE jobs ADD COLUMN education_evidence TEXT" },
+  { name: "salary_min", ddl: "ALTER TABLE jobs ADD COLUMN salary_min REAL" },
+  { name: "salary_max", ddl: "ALTER TABLE jobs ADD COLUMN salary_max REAL" },
+  { name: "salary_currency", ddl: "ALTER TABLE jobs ADD COLUMN salary_currency TEXT" },
+  { name: "salary_period", ddl: "ALTER TABLE jobs ADD COLUMN salary_period TEXT" },
+  { name: "salary_bonus", ddl: "ALTER TABLE jobs ADD COLUMN salary_bonus TEXT" },
+  { name: "salary_commission", ddl: "ALTER TABLE jobs ADD COLUMN salary_commission TEXT" },
+  { name: "salary_equity", ddl: "ALTER TABLE jobs ADD COLUMN salary_equity TEXT" },
+  { name: "clearance_required", ddl: "ALTER TABLE jobs ADD COLUMN clearance_required TEXT" },
+  { name: "clearance_level", ddl: "ALTER TABLE jobs ADD COLUMN clearance_level TEXT" },
+  { name: "citizenship_required", ddl: "ALTER TABLE jobs ADD COLUMN citizenship_required TEXT" },
+  { name: "work_authorization_required", ddl: "ALTER TABLE jobs ADD COLUMN work_authorization_required TEXT" },
+  { name: "clearance_evidence", ddl: "ALTER TABLE jobs ADD COLUMN clearance_evidence TEXT" },
+  { name: "industry_domain", ddl: "ALTER TABLE jobs ADD COLUMN industry_domain TEXT" },
+  { name: "industry_domain_evidence", ddl: "ALTER TABLE jobs ADD COLUMN industry_domain_evidence TEXT" },
+  { name: "job_quality_flags", ddl: "ALTER TABLE jobs ADD COLUMN job_quality_flags TEXT" },
+  { name: "structured_extraction_version", ddl: "ALTER TABLE jobs ADD COLUMN structured_extraction_version INTEGER" },
+  { name: "structured_extracted_at", ddl: "ALTER TABLE jobs ADD COLUMN structured_extracted_at TEXT" },
+];
+
+function runStructuredIntelMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((c) => c.name)
+  );
+  for (const column of JOBS_STRUCTURED_INTEL_ADDITIVE_COLUMNS) {
+    if (!existingColumns.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+}
+
+// Same reasoning as ensureJobsIndexes above: these columns don't exist on an existing database
+// until runStructuredIntelMigrations() has just added them, so schema.sql's CREATE TABLE IF NOT
+// EXISTS (which runs before any migration) can't declare indexes on them. Safe to call
+// unconditionally and repeatedly.
+function ensureStructuredIntelIndexes(db: Database.Database) {
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_seniority ON jobs(seniority)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_employment_type_normalized ON jobs(employment_type_normalized)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_workplace_type_normalized ON jobs(workplace_type_normalized)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_clearance_required ON jobs(clearance_required)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_salary_min ON jobs(salary_min)");
+}
+
 function createConnection(): Database.Database {
   ensureDataDirs();
   const db = new Database(DB_PATH);
@@ -430,6 +500,8 @@ function createConnection(): Database.Database {
   migrateCompaniesH1bConfidenceCheck(db, schema);
   migrateJobsH1bConfidenceCheck(db, schema);
   ensureJobsIndexes(db);
+  runStructuredIntelMigrations(db);
+  ensureStructuredIntelIndexes(db);
   return db;
 }
 

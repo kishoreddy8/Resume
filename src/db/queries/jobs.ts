@@ -4,6 +4,7 @@ import { canArchive, getJobAgeBand, getJobAgeDays, isLifecycleProtected } from "
 import type {
   AgeSweepResult,
   DeletedJobRef,
+  EmploymentTypeNormalized,
   H1bJobConfidence,
   Job,
   JobHistoryChangeType,
@@ -11,8 +12,10 @@ import type {
   JobWithCompany,
   NormalizedJob,
   PipelineStatus,
+  Seniority,
   SourceType,
   SponsorshipPolarity,
+  WorkplaceTypeNormalized,
 } from "@/types";
 
 export interface JobFilters {
@@ -27,6 +30,14 @@ export interface JobFilters {
    *  jobs entirely so "Show Archived Jobs separately" holds without every existing caller having
    *  to opt in. */
   archived?: boolean;
+  // --- Structured Job Intelligence filters (additive; see src/lib/jobIntel/) -------------------
+  workplaceType?: WorkplaceTypeNormalized;
+  employmentType?: EmploymentTypeNormalized;
+  seniority?: Seniority;
+  /** true = only jobs with a parsed salary_min/salary_max. */
+  salaryAvailable?: boolean;
+  /** true = only jobs where clearance_required = 'Required'. */
+  clearanceRequired?: boolean;
 }
 
 /** Appends one row to job_status_history. Internal — all lifecycle/pipeline mutations in this file
@@ -91,6 +102,24 @@ export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
       params[`h1b${i}`] = sig;
     });
   }
+  if (filters.workplaceType) {
+    clauses.push("j.workplace_type_normalized = @workplaceType");
+    params.workplaceType = filters.workplaceType;
+  }
+  if (filters.employmentType) {
+    clauses.push("j.employment_type_normalized = @employmentType");
+    params.employmentType = filters.employmentType;
+  }
+  if (filters.seniority) {
+    clauses.push("j.seniority = @seniority");
+    params.seniority = filters.seniority;
+  }
+  if (filters.salaryAvailable) {
+    clauses.push("(j.salary_min IS NOT NULL OR j.salary_max IS NOT NULL)");
+  }
+  if (filters.clearanceRequired) {
+    clauses.push("j.clearance_required = 'Required'");
+  }
   // Archived jobs are excluded from every normal listing by default — the Archived Jobs page is
   // the only caller that passes archived: true to see them.
   clauses.push(filters.archived ? "j.is_archived = 1" : "j.is_archived = 0");
@@ -112,6 +141,15 @@ export function getJob(id: number): JobWithCompany | undefined {
       `SELECT ${JOB_WITH_COMPANY_SELECT} FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.id = ?`
     )
     .get(id) as JobWithCompany | undefined;
+}
+
+/** Looks up a job's id by its dedupe_key — upsertJob() only returns the outcome ("inserted" etc.),
+ *  not the row id, so callers that need to act on the row right after upserting it (e.g. Structured
+ *  Job Intelligence writing extraction results in src/lib/scan.ts) use this rather than re-deriving
+ *  the id another way. Read-only, does not participate in upsertJob's own logic. */
+export function getJobIdByDedupeKey(dedupeKey: string): number | undefined {
+  const row = getDb().prepare("SELECT id FROM jobs WHERE dedupe_key = ?").get(dedupeKey) as { id: number } | undefined;
+  return row?.id;
 }
 
 export function updateJobPipeline(

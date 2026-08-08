@@ -12,6 +12,11 @@ function buildQuery(filters: JobFilterState): string {
   if (filters.sourceType) params.set("sourceType", filters.sourceType);
   if (filters.search) params.set("search", filters.search);
   if (filters.activeOnly) params.set("activeOnly", "true");
+  if (filters.workplaceType) params.set("workplaceType", filters.workplaceType);
+  if (filters.employmentType) params.set("employmentType", filters.employmentType);
+  if (filters.seniority) params.set("seniority", filters.seniority);
+  if (filters.salaryAvailable) params.set("salaryAvailable", "true");
+  if (filters.clearanceRequired) params.set("clearanceRequired", "true");
 
   const levels = filters.hideNotSponsoring
     ? filters.h1bConfidence.filter((s) => s !== "Not Sponsoring")
