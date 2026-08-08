@@ -110,6 +110,21 @@ async function fetchDetail(
   return data.jobPostingInfo;
 }
 
+/**
+ * Workday's externalPath conventionally ends in "_<reqId>" (optionally with a "-N" duplicate-post
+ * suffix, e.g. ".../Some-Title_JR1561-1") — the same requisition ID a successful detail fetch
+ * exposes as jobReqId. Recovering it here (used only when the detail fetch fails — see the catch
+ * branch in fetchWorkdayJobs below) keeps dedupe identity (src/lib/dedupe.ts's dedupeKeyForAts)
+ * consistent with what it would be on a successful fetch of the SAME posting, rather than diverging
+ * to the raw path and creating a duplicate row that later gets closed/archived as if the real
+ * posting had disappeared once the detail fetch recovers. Falls back to the raw path — today's
+ * existing behavior — when a tenant's paths don't follow this convention.
+ */
+function reqIdFromExternalPath(externalPath: string): string | null {
+  const match = externalPath.match(/_([A-Za-z0-9]+)(?:-\d+)?$/);
+  return match ? match[1] : null;
+}
+
 export interface FetchWorkdayJobsOptions extends FetchWithRetryOptions {
   /** Testing-only: overrides the `https://{tenant}.{host}.myworkdayjobs.com` origin both the list
    *  and detail requests are built from, so tests can point a real Workday token shape at a local
@@ -152,9 +167,12 @@ export async function fetchWorkdayJobs(
         } catch (err) {
           // One bad detail request (timeout, transient 5xx) shouldn't drop the job entirely —
           // still return it from the list data alone so "complete jobs" holds even when
-          // "complete descriptions" partially fails.
+          // "complete descriptions" partially fails. externalId prefers the requisition ID
+          // recoverable from externalPath (see reqIdFromExternalPath) over the raw path itself, so
+          // this job's dedupe identity matches what a successful detail fetch would have produced —
+          // see that function's doc comment for why.
           return {
-            externalId: listing.externalPath,
+            externalId: reqIdFromExternalPath(listing.externalPath) ?? listing.externalPath,
             title: listing.title,
             location: listing.locationsText ?? null,
             department: null,

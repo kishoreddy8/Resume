@@ -418,6 +418,43 @@ test("workday e2e: a detail fetch that exhausts retries yields a partial scan th
   }
 });
 
+test("workday e2e: a detail fetch that permanently fails still recovers the same dedupe identity a successful fetch would have produced", async () => {
+  // externalPath follows Workday's conventional "<slug>_<reqId>[-N]" shape, same as real tenant
+  // data observed in this project's own database (see reqIdFromExternalPath's doc comment in
+  // src/lib/ats/workday.ts) — the requisition ID "JR1561" is recoverable from the path alone,
+  // without needing the detail fetch that failed.
+  const externalPath = `${CXS_PREFIX}/job/Some-Title_JR1561-1`;
+
+  const { origin: failOrigin, server: failServer } = await startWorkdayServer({
+    list: (_req, res) => jsonRes(res, 200, { total: 1, jobPostings: [{ title: "Some Title", externalPath }] }),
+    detail: (_req, res) => jsonRes(res, 503, { error: "unavailable" }),
+  });
+  const { origin: okOrigin, server: okServer } = await startWorkdayServer({
+    list: (_req, res) => jsonRes(res, 200, { total: 1, jobPostings: [{ title: "Some Title", externalPath }] }),
+    detail: (_req, res) =>
+      jsonRes(res, 200, { jobPostingInfo: { title: "Some Title", jobDescription: "<p>Do stuff</p>", jobReqId: "JR1561" } }),
+  });
+  try {
+    const failedJobs = await fetchWorkdayJobs(WORKDAY_TOKEN, {
+      hostOverride: failOrigin,
+      maxAttempts: 1,
+      baseDelayMs: 1,
+    });
+    const okJobs = await fetchWorkdayJobs(WORKDAY_TOKEN, { hostOverride: okOrigin });
+
+    assert.equal(failedJobs[0].externalId, "JR1561", "recovered from externalPath despite the detail fetch failing");
+    assert.equal(okJobs[0].externalId, "JR1561", "matches jobReqId from a successful detail fetch");
+    assert.equal(
+      dedupeKeyForAts("workday", 1, failedJobs[0].externalId!),
+      dedupeKeyForAts("workday", 1, okJobs[0].externalId!),
+      "same posting must resolve to the same dedupe_key whether or not the detail fetch succeeded"
+    );
+  } finally {
+    failServer.close();
+    okServer.close();
+  }
+});
+
 test("workday e2e: list-phase retry exhaustion fails the whole scan (never reaches job data)", async () => {
   const { origin, server, getCount } = await startWorkdayServer({
     list: (_req, res) => jsonRes(res, 500, { error: "boom" }),
