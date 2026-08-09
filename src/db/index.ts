@@ -624,6 +624,42 @@ function runCandidateScopingMigrations(db: Database.Database, schemaSql: string)
  * name/master-file backfill happens in the Stage 5 migration script, not here; this only guarantees
  * id=1 exists so the candidate_id DEFAULT 1 backfill above always points at a real row.
  */
+// --- H1B Employer Source Discovery + ATS Hardening -------------------------------------------
+
+// New, purely-additive companies columns for domain-identity resolution (see
+// src/lib/companyIdentity/). Deliberately independent of resolution_status/discovered_jobs_url/
+// discovery_attempted_at/discovery_reason/suspected_ats above — domain_identity_status answers
+// "did we identify the real public company/domain," resolution_status answers "did we find its
+// careers/ATS source," and the two must never overwrite or gate each other. All nullable, no
+// backfill needed (a company that already has a career_page_url/ats_board_token today was added
+// via manual URL entry, which says nothing about whether its DOMAIN identity was ever verified
+// through this new pipeline — defaulting to 'UNRESOLVED' for domain_identity_status is honest,
+// unlike the one-time resolution_status backfill in runCompaniesDiscoveryMigrations above, which
+// had real evidence — "it's scanning today" — to justify a non-default backfill).
+const COMPANIES_DOMAIN_IDENTITY_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
+  { name: "verified_domain", ddl: "ALTER TABLE companies ADD COLUMN verified_domain TEXT" },
+  {
+    name: "domain_identity_status",
+    ddl: "ALTER TABLE companies ADD COLUMN domain_identity_status TEXT NOT NULL DEFAULT 'UNRESOLVED'",
+  },
+  { name: "last_successful_discovery_at", ddl: "ALTER TABLE companies ADD COLUMN last_successful_discovery_at TEXT" },
+];
+
+function runCompaniesDomainIdentityMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(companies)").all() as { name: string }[]).map((c) => c.name)
+  );
+  for (const column of COMPANIES_DOMAIN_IDENTITY_ADDITIVE_COLUMNS) {
+    if (!existingColumns.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+  // Same reasoning as idx_companies_resolution_status above: domain_identity_status doesn't exist
+  // on an existing database until the ALTER TABLE above runs, so schema.sql can't declare this
+  // index unconditionally. Safe to call unconditionally and repeatedly (IF NOT EXISTS).
+  db.exec("CREATE INDEX IF NOT EXISTS idx_companies_domain_identity_status ON companies(domain_identity_status)");
+}
+
 function ensureCandidateOne(db: Database.Database) {
   const existing = db.prepare("SELECT id FROM candidates WHERE id = 1").get();
   if (existing) return;
@@ -657,6 +693,7 @@ function createConnection(): Database.Database {
   runCompaniesDiscoveryMigrations(db);
   ensureCandidateOne(db);
   runCandidateScopingMigrations(db, schema);
+  runCompaniesDomainIdentityMigrations(db);
   return db;
 }
 

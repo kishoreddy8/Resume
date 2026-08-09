@@ -15,6 +15,18 @@ export function getCompany(id: number): Company | undefined {
     .get(id) as Company | undefined;
 }
 
+/** Exact-name lookup — used by the H1B employer discovery batch runner (src/lib/discovery/batch.ts)
+ *  to reuse an existing companies row for an employer rather than creating a duplicate on a
+ *  re-run. Case-sensitive on purpose: company names are user/DOL-sourced free text, and a
+ *  case-insensitive match risks silently merging two distinctly-cased but genuinely different
+ *  legal names — the same "never silently merge on fuzzy similarity" discipline this phase's
+ *  identity-resolution design applies everywhere else. */
+export function getCompanyByName(name: string): Company | undefined {
+  return getDb()
+    .prepare("SELECT * FROM companies WHERE name = ?")
+    .get(name) as Company | undefined;
+}
+
 export function listActiveCompanies(): Company[] {
   return getDb()
     .prepare("SELECT * FROM companies WHERE is_active = 1 ORDER BY name COLLATE NOCASE")
@@ -213,6 +225,33 @@ export function recordDiscoveryResult(id: number, result: DiscoveryResult): Comp
     careerPageUrl: shouldPromoteToGeneric ? result.discoveredJobsUrl : existing.career_page_url,
   });
 
+  return getCompany(id);
+}
+
+/**
+ * Writes the result of a DOMAIN-IDENTITY verification (src/lib/companyIdentity/verifyDomain.ts) —
+ * a DIFFERENT axis from recordDiscoveryResult above, on purpose. domain_identity_status answers
+ * "did we identify the real public company/domain," resolution_status (recordDiscoveryResult)
+ * answers "did we find its careers/ATS source" — neither ever gates or overwrites the other. Only
+ * called on a terminal outcome (VERIFIED/AMBIGUOUS) reaching this far in the batch runner; a
+ * FAILED_TEMPORARY/UNRESOLVED domain result never reaches here because no companies row exists yet
+ * to update (see src/lib/discovery/batch.ts — a company row is only created once a domain is
+ * VERIFIED).
+ */
+export function updateCompanyDomainIdentity(
+  id: number,
+  input: { verifiedDomain: string; domainIdentityStatus: string }
+): Company | undefined {
+  getDb()
+    .prepare(
+      `UPDATE companies SET
+        verified_domain = @verifiedDomain,
+        domain_identity_status = @domainIdentityStatus,
+        last_successful_discovery_at = datetime('now'),
+        updated_at = datetime('now')
+       WHERE id = @id`
+    )
+    .run({ id, ...input });
   return getCompany(id);
 }
 

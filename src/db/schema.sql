@@ -602,3 +602,104 @@ CREATE TABLE IF NOT EXISTS candidate_job_state_history (
 
 CREATE INDEX IF NOT EXISTS idx_candidate_job_state_history_lookup
   ON candidate_job_state_history(candidate_id, dedupe_key, changed_at DESC);
+
+-- H1B Employer Source Discovery + ATS Hardening (see src/lib/companyIdentity/). Three brand-new
+-- tables plus additive companies columns (added via migration in src/db/index.ts, since companies
+-- pre-dates this feature) — safe via plain CREATE TABLE IF NOT EXISTS on both a fresh install and
+-- an existing database, same precedent as every other additive feature above.
+--
+-- CRITICAL BOUNDARY: nothing below this line is ever read by, written by, or allowed to influence
+-- h1b_confidence/h1b_combined_confidence, src/lib/h1b/combineSignal.ts, Phase 2 eligibility, or any
+-- job_match_results/candidate_settings_hash row. This is source/identity DISCOVERY only — where to
+-- find a company's jobs — never sponsorship EVIDENCE. See employerIdentityResolutions.test.ts's
+-- boundary regression test.
+
+-- Curated employer -> official domain override — the highest-trust Layer 0 of the domain
+-- resolution waterfall. Deliberately empty by default, never auto-seeded or hardcoded — same
+-- precedent as h1b_employer_aliases above. A row here is a human-reviewed fact, not a guess.
+CREATE TABLE IF NOT EXISTS h1b_employer_domain_overrides (
+  id INTEGER PRIMARY KEY,
+  employer_name_normalized TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_h1b_employer_domain_overrides_name
+  ON h1b_employer_domain_overrides(employer_name_normalized);
+
+-- One row per h1b_sponsors.id — current-state table (latest attempt's outcome), mirroring
+-- companies' own resolution_status/discovery_attempted_at pattern rather than an append-only log.
+-- This is the SOURCE-DISCOVERY mapping from an H1B legal filer identity to a resolved public
+-- company/domain — deliberately many-h1b_sponsors-rows-to-one-companies-row capable (a parent +
+-- several subsidiary legal filers may share one resolved_company_id), and deliberately NEVER a
+-- 1:1 identity merge. domain_identity_status is its own axis, fully independent of
+-- companies.resolution_status (see that column's own comment below) — a company's official domain
+-- can be VERIFIED while careers/ATS discovery for it is FAILED_TEMPORARY, and that is a valid,
+-- expected, and common state, not a contradiction.
+CREATE TABLE IF NOT EXISTS employer_identity_resolutions (
+  id INTEGER PRIMARY KEY,
+  h1b_sponsor_id INTEGER NOT NULL REFERENCES h1b_sponsors(id),
+  -- Nullable: a FAILED_TEMPORARY/UNRESOLVED/AMBIGUOUS attempt has no resolved company yet.
+  resolved_company_id INTEGER REFERENCES companies(id),
+  -- 'VERIFIED' | 'AMBIGUOUS' | 'UNRESOLVED' | 'FAILED_TEMPORARY' — app-layer validated, no CHECK
+  -- (same "taxonomy may grow" precedent as companies.source_type above).
+  domain_identity_status TEXT NOT NULL DEFAULT 'UNRESOLVED',
+  domain TEXT,
+  -- 'curated' | 'wikidata' | 'sec_corroborated' | 'redirect_corroborated' |
+  -- 'generated_verified_multisignal' | 'unresolved' — app-layer validated.
+  resolution_method TEXT,
+  -- 'high' | 'medium' | 'low' — Path A (authoritative) resolves at 'high', Path B (multi-signal
+  -- first-party, no external registry) resolves at 'medium' by design; never higher, since it has
+  -- a weaker evidentiary basis than an external registry hit. See verifyDomain.ts.
+  resolution_confidence TEXT,
+  -- JSON array of strings, e.g. '["jsonld_legalname_match","footer_copyright_match"]'.
+  evidence TEXT,
+  -- JSON object: {jsonLd, footer, aboutPage, termsPrivacyPage}, each 'match'|'no_match'|'conflict'|
+  -- 'not_checked' — makes Path B's "≥2 distinct channels" rule independently auditable rather than
+  -- trusting evidence's free-text strings to prove channel-distinctness. See verifyDomain.ts.
+  channels_checked TEXT,
+  -- Optional, additive snapshot of a careers/ATS discovery attempt against this row's domain — NEVER
+  -- read by, and never a gate on, domain_identity_status above (see verifyDomain.ts's Step
+  -- ordering). Purely a convenience cache so a future batch run doesn't have to re-run
+  -- discoverCompanySource to know it was already attempted.
+  careers_checked_at TEXT,
+  careers_source_resolution_status TEXT,
+  discovered_jobs_url TEXT,
+  attempted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Set when domain_identity_status reaches a terminal outcome (VERIFIED/AMBIGUOUS/UNRESOLVED);
+  -- left NULL for FAILED_TEMPORARY, which is retry-eligible rather than terminal.
+  resolved_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_employer_identity_resolutions_sponsor
+  ON employer_identity_resolutions(h1b_sponsor_id);
+CREATE INDEX IF NOT EXISTS idx_employer_identity_resolutions_status
+  ON employer_identity_resolutions(domain_identity_status);
+CREATE INDEX IF NOT EXISTS idx_employer_identity_resolutions_company
+  ON employer_identity_resolutions(resolved_company_id);
+
+-- Batch-level discovery observability — one row per bounded batch run (src/lib/discovery/batch.ts),
+-- mirrors scan_runs'/match_runs' shape/reasoning exactly. Per-employer detail lives on
+-- employer_identity_resolutions/companies themselves, not duplicated here.
+CREATE TABLE IF NOT EXISTS discovery_runs (
+  id INTEGER PRIMARY KEY,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  employers_attempted INTEGER NOT NULL DEFAULT 0,
+  domains_verified INTEGER NOT NULL DEFAULT 0,
+  domains_ambiguous INTEGER NOT NULL DEFAULT 0,
+  domains_unresolved INTEGER NOT NULL DEFAULT 0,
+  domains_failed_temporary INTEGER NOT NULL DEFAULT 0,
+  careers_pages_resolved INTEGER NOT NULL DEFAULT 0,
+  ats_verified INTEGER NOT NULL DEFAULT 0,
+  needs_adapter INTEGER NOT NULL DEFAULT 0,
+  source_unresolved INTEGER NOT NULL DEFAULT 0,
+  source_failed_temporary INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  error_summary TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_discovery_runs_time ON discovery_runs(started_at DESC);

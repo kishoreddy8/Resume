@@ -111,6 +111,26 @@ function isDisallowedIp(address: string, family: 4 | 6): boolean {
 
 const DISALLOWED_HOSTNAME_LITERALS = new Set(["localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"]);
 
+/**
+ * Public, boolean-returning wrapper around this module's own private-network/scheme checks — the
+ * SAME logic safeFetch itself uses for every hop, exported so a caller that needs boolean
+ * semantics instead of a thrown SafeFetchError (e.g. the browser-based Tier-3 discovery fallback's
+ * per-navigation request interception, see src/lib/ats/discoveryBrowser.ts) never has to
+ * re-implement private-IP/loopback/link-local/DNS-rebinding detection. This is the ONLY sanctioned
+ * way for a non-safeFetch code path in this project to validate a URL's safety — see AGENTS.md's
+ * "any future discovery-related change must go through safeFetch, never a raw fetch()" precedent,
+ * extended here to browser navigation, which safeFetch itself can't cover directly.
+ */
+export async function isUrlSafeForNavigation(urlString: string, allowPrivateNetworksForTests = false): Promise<boolean> {
+  try {
+    await assertSafeUrl(urlString, allowPrivateNetworksForTests);
+    return true;
+  } catch (err) {
+    if (err instanceof SafeFetchError) return false;
+    throw err;
+  }
+}
+
 async function assertSafeUrl(urlString: string, allowPrivateNetworksForTests: boolean): Promise<URL> {
   let parsed: URL;
   try {

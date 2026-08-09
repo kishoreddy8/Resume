@@ -44,7 +44,13 @@ const UNSUPPORTED_ATS_SIGNATURES: { pattern: RegExp; name: string }[] = [
   { pattern: /recruitee\.com\//i, name: "Recruitee" },
 ];
 
-function detectUnsupportedAts(text: string): string | null {
+// Exported (unlike the rest of this module's private helpers) specifically so
+// src/lib/ats/discoveryBrowser.ts (Tier 3, the bounded browser-rendered fallback) can reuse the
+// EXACT SAME unsupported-ATS signature list, embedded-URL scanner, and careers-link scorer against
+// rendered HTML instead of duplicating this detection logic — the only thing that differs for
+// Tier 3 is where the HTML comes from (page.content() after JS execution vs. safeFetch's raw
+// response body), never how it's interpreted. See AGENTS.md's "reuse, don't duplicate" precedent.
+export function detectUnsupportedAts(text: string): string | null {
   for (const sig of UNSUPPORTED_ATS_SIGNATURES) {
     if (sig.pattern.test(text)) return sig.name;
   }
@@ -60,7 +66,7 @@ function trimTrailingPunctuation(url: string): string {
 /** Scans every URL-looking token anywhere in the HTML (href/src attributes, inline scripts, plain
  *  text alike) — same "whole-document regex" approach detect.ts's own Tier 2 already uses, just
  *  applied here so the exact matched URL (not only the sourceType) can be recorded. */
-function findEmbeddedAtsUrl(html: string): { sourceType: Exclude<SourceType, "career_link">; atsBoardToken: string; url: string } | null {
+export function findEmbeddedAtsUrl(html: string): { sourceType: Exclude<SourceType, "career_link">; atsBoardToken: string; url: string } | null {
   const tokens = html.match(URL_TOKEN_RE) ?? [];
   for (const token of tokens) {
     const trimmed = trimTrailingPunctuation(token);
@@ -70,7 +76,7 @@ function findEmbeddedAtsUrl(html: string): { sourceType: Exclude<SourceType, "ca
   return null;
 }
 
-function findEmbeddedUnsupportedAtsUrl(html: string): { name: string; url: string } | null {
+export function findEmbeddedUnsupportedAtsUrl(html: string): { name: string; url: string } | null {
   const tokens = html.match(URL_TOKEN_RE) ?? [];
   for (const token of tokens) {
     const trimmed = trimTrailingPunctuation(token);
@@ -128,7 +134,7 @@ const CAREERS_LINK_SIGNALS: { phrase: string; weight: number }[] = [
   { phrase: "jobs", weight: 1 },
 ];
 
-function scoreCareersLink(link: { url: string; text: string }): number {
+export function scoreCareersLink(link: { url: string; text: string }): number {
   const haystack = `${link.text} ${link.url}`.toLowerCase();
   let score = 0;
   for (const { phrase, weight } of CAREERS_LINK_SIGNALS) {
@@ -139,7 +145,7 @@ function scoreCareersLink(link: { url: string; text: string }): number {
 
 /** Highest-scoring distinct link that isn't the page we're already on. Ties break on first
  *  occurrence (HTML document order), a deterministic and reasonable proxy for visual prominence. */
-function findBestCareersLink(html: string, baseUrl: string, excludeUrl: string): string | null {
+export function findBestCareersLink(html: string, baseUrl: string, excludeUrl: string): string | null {
   const links = extractLinks(html, baseUrl);
   let best: { url: string; score: number } | null = null;
   for (const link of links) {

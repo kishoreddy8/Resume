@@ -99,11 +99,128 @@ export interface Company {
   discovery_reason: string | null;
   /** Set only when resolution_status is NEEDS_ADAPTER — a recognized-but-unsupported ATS platform. */
   suspected_ats: string | null;
+  // --- Domain identity (H1B Employer Source Discovery + ATS Hardening; see
+  // src/lib/companyIdentity/) — a DIFFERENT axis from resolution_status above. resolution_status
+  // answers "did we find its careers/ATS source"; domain_identity_status answers "did we identify
+  // the real public company/domain." Neither ever gates or overwrites the other — a company can be
+  // domain_identity_status=VERIFIED while resolution_status=FAILED_TEMPORARY, and that is valid.
+  verified_domain: string | null;
+  domain_identity_status: DomainIdentityStatus;
+  last_successful_discovery_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export type CompanyResolutionStatus = "VERIFIED" | "GENERIC_SUPPORTED" | "UNRESOLVED" | "NEEDS_ADAPTER" | "FAILED_TEMPORARY";
+
+/** "Did we identify the real public company/domain for this employer?" — fully independent of
+ *  CompanyResolutionStatus above (see companies.domain_identity_status's comment). AMBIGUOUS is
+ *  distinct from UNRESOLVED: it means multiple plausible entities were found and none was
+ *  confidently chosen — an honest "we found candidates but won't guess," not "we found nothing." */
+export type DomainIdentityStatus = "VERIFIED" | "AMBIGUOUS" | "UNRESOLVED" | "FAILED_TEMPORARY";
+
+/** Which evidence path a VERIFIED/AMBIGUOUS domain_identity_status was reached through — see
+ *  src/lib/companyIdentity/verifyDomain.ts. 'generated_verified_multisignal' is Path B (private
+ *  companies with no Wikidata/SEC record, verified via ≥2 independent first-party channels); the
+ *  rest are Path A (authoritative). */
+export type DomainResolutionMethod =
+  | "curated"
+  | "wikidata"
+  | "sec_corroborated"
+  | "redirect_corroborated"
+  | "generated_verified_multisignal"
+  | "unresolved";
+
+export type DomainResolutionConfidence = "high" | "medium" | "low";
+
+/** Each of verifyDomain.ts's four strong first-party channels (CH1-CH4) — independently checked,
+ *  never inferred from one another. 'conflict' means the channel was checked and named a DIFFERENT
+ *  legal identity than what's being verified — distinct from 'no_match' (checked, said nothing
+ *  useful) and 'not_checked' (never reached, e.g. because Path A already resolved it). */
+export type DomainEvidenceChannelResult = "match" | "no_match" | "conflict" | "not_checked";
+
+export interface DomainIdentityChannelsChecked {
+  jsonLd: DomainEvidenceChannelResult;
+  footer: DomainEvidenceChannelResult;
+  aboutPage: DomainEvidenceChannelResult;
+  termsPrivacyPage: DomainEvidenceChannelResult;
+}
+
+/** Optional, additive-only careers/ATS discovery snapshot attached to a DomainIdentityResult —
+ *  NEVER read by, and never a gate on, domain identity status. See verifyDomain.ts. */
+export interface CareersEvidence {
+  checkedAt: string;
+  sourceResolutionStatus: CompanyResolutionStatus | null;
+  discoveredJobsUrl: string | null;
+}
+
+/** Result of running the domain-resolution waterfall (src/lib/companyIdentity/resolveDomain.ts)
+ *  for one employer name. Persisted 1:1 onto EmployerIdentityResolution — see that interface's own
+ *  comment for the schema-level shape/reasoning. */
+export interface DomainIdentityResult {
+  status: DomainIdentityStatus;
+  domain: string | null;
+  method: DomainResolutionMethod;
+  confidence: DomainResolutionConfidence | null;
+  evidence: string[];
+  channelsChecked: DomainIdentityChannelsChecked;
+  careersEvidence: CareersEvidence | null;
+}
+
+/** Persisted row — one per h1b_sponsors.id, current-state (latest attempt), mirroring companies'
+ *  own resolution_status/discovery_attempted_at pattern. SOURCE-DISCOVERY mapping only — see
+ *  schema.sql's CRITICAL BOUNDARY comment above this table: never read by H1B sponsorship scoring. */
+export interface EmployerIdentityResolution {
+  id: number;
+  h1b_sponsor_id: number;
+  resolved_company_id: number | null;
+  domain_identity_status: DomainIdentityStatus;
+  domain: string | null;
+  resolution_method: DomainResolutionMethod | null;
+  resolution_confidence: DomainResolutionConfidence | null;
+  /** JSON-encoded string array — see DomainIdentityResult.evidence. */
+  evidence: string | null;
+  /** JSON-encoded DomainIdentityChannelsChecked. */
+  channels_checked: string | null;
+  careers_checked_at: string | null;
+  careers_source_resolution_status: CompanyResolutionStatus | null;
+  discovered_jobs_url: string | null;
+  attempted_at: string;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Curated employer -> official domain override — Layer 0 of the resolution waterfall, the
+ *  highest-trust source. Deliberately empty by default, never auto-seeded — same precedent as
+ *  H1bEmployerAlias. */
+export interface H1bEmployerDomainOverride {
+  id: number;
+  employer_name_normalized: string;
+  domain: string;
+  notes: string | null;
+  created_at: string;
+}
+
+/** Batch-level discovery observability — one row per bounded batch run
+ *  (src/lib/discovery/batch.ts). Mirrors ScanRun/match_runs' shape/reasoning. */
+export interface DiscoveryRun {
+  id: number;
+  started_at: string;
+  finished_at: string;
+  employers_attempted: number;
+  domains_verified: number;
+  domains_ambiguous: number;
+  domains_unresolved: number;
+  domains_failed_temporary: number;
+  careers_pages_resolved: number;
+  ats_verified: number;
+  needs_adapter: number;
+  source_unresolved: number;
+  source_failed_temporary: number;
+  duration_ms: number;
+  error_summary: string | null;
+}
 
 /** One row per company-scan attempt — see src/db/queries/scanRuns.ts and src/lib/scan.ts. Written
  *  once, after the attempt finishes one way or another (no intermediate "running" row). */
