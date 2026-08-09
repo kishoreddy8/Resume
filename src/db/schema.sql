@@ -405,3 +405,75 @@ CREATE TABLE IF NOT EXISTS ai_audit_log (
 -- several events recorded in rapid succession can share an identical timestamp — id (autoincrement)
 -- is the reliable ordering column, both here and in src/db/queries/aiAudit.ts's getAuditTrail.
 CREATE INDEX IF NOT EXISTS idx_ai_audit_log_enrichment ON ai_audit_log(ai_enrichment_id, id DESC);
+
+-- Phase 2 (see src/lib/match/): deterministic Job Eligibility + Candidate Matching + Explainable
+-- Scoring + Tailoring Readiness. Two brand-new tables, not an ALTER of any existing one — safe via
+-- plain CREATE TABLE IF NOT EXISTS on both a fresh install and an existing database, same as
+-- settings/ai_enrichments above. Zero new AI tasks (V1 is 100% deterministic computation); nothing
+-- here is written by or read by Phase 1's scan/dedupe/lifecycle/suppression/H1B/jobIntel pipeline.
+
+-- One row per (dedupe_key, match_engine_version, match_knowledge_hash, candidate_profile_hash,
+-- candidate_settings_hash, jd_content_hash) — immutable per that exact key, same "never updated,
+-- identical inputs are always a cache hit" philosophy as ai_enrichments.
+--
+-- IDENTITY SAFETY: dedupe_key, not job_id, is authoritative here — same reasoning as
+-- ai_enrichments' entity_key vs. entity_id (see that table's comment above). jobs.id lacks
+-- AUTOINCREMENT and can be reused by an unrelated later row once the original job is deleted
+-- (Not Interested / aged-out sweep). job_id below is therefore deliberately NOT a foreign key at
+-- all — not even a non-cascading one: a FK (cascade or NO ACTION) would either destroy this match
+-- history the moment the underlying job is deleted, or block that deletion outright, and Phase 2
+-- must do neither (match history must survive Phase 1 job deletion; Phase 2 must never alter Phase
+-- 1 deletion behavior). job_id is convenience/debug metadata only — every real lookup filters on
+-- dedupe_key.
+CREATE TABLE IF NOT EXISTS job_match_results (
+  id INTEGER PRIMARY KEY,
+  dedupe_key TEXT NOT NULL,
+  job_id INTEGER NOT NULL,
+  match_engine_version INTEGER NOT NULL,
+  -- Automatic data-fingerprint hash (src/lib/match/matchKnowledgeHash.ts) over every purely-data
+  -- matching constant (skill taxonomy, transferable-skill pairs, credit table, scoring weights,
+  -- readiness thresholds, track profiles, hands-on cue regex) — invalidates the cache the moment
+  -- any of those change, with no manual version-bump discipline required for data-only edits.
+  match_knowledge_hash TEXT NOT NULL,
+  -- data/master's resume+skills sha256 pair, combined (src/lib/match/candidateProfile.ts).
+  candidate_profile_hash TEXT NOT NULL,
+  -- Hash of Settings > Candidate (requiresSponsorship/clearance/etc.) at compute time — these are
+  -- scoring-relevant facts too, independent of both the resume/skills files and the JD.
+  candidate_settings_hash TEXT NOT NULL,
+  jd_content_hash TEXT NOT NULL,
+  eligibility_status TEXT NOT NULL, -- 'PASS' | 'BLOCKED' | 'UNKNOWN' — PASS means only "no known hard blocker"
+  eligibility_reasons TEXT NOT NULL, -- JSON array of strings
+  requirement_coverage REAL NOT NULL,
+  overall_score REAL NOT NULL, -- honest weighted average, never capped/mutated after the fact
+  employer_evidenced_share REAL NOT NULL,
+  insufficient_jd_signal INTEGER NOT NULL DEFAULT 0,
+  dimension_scores TEXT NOT NULL, -- JSON: {required,preferred,experience,seniority} each 0..100|null
+  requirement_breakdown TEXT NOT NULL, -- JSON: employer/inventory/transferable/missing/unresolved buckets
+  recommended_track TEXT NOT NULL,
+  decision TEXT NOT NULL, -- 'BLOCKED' | 'NEEDS_REVIEW' | 'READY_FOR_TAILORING' — Phase 2's terminal state
+  blocking_reasons TEXT NOT NULL, -- JSON array; empty iff decision = 'READY_FOR_TAILORING'
+  status TEXT NOT NULL DEFAULT 'active', -- 'active' | 'superseded' — bookkeeping only, same as ai_enrichments
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_match_results_key
+  ON job_match_results(dedupe_key, match_engine_version, match_knowledge_hash, candidate_profile_hash, candidate_settings_hash, jd_content_hash);
+-- Primary history-lookup path — by dedupe_key, never by job_id (see IDENTITY SAFETY above).
+CREATE INDEX IF NOT EXISTS idx_job_match_results_dedupe ON job_match_results(dedupe_key, created_at DESC);
+-- Convenience/debug only — mirrors idx_ai_enrichments_entity_id_debug's reasoning exactly.
+CREATE INDEX IF NOT EXISTS idx_job_match_results_job_id_debug ON job_match_results(job_id);
+
+-- Batch-evaluation observability — one row per batch attempt, mirrors scan_runs' shape/reasoning.
+CREATE TABLE IF NOT EXISTS match_runs (
+  id INTEGER PRIMARY KEY,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  jobs_evaluated INTEGER NOT NULL DEFAULT 0,
+  jobs_blocked INTEGER NOT NULL DEFAULT 0,
+  jobs_needs_review INTEGER NOT NULL DEFAULT 0,
+  jobs_ready INTEGER NOT NULL DEFAULT 0,
+  jobs_errored INTEGER NOT NULL DEFAULT 0,
+  error_summary TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_match_runs_time ON match_runs(started_at DESC);

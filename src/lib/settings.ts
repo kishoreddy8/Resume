@@ -47,6 +47,20 @@ const suppressionSchema = z.object({
     .max(SUPPRESSION_BOUNDS.expiredJobSuppressionDays.max),
 });
 
+/**
+ * Candidate Eligibility (Phase 2 — see src/lib/match/eligibility.ts). Small, fixed-shape facts about
+ * the candidate's OWN visa/authorization/clearance status — genuinely distinct from anything a
+ * resume should state (tailor-resume's guardrails explicitly forbid inferring visa/sponsorship status
+ * from resume content) and distinct from any job-side fact Phase 1 already extracts. This is the only
+ * place these facts live; Phase 2's eligibility engine reads them, nothing else does.
+ */
+const candidateSchema = z.object({
+  requiresSponsorship: z.boolean(),
+  usCitizen: z.boolean(),
+  workAuthorizedUS: z.boolean(),
+  clearanceLevel: z.enum(["None", "Public Trust", "Secret", "Top Secret", "TS/SCI"]),
+});
+
 const scannerSchema = z.object({
   timeoutMs: z.number().int().min(SCANNER_BOUNDS.timeoutMs.min).max(SCANNER_BOUNDS.timeoutMs.max),
   maxAttempts: z.number().int().min(SCANNER_BOUNDS.maxAttempts.min).max(SCANNER_BOUNDS.maxAttempts.max),
@@ -66,6 +80,7 @@ export const appSettingsSchema = z
     lifecycle: lifecycleSchema,
     suppression: suppressionSchema,
     scanner: scannerSchema,
+    candidate: candidateSchema,
   })
   .strict()
   .superRefine((s, ctx) => {
@@ -100,6 +115,7 @@ export const appSettingsPatchSchema = z
     lifecycle: lifecycleSchema.partial().strict().optional(),
     suppression: suppressionSchema.partial().strict().optional(),
     scanner: scannerSchema.partial().strict().optional(),
+    candidate: candidateSchema.partial().strict().optional(),
   })
   .strict();
 
@@ -121,6 +137,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
     baseDelayMs: 300,
     maxDelayMs: 4000,
     concurrency: 6,
+  },
+  // Conservative defaults, deliberately in the "more restrictive" direction: a wrong default here
+  // must fail toward under-stating eligibility (flagging a job that's actually fine), never toward
+  // silently passing a job that's actually BLOCKED for the real candidate. The user is expected to
+  // set these accurately via Settings before relying on Phase 2 match results.
+  candidate: {
+    requiresSponsorship: true,
+    usCitizen: false,
+    workAuthorizedUS: false,
+    clearanceLevel: "None",
   },
 };
 

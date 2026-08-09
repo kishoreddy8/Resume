@@ -24,6 +24,10 @@ const STORAGE_KEYS = {
   baseDelayMs: "scanner.base_delay_ms",
   maxDelayMs: "scanner.max_delay_ms",
   concurrency: "scanner.concurrency",
+  requiresSponsorship: "candidate.requires_sponsorship",
+  usCitizen: "candidate.us_citizen",
+  workAuthorizedUS: "candidate.work_authorized_us",
+  clearanceLevel: "candidate.clearance_level",
 } as const;
 
 // Removed: explicit "Not Interested" suppression is permanent and was never actually meant to be
@@ -41,6 +45,12 @@ function rowsToSettings(rows: SettingsRow[]): AppSettings {
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : fallback;
   };
+  const bool = (key: string, fallback: boolean): boolean => {
+    const raw = stored.get(key);
+    if (raw === undefined) return fallback;
+    return raw === "true";
+  };
+  const str = (key: string, fallback: string): string => stored.get(key) ?? fallback;
 
   return {
     lifecycle: {
@@ -60,6 +70,12 @@ function rowsToSettings(rows: SettingsRow[]): AppSettings {
       baseDelayMs: num(STORAGE_KEYS.baseDelayMs, DEFAULT_SETTINGS.scanner.baseDelayMs),
       maxDelayMs: num(STORAGE_KEYS.maxDelayMs, DEFAULT_SETTINGS.scanner.maxDelayMs),
       concurrency: num(STORAGE_KEYS.concurrency, DEFAULT_SETTINGS.scanner.concurrency),
+    },
+    candidate: {
+      requiresSponsorship: bool(STORAGE_KEYS.requiresSponsorship, DEFAULT_SETTINGS.candidate.requiresSponsorship),
+      usCitizen: bool(STORAGE_KEYS.usCitizen, DEFAULT_SETTINGS.candidate.usCitizen),
+      workAuthorizedUS: bool(STORAGE_KEYS.workAuthorizedUS, DEFAULT_SETTINGS.candidate.workAuthorizedUS),
+      clearanceLevel: str(STORAGE_KEYS.clearanceLevel, DEFAULT_SETTINGS.candidate.clearanceLevel) as AppSettings["candidate"]["clearanceLevel"],
     },
   };
 }
@@ -103,6 +119,7 @@ export function updateAppSettings(patch: unknown): UpdateSettingsResult {
     lifecycle: { ...current.lifecycle, ...patchParsed.data.lifecycle },
     suppression: { ...current.suppression, ...patchParsed.data.suppression },
     scanner: { ...current.scanner, ...patchParsed.data.scanner },
+    candidate: { ...current.candidate, ...patchParsed.data.candidate },
   };
 
   const fullParsed = appSettingsSchema.safeParse(merged);
@@ -133,6 +150,10 @@ export function updateAppSettings(patch: unknown): UpdateSettingsResult {
     upsert.run({ key: STORAGE_KEYS.baseDelayMs, value: String(settings.scanner.baseDelayMs) });
     upsert.run({ key: STORAGE_KEYS.maxDelayMs, value: String(settings.scanner.maxDelayMs) });
     upsert.run({ key: STORAGE_KEYS.concurrency, value: String(settings.scanner.concurrency) });
+    upsert.run({ key: STORAGE_KEYS.requiresSponsorship, value: String(settings.candidate.requiresSponsorship) });
+    upsert.run({ key: STORAGE_KEYS.usCitizen, value: String(settings.candidate.usCitizen) });
+    upsert.run({ key: STORAGE_KEYS.workAuthorizedUS, value: String(settings.candidate.workAuthorizedUS) });
+    upsert.run({ key: STORAGE_KEYS.clearanceLevel, value: settings.candidate.clearanceLevel });
     for (const key of LEGACY_KEYS) dropLegacy.run(key);
   })();
 

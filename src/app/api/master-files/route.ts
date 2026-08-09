@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
@@ -15,6 +16,15 @@ interface ManifestEntry {
   filename: string;
   uploadedAt: string;
   sizeBytes: number;
+  /** sha256 of the file's raw bytes — the staleness-detection anchor for Phase 2's candidate
+   *  profile (see src/lib/match/candidateProfile.ts). Added additively; older manifest entries
+   *  written before this field existed simply have it undefined, which the profile loader treats
+   *  as "cannot verify freshness" (never as "assume fresh"). */
+  sha256: string;
+}
+
+function sha256Hex(bytes: Buffer): string {
+  return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
 type Manifest = Partial<Record<Slot, ManifestEntry>>;
@@ -91,6 +101,7 @@ export async function POST(req: NextRequest) {
     filename: file.name,
     uploadedAt: new Date().toISOString(),
     sizeBytes: bytes.length,
+    sha256: sha256Hex(bytes),
   };
   writeManifest(manifest);
 

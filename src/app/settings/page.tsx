@@ -42,6 +42,71 @@ interface ApiError {
   message: string;
 }
 
+const CLEARANCE_LEVELS = ["None", "Public Trust", "Secret", "Top Secret", "TS/SCI"] as const;
+
+/** Candidate Eligibility (Phase 2) — booleans + one enum, so it doesn't fit SettingsGroup's
+ *  numeric-only <input type="number"> rendering; kept as its own small component instead of
+ *  contorting SettingsGroup to handle multiple field shapes. */
+function CandidateSettingsGroup({
+  values,
+  onChange,
+  errors,
+}: {
+  values: AppSettings["candidate"];
+  onChange: (key: keyof AppSettings["candidate"], value: boolean | string) => void;
+  errors: ApiError[];
+}) {
+  const fieldError = (key: string) => errors.find((e) => e.path === `candidate.${key}`);
+  return (
+    <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <div>
+        <h2 className="text-sm font-semibold">Candidate Eligibility</h2>
+        <p className="text-xs text-zinc-500">
+          Used only by Phase 2&apos;s job-match eligibility check (sponsorship/clearance/work-authorization
+          hard blockers). Never inferred from your resume — set these directly and accurately.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={values.requiresSponsorship}
+            onChange={(e) => onChange("requiresSponsorship", e.target.checked)}
+          />
+          <span>Requires visa sponsorship</span>
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={values.usCitizen} onChange={(e) => onChange("usCitizen", e.target.checked)} />
+          <span>U.S. citizen</span>
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={values.workAuthorizedUS}
+            onChange={(e) => onChange("workAuthorizedUS", e.target.checked)}
+          />
+          <span>Currently work-authorized in the U.S.</span>
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Security clearance held</span>
+          <select
+            value={values.clearanceLevel}
+            onChange={(e) => onChange("clearanceLevel", e.target.value)}
+            className="rounded border border-zinc-300 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+          >
+            {CLEARANCE_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {fieldError("clearanceLevel") && <p className="text-xs text-red-600">{fieldError("clearanceLevel")?.message}</p>}
+    </section>
+  );
+}
+
 function SettingsGroup({
   title,
   description,
@@ -230,6 +295,14 @@ export default function SettingsPage() {
         fields={SCANNER_FIELDS}
         values={settings.scanner}
         onChange={handleChange}
+        errors={errors}
+      />
+      <CandidateSettingsGroup
+        values={settings.candidate}
+        onChange={(key, value) => {
+          setSettings((prev) => (prev ? { ...prev, candidate: { ...prev.candidate, [key]: value } } : prev));
+          setSavedAt(null);
+        }}
         errors={errors}
       />
     </div>

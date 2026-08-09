@@ -1,11 +1,59 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
+import { MatchDecisionBadge, type MatchDecision } from "@/components/MatchDecisionBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import type { JobWithCompany } from "@/types";
+
+type DecisionFilter = "All" | MatchDecision | "Not Evaluated";
+const DECISION_FILTERS: DecisionFilter[] = ["All", "READY_FOR_TAILORING", "NEEDS_REVIEW", "BLOCKED", "Not Evaluated"];
+const DECISION_FILTER_LABELS: Record<DecisionFilter, string> = {
+  All: "All",
+  READY_FOR_TAILORING: "Ready for Tailoring",
+  NEEDS_REVIEW: "Needs Review",
+  BLOCKED: "Blocked",
+  "Not Evaluated": "Not Evaluated",
+};
+
+/** Batch-fetches the latest Phase 2 match decision for every visible job's dedupe_key in one
+ *  request — never one request per row. Purely additive/client-side: does not touch listJobs'
+ *  server-side SQL or JobFilterSidebar's URL-param-driven filters. */
+function useMatchDecisions(jobs: JobWithCompany[]): Record<string, { decision: MatchDecision; overallScore: number }> {
+  const [decisions, setDecisions] = useState<Record<string, { decision: MatchDecision; overallScore: number }>>({});
+  const dedupeKeysKey = jobs.map((j) => j.dedupe_key).join(",");
+
+  useEffect(() => {
+    const dedupeKeys = dedupeKeysKey ? dedupeKeysKey.split(",") : [];
+    let cancelled = false;
+    // Always resolves asynchronously (even the empty-list case) so setDecisions is never called
+    // synchronously within the effect body itself.
+    const request: Promise<Record<string, { decision: MatchDecision; overallScore: number }>> =
+      dedupeKeys.length === 0
+        ? Promise.resolve({})
+        : fetch("/api/jobs/match-decisions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dedupeKeys }),
+          })
+            .then((res) => res.json())
+            .then((body) => body.decisions ?? {});
+
+    request.then((decisions) => {
+      if (!cancelled) setDecisions(decisions);
+    }).catch(() => {
+      if (!cancelled) setDecisions({});
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dedupeKeysKey]);
+
+  return decisions;
+}
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -62,30 +110,54 @@ function TailoringCheckbox({ jobId, initial }: { jobId: number; initial: boolean
 }
 
 export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; thresholds: LifecycleThresholds }) {
-  if (jobs.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
-        No jobs match these filters. Add companies and run a scan, or widen your filters.
-      </div>
-    );
-  }
+  const decisions = useMatchDecisions(jobs);
+  const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>("All");
+
+  const visibleJobs = jobs.filter((job) => {
+    if (decisionFilter === "All") return true;
+    const entry = decisions[job.dedupe_key];
+    if (decisionFilter === "Not Evaluated") return !entry;
+    return entry?.decision === decisionFilter;
+  });
 
   return (
-    <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <table className="w-full text-left text-sm">
-        <thead className="bg-zinc-100 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-          <tr>
-            <th className="px-3 py-2 font-medium">Title / Company</th>
-            <th className="px-3 py-2 font-medium">Location</th>
-            <th className="px-3 py-2 font-medium">Posted</th>
-            <th className="px-3 py-2 font-medium">H1B</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium text-center">Tailor</th>
-            <th className="px-3 py-2 font-medium"></th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-          {jobs.map((job) => (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-zinc-500">Match decision:</span>
+        <select
+          value={decisionFilter}
+          onChange={(e) => setDecisionFilter(e.target.value as DecisionFilter)}
+          className="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950"
+        >
+          {DECISION_FILTERS.map((f) => (
+            <option key={f} value={f}>
+              {DECISION_FILTER_LABELS[f]}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {visibleJobs.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+          No jobs match these filters. Add companies and run a scan, or widen your filters.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-zinc-100 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+              <tr>
+                <th className="px-3 py-2 font-medium">Title / Company</th>
+                <th className="px-3 py-2 font-medium">Location</th>
+                <th className="px-3 py-2 font-medium">Posted</th>
+                <th className="px-3 py-2 font-medium">H1B</th>
+                <th className="px-3 py-2 font-medium">Match</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium text-center">Tailor</th>
+                <th className="px-3 py-2 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              {visibleJobs.map((job) => (
             <tr key={job.id} className={job.is_active ? "" : "opacity-50"}>
               <td className="px-3 py-2">
                 <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">
@@ -105,6 +177,13 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
                 <H1bBadge confidence={job.h1b_combined_confidence} />
               </td>
               <td className="px-3 py-2">
+                {decisions[job.dedupe_key] ? (
+                  <MatchDecisionBadge decision={decisions[job.dedupe_key].decision} />
+                ) : (
+                  <span className="text-xs text-zinc-400">—</span>
+                )}
+              </td>
+              <td className="px-3 py-2">
                 <PipelineStatusSelect jobId={job.id} value={job.pipeline_status} />
               </td>
               <td className="px-3 py-2 text-center">
@@ -121,9 +200,11 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
                 </a>
               </td>
             </tr>
-          ))}
-        </tbody>
-      </table>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

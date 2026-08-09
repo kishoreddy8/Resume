@@ -183,6 +183,36 @@ test("settings persist across a simulated database reconnect", () => {
   resetAppSettings();
 });
 
+// --- Candidate eligibility (Phase 2) -----------------------------------------------------------
+
+test("candidate settings default to the conservative DEFAULT_SETTINGS values on an empty table", () => {
+  resetAppSettings();
+  const settings = getAppSettings();
+  assert.deepEqual(settings.candidate, DEFAULT_SETTINGS.candidate);
+});
+
+test("candidate settings persist a partial patch and merge with existing values", () => {
+  resetAppSettings();
+  const result = updateAppSettings({ candidate: { requiresSponsorship: false, clearanceLevel: "Secret" } });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.settings.candidate.requiresSponsorship, false);
+    assert.equal(result.settings.candidate.clearanceLevel, "Secret");
+    // untouched fields keep their prior (default) value — a partial patch is a merge, not a replace
+    assert.equal(result.settings.candidate.usCitizen, DEFAULT_SETTINGS.candidate.usCitizen);
+  }
+  assert.equal(getAppSettings().candidate.requiresSponsorship, false);
+  resetAppSettings();
+});
+
+test("an invalid clearanceLevel enum value is rejected and leaves settings untouched", () => {
+  resetAppSettings();
+  const before = getAppSettings();
+  const result = updateAppSettings({ candidate: { clearanceLevel: "Not A Real Level" } });
+  assert.equal(result.ok, false);
+  assert.deepEqual(getAppSettings(), before);
+});
+
 // --- Lifecycle wiring -------------------------------------------------------------------------
 
 test("runAgeBasedSweep uses configured lifecycle thresholds, not the hardcoded defaults", () => {
