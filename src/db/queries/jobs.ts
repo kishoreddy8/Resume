@@ -1,7 +1,8 @@
 import type Database from "better-sqlite3";
 import { getDb } from "@/db";
+import { isProtectedForAnyCandidate } from "@/db/queries/candidateJobState";
 import { getAppSettings } from "@/db/queries/settings";
-import { canArchive, getJobAgeBand, getJobAgeDays, isLifecycleProtected } from "@/lib/jobLifecycle";
+import { getJobAgeBand, getJobAgeDays } from "@/lib/jobLifecycle";
 import { isSuppressionActive } from "@/lib/settings";
 import type {
   AgeSweepResult,
@@ -40,6 +41,40 @@ export interface JobFilters {
   salaryAvailable?: boolean;
   /** true = only jobs where clearance_required = 'Required'. */
   clearanceRequired?: boolean;
+  /**
+   * Phase 2.5: when provided, `status`/`markedForTailoring` filter against — and
+   * pipeline_status/pinned/notes/tags/marked_for_tailoring on each returned row reflect — THIS
+   * candidate's candidate_job_state via a LEFT JOIN, instead of the frozen legacy jobs.* columns.
+   * Omitted = byte-identical legacy behavior (every existing caller that doesn't pass this gets the
+   * exact same query/results as before Phase 2.5 — this parameter changes nothing unless supplied).
+   * A job with no candidate_job_state row overlays the same defaults candidateJobState.ts uses
+   * (pipeline_status='New', pinned=0, marked_for_tailoring=0, notes/tags=null).
+   */
+  candidateId?: number;
+}
+
+/** Shared by listJobs/getJob: builds the LEFT JOIN + per-field COALESCE expressions that overlay
+ *  candidate_job_state onto a job row, only when candidateId is provided. Returns empty/legacy
+ *  expressions (no JOIN, read straight from j.*) when it's not — see JobFilters.candidateId's doc
+ *  comment for why that keeps every pre-Phase-2.5 caller byte-identical. */
+function candidateOverlay(candidateId: number | undefined) {
+  if (!candidateId) {
+    return { join: "", selectOverride: "", params: {} as Record<string, unknown> };
+  }
+  return {
+    join: "LEFT JOIN candidate_job_state cjs ON cjs.candidate_id = @overlayCandidateId AND cjs.dedupe_key = j.dedupe_key",
+    // Appended after j.* in the SELECT list — SQLite/better-sqlite3 builds each result object by
+    // assigning columns in order, so a later column with the same name overwrites the earlier one,
+    // which is exactly how this overrides j.pipeline_status/j.pinned/etc. without excluding them.
+    selectOverride: `,
+      COALESCE(cjs.pipeline_status, 'New') AS pipeline_status,
+      COALESCE(cjs.pinned, 0) AS pinned,
+      COALESCE(cjs.marked_for_tailoring, 0) AS marked_for_tailoring,
+      cjs.tailoring_marked_at AS tailoring_marked_at,
+      cjs.notes AS notes,
+      cjs.tags AS tags`,
+    params: { overlayCandidateId: candidateId },
+  };
 }
 
 /** Appends one row to job_status_history. Internal — all lifecycle/pipeline mutations in this file
@@ -74,9 +109,13 @@ const JOB_WITH_COMPANY_SELECT = `
 export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
   const clauses: string[] = [];
   const params: Record<string, unknown> = {};
+  const overlay = candidateOverlay(filters.candidateId);
+  Object.assign(params, overlay.params);
+  const pipelineStatusExpr = filters.candidateId ? "COALESCE(cjs.pipeline_status, 'New')" : "j.pipeline_status";
+  const markedForTailoringExpr = filters.candidateId ? "COALESCE(cjs.marked_for_tailoring, 0)" : "j.marked_for_tailoring";
 
   if (filters.status) {
-    clauses.push("j.pipeline_status = @status");
+    clauses.push(`${pipelineStatusExpr} = @status`);
     params.status = filters.status;
   }
   if (filters.companyId) {
@@ -91,7 +130,7 @@ export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
     clauses.push("j.is_active = 1");
   }
   if (filters.markedForTailoring) {
-    clauses.push("j.marked_for_tailoring = 1");
+    clauses.push(`${markedForTailoringExpr} = 1`);
   }
   if (filters.search) {
     clauses.push("(j.title LIKE @search OR j.description_text LIKE @search OR c.name LIKE @search)");
@@ -128,21 +167,25 @@ export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
 
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   const sql = `
-    SELECT ${JOB_WITH_COMPANY_SELECT}
+    SELECT ${JOB_WITH_COMPANY_SELECT}${overlay.selectOverride}
     FROM jobs j
     JOIN companies c ON c.id = j.company_id
+    ${overlay.join}
     ${where}
     ORDER BY j.posted_at DESC, j.first_seen_at DESC
   `;
   return getDb().prepare(sql).all(params) as JobWithCompany[];
 }
 
-export function getJob(id: number): JobWithCompany | undefined {
+/** candidateId is optional — see JobFilters.candidateId's doc comment on listJobs above; omitted
+ *  keeps this byte-identical to pre-Phase-2.5 behavior for every existing caller. */
+export function getJob(id: number, candidateId?: number): JobWithCompany | undefined {
+  const overlay = candidateOverlay(candidateId);
   return getDb()
     .prepare(
-      `SELECT ${JOB_WITH_COMPANY_SELECT} FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.id = ?`
+      `SELECT ${JOB_WITH_COMPANY_SELECT}${overlay.selectOverride} FROM jobs j JOIN companies c ON c.id = j.company_id ${overlay.join} WHERE j.id = @id`
     )
-    .get(id) as JobWithCompany | undefined;
+    .get({ id, ...overlay.params }) as JobWithCompany | undefined;
 }
 
 /** Looks up a job's id by its dedupe_key — upsertJob() only returns the outcome ("inserted" etc.),
@@ -357,7 +400,8 @@ export interface CloseStaleJobsResult {
  * CLOSED JOBS policy: for a company's jobs not present in the latest scan of an authoritative ATS
  * board (seenDedupeKeys) — career_link scrapes are never passed here; see scan.ts — closes them
  * (is_active=0) the moment they first go missing, and in that same moment archives them too, but
- * ONLY if canArchive() allows it (unapplied and unpinned). A protected job (Applied, Interviewing,
+ * ONLY if it's unprotected (unapplied and unpinned for EVERY candidate — see
+ * isProtectedForAnyCandidate, Phase 2.5). A protected job (Applied, Interviewing,
  * Offer, Employer Rejected, or pinned) just stays closed-but-not-archived indefinitely: "keep
  * record and mark posting closed." This only fires on the Active->Closed transition itself, not on
  * every subsequent scan a job is still missing — a protected job that later becomes unprotected is
@@ -413,7 +457,11 @@ export function closeStaleJobs(companyId: number, seenDedupeKeys: string[]): Clo
         recordHistory(db, job.id, "lifecycle", "Active", "Closed", "Not found in latest scan (posting closed)");
         jobsClosed++;
 
-        if (canArchive({ pipelineStatus: job.pipeline_status, pinned: job.pinned })) {
+        // Phase 2.5: protection is now a cross-candidate OR over candidate_job_state, not the frozen
+        // jobs.pipeline_status/jobs.pinned columns — see isProtectedForAnyCandidate's doc comment.
+        // The underlying protection RULE (Applied/Interviewing/Offer/Employer Rejected/pinned never
+        // auto-archived) is unchanged; only its data source moved.
+        if (!isProtectedForAnyCandidate(job.dedupe_key)) {
           const reason = "Posting closed upstream (unapplied)";
           archiveStmt.run({ id: job.id, reason });
           recordHistory(db, job.id, "lifecycle", "Closed", "Archived", reason);
@@ -430,10 +478,11 @@ export function closeStaleJobs(companyId: number, seenDedupeKeys: string[]): Clo
 }
 
 /**
- * Manually archives a job. Refuses (canArchive() = false) while the job is protected — Applied,
- * Interviewing, Offer, Employer Rejected, or pinned — the same guardrail every automatic archive
- * path (closeStaleJobs, runAgeBasedSweep) enforces, so "never archive a protected job" holds
- * regardless of trigger. A no-op (not an error) if the job is already archived.
+ * Manually archives a job. Refuses while the job is protected for ANY candidate — Applied,
+ * Interviewing, Offer, Employer Rejected, or pinned (see isProtectedForAnyCandidate, Phase 2.5) —
+ * the same guardrail every automatic archive path (closeStaleJobs, runAgeBasedSweep) enforces, so
+ * "never archive a protected job" holds regardless of trigger. A no-op (not an error) if the job is
+ * already archived.
  */
 export function archiveJob(
   id: number,
@@ -443,11 +492,15 @@ export function archiveJob(
   const existing = db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job | undefined;
   if (!existing) return { ok: false, blockedReason: "Job not found" };
   if (existing.is_archived === 1) return { ok: true, job: existing };
-  if (!canArchive({ pipelineStatus: existing.pipeline_status, pinned: existing.pinned })) {
-    const why = existing.pinned === 1 ? "it is pinned" : `it is marked "${existing.pipeline_status}"`;
+  // Phase 2.5: cross-candidate protection check — see isProtectedForAnyCandidate's doc comment.
+  // The reason text is deliberately generic (not "it is marked X") since jobs.pipeline_status/pinned
+  // are frozen legacy columns now — the actual protecting candidate's state lives in
+  // candidate_job_state and may belong to a different candidate than whoever clicked Archive.
+  if (isProtectedForAnyCandidate(existing.dedupe_key)) {
     return {
       ok: false,
-      blockedReason: `Cannot archive this job — ${why}. Unpin it or change its pipeline status first.`,
+      blockedReason:
+        "Cannot archive this job — at least one candidate has it pinned or in a protected pipeline stage (Applied/Interviewing/Offer/Employer Rejected). Unpin it or change that candidate's pipeline status first.",
     };
   }
 
@@ -536,8 +589,8 @@ export function markNotInterested(jobId: number): DeletedJobRef | undefined {
  * (getJobAgeDays — posted_at when reliable, else first_seen_at, never last_seen_at) against the
  * Fresh/Active/Archived/Delete policy, for jobs of ANY source_type (unlike closeStaleJobs, this
  * isn't about a posting closing upstream — it's purely "how long has this sat unactioned," which
- * applies to career-link jobs too). Protected jobs (isLifecycleProtected: Applied, Interviewing,
- * Offer, Employer Rejected, or pinned) are skipped entirely, at any age.
+ * applies to career-link jobs too). Protected jobs (isProtectedForAnyCandidate: Applied, Interviewing,
+ * Offer, Employer Rejected, or pinned for ANY candidate) are skipped entirely, at any age.
  *
  *   8-10 days old, unapplied/unpinned, not yet archived -> archived.
  *   >10 days old, unapplied/unpinned (regardless of current archived state) -> permanently
@@ -583,7 +636,8 @@ export function runAgeBasedSweep(now: Date = new Date()): AgeSweepResult {
 
   db.transaction(() => {
     for (const job of rows) {
-      if (isLifecycleProtected({ pipelineStatus: job.pipeline_status, pinned: job.pinned })) continue;
+      // Phase 2.5: cross-candidate protection check — see isProtectedForAnyCandidate's doc comment.
+      if (isProtectedForAnyCandidate(job.dedupe_key)) continue;
 
       const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at }, now);
       const band = getJobAgeBand(ageDays, thresholds);

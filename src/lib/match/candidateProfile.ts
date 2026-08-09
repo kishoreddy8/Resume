@@ -4,27 +4,42 @@ import { z } from "zod";
 import type { CandidateProfile } from "./types";
 
 /**
- * Loader/validator for data/master/candidate-profile.json — the ONLY V1 source of a candidate
- * profile (see build-candidate-profile skill, .claude/skills/build-candidate-profile/SKILL.md).
+ * Loader/validator for data/candidates/<candidateId>/candidate-profile.json — the ONLY V1 source of
+ * a candidate profile (see build-candidate-profile skill,
+ * .claude/skills/build-candidate-profile/SKILL.md — invoked as `/build-candidate-profile <candidate_id>`).
  *
- * Master Resume and Master Skills Inventory (data/master/resume.docx, data/master/skills.docx)
+ * Master Resume and Master Skills Inventory (data/candidates/<candidateId>/master/{resume,skills}.*)
  * remain the sole factual authority at all times. This file is a derived, versioned INDEX only —
  * this module never writes it, never trusts it over the manifest's source hashes, and refuses to
  * treat a stale or missing profile as usable (see loadCandidateProfile below).
+ *
+ * Phase 2.5: every path below is candidate-scoped by an explicit candidateId parameter — there is no
+ * "current candidate" fallback anywhere in this module. A caller that gets the wrong candidateId gets
+ * the wrong candidate's data; there is no implicit default to accidentally cross-contaminate against.
  */
 
 export const CANDIDATE_PROFILE_SCHEMA_VERSION = 1;
 
-// Overridable for tests only, mirroring src/db/index.ts's CAREER_OPS_DB_PATH convention — real app
-// code never sets this env var, it always resolves to the real data/master directory.
-function masterDir(): string {
-  return process.env.CAREER_OPS_MASTER_DIR ?? path.join(process.cwd(), "data", "master");
+// CAREER_OPS_MASTER_DIR is a test-only override (mirroring src/db/index.ts's CAREER_OPS_DB_PATH
+// convention) that specifies the exact master directory directly, bypassing per-candidate path
+// derivation entirely — real app code never sets this env var. CAREER_OPS_CANDIDATES_DIR (also
+// test-only) overrides just the candidates root, preserving per-candidate subdirectories.
+function candidatesRoot(): string {
+  return process.env.CAREER_OPS_CANDIDATES_DIR ?? path.join(process.cwd(), "data", "candidates");
 }
-function candidateProfilePath(): string {
-  return path.join(masterDir(), "candidate-profile.json");
+function candidateDir(candidateId: number): string {
+  return path.join(candidatesRoot(), String(candidateId));
 }
-function manifestPath(): string {
-  return path.join(masterDir(), "manifest.json");
+function masterDir(candidateId: number): string {
+  return process.env.CAREER_OPS_MASTER_DIR ?? path.join(candidateDir(candidateId), "master");
+}
+function candidateProfilePath(candidateId: number): string {
+  return process.env.CAREER_OPS_MASTER_DIR
+    ? path.join(process.env.CAREER_OPS_MASTER_DIR, "candidate-profile.json")
+    : path.join(candidateDir(candidateId), "candidate-profile.json");
+}
+function manifestPath(candidateId: number): string {
+  return path.join(masterDir(candidateId), "manifest.json");
 }
 
 const skillEntrySchema = z
@@ -77,8 +92,8 @@ interface ManifestEntry {
 }
 type Manifest = Partial<Record<"resume" | "skills", ManifestEntry>>;
 
-function readManifest(): Manifest {
-  const manifestFile = manifestPath();
+function readManifest(candidateId: number): Manifest {
+  const manifestFile = manifestPath(candidateId);
   if (!fs.existsSync(manifestFile)) return {};
   try {
     return JSON.parse(fs.readFileSync(manifestFile, "utf-8"));
@@ -101,8 +116,8 @@ export type CandidateProfileLoadResult =
  * "candidate-profile missing or stale must never produce READY_FOR_TAILORING" true by construction,
  * since no result is ever computed in either case).
  */
-export function loadCandidateProfile(): CandidateProfileLoadResult {
-  const profileFile = candidateProfilePath();
+export function loadCandidateProfile(candidateId: number): CandidateProfileLoadResult {
+  const profileFile = candidateProfilePath(candidateId);
   if (!fs.existsSync(profileFile)) return { status: "missing" };
 
   let raw: unknown;
@@ -120,7 +135,7 @@ export function loadCandidateProfile(): CandidateProfileLoadResult {
     return { status: "invalid", error: `Unsupported candidate-profile schemaVersion ${parsed.data.schemaVersion} (expected ${CANDIDATE_PROFILE_SCHEMA_VERSION})` };
   }
 
-  const manifest = readManifest();
+  const manifest = readManifest(candidateId);
   const resumeHash = manifest.resume?.sha256;
   const skillsHash = manifest.skills?.sha256;
   // Missing manifest hashes (upload predates the sha256 field, or files were never uploaded) can

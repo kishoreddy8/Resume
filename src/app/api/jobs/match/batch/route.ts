@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAppSettings } from "@/db/queries/settings";
+import { requireActiveCandidate } from "@/db/queries/candidates";
+import { getMatchAffectingSettings } from "@/db/queries/candidateSettings";
 import { getJob, listJobs } from "@/db/queries/jobs";
 import { getJobCertifications, getJobSkills } from "@/db/queries/jobIntel";
 import { getJobMatchResult, insertJobMatchResult } from "@/db/queries/jobMatches";
@@ -12,6 +13,11 @@ import type { DescriptionSections, JobWithCompany } from "@/types";
  * src/lib/scan.ts's per-company isolation). Deterministic only — zero AI, so no cost concern; the
  * bound exists purely to keep one request fast and to make DB writes observable per-run, not to
  * ration a paid resource. Never triggered automatically by scanning — always an explicit call.
+ *
+ * Phase 2.5: always exactly ONE candidate per batch call (candidateId required in the body) — never
+ * a cross-candidate batch. Each of the 3-4 local candidates gets its own explicit batch call; see
+ * CAREER_OPS_HANDOFF.md's Phase 2.5 design record §12/13 for why this stays fully synchronous and
+ * in-request rather than introducing any queue/worker infrastructure.
  */
 
 const DEFAULT_LIMIT = 50;
@@ -56,6 +62,11 @@ function buildInput(job: JobWithCompany): EvaluateJobMatchInput {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
+
+  const candidateId = typeof body?.candidateId === "number" ? body.candidateId : null;
+  if (candidateId === null) return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
+  if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+
   const requestedLimit = typeof body?.limit === "number" ? body.limit : DEFAULT_LIMIT;
   const limit = Math.max(1, Math.min(MAX_LIMIT, requestedLimit));
 
@@ -69,7 +80,7 @@ export async function POST(req: NextRequest) {
     targets = listJobs({ activeOnly: true }).slice(0, limit);
   }
 
-  const settings = getAppSettings();
+  const candidateSettings = getMatchAffectingSettings(candidateId);
   const startedAt = new Date().toISOString();
 
   let blocked = 0;
@@ -81,12 +92,13 @@ export async function POST(req: NextRequest) {
 
   for (const job of targets) {
     try {
-      const result = evaluateJobMatch(buildInput(job), settings.candidate);
+      const result = evaluateJobMatch(buildInput(job), candidateSettings, candidateId);
       if (result.status === "unavailable") {
         outcomes.push({ jobId: job.id, status: "unavailable", reason: result.reason });
         continue;
       }
       const existing = getJobMatchResult({
+        candidateId: result.data.candidateId,
         dedupeKey: result.data.dedupeKey,
         matchEngineVersion: result.data.matchEngineVersion,
         matchKnowledgeHash: result.data.matchKnowledgeHash,
@@ -111,6 +123,7 @@ export async function POST(req: NextRequest) {
 
   const finishedAt = new Date().toISOString();
   const run = insertMatchRun({
+    candidateId,
     startedAt,
     finishedAt,
     jobsEvaluated: targets.length,

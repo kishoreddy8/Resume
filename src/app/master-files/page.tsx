@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 
 interface ManifestEntry {
   filename: string;
@@ -21,12 +22,14 @@ function UploadSlot({
   label,
   description,
   entry,
+  candidateId,
   onUploaded,
 }: {
   slot: "resume" | "skills";
   label: string;
   description: string;
   entry?: ManifestEntry;
+  candidateId: number;
   onUploaded: () => void;
 }) {
   const [uploading, setUploading] = useState(false);
@@ -41,6 +44,7 @@ function UploadSlot({
       const body = new FormData();
       body.set("slot", slot);
       body.set("file", file);
+      body.set("candidateId", String(candidateId));
       const res = await fetch("/api/master-files", { method: "POST", body });
       if (!res.ok) {
         const data = await res.json();
@@ -130,13 +134,14 @@ function UploadSlot({
 }
 
 export default function MasterFilesPage() {
+  const candidateId = useActiveCandidateId();
   const [manifest, setManifest] = useState<Manifest>({});
   const [loading, setLoading] = useState(true);
 
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch("/api/master-files");
+      const res = await fetch(`/api/master-files?candidateId=${candidateId}`);
       const data = await res.json();
       setManifest(data.manifest ?? {});
     } finally {
@@ -148,7 +153,8 @@ export default function MasterFilesPage() {
     // Intentional: fetch-on-mount with a loading flag, not a render loop.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateId]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -172,6 +178,7 @@ export default function MasterFilesPage() {
             label="Master Resume"
             description="Your full resume (.docx, .md, or .txt). Every tailored resume is derived from this."
             entry={manifest.resume}
+            candidateId={candidateId}
             onUploaded={load}
           />
           <UploadSlot
@@ -179,6 +186,7 @@ export default function MasterFilesPage() {
             label="Master Skills Inventory"
             description="Every technology you genuinely know, grouped by ecosystem. Used to decide what can be truthfully emphasized per job."
             entry={manifest.skills}
+            candidateId={candidateId}
             onUploaded={load}
           />
         </div>

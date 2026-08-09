@@ -26,8 +26,6 @@ let upsertJob: typeof import("../jobs").upsertJob;
 let getJob: typeof import("../jobs").getJob;
 let listJobs: typeof import("../jobs").listJobs;
 let runAgeBasedSweep: typeof import("../jobs").runAgeBasedSweep;
-let updateJobPipeline: typeof import("../jobs").updateJobPipeline;
-let setJobPinned: typeof import("../jobs").setJobPinned;
 let markNotInterested: typeof import("../jobs").markNotInterested;
 let getAppSettings: typeof import("../settings").getAppSettings;
 let updateAppSettings: typeof import("../settings").updateAppSettings;
@@ -35,6 +33,8 @@ let resetAppSettings: typeof import("../settings").resetAppSettings;
 let runScan: typeof import("../../../lib/scan").runScan;
 let dedupeKeyForAts: typeof import("../../../lib/dedupe").dedupeKeyForAts;
 let DEFAULT_SETTINGS: typeof import("../../../lib/settings").DEFAULT_SETTINGS;
+let setCandidatePipelineStatus: typeof import("../candidateJobState").setPipelineStatus;
+let setCandidatePinned: typeof import("../candidateJobState").setPinned;
 
 before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-settings-test-"));
@@ -42,13 +42,12 @@ before(async () => {
 
   ({ getDb } = await import("../../index"));
   ({ createCompany } = await import("../companies"));
-  ({ upsertJob, getJob, listJobs, runAgeBasedSweep, updateJobPipeline, setJobPinned, markNotInterested } = await import(
-    "../jobs"
-  ));
+  ({ upsertJob, getJob, listJobs, runAgeBasedSweep, markNotInterested } = await import("../jobs"));
   ({ getAppSettings, updateAppSettings, resetAppSettings } = await import("../settings"));
   ({ runScan } = await import("../../../lib/scan"));
   ({ dedupeKeyForAts } = await import("../../../lib/dedupe"));
   ({ DEFAULT_SETTINGS } = await import("../../../lib/settings"));
+  ({ setPipelineStatus: setCandidatePipelineStatus, setPinned: setCandidatePinned } = await import("../candidateJobState"));
 
   getDb(); // ensure schema + migrations have run
 });
@@ -246,12 +245,13 @@ test("protected jobs (Applied, pinned) remain protected regardless of how aggres
   const appliedKey = dedupeKeyForAts("greenhouse", company.id, "req-protected-applied");
   seedJob(company.id, appliedKey, { title: "Applied Role" });
   const appliedJobId = listJobs({ companyId: company.id }).find((j) => j.dedupe_key === appliedKey)!.id;
-  updateJobPipeline(appliedJobId, { pipelineStatus: "Applied" as PipelineStatus });
+  // Phase 2.5: lifecycle protection now reads candidate_job_state, not jobs.pipeline_status/pinned.
+  setCandidatePipelineStatus(1, appliedKey, "Applied" as PipelineStatus);
 
   const pinnedKey = dedupeKeyForAts("greenhouse", company.id, "req-protected-pinned");
   seedJob(company.id, pinnedKey, { title: "Pinned Role" });
   const pinnedJobId = listJobs({ companyId: company.id }).find((j) => j.dedupe_key === pinnedKey)!.id;
-  setJobPinned(pinnedJobId, true);
+  setCandidatePinned(1, pinnedKey, true);
 
   const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
   getDb().prepare("UPDATE jobs SET first_seen_at = ? WHERE id IN (?, ?)").run(tenDaysAgo, appliedJobId, pinnedJobId);

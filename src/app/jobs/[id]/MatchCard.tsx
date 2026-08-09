@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { MatchDecisionBadge, type MatchDecision } from "@/components/MatchDecisionBadge";
 import type { JobMatchResult } from "@/lib/match/types";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 
 /**
  * Phase 2 — deterministic Job Match / Eligibility / Readiness. Unlike AiInsightsCard, this fetches
@@ -20,8 +21,8 @@ function pct(value: number | null): string {
   return value === null ? "—" : `${Math.round(value)}%`;
 }
 
-function RequirementList({ title, items, tone }: { title: string; items: JobMatchResult["missingRequirements"]; tone: string }) {
-  if (items.length === 0) return null;
+function RequirementList({ title, items, tone }: { title: string; items: JobMatchResult["missingRequirements"] | undefined; tone: string }) {
+  if (!items || items.length === 0) return null;
   return (
     <div>
       <h4 className={`mb-1 text-xs font-semibold ${tone}`}>
@@ -43,6 +44,7 @@ function RequirementList({ title, items, tone }: { title: string; items: JobMatc
 }
 
 export function MatchCard({ jobId }: { jobId: number }) {
+  const candidateId = useActiveCandidateId();
   const [result, setResult] = useState<JobMatchResult | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "ok" | "none" | "unavailable" | "error">("idle");
   const [reason, setReason] = useState<string | null>(null);
@@ -50,7 +52,7 @@ export function MatchCard({ jobId }: { jobId: number }) {
   async function loadLatest() {
     setState("loading");
     try {
-      const res = await fetch(`/api/jobs/${jobId}/match`);
+      const res = await fetch(`/api/jobs/${jobId}/match?candidateId=${candidateId}`);
       const body = (await res.json().catch(() => null)) as GetResponse | null;
       if (!res.ok || !body || "error" in body) {
         setState("error");
@@ -73,12 +75,16 @@ export function MatchCard({ jobId }: { jobId: number }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadLatest();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId]);
+  }, [jobId, candidateId]);
 
   async function evaluate() {
     setState("loading");
     try {
-      const res = await fetch(`/api/jobs/${jobId}/match`, { method: "POST" });
+      const res = await fetch(`/api/jobs/${jobId}/match`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ candidateId }),
+      });
       const body = (await res.json().catch(() => null)) as PostResponse | null;
       if (!res.ok || !body || "error" in body) {
         setState("error");
@@ -147,48 +153,51 @@ export function MatchCard({ jobId }: { jobId: number }) {
         <div className="space-y-3">
           <div>
             <div className="text-xs font-medium text-zinc-500">Overall Score</div>
-            <div className="text-lg font-semibold">{Math.round(result.overallScore)}</div>
+            <div className="text-lg font-semibold">{typeof result.overallScore === "number" ? Math.round(result.overallScore) : "—"}</div>
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             <div>
               <div className="text-zinc-500">Required</div>
-              <div className="font-medium">{pct(result.dimensionScores.required)}</div>
+              <div className="font-medium">{pct(result.dimensionScores?.required ?? null)}</div>
             </div>
             <div>
               <div className="text-zinc-500">Preferred</div>
-              <div className="font-medium">{pct(result.dimensionScores.preferred)}</div>
+              <div className="font-medium">{pct(result.dimensionScores?.preferred ?? null)}</div>
             </div>
             <div>
               <div className="text-zinc-500">Experience</div>
-              <div className="font-medium">{pct(result.dimensionScores.experience)}</div>
+              <div className="font-medium">{pct(result.dimensionScores?.experience ?? null)}</div>
             </div>
             <div>
               <div className="text-zinc-500">Seniority</div>
-              <div className="font-medium">{pct(result.dimensionScores.seniority)}</div>
+              <div className="font-medium">{pct(result.dimensionScores?.seniority ?? null)}</div>
             </div>
           </div>
 
           <div className="text-xs">
             <span className="text-zinc-500">Requirement Coverage: </span>
-            <span className="font-medium">{Math.round(result.requirementCoverage * 100)}%</span>
+            <span className="font-medium">{typeof result.requirementCoverage === "number" ? Math.round(result.requirementCoverage * 100) : "—"}%</span>
             <span className="text-zinc-500"> · Employer-Evidenced Share: </span>
-            <span className="font-medium">{Math.round(result.employerEvidencedShare * 100)}%</span>
+            <span className="font-medium">{typeof result.employerEvidencedShare === "number" ? Math.round(result.employerEvidencedShare * 100) : "—"}%</span>
           </div>
 
           <div className="rounded border border-zinc-200 p-2 text-xs dark:border-zinc-800">
             <div className="mb-1 font-semibold">
-              Eligibility: <span className={result.eligibility.status === "BLOCKED" ? "text-red-600" : result.eligibility.status === "UNKNOWN" ? "text-amber-600" : "text-emerald-700 dark:text-emerald-400"}>{result.eligibility.status}</span>
-              {result.eligibility.status === "PASS" && <span className="ml-1 font-normal text-zinc-500">(no known hard blocker — not a confirmation)</span>}
+              Eligibility: <span className={result.eligibility?.status === "BLOCKED" ? "text-red-600" : result.eligibility?.status === "UNKNOWN" ? "text-amber-600" : "text-emerald-700 dark:text-emerald-400"}>{result.eligibility?.status ?? "Unknown"}</span>
+              {result.eligibility?.status === "PASS" && <span className="ml-1 font-normal text-zinc-500">(no known hard blocker — not a confirmation)</span>}
             </div>
             <ul className="space-y-0.5 text-zinc-600 dark:text-zinc-400">
-              {result.eligibility.reasons.map((r, i) => (
+              {(result.eligibility?.reasons ?? []).map((r, i) => (
                 <li key={i}>{r}</li>
               ))}
             </ul>
           </div>
 
-          {result.criticalGaps.length > 0 && (
+          {/* Defensive: every field below normalizes with `?? []`/`?.` even though the API is now
+              expected to always populate them (see deserializeJobMatchResult) — this component must
+              never crash on an old cached result, a manually-inserted row, or a future schema gap. */}
+          {(result.criticalGaps ?? []).length > 0 && (
             <RequirementList title="Critical Gaps" items={result.criticalGaps} tone="text-red-600" />
           )}
           <RequirementList title="Employer-Evidenced Matches" items={result.employerEvidencedMatches} tone="text-emerald-700 dark:text-emerald-400" />
@@ -197,7 +206,7 @@ export function MatchCard({ jobId }: { jobId: number }) {
           <RequirementList title="Missing Requirements" items={result.missingRequirements} tone="text-zinc-500" />
           <RequirementList title="Unresolved Requirements" items={result.unresolvedRequirements} tone="text-zinc-500" />
 
-          {result.unrecognizedCandidateSkills.length > 0 && (
+          {(result.unrecognizedCandidateSkills ?? []).length > 0 && (
             <p className="text-xs text-zinc-400">
               Not yet recognized by the skill taxonomy: {result.unrecognizedCandidateSkills.join(", ")}
             </p>
@@ -205,10 +214,10 @@ export function MatchCard({ jobId }: { jobId: number }) {
 
           <div className="text-xs">
             <span className="text-zinc-500">Recommended Track: </span>
-            <span className="font-medium">{result.recommendedTrack}</span>
+            <span className="font-medium">{result.recommendedTrack ?? "Unknown"}</span>
           </div>
 
-          {result.blockingReasons.length > 0 && (
+          {(result.blockingReasons ?? []).length > 0 && (
             <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs dark:border-amber-900 dark:bg-amber-900/20">
               <div className="mb-1 font-semibold">Why not Ready for Tailoring:</div>
               <ul className="space-y-0.5">

@@ -21,8 +21,9 @@ after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-test("insertMatchRun writes and returns a full row", () => {
+test("insertMatchRun writes and returns a full row, attributed to a candidate", () => {
   const run = insertMatchRun({
+    candidateId: 1,
     startedAt: "2026-01-01T00:00:00Z",
     finishedAt: "2026-01-01T00:00:05Z",
     jobsEvaluated: 10,
@@ -32,20 +33,28 @@ test("insertMatchRun writes and returns a full row", () => {
     jobsErrored: 0,
   });
   assert.ok(run.id > 0);
+  assert.equal(run.candidate_id, 1);
   assert.equal(run.jobs_evaluated, 10);
   assert.equal(run.error_summary, null);
 });
 
 test("listMatchRuns returns most-recent-first", () => {
-  insertMatchRun({ startedAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:00:01Z", jobsEvaluated: 1, jobsBlocked: 0, jobsNeedsReview: 1, jobsReady: 0, jobsErrored: 0 });
-  insertMatchRun({ startedAt: "2026-01-02T00:00:00Z", finishedAt: "2026-01-02T00:00:01Z", jobsEvaluated: 1, jobsBlocked: 0, jobsNeedsReview: 0, jobsReady: 1, jobsErrored: 0 });
-  const runs = listMatchRuns(10);
+  insertMatchRun({ candidateId: 1, startedAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:00:01Z", jobsEvaluated: 1, jobsBlocked: 0, jobsNeedsReview: 1, jobsReady: 0, jobsErrored: 0 });
+  insertMatchRun({ candidateId: 1, startedAt: "2026-01-02T00:00:00Z", finishedAt: "2026-01-02T00:00:01Z", jobsEvaluated: 1, jobsBlocked: 0, jobsNeedsReview: 0, jobsReady: 1, jobsErrored: 0 });
+  const runs = listMatchRuns(undefined, 10);
   assert.ok(runs.length >= 2);
   assert.ok(new Date(runs[0].started_at) >= new Date(runs[1].started_at));
 });
 
+test("listMatchRuns(candidateId) filters to just that candidate's batch runs", () => {
+  insertMatchRun({ candidateId: 2, startedAt: "2026-01-05T00:00:00Z", finishedAt: "2026-01-05T00:00:01Z", jobsEvaluated: 1, jobsBlocked: 0, jobsNeedsReview: 1, jobsReady: 0, jobsErrored: 0 });
+  const candidateTwoRuns = listMatchRuns(2, 10);
+  assert.ok(candidateTwoRuns.every((r) => r.candidate_id === 2));
+});
+
 test("a failed batch attempt records an error summary without losing the successfully-evaluated count", () => {
   const run = insertMatchRun({
+    candidateId: 1,
     startedAt: "2026-01-03T00:00:00Z",
     finishedAt: "2026-01-03T00:00:02Z",
     jobsEvaluated: 4,

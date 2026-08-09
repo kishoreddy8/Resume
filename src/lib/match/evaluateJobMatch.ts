@@ -71,8 +71,12 @@ function clampExperienceScore(candidateYears: number, minYears: number): number 
   return Math.max(0, Math.min(1, candidateYears / minYears));
 }
 
-export function evaluateJobMatch(input: EvaluateJobMatchInput, candidateSettings: AppSettings["candidate"]): EvaluateMatchResult {
-  const profileLoad = loadCandidateProfile();
+export function evaluateJobMatch(
+  input: EvaluateJobMatchInput,
+  candidateSettings: AppSettings["candidate"],
+  candidateId: number
+): EvaluateMatchResult {
+  const profileLoad = loadCandidateProfile(candidateId);
   if (profileLoad.status === "missing") return { status: "unavailable", reason: "missing_candidate_profile" };
   // "invalid" (corrupt/malformed JSON, wrong schema version) is treated the same as missing — never
   // usable, never partially trusted.
@@ -149,6 +153,7 @@ export function evaluateJobMatch(input: EvaluateJobMatchInput, candidateSettings
   });
 
   const result: JobMatchResult = {
+    candidateId,
     jobId: input.jobId,
     dedupeKey: input.dedupeKey,
     matchEngineVersion: MATCH_ENGINE_VERSION,

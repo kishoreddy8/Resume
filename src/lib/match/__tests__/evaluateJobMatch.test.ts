@@ -98,14 +98,14 @@ const requiresSponsorship = { ...DEFAULT_SETTINGS.candidate, requiresSponsorship
 
 test("missing candidate profile -> 'unavailable', never a decision, never READY_FOR_TAILORING", () => {
   // no manifest/profile written
-  const result = evaluateJobMatch(baseInput({}), requiresSponsorship);
+  const result = evaluateJobMatch(baseInput({}), requiresSponsorship, 1);
   assert.equal(result.status, "unavailable");
   if (result.status === "unavailable") assert.equal(result.reason, "missing_candidate_profile");
 });
 
 test("stale candidate profile (master files re-uploaded since) -> 'unavailable', never a decision", () => {
   writeManifestAndProfile({ sourceHashes: { resume: "old-hash", skills: HASH_S } });
-  const result = evaluateJobMatch(baseInput({}), requiresSponsorship);
+  const result = evaluateJobMatch(baseInput({}), requiresSponsorship, 1);
   assert.equal(result.status, "unavailable");
   if (result.status === "unavailable") assert.equal(result.reason, "stale_candidate_profile");
 });
@@ -141,7 +141,7 @@ test("Example A — strong employer-evidenced match -> READY_FOR_TAILORING", () 
     sponsorshipPolarity: "positive",
   });
 
-  const result = evaluateJobMatch(input, requiresSponsorship);
+  const result = evaluateJobMatch(input, requiresSponsorship, 1);
   assert.equal(result.status, "ok");
   if (result.status !== "ok") return;
   assert.equal(result.data.eligibility.status, "PASS");
@@ -163,7 +163,7 @@ test("Example B — technically excellent but BLOCKED on explicit no-sponsorship
     skills: [skill({ id: 1, skill_name: "Python" }), skill({ id: 2, skill_name: "SQL" })],
     sponsorshipPolarity: "negative",
   });
-  const result = evaluateJobMatch(input, requiresSponsorship);
+  const result = evaluateJobMatch(input, requiresSponsorship, 1);
   assert.equal(result.status, "ok");
   if (result.status !== "ok") return;
   assert.equal(result.data.eligibility.status, "BLOCKED");
@@ -199,7 +199,7 @@ test("Example C — score >= 80 but NEEDS_REVIEW due to an unresolved critical r
       niceToHave: undefined,
     } as unknown as EvaluateJobMatchInput["descriptionSections"],
   });
-  const result = evaluateJobMatch(input, requiresSponsorship);
+  const result = evaluateJobMatch(input, requiresSponsorship, 1);
   assert.equal(result.status, "ok");
   if (result.status !== "ok") return;
   assert.equal(result.data.unresolvedRequirements.length, 1, "the data-mesh line must surface as a genuine UNRESOLVED unit, not be hand-waved");
@@ -235,7 +235,7 @@ test("Example D — broad inventory-only required-skill match cannot manufacture
       skill({ id: 9, skill_name: "dbt", requirement_level: "Preferred", evidence_snippet: "dbt preferred" }),
     ],
   });
-  const result = evaluateJobMatch(input, requiresSponsorship);
+  const result = evaluateJobMatch(input, requiresSponsorship, 1);
   assert.equal(result.status, "ok");
   if (result.status !== "ok") return;
   assert.equal(result.data.employerEvidencedShare, 0, "every required-skill match came from inventory-only evidence");
@@ -246,8 +246,8 @@ test("Example D — broad inventory-only required-skill match cannot manufacture
 test("cache-key stability: identical input twice produces identical hashes/keys", () => {
   writeManifestAndProfile({ skills: [{ rawSkillName: "Python", source: "employer", attributedTo: [{ employer: "Acme" }] }] });
   const input = baseInput({ skills: [skill({ id: 1, skill_name: "Python" })] });
-  const r1 = evaluateJobMatch(input, requiresSponsorship);
-  const r2 = evaluateJobMatch(input, requiresSponsorship);
+  const r1 = evaluateJobMatch(input, requiresSponsorship, 1);
+  const r2 = evaluateJobMatch(input, requiresSponsorship, 1);
   assert.equal(r1.status, "ok");
   assert.equal(r2.status, "ok");
   if (r1.status === "ok" && r2.status === "ok") {
@@ -260,8 +260,8 @@ test("cache-key stability: identical input twice produces identical hashes/keys"
 
 test("cache-key sensitivity: a JD text change produces a different jdContentHash", () => {
   writeManifestAndProfile({ skills: [{ rawSkillName: "Python", source: "employer", attributedTo: [{ employer: "Acme" }] }] });
-  const r1 = evaluateJobMatch(baseInput({ descriptionText: "Version one of the JD" }), requiresSponsorship);
-  const r2 = evaluateJobMatch(baseInput({ descriptionText: "Version two of the JD, edited" }), requiresSponsorship);
+  const r1 = evaluateJobMatch(baseInput({ descriptionText: "Version one of the JD" }), requiresSponsorship, 1);
+  const r2 = evaluateJobMatch(baseInput({ descriptionText: "Version two of the JD, edited" }), requiresSponsorship, 1);
   assert.equal(r1.status, "ok");
   assert.equal(r2.status, "ok");
   if (r1.status === "ok" && r2.status === "ok") assert.notEqual(r1.data.jdContentHash, r2.data.jdContentHash);
@@ -269,8 +269,8 @@ test("cache-key sensitivity: a JD text change produces a different jdContentHash
 
 test("cache-key sensitivity: a candidate settings change (e.g. requiresSponsorship) produces a different candidateSettingsHash", () => {
   writeManifestAndProfile({});
-  const r1 = evaluateJobMatch(baseInput({}), requiresSponsorship);
-  const r2 = evaluateJobMatch(baseInput({}), { ...requiresSponsorship, requiresSponsorship: false });
+  const r1 = evaluateJobMatch(baseInput({}), requiresSponsorship, 1);
+  const r2 = evaluateJobMatch(baseInput({}), { ...requiresSponsorship, requiresSponsorship: false }, 1);
   assert.equal(r1.status, "ok");
   assert.equal(r2.status, "ok");
   if (r1.status === "ok" && r2.status === "ok") assert.notEqual(r1.data.candidateSettingsHash, r2.data.candidateSettingsHash);
@@ -278,7 +278,7 @@ test("cache-key sensitivity: a candidate settings change (e.g. requiresSponsorsh
 
 test("cache-key sensitivity: a candidate profile change (different resume/skills upload) produces a different candidateProfileHash", () => {
   writeManifestAndProfile({});
-  const r1 = evaluateJobMatch(baseInput({}), requiresSponsorship);
+  const r1 = evaluateJobMatch(baseInput({}), requiresSponsorship, 1);
 
   fs.writeFileSync(
     path.join(tmpDir, "manifest.json"),
@@ -300,7 +300,7 @@ test("cache-key sensitivity: a candidate profile change (different resume/skills
       totalYearsExperience: null,
     })
   );
-  const r2 = evaluateJobMatch(baseInput({}), requiresSponsorship);
+  const r2 = evaluateJobMatch(baseInput({}), requiresSponsorship, 1);
   assert.equal(r1.status, "ok");
   assert.equal(r2.status, "ok");
   if (r1.status === "ok" && r2.status === "ok") assert.notEqual(r1.data.candidateProfileHash, r2.data.candidateProfileHash);
@@ -317,7 +317,7 @@ test("only JD-side requirements ever appear in the score: a large unrelated Mast
     ],
   });
   const input = baseInput({ skills: [skill({ id: 1, skill_name: "Python" })], experienceMinYears: null, jobSeniority: "Unknown" });
-  const result = evaluateJobMatch(input, requiresSponsorship);
+  const result = evaluateJobMatch(input, requiresSponsorship, 1);
   assert.equal(result.status, "ok");
   if (result.status !== "ok") return;
   assert.equal(result.data.dimensionScores.required, 100, "only the one JD-required Python unit contributes — the unrelated inventory skills are invisible to scoring");

@@ -549,6 +549,90 @@ function migrateAiEnrichmentsEntityKey(db: Database.Database, schemaSql: string)
   db.exec(schemaSql);
 }
 
+// --- Phase 2.5: multi-candidate support ------------------------------------------------------
+
+const COMPANIES_DISCOVERY_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
+  { name: "resolution_status", ddl: "ALTER TABLE companies ADD COLUMN resolution_status TEXT NOT NULL DEFAULT 'UNRESOLVED'" },
+  { name: "discovered_jobs_url", ddl: "ALTER TABLE companies ADD COLUMN discovered_jobs_url TEXT" },
+  { name: "discovery_attempted_at", ddl: "ALTER TABLE companies ADD COLUMN discovery_attempted_at TEXT" },
+  { name: "discovery_reason", ddl: "ALTER TABLE companies ADD COLUMN discovery_reason TEXT" },
+  { name: "suspected_ats", ddl: "ALTER TABLE companies ADD COLUMN suspected_ats TEXT" },
+];
+
+// Exported (unlike this file's other migration functions) specifically so the resolution_status
+// backfill predicate can be regression-tested directly against a hand-built "old shape" database —
+// going through getDb()/DB_PATH for this scenario doesn't work in-process, since DB_PATH is a
+// module-level constant captured once at import time, not re-read from the env per call.
+export function runCompaniesDiscoveryMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(companies)").all() as { name: string }[]).map((c) => c.name)
+  );
+  const resolutionStatusIsNew = !existingColumns.has("resolution_status");
+  for (const column of COMPANIES_DISCOVERY_ADDITIVE_COLUMNS) {
+    if (!existingColumns.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+  // One-time backfill, only at the moment resolution_status is introduced: a company that already
+  // has a working ats_board_token or career_page_url is demonstrably an already-resolved source (it
+  // was successfully added and is scanning today) — defaulting it to 'UNRESOLVED' like a brand-new,
+  // never-attempted company would misrepresent working sources. This does not run again on
+  // subsequent connections (resolutionStatusIsNew is only true the first time), so it never
+  // overwrites a resolution_status the discovery pipeline later sets deliberately.
+  if (resolutionStatusIsNew) {
+    db.exec(
+      `UPDATE companies SET resolution_status = 'VERIFIED'
+       WHERE (ats_board_token IS NOT NULL OR career_page_url IS NOT NULL)`
+    );
+  }
+  // Same reasoning as ensureJobsIndexes/ensureStructuredIntelIndexes: resolution_status doesn't
+  // exist on an existing database until the ALTER TABLEs above run, so schema.sql can't declare
+  // this index unconditionally. Safe to call unconditionally and repeatedly (IF NOT EXISTS).
+  db.exec("CREATE INDEX IF NOT EXISTS idx_companies_resolution_status ON companies(resolution_status)");
+}
+
+/**
+ * Adds candidate_id to job_match_results/match_runs, backfilled to Candidate #1 (id 1) via a
+ * constant DEFAULT — every row that existed before multi-candidate support becomes Candidate #1's
+ * data, exactly as the approved migration plan requires. Then rebuilds job_match_results' unique/
+ * lookup indexes to include candidate_id. Mirrors migrateAiEnrichmentsEntityKey's drop-index-then-
+ * re-exec-schema pattern exactly — a table rebuild is NOT needed here, since this only adds a column
+ * and changes an index, never a column type or a CHECK constraint.
+ */
+function runCandidateScopingMigrations(db: Database.Database, schemaSql: string) {
+  const jobMatchResultsColumns = new Set(
+    (db.prepare("PRAGMA table_info(job_match_results)").all() as { name: string }[]).map((c) => c.name)
+  );
+  if (!jobMatchResultsColumns.has("candidate_id")) {
+    db.exec("ALTER TABLE job_match_results ADD COLUMN candidate_id INTEGER NOT NULL DEFAULT 1");
+    db.exec("DROP INDEX IF EXISTS idx_job_match_results_key");
+    db.exec("DROP INDEX IF EXISTS idx_job_match_results_dedupe");
+    db.exec(schemaSql);
+  }
+
+  const matchRunsColumns = new Set(
+    (db.prepare("PRAGMA table_info(match_runs)").all() as { name: string }[]).map((c) => c.name)
+  );
+  if (!matchRunsColumns.has("candidate_id")) {
+    db.exec("ALTER TABLE match_runs ADD COLUMN candidate_id INTEGER NOT NULL DEFAULT 1");
+  }
+}
+
+/**
+ * Candidate #1 is the migrated identity of this project's original single-candidate user — seeded
+ * once, idempotent (never re-run if a candidates row already exists), never overwritten. Actual
+ * name/master-file backfill happens in the Stage 5 migration script, not here; this only guarantees
+ * id=1 exists so the candidate_id DEFAULT 1 backfill above always points at a real row.
+ */
+function ensureCandidateOne(db: Database.Database) {
+  const existing = db.prepare("SELECT id FROM candidates WHERE id = 1").get();
+  if (existing) return;
+  db.prepare(
+    `INSERT INTO candidates (id, first_name, last_name, display_name, status) VALUES (1, 'Candidate', 'One', 'Candidate #1', 'active')`
+  ).run();
+  db.prepare(`INSERT OR IGNORE INTO candidate_settings (candidate_id) VALUES (1)`).run();
+}
+
 function createConnection(): Database.Database {
   ensureDataDirs();
   const db = new Database(DB_PATH);
@@ -570,6 +654,9 @@ function createConnection(): Database.Database {
   ensureStructuredIntelIndexes(db);
   runScanHealthMigrations(db);
   migrateAiEnrichmentsEntityKey(db, schema);
+  runCompaniesDiscoveryMigrations(db);
+  ensureCandidateOne(db);
+  runCandidateScopingMigrations(db, schema);
   return db;
 }
 

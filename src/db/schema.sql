@@ -33,9 +33,25 @@ CREATE TABLE IF NOT EXISTS companies (
   last_scanned_at TEXT,
   last_scan_status TEXT,
   last_scan_error TEXT,
+  -- Source/ATS discovery status (Phase 2.5, see src/lib/ats/discovery.ts). Distinct from Phase 2's
+  -- candidate-facing NEEDS_REVIEW decision — this describes whether Career-Ops itself could resolve
+  -- a scannable source for the company, not whether a candidate is a fit for any of its jobs.
+  -- 'VERIFIED' | 'GENERIC_SUPPORTED' | 'UNRESOLVED' | 'NEEDS_ADAPTER' | 'FAILED_TEMPORARY' —
+  -- app-layer validated, no CHECK (same "taxonomy may grow" precedent as source_type above).
+  resolution_status TEXT NOT NULL DEFAULT 'UNRESOLVED',
+  discovered_jobs_url TEXT,
+  discovery_attempted_at TEXT,
+  discovery_reason TEXT,
+  suspected_ats TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- idx_companies_resolution_status is NOT declared here: on an existing database, resolution_status
+-- doesn't exist until runCompaniesDiscoveryMigrations() adds it (this CREATE TABLE IF NOT EXISTS is
+-- a no-op there), and this whole file runs as one db.exec() before that migration step — same
+-- reasoning as idx_jobs_archived/idx_jobs_pinned below. src/db/index.ts creates that index
+-- explicitly after the migration instead.
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_ats
   ON companies(source_type, ats_board_token) WHERE ats_board_token IS NOT NULL;
@@ -427,6 +443,13 @@ CREATE INDEX IF NOT EXISTS idx_ai_audit_log_enrichment ON ai_audit_log(ai_enrich
 -- dedupe_key.
 CREATE TABLE IF NOT EXISTS job_match_results (
   id INTEGER PRIMARY KEY,
+  -- Phase 2.5: which candidate this result belongs to. Backfilled to 1 (Candidate #1) for every row
+  -- that existed before multi-candidate support — see src/db/index.ts's migrateCandidateScoping.
+  -- Deliberately no REFERENCES clause, same reasoning as job_id below: convenience/query-scoping
+  -- metadata, not the source of correctness (candidate_profile_hash/candidate_settings_hash already
+  -- differ per candidate in practice; this column exists so reads can filter directly instead of
+  -- relying on hash non-collision).
+  candidate_id INTEGER NOT NULL DEFAULT 1,
   dedupe_key TEXT NOT NULL,
   job_id INTEGER NOT NULL,
   match_engine_version INTEGER NOT NULL,
@@ -457,15 +480,20 @@ CREATE TABLE IF NOT EXISTS job_match_results (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_job_match_results_key
-  ON job_match_results(dedupe_key, match_engine_version, match_knowledge_hash, candidate_profile_hash, candidate_settings_hash, jd_content_hash);
--- Primary history-lookup path — by dedupe_key, never by job_id (see IDENTITY SAFETY above).
-CREATE INDEX IF NOT EXISTS idx_job_match_results_dedupe ON job_match_results(dedupe_key, created_at DESC);
+  ON job_match_results(candidate_id, dedupe_key, match_engine_version, match_knowledge_hash, candidate_profile_hash, candidate_settings_hash, jd_content_hash);
+-- Primary history-lookup path — by (candidate_id, dedupe_key), never by job_id (see IDENTITY SAFETY
+-- above). candidate_id first so "this candidate's history for this job" is a single index seek.
+CREATE INDEX IF NOT EXISTS idx_job_match_results_dedupe ON job_match_results(candidate_id, dedupe_key, created_at DESC);
 -- Convenience/debug only — mirrors idx_ai_enrichments_entity_id_debug's reasoning exactly.
 CREATE INDEX IF NOT EXISTS idx_job_match_results_job_id_debug ON job_match_results(job_id);
 
 -- Batch-evaluation observability — one row per batch attempt, mirrors scan_runs' shape/reasoning.
+-- Phase 2.5: candidate_id attributes a batch run to the one candidate it evaluated (batches are
+-- always single-candidate — see forbidden cross-candidate batching note in evaluateJobMatch call
+-- sites). Backfilled to 1 for pre-existing rows, same reasoning as job_match_results.candidate_id.
 CREATE TABLE IF NOT EXISTS match_runs (
   id INTEGER PRIMARY KEY,
+  candidate_id INTEGER NOT NULL DEFAULT 1,
   started_at TEXT NOT NULL,
   finished_at TEXT NOT NULL,
   jobs_evaluated INTEGER NOT NULL DEFAULT 0,
@@ -477,3 +505,100 @@ CREATE TABLE IF NOT EXISTS match_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_match_runs_time ON match_runs(started_at DESC);
+
+-- Phase 2.5 (see CAREER_OPS_HANDOFF.md's Phase 2.5 design record): local multi-candidate support.
+-- Companies/jobs/H1B/Job Intelligence remain fully shared/global — everything below scopes ONE
+-- candidate's personal relationship to that shared data. Four brand-new tables, not an ALTER of any
+-- existing one — safe via plain CREATE TABLE IF NOT EXISTS on both a fresh install and an existing
+-- database, same precedent as settings/ai_enrichments/job_match_results above.
+
+CREATE TABLE IF NOT EXISTS candidates (
+  -- AUTOINCREMENT (unlike companies.id/jobs.id) so a candidate_id can never be reused even if a row
+  -- is ever hard-deleted — this id is threaded into on-disk file paths and every candidate-scoped
+  -- table below, so identity safety matters more here than it does for companies/jobs.
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  -- 'active' | 'archived' — app-layer validated, no CHECK (same "taxonomy may grow" precedent as
+  -- companies.source_type/jobs.pipeline_status).
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status);
+
+-- One row per candidate. Splits into two use cases enforced at the TypeScript layer (see
+-- src/lib/match/candidateSettingsHash.ts's MatchAffectingCandidateSettings type), not by separate
+-- tables:
+--   MATCH-AFFECTING: requires_sponsorship/us_citizen/work_authorized_us/clearance_level — consumed
+--     by src/lib/match/eligibility.ts and hashed into job_match_results.candidate_settings_hash.
+--     Changing one of these legitimately invalidates cached Phase 2 match results.
+--   RANKING-ONLY preferences: primary_target_role/secondary_target_roles/location_preference/
+--     workplace_preference/employment_type_preference — consumed ONLY by the For You ranking layer
+--     (src/lib/rank/forYou.ts), NEVER passed to computeCandidateSettingsHash or eligibility.ts.
+--     Changing one of these must never invalidate a Phase 2 match result.
+CREATE TABLE IF NOT EXISTS candidate_settings (
+  candidate_id INTEGER PRIMARY KEY REFERENCES candidates(id),
+  requires_sponsorship INTEGER NOT NULL DEFAULT 1,
+  us_citizen INTEGER NOT NULL DEFAULT 0,
+  work_authorized_us INTEGER NOT NULL DEFAULT 0,
+  clearance_level TEXT NOT NULL DEFAULT 'None',
+  primary_target_role TEXT,
+  secondary_target_roles TEXT, -- JSON array of strings
+  location_preference TEXT,
+  workplace_preference TEXT, -- JSON array of strings, e.g. '["remote","hybrid"]'
+  employment_type_preference TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Candidate-scoped "my relationship to this shared job" — see CAREER_OPS_HANDOFF.md's Phase 2.5
+-- design record for the full field-by-field GLOBAL-vs-CANDIDATE-SPECIFIC classification (pipeline
+-- status/pinned/marked_for_tailoring/notes/tags/not_interested are personal; is_active/is_archived/
+-- posted_at/etc. on jobs itself stay global). Keyed on (candidate_id, dedupe_key), NOT job_id — same
+-- identity-safety philosophy as job_match_results/suppressed_jobs: this row survives the underlying
+-- job being deleted by the age-based sweep. Legacy jobs.pipeline_status/pinned/notes/tags/
+-- marked_for_tailoring columns are NOT removed by this migration — they stay as a frozen, read-only
+-- snapshot of Candidate #1's state at migration time; the application stops writing to them once
+-- this table is live (see src/db/queries/candidateJobState.ts).
+CREATE TABLE IF NOT EXISTS candidate_job_state (
+  id INTEGER PRIMARY KEY,
+  candidate_id INTEGER NOT NULL REFERENCES candidates(id),
+  dedupe_key TEXT NOT NULL,
+  pipeline_status TEXT NOT NULL DEFAULT 'New',
+  pipeline_updated_at TEXT,
+  marked_for_tailoring INTEGER NOT NULL DEFAULT 0,
+  tailoring_marked_at TEXT,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  not_interested INTEGER NOT NULL DEFAULT 0,
+  not_interested_at TEXT,
+  not_interested_reason TEXT,
+  notes TEXT,
+  tags TEXT, -- JSON array of strings, same convention as the legacy jobs.tags column
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_job_state_key ON candidate_job_state(candidate_id, dedupe_key);
+CREATE INDEX IF NOT EXISTS idx_candidate_job_state_pipeline ON candidate_job_state(candidate_id, pipeline_status);
+CREATE INDEX IF NOT EXISTS idx_candidate_job_state_not_interested ON candidate_job_state(candidate_id, not_interested);
+
+-- Candidate-personal history split off job_status_history, which keeps recording ONLY 'lifecycle'
+-- change_type rows going forward (a global job fact, untouched by this migration). Keyed on
+-- (candidate_id, dedupe_key), not job_id, so it survives the underlying job's deletion —
+-- job_status_history does not (it cascade-deletes with its job), which is correct for a global fact
+-- but would have been wrong here.
+CREATE TABLE IF NOT EXISTS candidate_job_state_history (
+  id INTEGER PRIMARY KEY,
+  candidate_id INTEGER NOT NULL REFERENCES candidates(id),
+  dedupe_key TEXT NOT NULL,
+  change_type TEXT NOT NULL CHECK (change_type IN ('pipeline_status', 'tailoring', 'pinned', 'not_interested')),
+  old_value TEXT,
+  new_value TEXT,
+  reason TEXT,
+  changed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_candidate_job_state_history_lookup
+  ON candidate_job_state_history(candidate_id, dedupe_key, changed_at DESC);

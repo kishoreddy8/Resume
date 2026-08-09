@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { JobWithCompany, PipelineStatus } from "@/types";
 
 const COLUMNS: PipelineStatus[] = [
@@ -16,13 +17,14 @@ const COLUMNS: PipelineStatus[] = [
 ];
 
 export default function PipelinePage() {
+  const candidateId = useActiveCandidateId();
   const [jobs, setJobs] = useState<JobWithCompany[]>([]);
   const [loading, setLoading] = useState(true);
 
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch("/api/jobs?activeOnly=true");
+      const res = await fetch(`/api/jobs?activeOnly=true&candidateId=${candidateId}`);
       const data = await res.json();
       setJobs(data.jobs ?? []);
     } finally {
@@ -31,10 +33,11 @@ export default function PipelinePage() {
   }
 
   useEffect(() => {
-    // Intentional: fetch-on-mount with a loading flag, not a render loop.
+    // Intentional: fetch-on-mount/candidate-change with a loading flag, not a render loop.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateId]);
 
   if (loading) return <p className="text-sm text-zinc-500">Loading…</p>;
 
@@ -67,6 +70,7 @@ export default function PipelinePage() {
                       <PipelineStatusSelect
                         jobId={job.id}
                         value={job.pipeline_status}
+                        candidateId={candidateId}
                         onChanged={() => load()}
                       />
                     </div>

@@ -53,14 +53,14 @@ const HASH_B = crypto.createHash("sha256").update("skills-b").digest("hex");
 
 test("missing candidate-profile.json -> status 'missing'", () => {
   writeManifest(HASH_A, HASH_B);
-  const result = loadCandidateProfile();
+  const result = loadCandidateProfile(1);
   assert.equal(result.status, "missing");
 });
 
 test("matching hashes -> status 'ok'", () => {
   writeManifest(HASH_A, HASH_B);
   writeProfile(HASH_A, HASH_B);
-  const result = loadCandidateProfile();
+  const result = loadCandidateProfile(1);
   assert.equal(result.status, "ok");
   if (result.status === "ok") {
     assert.equal(result.profile.skills[0].rawSkillName, "Python");
@@ -71,7 +71,7 @@ test("matching hashes -> status 'ok'", () => {
 test("mismatched resume hash (master file re-uploaded since profile built) -> status 'stale'", () => {
   writeManifest(HASH_A, HASH_B);
   writeProfile("some-old-hash", HASH_B);
-  const result = loadCandidateProfile();
+  const result = loadCandidateProfile(1);
   assert.equal(result.status, "stale");
 });
 
@@ -84,14 +84,14 @@ test("manifest missing a sha256 (pre-hash upload) -> status 'stale', never assum
     })
   );
   writeProfile(HASH_A, HASH_B);
-  const result = loadCandidateProfile();
+  const result = loadCandidateProfile(1);
   assert.equal(result.status, "stale");
 });
 
 test("malformed JSON -> status 'invalid'", () => {
   writeManifest(HASH_A, HASH_B);
   fs.writeFileSync(path.join(tmpDir, "candidate-profile.json"), "{not json");
-  const result = loadCandidateProfile();
+  const result = loadCandidateProfile(1);
   assert.equal(result.status, "invalid");
 });
 
@@ -110,7 +110,7 @@ test("wrong schemaVersion -> status 'invalid'", () => {
       totalYearsExperience: null,
     })
   );
-  const result = loadCandidateProfile();
+  const result = loadCandidateProfile(1);
   assert.equal(result.status, "invalid");
 });
 
@@ -129,7 +129,7 @@ test("unrecognized-taxonomy skill entries are preserved verbatim, not rejected",
       totalYearsExperience: null,
     })
   );
-  const result = loadCandidateProfile();
+  const result = loadCandidateProfile(1);
   assert.equal(result.status, "ok");
   if (result.status === "ok") {
     assert.equal(result.profile.skills[0].rawSkillName, "SomeBrandNewToolNotInTaxonomyYet");

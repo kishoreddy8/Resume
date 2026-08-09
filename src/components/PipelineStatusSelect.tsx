@@ -15,10 +15,12 @@ const STATUSES: PipelineStatus[] = [
 export function PipelineStatusSelect({
   jobId,
   value,
+  candidateId,
   onChanged,
 }: {
   jobId: number;
   value: PipelineStatus;
+  candidateId: number;
   onChanged?: (status: PipelineStatus) => void;
 }) {
   const [status, setStatus] = useState(value);
@@ -32,7 +34,7 @@ export function PipelineStatusSelect({
       const res = await fetch(`/api/jobs/${jobId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pipelineStatus: next }),
+        body: JSON.stringify({ candidateId, pipelineStatus: next }),
       });
       if (!res.ok) throw new Error("Failed to update status");
       onChanged?.(next);

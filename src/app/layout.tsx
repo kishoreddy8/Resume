@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import { CandidateSelector } from "@/components/CandidateSelector";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -51,6 +52,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
                 </Link>
               ))}
             </nav>
+            <div className="ml-auto">
+              <CandidateSelector />
+            </div>
           </div>
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-6">{children}</main>

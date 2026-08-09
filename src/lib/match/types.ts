@@ -157,6 +157,7 @@ export interface DimensionScores {
 }
 
 export interface JobMatchResult {
+  candidateId: number;
   jobId: number;
   dedupeKey: string;
   matchEngineVersion: number;

@@ -6,6 +6,7 @@ import { H1bBadge } from "@/components/H1bBadge";
 import { MatchDecisionBadge, type MatchDecision } from "@/components/MatchDecisionBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { JobWithCompany } from "@/types";
 
 type DecisionFilter = "All" | MatchDecision | "Not Evaluated";
@@ -21,7 +22,7 @@ const DECISION_FILTER_LABELS: Record<DecisionFilter, string> = {
 /** Batch-fetches the latest Phase 2 match decision for every visible job's dedupe_key in one
  *  request — never one request per row. Purely additive/client-side: does not touch listJobs'
  *  server-side SQL or JobFilterSidebar's URL-param-driven filters. */
-function useMatchDecisions(jobs: JobWithCompany[]): Record<string, { decision: MatchDecision; overallScore: number }> {
+function useMatchDecisions(jobs: JobWithCompany[], candidateId: number): Record<string, { decision: MatchDecision; overallScore: number }> {
   const [decisions, setDecisions] = useState<Record<string, { decision: MatchDecision; overallScore: number }>>({});
   const dedupeKeysKey = jobs.map((j) => j.dedupe_key).join(",");
 
@@ -36,7 +37,7 @@ function useMatchDecisions(jobs: JobWithCompany[]): Record<string, { decision: M
         : fetch("/api/jobs/match-decisions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ dedupeKeys }),
+            body: JSON.stringify({ dedupeKeys, candidateId }),
           })
             .then((res) => res.json())
             .then((body) => body.decisions ?? {});
@@ -50,7 +51,7 @@ function useMatchDecisions(jobs: JobWithCompany[]): Record<string, { decision: M
     return () => {
       cancelled = true;
     };
-  }, [dedupeKeysKey]);
+  }, [dedupeKeysKey, candidateId]);
 
   return decisions;
 }
@@ -78,7 +79,7 @@ function FreshBadge({ job, thresholds }: { job: JobWithCompany; thresholds: Life
   );
 }
 
-function TailoringCheckbox({ jobId, initial }: { jobId: number; initial: boolean }) {
+function TailoringCheckbox({ jobId, initial, candidateId }: { jobId: number; initial: boolean; candidateId: number }) {
   const [checked, setChecked] = useState(initial);
   const [saving, setSaving] = useState(false);
 
@@ -90,7 +91,7 @@ function TailoringCheckbox({ jobId, initial }: { jobId: number; initial: boolean
       await fetch(`/api/jobs/${jobId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ markedForTailoring: next }),
+        body: JSON.stringify({ candidateId, markedForTailoring: next }),
       });
     } finally {
       setSaving(false);
@@ -110,7 +111,8 @@ function TailoringCheckbox({ jobId, initial }: { jobId: number; initial: boolean
 }
 
 export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; thresholds: LifecycleThresholds }) {
-  const decisions = useMatchDecisions(jobs);
+  const candidateId = useActiveCandidateId();
+  const decisions = useMatchDecisions(jobs, candidateId);
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>("All");
 
   const visibleJobs = jobs.filter((job) => {
@@ -184,10 +186,10 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
                 )}
               </td>
               <td className="px-3 py-2">
-                <PipelineStatusSelect jobId={job.id} value={job.pipeline_status} />
+                <PipelineStatusSelect jobId={job.id} value={job.pipeline_status} candidateId={candidateId} />
               </td>
               <td className="px-3 py-2 text-center">
-                <TailoringCheckbox jobId={job.id} initial={job.marked_for_tailoring === 1} />
+                <TailoringCheckbox jobId={job.id} initial={job.marked_for_tailoring === 1} candidateId={candidateId} />
               </td>
               <td className="px-3 py-2 text-right">
                 <a

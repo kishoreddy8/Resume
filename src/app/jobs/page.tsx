@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { Company, JobWithCompany, ScanSummary } from "@/types";
 import { DEFAULT_FILTERS, JobFilterSidebar, type JobFilterState } from "./JobFilterSidebar";
 import { JobList } from "./JobList";
@@ -32,6 +33,7 @@ function buildQuery(filters: JobFilterState): string {
 }
 
 export default function JobsPage() {
+  const candidateId = useActiveCandidateId();
   const [filters, setFilters] = useState<JobFilterState>(DEFAULT_FILTERS);
   const [jobs, setJobs] = useState<JobWithCompany[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -40,7 +42,7 @@ export default function JobsPage() {
   const [scanResult, setScanResult] = useState<ScanSummary | null>(null);
   const { thresholds, loaded: thresholdsLoaded } = useLifecycleThresholds();
 
-  const query = useMemo(() => buildQuery(filters), [filters]);
+  const query = useMemo(() => `${buildQuery(filters)}&candidateId=${candidateId}`, [filters, candidateId]);
 
   const loadJobs = useCallback(async () => {
     setLoading(true);

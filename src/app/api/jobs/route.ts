@@ -64,6 +64,8 @@ export async function GET(req: NextRequest) {
   const seniority = params.get("seniority");
   const salaryAvailable = params.get("salaryAvailable");
   const clearanceRequired = params.get("clearanceRequired");
+  const candidateIdParam = params.get("candidateId");
+  const candidateId = candidateIdParam && Number.isInteger(Number(candidateIdParam)) ? Number(candidateIdParam) : undefined;
 
   if (status && !VALID_STATUSES.includes(status as PipelineStatus)) {
     return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 });
@@ -98,6 +100,7 @@ export async function GET(req: NextRequest) {
     seniority: (seniority as Seniority) ?? undefined,
     salaryAvailable: salaryAvailable === "true",
     clearanceRequired: clearanceRequired === "true",
+    candidateId,
   });
 
   return NextResponse.json({ jobs });

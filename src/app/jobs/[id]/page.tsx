@@ -11,6 +11,7 @@ import { MatchCard } from "./MatchCard";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { DescriptionSections, JobCertification, JobSkill, JobStatusHistoryEntry, JobWithCompany } from "@/types";
 import { useLifecycleThresholds } from "../useLifecycleThresholds";
 
@@ -94,7 +95,7 @@ function parseSections(json: string | null): DescriptionSections | null {
   }
 }
 
-function TailoringToggle({ jobId, initial }: { jobId: number; initial: boolean }) {
+function TailoringToggle({ jobId, initial, candidateId }: { jobId: number; initial: boolean; candidateId: number }) {
   const [checked, setChecked] = useState(initial);
   const [saving, setSaving] = useState(false);
 
@@ -106,7 +107,7 @@ function TailoringToggle({ jobId, initial }: { jobId: number; initial: boolean }
       await fetch(`/api/jobs/${jobId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ markedForTailoring: next }),
+        body: JSON.stringify({ candidateId, markedForTailoring: next }),
       });
     } finally {
       setSaving(false);
@@ -151,10 +152,12 @@ function CopyPromptButton({ job }: { job: JobWithCompany }) {
 function LifecycleCard({
   job,
   thresholds,
+  candidateId,
   onChanged,
 }: {
   job: JobWithCompany;
   thresholds: LifecycleThresholds;
+  candidateId: number;
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -202,7 +205,7 @@ function LifecycleCard({
       const res = await fetch(`/api/jobs/${job.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pinned: job.pinned !== 1 }),
+        body: JSON.stringify({ candidateId, pinned: job.pinned !== 1 }),
       });
       if (!res.ok) throw new Error("Failed to update pin");
       onChanged();
@@ -292,26 +295,30 @@ function LifecycleCard({
   );
 }
 
-/** Irreversible — deletes the job record, its generated files, and leaves a suppression
- *  fingerprint so the exact same requisition never reappears (src/db/queries/jobs.ts's
- *  markNotInterested). Unlike Archive, there is no Restore. */
-function NotInterestedButton({ job }: { job: JobWithCompany }) {
+/**
+ * Phase 2.5: candidate-personal, NOT global. Marking Not Interested no longer deletes the job or
+ * touches the shared `jobs`/`suppressed_jobs` tables at all — it only records this ONE candidate's
+ * disinterest in candidate_job_state, so the job stays fully intact and visible to every other
+ * candidate (see CAREER_OPS_HANDOFF.md's Phase 2.5 design record §2/13). Reversible: toggling it
+ * off clears the flag, unlike the old delete-based behavior.
+ */
+function NotInterestedButton({ job, candidateId }: { job: JobWithCompany; candidateId: number }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function markNotInterested() {
-    if (
-      !confirm(
-        `Mark "${job.title}" as Not Interested? This permanently deletes the job record and any generated resume files — this can't be undone.`
-      )
-    ) {
+    if (!confirm(`Mark "${job.title}" as Not Interested? It will no longer appear in your Jobs list, but stays intact and visible to any other candidate profile.`)) {
       return;
     }
     setError(null);
     setBusy(true);
     try {
-      const res = await fetch(`/api/jobs/${job.id}/not-interested`, { method: "POST" });
+      const res = await fetch(`/api/jobs/${job.id}/not-interested`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ candidateId }),
+      });
       if (!res.ok) throw new Error("Failed to mark as Not Interested");
       router.push("/jobs");
     } catch (err) {
@@ -324,8 +331,8 @@ function NotInterestedButton({ job }: { job: JobWithCompany }) {
     <div className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/40 dark:bg-red-950/20">
       <h2 className="mb-1 text-sm font-semibold text-red-800 dark:text-red-300">Not interested</h2>
       <p className="mb-3 text-xs text-red-700/80 dark:text-red-400/80">
-        Permanently deletes this job and its generated files, and prevents this exact posting from
-        reappearing on future scans.
+        Hides this job from your own Jobs list. The job itself is untouched and stays visible to
+        any other candidate profile — this never deletes anything.
       </p>
       <button
         disabled={busy}
@@ -339,7 +346,7 @@ function NotInterestedButton({ job }: { job: JobWithCompany }) {
   );
 }
 
-function NotesTagsCard({ job, onChanged }: { job: JobWithCompany; onChanged: () => void }) {
+function NotesTagsCard({ job, candidateId, onChanged }: { job: JobWithCompany; candidateId: number; onChanged: () => void }) {
   const [notes, setNotes] = useState(job.notes ?? "");
   const [tagsInput, setTagsInput] = useState(parseTags(job.tags).join(", "));
   const [saving, setSaving] = useState(false);
@@ -356,7 +363,7 @@ function NotesTagsCard({ job, onChanged }: { job: JobWithCompany; onChanged: () 
       await fetch(`/api/jobs/${job.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: notes.trim() === "" ? null : notes, tags }),
+        body: JSON.stringify({ candidateId, notes: notes.trim() === "" ? null : notes, tags }),
       });
       setSaved(true);
       onChanged();
@@ -735,6 +742,7 @@ function AtAGlanceCard({
 
 export default function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const candidateId = useActiveCandidateId();
   const [data, setData] = useState<JobDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -744,7 +752,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/jobs/${id}`);
+      const res = await fetch(`/api/jobs/${id}?candidateId=${candidateId}`);
       if (res.status === 404) {
         setNotFound(true);
         return;
@@ -757,13 +765,13 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
   }
 
   useEffect(() => {
-    // Intentional: fetch-on-mount/id-change with a loading flag, not a render loop.
+    // Intentional: fetch-on-mount/id-or-candidate-change with a loading flag, not a render loop.
     // `load` is intentionally omitted below — it's redefined every render and doesn't depend on
-    // anything but `id`, which is already the effect's dependency.
+    // anything but `id`/`candidateId`, which are already the effect's dependencies.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, candidateId]);
 
   if (loading || !thresholdsLoaded) return <p className="text-sm text-zinc-500">Loading…</p>;
   if (notFound || !data) return <p className="text-sm text-zinc-500">Job not found.</p>;
@@ -852,13 +860,14 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
                 <PipelineStatusSelect
                   jobId={job.id}
                   value={job.pipeline_status}
+                  candidateId={candidateId}
                   onChanged={() => {
                     load();
                     setHistoryKey((k) => k + 1);
                   }}
                 />
               </div>
-              <TailoringToggle jobId={job.id} initial={job.marked_for_tailoring === 1} />
+              <TailoringToggle jobId={job.id} initial={job.marked_for_tailoring === 1} candidateId={candidateId} />
             </div>
           </div>
 
@@ -867,13 +876,14 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
           <LifecycleCard
             job={job}
             thresholds={thresholds}
+            candidateId={candidateId}
             onChanged={() => {
               load();
               setHistoryKey((k) => k + 1);
             }}
           />
 
-          <NotesTagsCard job={job} onChanged={load} />
+          <NotesTagsCard job={job} candidateId={candidateId} onChanged={load} />
 
           <H1bIntelligenceCard job={job} />
 
@@ -906,7 +916,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 
           <HistoryCard jobId={job.id} refreshKey={historyKey} />
 
-          <NotInterestedButton job={job} />
+          <NotInterestedButton job={job} candidateId={candidateId} />
         </div>
       </div>
     </div>

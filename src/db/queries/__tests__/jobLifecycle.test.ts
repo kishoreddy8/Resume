@@ -24,7 +24,6 @@ let closeStaleJobs: typeof import("../jobs").closeStaleJobs;
 let updateJobPipeline: typeof import("../jobs").updateJobPipeline;
 let archiveJob: typeof import("../jobs").archiveJob;
 let restoreJob: typeof import("../jobs").restoreJob;
-let setJobPinned: typeof import("../jobs").setJobPinned;
 let markNotInterested: typeof import("../jobs").markNotInterested;
 let runAgeBasedSweep: typeof import("../jobs").runAgeBasedSweep;
 let getJobHistory: typeof import("../jobs").getJobHistory;
@@ -32,6 +31,24 @@ let getJob: typeof import("../jobs").getJob;
 let listJobs: typeof import("../jobs").listJobs;
 let dedupeKeyForAts: typeof import("../../../lib/dedupe").dedupeKeyForAts;
 let runScan: typeof import("../../../lib/scan").runScan;
+let setCandidatePipelineStatus: typeof import("../candidateJobState").setPipelineStatus;
+let setCandidatePinned: typeof import("../candidateJobState").setPinned;
+
+// Phase 2.5: lifecycle protection (isProtectedForAnyCandidate) now reads candidate_job_state, not
+// the frozen jobs.pipeline_status/jobs.pinned columns — see src/db/queries/candidateJobState.ts.
+// Every protection-testing call below writes through this candidate-scoped path instead of
+// updateJobPipeline (which still exists and is still exercised by the "notes/tags survive a
+// rescan" test elsewhere in this file, since THAT concern is genuinely about the legacy columns'
+// own persistence, not about lifecycle protection).
+const CANDIDATE_ID = 1;
+function protectPipeline(jobId: number, status: PipelineStatus) {
+  const dedupeKey = getJob(jobId)!.dedupe_key;
+  setCandidatePipelineStatus(CANDIDATE_ID, dedupeKey, status);
+}
+function protectPinned(jobId: number, pinned: boolean) {
+  const dedupeKey = getJob(jobId)!.dedupe_key;
+  setCandidatePinned(CANDIDATE_ID, dedupeKey, pinned);
+}
 
 before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-lifecycle-test-"));
@@ -45,7 +62,6 @@ before(async () => {
     updateJobPipeline,
     archiveJob,
     restoreJob,
-    setJobPinned,
     markNotInterested,
     runAgeBasedSweep,
     getJobHistory,
@@ -54,6 +70,7 @@ before(async () => {
   } = await import("../jobs"));
   ({ dedupeKeyForAts } = await import("../../../lib/dedupe"));
   ({ runScan } = await import("../../../lib/scan"));
+  ({ setPipelineStatus: setCandidatePipelineStatus, setPinned: setCandidatePinned } = await import("../candidateJobState"));
 
   getDb(); // ensure schema + migrations have run
 });
@@ -194,7 +211,7 @@ test("a protected (Applied) job missing from an ATS scan is closed but never arc
   const key = dedupeKeyForAts("greenhouse", company.id, "ext-1");
   seedJob(company.id, key);
   const jobId = listJobs({ companyId: company.id })[0].id;
-  updateJobPipeline(jobId, { pipelineStatus: "Applied" as PipelineStatus });
+  protectPipeline(jobId, "Applied" as PipelineStatus);
 
   const { jobsClosed, jobsArchived } = closeStaleJobs(company.id, []);
   assert.equal(jobsClosed, 1);
@@ -247,18 +264,18 @@ test("archiveJob refuses a protected (Interviewing) job, refuses a pinned job, a
   seedJob(company.id, key);
   const jobId = listJobs({ companyId: company.id })[0].id;
 
-  updateJobPipeline(jobId, { pipelineStatus: "Interviewing" as PipelineStatus });
+  protectPipeline(jobId, "Interviewing" as PipelineStatus);
   let blocked = archiveJob(jobId);
   assert.equal(blocked.ok, false);
   if (!blocked.ok) assert.match(blocked.blockedReason, /Interviewing/);
 
-  updateJobPipeline(jobId, { pipelineStatus: "Interested" as PipelineStatus });
-  setJobPinned(jobId, true);
+  protectPipeline(jobId, "Interested" as PipelineStatus);
+  protectPinned(jobId, true);
   blocked = archiveJob(jobId);
   assert.equal(blocked.ok, false);
   if (!blocked.ok) assert.match(blocked.blockedReason, /pinned/);
 
-  setJobPinned(jobId, false);
+  protectPinned(jobId, false);
   const allowed = archiveJob(jobId, "Went with another candidate");
   assert.equal(allowed.ok, true);
   if (allowed.ok) assert.equal(allowed.job.archived_reason, "Went with another candidate");
@@ -335,7 +352,7 @@ test("11-day unapplied Delete: the age sweep permanently deletes an unapplied jo
 test("15-day Applied job is preserved by the age sweep (never archived or deleted)", () => {
   const company = makeCompany();
   const job = seedJobAtAge(company, 15);
-  updateJobPipeline(job.id, { pipelineStatus: "Applied" as PipelineStatus });
+  protectPipeline(job.id, "Applied" as PipelineStatus);
 
   const result = runAgeBasedSweep();
   assert.equal(result.archived, 0);
@@ -347,7 +364,7 @@ test("15-day Applied job is preserved by the age sweep (never archived or delete
 test("a 15-day-old Interviewing job is preserved by the age sweep", () => {
   const company = makeCompany();
   const job = seedJobAtAge(company, 15);
-  updateJobPipeline(job.id, { pipelineStatus: "Interviewing" as PipelineStatus });
+  protectPipeline(job.id, "Interviewing" as PipelineStatus);
 
   runAgeBasedSweep();
   assert.ok(getJob(job.id));
@@ -357,7 +374,7 @@ test("a 15-day-old Interviewing job is preserved by the age sweep", () => {
 test("a 15-day-old Offer job is preserved by the age sweep", () => {
   const company = makeCompany();
   const job = seedJobAtAge(company, 15);
-  updateJobPipeline(job.id, { pipelineStatus: "Offer" as PipelineStatus });
+  protectPipeline(job.id, "Offer" as PipelineStatus);
 
   runAgeBasedSweep();
   assert.ok(getJob(job.id));
@@ -367,7 +384,7 @@ test("a 15-day-old Offer job is preserved by the age sweep", () => {
 test("a 15-day-old Employer Rejected job is preserved by the age sweep", () => {
   const company = makeCompany();
   const job = seedJobAtAge(company, 15);
-  updateJobPipeline(job.id, { pipelineStatus: "Employer Rejected" as PipelineStatus });
+  protectPipeline(job.id, "Employer Rejected" as PipelineStatus);
 
   runAgeBasedSweep();
   assert.ok(getJob(job.id));
@@ -377,7 +394,7 @@ test("a 15-day-old Employer Rejected job is preserved by the age sweep", () => {
 test("a 15-day-old Pinned job (New status) is preserved by the age sweep", () => {
   const company = makeCompany();
   const job = seedJobAtAge(company, 15);
-  setJobPinned(job.id, true);
+  protectPinned(job.id, true);
 
   runAgeBasedSweep();
   assert.ok(getJob(job.id), "pinned job was not deleted");
