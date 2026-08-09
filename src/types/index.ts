@@ -89,9 +89,21 @@ export interface Company {
   last_error_category: ErrorCategory | null;
   last_error_message: string | null;
   connector_health: ConnectorHealth;
+  // --- Source/ATS discovery (Phase 2.5; see src/lib/ats/discovery.ts) --------------------------
+  // Whether Career-Ops itself could resolve a scannable source for this company. Distinct from
+  // Phase 2's candidate-facing NEEDS_REVIEW match decision — this is company-registry state, not
+  // per-candidate job fit.
+  resolution_status: CompanyResolutionStatus;
+  discovered_jobs_url: string | null;
+  discovery_attempted_at: string | null;
+  discovery_reason: string | null;
+  /** Set only when resolution_status is NEEDS_ADAPTER — a recognized-but-unsupported ATS platform. */
+  suspected_ats: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export type CompanyResolutionStatus = "VERIFIED" | "GENERIC_SUPPORTED" | "UNRESOLVED" | "NEEDS_ADAPTER" | "FAILED_TEMPORARY";
 
 /** One row per company-scan attempt — see src/db/queries/scanRuns.ts and src/lib/scan.ts. Written
  *  once, after the attempt finishes one way or another (no intermediate "running" row). */
@@ -311,6 +323,10 @@ export interface JobWithCompany extends Job {
   company_h1b_match_tier: H1bMatchTier | null;
   company_h1b_lca_count: number;
   company_h1b_latest_fiscal_year: number | null;
+  /** Only present when the query was scoped to a candidateId (see JobFilters.candidateId on
+   *  listJobs/getJob) — this candidate's candidate_job_state.not_interested overlay. No legacy
+   *  jobs.* counterpart, unlike pipeline_status/pinned/notes/tags. */
+  not_interested?: 0 | 1;
 }
 
 /** Age band computed live from posted_at (preferred) or first_seen_at — never persisted, never

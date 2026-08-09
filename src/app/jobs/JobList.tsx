@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { H1bBadge } from "@/components/H1bBadge";
 import { MatchDecisionBadge, type MatchDecision } from "@/components/MatchDecisionBadge";
+import { NotInterestedToggle } from "@/components/NotInterestedToggle";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
+import { computeFreshnessTier } from "@/lib/rank/forYou";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { JobWithCompany } from "@/types";
 
@@ -173,7 +176,8 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
               </td>
               <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{job.location ?? "—"}</td>
               <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">
-                {formatDate(job.posted_at)}
+                <div>{formatDate(job.posted_at)}</div>
+                <FreshnessBadge tier={computeFreshnessTier(job.posted_at)} />
               </td>
               <td className="px-3 py-2">
                 <H1bBadge confidence={job.h1b_combined_confidence} />
@@ -192,14 +196,22 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
                 <TailoringCheckbox jobId={job.id} initial={job.marked_for_tailoring === 1} candidateId={candidateId} />
               </td>
               <td className="px-3 py-2 text-right">
-                <a
-                  href={job.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
-                >
-                  View ↗
-                </a>
+                <div className="flex flex-col items-end gap-1">
+                  <a
+                    href={job.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                  >
+                    View ↗
+                  </a>
+                  <NotInterestedToggle
+                    jobId={job.id}
+                    jobTitle={job.title}
+                    candidateId={candidateId}
+                    initialNotInterested={job.not_interested === 1}
+                  />
+                </div>
               </td>
             </tr>
               ))}

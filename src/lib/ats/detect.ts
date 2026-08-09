@@ -41,40 +41,8 @@ export function detectAtsFromUrlString(url: string): AtsDetection | null {
   return null;
 }
 
-const FETCH_TIMEOUT_MS = 10000;
-const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
-
-/**
- * Tier 2: for a custom domain (e.g. careers.company.com) that isn't itself an ATS URL but proxies
- * or redirects to one. Follows redirects and, failing that, scans the raw HTML for an embedded ATS
- * link (iframe/script src, "apply" links) — the same signal genericPlaywright.ts looks for when
- * suggesting a career_link-to-ATS upgrade after the fact, just applied proactively at add-time.
- */
-export async function detectAtsFromUrl(url: string): Promise<AtsDetection | null> {
-  const direct = detectAtsFromUrlString(url);
-  if (direct) return direct;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      redirect: "follow",
-      headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
-      signal: controller.signal,
-    });
-
-    const finalUrlMatch = detectAtsFromUrlString(res.url);
-    if (finalUrlMatch) return finalUrlMatch;
-
-    const contentType = res.headers.get("content-type") ?? "";
-    if (!contentType.includes("html")) return null;
-
-    const html = await res.text();
-    return detectAtsFromUrlString(html);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
+// Tier 2 (multi-hop, network-based detection for a custom domain that proxies/redirects to an ATS)
+// used to live here as detectAtsFromUrl(), calling raw fetch() with no SSRF protection, no response
+// size cap, and only ever following ONE hop. It has been replaced by the bounded, SSRF-safe
+// discovery chain in src/lib/ats/discovery.ts (discoverCompanySource), which reuses
+// detectAtsFromUrlString above at every hop instead of duplicating this logic. See AGENTS.md §9-14.

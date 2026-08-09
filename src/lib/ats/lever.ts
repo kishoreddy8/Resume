@@ -16,12 +16,20 @@ interface LeverJob {
   createdAt?: number;
 }
 
+export interface FetchLeverJobsOptions extends FetchWithRetryOptions {
+  /** Testing-only: overrides the https://api.lever.co origin so tests can point a real company
+   *  slug at a local HTTP server instead of the real host. Production callers never pass this. */
+  hostOverride?: string;
+}
+
 export async function fetchLeverJobs(
   companySlug: string,
-  options: FetchWithRetryOptions = {}
+  options: FetchLeverJobsOptions = {}
 ): Promise<NormalizedJob[]> {
-  const url = `https://api.lever.co/v0/postings/${encodeURIComponent(companySlug)}?mode=json`;
-  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, options);
+  const { hostOverride, ...retryOptions } = options;
+  const origin = hostOverride ?? "https://api.lever.co";
+  const url = `${origin}/v0/postings/${encodeURIComponent(companySlug)}?mode=json`;
+  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, retryOptions);
   const jobs = await parseJsonOrThrow<LeverJob[]>(res, url);
   return jobs.map((job) => {
     const descriptionText = job.descriptionPlain ?? stripHtml(job.description);

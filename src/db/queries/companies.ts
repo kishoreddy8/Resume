@@ -1,4 +1,5 @@
 import { getDb } from "@/db";
+import type { DiscoveryResult } from "@/lib/ats/discovery";
 import { computeConnectorHealth } from "@/lib/scan/health";
 import type { Company, ErrorCategory, H1bCompanyConfidence, H1bMatchTier, SourceType } from "@/types";
 
@@ -169,6 +170,50 @@ export function recordScanFailure(
     connectorHealth: computeConnectorHealth(consecutiveFailures),
     ...input,
   });
+}
+
+/**
+ * Writes the result of an ATS discovery attempt (src/lib/ats/discovery.ts) — see AGENTS.md §13/§14.
+ * On VERIFIED, promotes the company to the real ATS connector (source_type/ats_board_token) so the
+ * next scan uses it automatically. On GENERIC_SUPPORTED, points career_page_url at the discovered
+ * jobs page (a better generic-scraper target than whatever URL the user originally pasted) while
+ * staying on source_type='career_link'. UNRESOLVED/NEEDS_ADAPTER/FAILED_TEMPORARY never touch
+ * source_type/ats_board_token/career_page_url at all — the company stays exactly as scannable (or
+ * not) as it already was; only the diagnostic fields change. Never fabricates an ATS: sourceType/
+ * atsBoardToken here always come straight from a DiscoveryResult that actually detected them.
+ */
+export function recordDiscoveryResult(id: number, result: DiscoveryResult): Company | undefined {
+  const db = getDb();
+  const existing = getCompany(id);
+  if (!existing) return undefined;
+
+  const shouldPromoteToAts = result.status === "VERIFIED" && result.sourceType && result.atsBoardToken;
+  const shouldPromoteToGeneric = result.status === "GENERIC_SUPPORTED" && result.discoveredJobsUrl;
+
+  db.prepare(
+    `UPDATE companies SET
+      resolution_status = @resolutionStatus,
+      discovered_jobs_url = @discoveredJobsUrl,
+      discovery_attempted_at = datetime('now'),
+      discovery_reason = @discoveryReason,
+      suspected_ats = @suspectedAts,
+      source_type = @sourceType,
+      ats_board_token = @atsBoardToken,
+      career_page_url = @careerPageUrl,
+      updated_at = datetime('now')
+     WHERE id = @id`
+  ).run({
+    id,
+    resolutionStatus: result.status,
+    discoveredJobsUrl: result.discoveredJobsUrl,
+    discoveryReason: result.reason,
+    suspectedAts: result.suspectedAts,
+    sourceType: shouldPromoteToAts ? result.sourceType : shouldPromoteToGeneric ? "career_link" : existing.source_type,
+    atsBoardToken: shouldPromoteToAts ? result.atsBoardToken : existing.ats_board_token,
+    careerPageUrl: shouldPromoteToGeneric ? result.discoveredJobsUrl : existing.career_page_url,
+  });
+
+  return getCompany(id);
 }
 
 export interface UpdateCompanyH1bConfidenceInput {

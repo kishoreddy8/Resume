@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createCompany, listCompanies, updateCompanyH1bConfidence } from "@/db/queries/companies";
-import { detectAtsFromUrl } from "@/lib/ats/detect";
+import { createCompany, listCompanies, recordDiscoveryResult, updateCompanyH1bConfidence } from "@/db/queries/companies";
+import { discoverCompanySource } from "@/lib/ats/discovery";
 import { matchCompanyToSponsor, scoreCompanyConfidence } from "@/lib/h1b/fuzzyMatch";
-import type { Company, SourceType } from "@/types";
+import type { Company } from "@/types";
 
 const EXPLICIT_SCHEMA = z
   .object({
@@ -51,20 +51,23 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
 
-  // Try the auto-detect shape first ({name, url}) — it's the primary flow now.
+  // Try the auto-detect shape first ({name, url}) — it's the primary flow now. Uses the bounded
+  // discovery chain (src/lib/ats/discovery.ts), not the old single-hop detectAtsFromUrl — see
+  // AGENTS.md §9-14. The company is always created, regardless of discovery outcome: an unresolved
+  // source stays in the registry with its diagnostic fields set, never silently dropped.
   const autoDetect = AUTO_DETECT_SCHEMA.safeParse(body);
   if (autoDetect.success) {
-    const detection = await detectAtsFromUrl(autoDetect.data.url);
     const company = createCompany({
       name: autoDetect.data.name,
-      source_type: (detection?.sourceType ?? "career_link") as SourceType,
-      ats_board_token: detection?.atsBoardToken ?? null,
+      source_type: "career_link",
       career_page_url: autoDetect.data.url,
       notes: autoDetect.data.notes ?? null,
     });
-    finalizeCompany(company);
+    const discovery = await discoverCompanySource(autoDetect.data.url);
+    const updated = recordDiscoveryResult(company.id, discovery) ?? company;
+    finalizeCompany(updated);
     return NextResponse.json(
-      { company, detected: detection?.sourceType ?? null },
+      { company: updated, detected: discovery.sourceType, resolutionStatus: discovery.status },
       { status: 201 }
     );
   }
@@ -86,6 +89,18 @@ export async function POST(req: NextRequest) {
     career_page_url: explicit.data.career_page_url ?? null,
     notes: explicit.data.notes ?? null,
   });
-  finalizeCompany(company);
-  return NextResponse.json({ company }, { status: 201 });
+  // Not run through discoverCompanySource (the user supplied the exact token/URL directly), but
+  // still recorded as resolved — otherwise it would default to resolution_status='UNRESOLVED' and
+  // wrongly show up in the Companies page's Unresolved Sources section despite working fine.
+  const updated =
+    recordDiscoveryResult(company.id, {
+      status: explicit.data.source_type === "career_link" ? "GENERIC_SUPPORTED" : "VERIFIED",
+      sourceType: explicit.data.source_type === "career_link" ? null : explicit.data.source_type,
+      atsBoardToken: explicit.data.source_type === "career_link" ? null : explicit.data.ats_board_token ?? null,
+      discoveredJobsUrl: explicit.data.career_page_url ?? null,
+      reason: "Manually added with an explicit board token/URL — discovery was not run.",
+      suspectedAts: null,
+    }) ?? company;
+  finalizeCompany(updated);
+  return NextResponse.json({ company: updated }, { status: 201 });
 }

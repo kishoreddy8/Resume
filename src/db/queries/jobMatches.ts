@@ -240,32 +240,48 @@ export function listJobMatchHistory(candidateId: number, dedupeKey: string): Job
 export interface LatestDecisionSummary {
   decision: string;
   overallScore: number;
+  /** Added for the For You ranking layer (src/lib/rank/forYou.ts's ForYouMatch) — additive fields,
+   *  ignored by pre-existing consumers (MatchDecisionBadge/job-list badge) that only read
+   *  decision/overallScore. */
+  employerEvidencedShare: number;
+  requirementCoverage: number;
 }
 
 /** Batch lookup of one candidate's latest decision per dedupe_key — used by the job-list badge/filter
- *  (a single query for the whole visible page of jobs, never one query per row). Keyed by
- *  (candidate_id, dedupe_key), never job_id, same identity discipline as every other lookup in this
- *  file. Jobs never evaluated for this candidate are simply absent from the returned map — the
- *  caller (For You ranking, MatchDecisionBadge) is responsible for treating "absent" as
- *  NOT_EVALUATED, never as a fabricated score. */
+ *  AND the For You ranking API (a single query for the whole visible page/candidate's job set, never
+ *  one query per row). Keyed by (candidate_id, dedupe_key), never job_id, same identity discipline as
+ *  every other lookup in this file. Jobs never evaluated for this candidate are simply absent from
+ *  the returned map — the caller (For You ranking, MatchDecisionBadge) is responsible for treating
+ *  "absent" as NOT_EVALUATED, never as a fabricated score. */
 export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys: string[]): Record<string, LatestDecisionSummary> {
   if (dedupeKeys.length === 0) return {};
   const db = getDb();
   const placeholders = dedupeKeys.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT t.dedupe_key, t.decision, t.overall_score
+      `SELECT t.dedupe_key, t.decision, t.overall_score, t.employer_evidenced_share, t.requirement_coverage
        FROM job_match_results t
        INNER JOIN (
          SELECT dedupe_key, MAX(id) AS max_id FROM job_match_results
          WHERE candidate_id = ? AND dedupe_key IN (${placeholders}) GROUP BY dedupe_key
        ) latest ON latest.max_id = t.id`
     )
-    .all(candidateId, ...dedupeKeys) as { dedupe_key: string; decision: string; overall_score: number }[];
+    .all(candidateId, ...dedupeKeys) as {
+    dedupe_key: string;
+    decision: string;
+    overall_score: number;
+    employer_evidenced_share: number;
+    requirement_coverage: number;
+  }[];
 
   const result: Record<string, LatestDecisionSummary> = {};
   for (const row of rows) {
-    result[row.dedupe_key] = { decision: row.decision, overallScore: row.overall_score };
+    result[row.dedupe_key] = {
+      decision: row.decision,
+      overallScore: row.overall_score,
+      employerEvidencedShare: row.employer_evidenced_share,
+      requirementCoverage: row.requirement_coverage,
+    };
   }
   return result;
 }

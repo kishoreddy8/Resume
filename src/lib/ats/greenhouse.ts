@@ -18,12 +18,20 @@ interface GreenhouseResponse {
   jobs: GreenhouseJob[];
 }
 
+export interface FetchGreenhouseJobsOptions extends FetchWithRetryOptions {
+  /** Testing-only: overrides the https://boards-api.greenhouse.io origin so tests can point a real
+   *  board token at a local HTTP server instead of the real host. Production callers never pass this. */
+  hostOverride?: string;
+}
+
 export async function fetchGreenhouseJobs(
   boardToken: string,
-  options: FetchWithRetryOptions = {}
+  options: FetchGreenhouseJobsOptions = {}
 ): Promise<NormalizedJob[]> {
-  const url = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(boardToken)}/jobs?content=true`;
-  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, options);
+  const { hostOverride, ...retryOptions } = options;
+  const origin = hostOverride ?? "https://boards-api.greenhouse.io";
+  const url = `${origin}/v1/boards/${encodeURIComponent(boardToken)}/jobs?content=true`;
+  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, retryOptions);
   const data = await parseJsonOrThrow<GreenhouseResponse>(res, url);
   return data.jobs.map((job) => {
     const descriptionText = stripHtml(job.content);

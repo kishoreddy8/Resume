@@ -66,13 +66,16 @@ function candidateOverlay(candidateId: number | undefined) {
     // Appended after j.* in the SELECT list — SQLite/better-sqlite3 builds each result object by
     // assigning columns in order, so a later column with the same name overwrites the earlier one,
     // which is exactly how this overrides j.pipeline_status/j.pinned/etc. without excluding them.
+    // not_interested has no legacy jobs.* counterpart (Phase 2.5-only) — genuinely absent from the
+    // row when candidateId isn't supplied, see JobWithCompany.not_interested's optional type.
     selectOverride: `,
       COALESCE(cjs.pipeline_status, 'New') AS pipeline_status,
       COALESCE(cjs.pinned, 0) AS pinned,
       COALESCE(cjs.marked_for_tailoring, 0) AS marked_for_tailoring,
       cjs.tailoring_marked_at AS tailoring_marked_at,
       cjs.notes AS notes,
-      cjs.tags AS tags`,
+      cjs.tags AS tags,
+      COALESCE(cjs.not_interested, 0) AS not_interested`,
     params: { overlayCandidateId: candidateId },
   };
 }

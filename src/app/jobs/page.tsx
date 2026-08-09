@@ -4,8 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { Company, JobWithCompany, ScanSummary } from "@/types";
 import { DEFAULT_FILTERS, JobFilterSidebar, type JobFilterState } from "./JobFilterSidebar";
+import { ForYouList } from "./ForYouList";
 import { JobList } from "./JobList";
 import { useLifecycleThresholds } from "./useLifecycleThresholds";
+
+type JobsView = "forYou" | "all";
 
 function buildQuery(filters: JobFilterState): string {
   const params = new URLSearchParams();
@@ -34,6 +37,7 @@ function buildQuery(filters: JobFilterState): string {
 
 export default function JobsPage() {
   const candidateId = useActiveCandidateId();
+  const [view, setView] = useState<JobsView>("forYou");
   const [filters, setFilters] = useState<JobFilterState>(DEFAULT_FILTERS);
   const [jobs, setJobs] = useState<JobWithCompany[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -62,10 +66,13 @@ export default function JobsPage() {
   }, []);
 
   useEffect(() => {
+    // Only the "All Jobs" view needs the unranked/filtered listJobs fetch — For You loads its own
+    // ranked data independently (see ForYouList). Avoids a wasted request on the default view.
+    if (view !== "all") return;
     // Intentional: fetch-on-mount/filter-change with a loading flag, not a render loop.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadJobs();
-  }, [loadJobs]);
+  }, [loadJobs, view]);
 
   async function runScan() {
     setScanning(true);
@@ -74,7 +81,7 @@ export default function JobsPage() {
       const res = await fetch("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       const summary = (await res.json()) as ScanSummary;
       setScanResult(summary);
-      await loadJobs();
+      if (view === "all") await loadJobs();
     } finally {
       setScanning(false);
     }
@@ -104,16 +111,37 @@ export default function JobsPage() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-4 lg:flex-row">
-        <JobFilterSidebar filters={filters} onChange={setFilters} companies={companies} />
-        <div className="flex-1">
-          {loading || !thresholdsLoaded ? (
-            <p className="text-sm text-zinc-500">Loading…</p>
-          ) : (
-            <JobList jobs={jobs} thresholds={thresholds} />
-          )}
-        </div>
+      <div className="flex items-center gap-1 border-b border-zinc-200 dark:border-zinc-800">
+        {(["forYou", "all"] as JobsView[]).map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setView(v)}
+            className={`-mb-px border-b-2 px-3 py-1.5 text-sm font-medium ${
+              view === v
+                ? "border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100"
+                : "border-transparent text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
+            }`}
+          >
+            {v === "forYou" ? "For You" : "All Jobs"}
+          </button>
+        ))}
       </div>
+
+      {view === "forYou" ? (
+        <ForYouList candidateId={candidateId} />
+      ) : (
+        <div className="flex flex-col gap-4 lg:flex-row">
+          <JobFilterSidebar filters={filters} onChange={setFilters} companies={companies} />
+          <div className="flex-1">
+            {loading || !thresholdsLoaded ? (
+              <p className="text-sm text-zinc-500">Loading…</p>
+            ) : (
+              <JobList jobs={jobs} thresholds={thresholds} />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

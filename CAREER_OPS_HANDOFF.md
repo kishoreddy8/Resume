@@ -21,9 +21,15 @@ to function at all.
 
 ## 2. Current Status
 
-**Phase 1 (deterministic pipeline) is complete, committed, and frozen.** Shared AI infrastructure
-and the first optional AI feature (OpenAI-backed "Enrich with AI") are also complete and committed.
-Nothing beyond this has been built. See §16 for the exact checkpoint.
+**Phase 1 (deterministic pipeline) is complete, committed, and frozen.** Shared AI infrastructure,
+the first optional AI feature ("Enrich with AI"), and Phase 2 (deterministic job matching/scoring)
+are also complete and committed. **Phase 2.5 (multi-candidate architecture + For You ranking + ATS
+discovery + generic-job validation) is now complete** — see §16 for the full Phase 2/2.5 design
+record (deterministic match engine, multi-candidate architecture, For You, candidate preferences,
+safeFetch, bounded ATS discovery, positive-evidence job validation, unsupported-source registry,
+freshness, inline actions) and the "Current Safe Checkpoint" section at the end of this document for
+the exact checkpoint. `CAREER_OPS_PHASE_2_5_CHECKPOINT.md` is now a closed, historical mid-phase
+snapshot — this document is authoritative again.
 
 Commit history (newest first) that matters for understanding how we got here:
 ```
@@ -257,6 +263,11 @@ an oversight — do not casually move it into the OpenAI API or the in-app AI la
 - `.claude/skills/tailor-resume/engine/*` — the deterministic DOCX rendering/validation boundary.
 - The `ai_enrichments` immutability guarantee — never add an UPDATE path onto that table's content
   columns.
+- `src/lib/match/**` (Phase 2 scoring/eligibility/track recommendation) and `src/lib/rank/forYou.ts`
+  (the approved 10-key ranking order) — see §16.1/§16.3. Neither's core logic was touched by the
+  Phase 2.5 work; only new callers were added around them.
+- `src/lib/net/safeFetch.ts`'s SSRF checks and `src/lib/ats/discoveryConfig.ts`'s bounded constants
+  (§16.4) — any future discovery-related change must go through `safeFetch`, never a raw `fetch()`.
 
 ## 10. Known Limitations
 
@@ -277,11 +288,16 @@ an oversight — do not casually move it into the OpenAI API or the in-app AI la
 ## 11. Testing / Safety Procedures
 
 ```bash
-npm test          # node:test, ~333 tests, isolated temp SQLite per suite (never touches data/app.db)
+npm test          # node:test, 571 tests, isolated temp SQLite per suite (never touches data/app.db)
 npm run lint       # eslint, must be clean
 npm run build      # next build — this is also the real TypeScript check; npm test alone does not type-check as strictly
 npx tsx .claude/skills/tailor-resume/engine/fixtures/run-fixtures.ts   # resume-engine regression fixtures
 ```
+
+Test globs live in `package.json`'s `test` script as an explicit list of `__tests__` directories —
+**every new `__tests__` directory must be added to that list explicitly**, or `npm test` silently
+skips it (a real issue flagged and checked during the Phase 2.5 work). `src/lib/net/__tests__` and
+`src/lib/ats/__tests__` were added this session.
 
 **DB migration safety procedure** (only needed if a change touches `schema.sql`/`db/index.ts`):
 1. Back up `data/app.db` (+ `-wal`/`-shm`) to `data/backups/` — follow the existing naming
@@ -309,13 +325,35 @@ genuinely needs one before assuming this procedure applies.
 
 ## 13. Current Roadmap
 
-**Next major phase: Phase 2 — Candidate Profile + Job Match Scoring + Prioritization.**
+**Phase 2 (deterministic job matching) and Phase 2.5 (multi-candidate + For You + ATS discovery) are
+both complete** — see §16 for the full design record. Nothing in Phase 3 has been started.
 
-High-level direction only (not designed here): build a candidate profile representation, then a
-scoring/ranking layer that surfaces "which of today's jobs are most worth your time," likely reusing
-the shared AI infrastructure from §6 for the reasoning-heavy parts (deterministic filters/rules
-first, AI advisory ranking/explanation second — same "deterministic wins, AI is advisory" pattern
-already established). Do not start designing or implementing this yet.
+**Next major phase: Phase 3 — Automatic resume/cover-letter generation**, and separately, at a much
+larger scale whenever it's explicitly prioritized: the 44k+ H1B-employer discovery expansion (company
+name → verified domain → careers page → ATS → job ingestion), reusing the bounded discovery
+architecture from §16 rather than redesigning it. Neither has been designed or started. Do not begin
+either without an explicit decision — this is a placeholder pointer, not a spec.
+
+Known deferred items within Phase 2.5's own scope (not blocking, documented so they aren't rediscovered
+as "missing"):
+- NEEDS_ADAPTER only recognizes a small, explicit list of other ATS platforms (SmartRecruiters,
+  iCIMS, Taleo, SuccessFactors, Jobvite, Workable, BambooHR, Breezy HR, Recruitee) — a real-world
+  platform outside that list still resolves UNRESOLVED, not NEEDS_ADAPTER, which is honest (no
+  fabricated signature) but not exhaustive.
+- ATS discovery (`src/lib/ats/discovery.ts`) uses safeFetch — a bounded, non-JS-executing HTTP
+  fetch — not Playwright. A homepage/careers page whose careers link only appears after client-side
+  JS rendering (no server-rendered `<a href>` in the initial HTML) is invisible to discovery, even
+  though the final generic scrape step (`genericPlaywright.ts`) does run a real browser. This is a
+  deliberate tradeoff (discovery must stay fast/cheap/bounded; full JS rendering at every hop would
+  defeat that) — live-validated against 9 real external sites in this session, all of which resolved
+  sensibly within this constraint.
+- The Companies page's global "Candidate Eligibility" settings group (`src/app/settings/page.tsx`,
+  backed by the legacy single-row `settings.candidate` group) is no longer read by the Phase 2 match
+  engine — `evaluateJobMatch`/the batch match route read `candidate_settings` (per-candidate) via
+  `getMatchAffectingSettings` instead. That legacy Settings UI section is effectively vestigial for
+  matching purposes now; the per-candidate Preferences page (`/candidates/[candidateId]/settings`,
+  added this session) is the real place to set eligibility going forward. Not removed in this session
+  — flagged here rather than silently left for a future agent to rediscover.
 
 ## 14. Claude vs. Codex Handoff Notes
 
@@ -373,16 +411,218 @@ Whichever agent picks this up next should, in order:
   ambiguous language — not in being trusted with facts that already have a reliable deterministic
   source.
 
+## 16. Phase 2 / Phase 2.5 Design Record
+
+### 16.1 Phase 2 — Deterministic Job Matching (complete, frozen)
+
+`src/lib/match/**` scores a candidate against a job's structured JD content: requirement-unit
+extraction, candidate evidence tiers (employer-attributed vs. inventory-only vs. transferable),
+OR-group collapsing, seniority alignment, critical-gap gating, employer-evidenced-share gating, and a
+weighted `overallScore`/`decision` (`READY_FOR_TAILORING` / `NEEDS_REVIEW` / `BLOCKED`). Eligibility
+(`src/lib/match/eligibility.ts`) is a separate hard-blocker pass (sponsorship/citizenship/clearance).
+Every `job_match_results` row is an immutable snapshot keyed on
+`(candidate_id, dedupe_key, match_engine_version, match_knowledge_hash, candidate_profile_hash,
+candidate_settings_hash, jd_content_hash)` — an exact-key cache hit, never recomputed or overwritten.
+**None of this was touched in this session** — see §9's frozen list, now extended to cover every
+Phase 2 module too (scoring weights, requirement matching, eligibility, track recommendation).
+
+### 16.2 Phase 2.5 — Multi-Candidate Architecture (complete)
+
+- **`candidates`** (`INTEGER PRIMARY KEY AUTOINCREMENT` — ids never reused, safe to thread through
+  file paths), **`candidate_settings`** (one row per candidate, split at the TYPE level into
+  `MatchAffectingCandidateSettings` — feeds `evaluateEligibility`/`computeCandidateSettingsHash` — and
+  `CandidateRankingPreferences` — feeds only the For You ranking layer, never the match cache hash),
+  **`candidate_job_state`** (one candidate's personal relationship to one shared job — pipeline
+  status, pinned, not_interested, notes, tags — keyed on `(candidate_id, dedupe_key)`, not `job_id`),
+  **`candidate_job_state_history`**.
+- Legacy `jobs.pipeline_status`/`pinned`/`notes`/`tags`/`marked_for_tailoring` columns are frozen,
+  read-only snapshots of Candidate #1's state at the original migration — nothing writes to them
+  anymore. `listJobs`/`getJob` take an optional `candidateId` that LEFT JOINs `candidate_job_state`
+  and overlays it onto each row; omitted = byte-identical pre-Phase-2.5 behavior.
+- **"Not Interested" is candidate-personal and reversible** (`candidate_job_state.not_interested`,
+  toggled via `POST /api/jobs/[id]/not-interested`) — completely separate from the global,
+  permanent, delete-based `markNotInterested`/`suppressed_jobs` mechanism the system-generated
+  age-sweep still uses. Marking a job Not Interested for one candidate never removes it from another
+  candidate's Jobs list, and never touches the shared `jobs` row.
+- **Cross-candidate lifecycle protection**: `isLifecycleProtected`/`canArchive`/`canDelete`
+  (`src/lib/jobLifecycle.ts`) are unchanged; their call sites now read protection status via
+  `isProtectedForAnyCandidate(dedupeKey)` (`src/db/queries/candidateJobState.ts`) — a job is
+  protected from the global auto-archive/auto-delete sweep if **any** candidate has it
+  Applied/Interviewing/Offer/Employer Rejected/pinned.
+- **Candidate-scoped master files/profile**: `src/lib/match/candidateProfile.ts` takes an explicit
+  `candidateId` everywhere, no implicit "current candidate." `data/candidates/<id>/master/**` +
+  `data/candidates/<id>/candidate-profile.json`, isolated per candidate, proven by an automated
+  multi-candidate fixture this session (see §16.5).
+
+### 16.3 For You Ranking (wired this session)
+
+`src/lib/rank/forYou.ts`'s `rankForYou` (built and unit-tested in the prior session, never wired
+until now) implements the approved 10-key sort order: valid/not-interested gate → role-family tier →
+decision rank → score band → sponsorship tier → exact score → employer-evidenced share → requirement
+coverage → freshness tier → posted_at → id. **Untouched in this session** — every consumer feeds it
+already-computed facts.
+
+- **`GET /api/candidates/[candidateId]/for-you`** (`src/app/api/candidates/[candidateId]/for-you/route.ts`,
+  new): gathers each active job's latest match summary (`listLatestDecisionsForDedupeKeys`, extended
+  additively with `employerEvidencedShare`/`requirementCoverage`), candidate_job_state
+  (`not_interested`), and a per-job `roleFamilyTier` (new — `src/lib/rank/roleFamily.ts`, deterministic
+  keyword-containment match between the candidate's `primaryTargetRole`/`secondaryTargetRoles` and the
+  job title; ranking-only, never touches score/eligibility), then calls `rankForYou` and returns the
+  ranked list. A job never evaluated for this candidate is passed through with `match: undefined` —
+  `rankForYou` treats that as `NOT_EVALUATED`, never a fabricated score.
+- **Jobs page** (`src/app/jobs/page.tsx`) now defaults to a **For You** / **All Jobs** toggle. For You
+  (`ForYouList.tsx`, new) is the personalized, ranked view; All Jobs (existing `JobList.tsx` +
+  `JobFilterSidebar.tsx`, untouched) remains the full, unranked, search/filterable global inventory —
+  neither view was removed or degraded.
+- **Candidate Preferences page** (`/candidates/[candidateId]/settings`, new —
+  `src/app/candidates/[candidateId]/settings/page.tsx` + `src/app/api/candidates/[candidateId]/settings/route.ts`):
+  the UI `candidateSettings.ts` was missing. Splits Ranking Preferences (target roles, location,
+  workplace, employment type) from Eligibility (sponsorship/citizenship/clearance) — mirrors the
+  underlying type boundary exactly, PATCH body carries them as two separate optional objects so a
+  ranking-only change can never accidentally land in the match-affecting bucket.
+
+### 16.4 ATS Discovery (built this session — was entirely missing)
+
+Root cause (confirmed against code, not assumed): `src/lib/ats/detect.ts`'s old `detectAtsFromUrl`
+made one raw, unbounded `fetch()` with `redirect: "follow"` — no SSRF protection, no response size
+cap, no revalidation of where a redirect actually landed, and it only ever inspected the ONE page it
+was given. A branded site whose ATS is hidden two hops away (homepage → careers → "Search Jobs" →
+ATS) was invisible to it. That function has been **removed** (dead, unsafe, unused after this
+session's changes — see `src/lib/ats/detect.ts`'s doc comment); `detectAtsFromUrlString` (the
+zero-network Tier-1 pattern matcher) is unchanged and is what the new discovery chain reuses.
+
+- **`src/lib/net/safeFetch.ts`** (new): SSRF-safe fetch. Blocks non-http(s) schemes; blocks
+  localhost/loopback/private/link-local/reserved IP ranges, including a hostname that *resolves* to
+  one (DNS-rebinding protection via `dns.promises.lookup`, checking every returned address); follows
+  redirects manually, revalidating each hop with the exact same checks (a redirect to a disallowed
+  scheme/host is rejected mid-chain, not just at the start); detects redirect loops; caps response
+  bytes (checks `Content-Length` first, then enforces the cap while streaming even without one);
+  enforces one overall wall-clock timeout covering the whole operation. 18 tests against a real local
+  HTTP server (`src/lib/net/__tests__/safeFetch.test.ts`) — never the live internet.
+- **`src/lib/ats/discoveryConfig.ts`** (new): the approved bounded constants —
+  `MAX_DISCOVERY_PAGES=3`, `MAX_DISCOVERY_DEPTH=2`, `MAX_REDIRECTS=5`,
+  `MAX_RESPONSE_BYTES=2_000_000`, `DISCOVERY_TIMEOUT_MS=10_000`. Every discovery call site references
+  these named constants, never a duplicated magic number.
+- **`src/lib/ats/discovery.ts`**'s `discoverCompanySource(url)` (new): the bounded chain. Tier 1
+  (`detectAtsFromUrlString`, no network) → fetch via safeFetch → check final URL after redirects →
+  scan the whole HTML for an embedded ATS URL (reuses `detectAtsFromUrlString` against every
+  `https?://...` token found, never a duplicated provider regex) → if nothing found and budget
+  remains, follow the highest-scoring careers/jobs-shaped link (`search jobs`/`view openings`/`open
+  positions`/`careers`/etc., weighted, deterministic, first-occurrence tiebreak) → repeat. Resolves to
+  exactly one of `VERIFIED` (known ATS found — `sourceType`/`atsBoardToken` set) / `GENERIC_SUPPORTED`
+  (no known ATS, but a real careers/jobs page was reached — `discoveredJobsUrl` set for the generic
+  scraper) / `UNRESOLVED` (nothing found within bounds) / `NEEDS_ADAPTER` (a recognized-but-unsupported
+  ATS platform — see the small `UNSUPPORTED_ATS_SIGNATURES` list in `discovery.ts`, informational
+  only, never scraped) / `FAILED_TEMPORARY` (the seed URL itself was unreachable for a transient
+  reason — timeout/network/DNS — worth retrying later). **Never throws** and **never fabricates** an
+  ATS/URL it didn't actually find. 9 tests against real local HTTP servers
+  (`src/lib/ats/__tests__/discovery.test.ts`), plus live validation against 9 real external sites
+  (§16.7).
+- **`companies` resolution columns** (already existed from the prior session's migration, unused
+  until now): `resolution_status`, `discovered_jobs_url`, `discovery_attempted_at`,
+  `discovery_reason`, `suspected_ats`. Written by `recordDiscoveryResult`
+  (`src/db/queries/companies.ts`, new) — on `VERIFIED` promotes the company to the real ATS connector;
+  on `GENERIC_SUPPORTED` points `career_page_url` at the discovered jobs page; `UNRESOLVED`/
+  `NEEDS_ADAPTER`/`FAILED_TEMPORARY` only update the diagnostic fields, never `source_type`/
+  `ats_board_token`/`career_page_url` — an unresolved company is never silently downgraded.
+  `career_page_url` always preserves the original seed URL regardless of outcome, which is what
+  "Retry Discovery" re-runs discovery against.
+- **`POST /api/companies`** (auto-detect path) now runs `discoverCompanySource` instead of the old
+  single-hop function; the company is **always created** regardless of outcome — an unresolved source
+  stays in the registry, never silently dropped, never creates a placeholder job.
+  `POST /api/companies/[id]/discover` (new) is "Retry Discovery" — user-triggered only; normal scans
+  reuse the stored resolution and never rediscover automatically.
+- **Companies page**: a prominent "Unsupported / Unresolved Sources" section (new,
+  `UnsupportedSourcesSection` in `src/app/companies/page.tsx`) lists every `UNRESOLVED`/
+  `NEEDS_ADAPTER`/`FAILED_TEMPORARY` company with its reason, last-attempt timestamp, and a Retry
+  Discovery button — separate from and above the main company table, per the explicit "should be easy
+  to find, not buried" requirement. Every company row also shows a small resolution-status badge.
+
+### 16.5 Generic Job Positive-Evidence Validation (built this session)
+
+Root cause (confirmed): `genericPlaywright.ts`'s old fallback accepted any collected link whose text
+didn't *exactly* match one of ~10 blocklisted nav words — real false positives observed in planning
+included "Jobs By Business Area," "MyDisneyCareer," "French," "Privacy," "Benefits," "Locations,"
+"Talent Network." A bigger blocklist can't fix an open-ended, company-specific set of navigation
+labels.
+
+- **`src/lib/ats/jobValidation.ts`** (new): `validateJobCandidate({url, text, contextText})` requires
+  genuine positive evidence — a requisition-ID-shaped URL (`?gh_jid=`, `/jobs/…-12345`, a UUID
+  segment, Workday-style `R1234`), or a title-shaped text plus a location signal (plus optionally an
+  "Apply" action word nearby) — before accepting a candidate at all; an exact nav-phrase match is an
+  always-disqualifying override. No positive evidence = rejected ("when uncertain, ingest nothing").
+  Also exports `extractJsonLdJobPostings(html)` — the strongest possible signal: when a page publishes
+  schema.org `JobPosting` structured data (common for SEO), it's used directly, title/url/location/
+  datePosted/description and all, skipping anchor heuristics entirely. 18 unit tests
+  (`src/lib/ats/__tests__/jobValidation.test.ts`), including every real false-positive example above,
+  now proven rejected, plus 3 tests running a real headless Chromium against a local page
+  (`src/lib/ats/__tests__/genericPlaywright.test.ts`).
+- **`genericPlaywright.ts`** wiring: JSON-LD checked first (page-level, bypasses anchor heuristics
+  entirely when present — also means a `postedAt` can now be real, not always null, when a site
+  publishes `datePosted`; see §16.6's freshness note). The anchor-collection step now also captures
+  each link's nearby container text (`contextText`) to give `jobValidation` real location/apply-action
+  signals to work with. The non-ATS fallback path now filters through `validateJobCandidate` instead
+  of the old exact-match blocklist. The majority-ATS-vote path (most links point at one embedded
+  Greenhouse/Lever/Ashby board) is completely unchanged.
+
+### 16.6 Freshness, Inline Actions, Posting-Date Regression (built this session)
+
+- **Freshness** (`computeFreshnessTier`, unchanged, already existed): now displayed via a shared
+  `src/components/FreshnessBadge.tsx` in **both** For You and All Jobs (`JobList.tsx`), computed
+  client-side from `posted_at` — a separate concept from `jobLifecycle.ts`'s age-band "Fresh"
+  highlight, which is untouched.
+- **Inline Not Interested** (`src/components/NotInterestedToggle.tsx`, new): added to both Jobs list
+  views — previously required opening the job detail page. Uses `candidate_job_state` exclusively via
+  the existing route; reversible; never deletes the global job row. In For You, toggling it removes
+  the row immediately (it would be excluded on the next fetch anyway); in All Jobs, the row stays
+  (that view intentionally shows the full global inventory) and the toggle just reflects state. This
+  required one additive SQL/type change: `listJobs`'s candidate overlay now also selects
+  `candidate_job_state.not_interested` (previously omitted); `JobWithCompany.not_interested` is a new
+  **optional** field (no legacy `jobs.*` counterpart), present only when a `candidateId` was supplied.
+- **Posting-date connector regression tests** (`src/lib/ats/__tests__/connectorPostedAt.test.ts`, new):
+  locks in the audited-but-previously-untested behavior — Ashby uses `publishedAt`, Lever uses
+  `createdAt` (converted to ISO), Workday uses `startDate` only when the per-job detail fetch succeeds
+  (null otherwise, proven via a forced 500), Greenhouse substitutes `updated_at` (documented as NOT a
+  true posting date — unchanged), and generic never fabricates one (proven for the anchor-heuristic
+  path; when a page's own JSON-LD provides a real `datePosted`, that real value is used — see §16.5).
+  Ashby/Lever/Greenhouse gained a test-only `hostOverride` option (mirroring the option Workday's
+  connector already had) so these could be tested against a real local HTTP server instead of the
+  live ATS APIs — zero production behavior change (default `undefined` = the real host, exactly as
+  before).
+
+### 16.7 Live Validation (this session)
+
+`discoverCompanySource` run against 9 real external sites (never written to `data/app.db` — pure,
+read-only, no DB calls at all): direct Workday (HP) → `VERIFIED`; a branded HP jobs page → hopped to
+a real jobs URL, `GENERIC_SUPPORTED` (its actual ATS, if any, is beyond the 2-hop bound — a known,
+documented limit, not a bug); Greenhouse via both the legacy `boards.*` and new `job-boards.*` URL
+shapes (Anthropic, Stripe) → both `VERIFIED`; Lever (Whoop) → `VERIFIED`; Ashby (Linear) → `VERIFIED`;
+a generic careers page with no known ATS (Mozilla) → `GENERIC_SUPPORTED`; a real SmartRecruiters URL
+(Bosch) → `NEEDS_ADAPTER` with `suspectedAts: "SmartRecruiters"`; a bot-defensive site (GM) →
+degraded gracefully to `GENERIC_SUPPORTED`, no crash; a nonexistent domain → `FAILED_TEMPORARY` with
+an honest DNS-failure reason. Additionally ran the real generic scraper against the live-discovered
+HP jobs page: 17 genuine job postings extracted, zero navigation-clutter false positives.
+
 ---
 
 ## Current Safe Checkpoint
 
 - **Branch**: `main`
-- **Latest commit**: `c5642915e86d587e6c4250368a18577c4837031f` — "feat: add optional AI job
-  enrichment with OpenAI"
-- **Git status**: clean except one pre-existing, unrelated local file:
-  `M .claude/settings.local.json` (not part of any feature work; safe to leave as-is or let the
-  user handle it)
-- **Full test count**: 333 passing, 0 failing (`npm test`)
-- **Unrelated local changes**: none beyond the settings file noted above — working tree otherwise
-  matches `origin/main` at this commit
+- **Base commit**: `43b5fac316548095f11380d47581c5b8c2f155fc` — "feat: add multi-candidate Career-Ops
+  foundation" (the Phase 2.5 mid-phase checkpoint this session started from and reproduced exactly:
+  500/500 tests, clean lint/build, `PRAGMA integrity_check` ok, matching row counts).
+- **This session's work (Phase 2.5 completion) is uncommitted** as of this document update — see the
+  IMPLEMENTATION REPORT delivered in-conversation for the exact file list, and `git status`/`git diff
+  --stat` for the live state. Awaiting explicit approval to commit per this session's instructions.
+- **Full test count**: 571 passing, 0 failing (`npm test`) — 71 new tests across 7 new test files
+  (`roleFamily`: 8, `safeFetch`: 18, `discovery`: 9, `jobValidation`: 18, `genericPlaywright`: 3,
+  `connectorPostedAt`: 5, `multiCandidateE2E`: 10) plus the pre-existing 500 unchanged and still green.
+- **Git status**: `.claude/settings.local.json` remains the one pre-existing, unrelated local file —
+  not staged, not part of any feature work, per every prior session's convention.
+- **DB**: `data/app.db` row counts identical to the base checkpoint (companies=2, jobs=5,
+  h1b_sponsors=44,697, suppressed_jobs=29, job_match_results=48); `PRAGMA integrity_check`: ok;
+  `PRAGMA foreign_key_check`: no violations. All live verification this session (candidate
+  preferences, a test company add/retry/delete, Not Interested toggles) was performed against the
+  real DB and reverted/cleaned up afterward — no residual test data beyond one harmless
+  `candidate_job_state` row left at its all-default values (functionally identical to no row at all;
+  see `getCandidateJobState`'s own "absence = defaults" design).

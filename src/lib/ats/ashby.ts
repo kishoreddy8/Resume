@@ -28,12 +28,20 @@ interface AshbyResponse {
   jobs: AshbyJob[];
 }
 
+export interface FetchAshbyJobsOptions extends FetchWithRetryOptions {
+  /** Testing-only: overrides the https://api.ashbyhq.com origin so tests can point a real board
+   *  name at a local HTTP server instead of the real host. Production callers never pass this. */
+  hostOverride?: string;
+}
+
 export async function fetchAshbyJobs(
   boardName: string,
-  options: FetchWithRetryOptions = {}
+  options: FetchAshbyJobsOptions = {}
 ): Promise<NormalizedJob[]> {
-  const url = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(boardName)}?includeCompensation=true`;
-  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, options);
+  const { hostOverride, ...retryOptions } = options;
+  const origin = hostOverride ?? "https://api.ashbyhq.com";
+  const url = `${origin}/posting-api/job-board/${encodeURIComponent(boardName)}?includeCompensation=true`;
+  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, retryOptions);
   const data = await parseJsonOrThrow<AshbyResponse>(res, url);
   return data.jobs.map((job) => {
     // Ashby doesn't reliably include full descriptions on the list endpoint for every board.

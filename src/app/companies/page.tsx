@@ -2,7 +2,133 @@
 
 import { useEffect, useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
-import type { Company, SourceType } from "@/types";
+import type { Company, CompanyResolutionStatus, SourceType } from "@/types";
+
+const RESOLUTION_LABELS: Record<CompanyResolutionStatus, string> = {
+  VERIFIED: "Verified",
+  GENERIC_SUPPORTED: "Generic scrape",
+  UNRESOLVED: "Unresolved",
+  NEEDS_ADAPTER: "Needs adapter",
+  FAILED_TEMPORARY: "Temporarily unreachable",
+};
+
+const RESOLUTION_STYLES: Record<CompanyResolutionStatus, string> = {
+  VERIFIED: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  GENERIC_SUPPORTED: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+  UNRESOLVED: "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  NEEDS_ADAPTER: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  FAILED_TEMPORARY: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+};
+
+function ResolutionBadge({ status }: { status: CompanyResolutionStatus }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${RESOLUTION_STYLES[status]}`}>
+      {RESOLUTION_LABELS[status]}
+    </span>
+  );
+}
+
+const UNRESOLVED_STATUSES: CompanyResolutionStatus[] = ["UNRESOLVED", "NEEDS_ADAPTER", "FAILED_TEMPORARY"];
+
+function RetryDiscoveryButton({ company, onChanged }: { company: Company; onChanged: () => void }) {
+  const [retrying, setRetrying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function retry() {
+    setRetrying(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/companies/${company.id}/discover`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof data.error === "string" ? data.error : "Retry failed");
+        return;
+      }
+      onChanged();
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  return (
+    <div className="text-right">
+      <button
+        type="button"
+        disabled={retrying}
+        onClick={retry}
+        className="rounded border border-zinc-300 px-2 py-1 text-xs font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+      >
+        {retrying ? "Retrying…" : "Retry Discovery"}
+      </button>
+      {error && <div className="mt-1 text-xs text-red-600">{error}</div>}
+    </div>
+  );
+}
+
+/**
+ * Deliberately its own prominent section, not folded into the main table — see AGENTS.md §17
+ * ("unsupported sources should be easy to find rather than buried"). Company source resolution
+ * (this) and Phase 2's candidate-facing NEEDS_REVIEW match decision are unrelated concepts; this
+ * section is purely about whether Career-Ops could find a scannable source at all.
+ */
+function UnsupportedSourcesSection({ companies, onChanged }: { companies: Company[]; onChanged: () => void }) {
+  const unresolved = companies.filter((c) => UNRESOLVED_STATUSES.includes(c.resolution_status));
+  if (unresolved.length === 0) return null;
+
+  return (
+    <section className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/20">
+      <div>
+        <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+          Unsupported / Unresolved Sources ({unresolved.length})
+        </h2>
+        <p className="text-xs text-amber-800/80 dark:text-amber-300/70">
+          Career-Ops could not confirm a scannable source for these companies. They stay in the
+          registry — nothing here creates placeholder jobs. Fix the URL and retry, or leave as-is.
+        </p>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-amber-200 bg-white dark:border-amber-900 dark:bg-zinc-900">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-amber-100/60 text-xs uppercase tracking-wide text-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+            <tr>
+              <th className="px-3 py-2 font-medium">Company</th>
+              <th className="px-3 py-2 font-medium">Status</th>
+              <th className="px-3 py-2 font-medium">Reason</th>
+              <th className="px-3 py-2 font-medium">Last attempt</th>
+              <th className="px-3 py-2 font-medium"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-amber-100 dark:divide-amber-900/40">
+            {unresolved.map((c) => (
+              <tr key={c.id}>
+                <td className="px-3 py-2">
+                  <div className="font-medium">{c.name}</div>
+                  {c.career_page_url && (
+                    <a href={c.career_page_url} target="_blank" rel="noopener noreferrer" className="text-xs text-zinc-400 hover:underline">
+                      {c.career_page_url}
+                    </a>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  <ResolutionBadge status={c.resolution_status} />
+                  {c.suspected_ats && (
+                    <div className="mt-0.5 text-xs text-zinc-500">Suspected: {c.suspected_ats}</div>
+                  )}
+                </td>
+                <td className="max-w-xs px-3 py-2 text-xs text-zinc-600 dark:text-zinc-400">
+                  {c.discovery_reason ?? "Never attempted"}
+                </td>
+                <td className="px-3 py-2 text-xs text-zinc-400">{c.discovery_attempted_at ?? "never"}</td>
+                <td className="px-3 py-2">
+                  <RetryDiscoveryButton company={c} onChanged={onChanged} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
 
 const PROVIDER_LABELS: Record<SourceType, string> = {
   greenhouse: "Greenhouse",
@@ -19,15 +145,21 @@ const ADVANCED_ATS_SOURCES: { value: Exclude<SourceType, "career_link">; label: 
   { value: "workday", label: "Workday", placeholder: "tenant|host|site, e.g. hp|wd5|ExternalCareerSite" },
 ];
 
+interface DetectionPreview {
+  detected: SourceType | null;
+  resolutionStatus: CompanyResolutionStatus;
+  reason: string;
+}
+
 function useDebouncedDetection(url: string) {
-  const [detected, setDetected] = useState<SourceType | null | undefined>(undefined); // undefined = not yet checked
+  const [preview, setPreview] = useState<DetectionPreview | undefined>(undefined); // undefined = not yet checked
   const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     if (!url || !/^https?:\/\/.+\..+/.test(url)) {
       // Intentional: resetting detection state as the debounced url prop changes, not a render loop.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setDetected(undefined);
+      setPreview(undefined);
       return;
     }
     let cancelled = false;
@@ -42,12 +174,12 @@ function useDebouncedDetection(url: string) {
         if (cancelled) return;
         if (res.ok) {
           const data = await res.json();
-          setDetected(data.detected ?? null);
+          setPreview({ detected: data.detected ?? null, resolutionStatus: data.resolutionStatus, reason: data.reason });
         } else {
-          setDetected(null);
+          setPreview(undefined);
         }
       } catch {
-        if (!cancelled) setDetected(null);
+        if (!cancelled) setPreview(undefined);
       } finally {
         if (!cancelled) setChecking(false);
       }
@@ -58,7 +190,7 @@ function useDebouncedDetection(url: string) {
     };
   }, [url]);
 
-  return { detected, checking };
+  return { preview, checking };
 }
 
 function AddCompanyForm({ onAdded }: { onAdded: () => void }) {
@@ -66,7 +198,7 @@ function AddCompanyForm({ onAdded }: { onAdded: () => void }) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const { detected, checking } = useDebouncedDetection(url);
+  const { preview, checking } = useDebouncedDetection(url);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -129,13 +261,19 @@ function AddCompanyForm({ onAdded }: { onAdded: () => void }) {
       </div>
       <div className="text-xs text-zinc-500">
         {checking && "Checking…"}
-        {!checking && detected !== undefined && detected !== null && (
+        {!checking && preview?.detected && (
           <span className="text-emerald-700 dark:text-emerald-400">
-            Detected: {PROVIDER_LABELS[detected]}
+            Detected: {PROVIDER_LABELS[preview.detected]}
           </span>
         )}
-        {!checking && detected === null && (
-          <span>No known ATS detected — will be added as a generic career-page scrape.</span>
+        {!checking && preview && !preview.detected && preview.resolutionStatus === "GENERIC_SUPPORTED" && (
+          <span>No known ATS detected — will use a generic career-page scrape of {preview.reason.split(": ").pop()}.</span>
+        )}
+        {!checking && preview && !preview.detected && preview.resolutionStatus === "NEEDS_ADAPTER" && (
+          <span className="text-amber-700 dark:text-amber-400">Recognized ATS with no connector yet — {preview.reason}</span>
+        )}
+        {!checking && preview && !preview.detected && (preview.resolutionStatus === "UNRESOLVED" || preview.resolutionStatus === "FAILED_TEMPORARY") && (
+          <span className="text-amber-700 dark:text-amber-400">{preview.reason}</span>
         )}
       </div>
       {error && <p className="text-xs text-red-600">{error}</p>}
@@ -288,7 +426,10 @@ function CompanyRow({ company, onChanged }: { company: Company; onChanged: () =>
   return (
     <tr className={company.is_active ? "" : "opacity-50"}>
       <td className="px-3 py-2">
-        <div className="font-medium">{company.name}</div>
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium">{company.name}</span>
+          <ResolutionBadge status={company.resolution_status} />
+        </div>
         <div className="text-xs text-zinc-500">
           {company.source_type}
           {company.ats_board_token ? `:${company.ats_board_token}` : ""}
@@ -382,6 +523,8 @@ export default function CompaniesPage() {
         <AddCompanyForm onAdded={load} />
         <AdvancedManualForm onAdded={load} />
       </div>
+
+      {!loading && <UnsupportedSourcesSection companies={companies} onChanged={load} />}
 
       {loading ? (
         <p className="text-sm text-zinc-500">Loading…</p>

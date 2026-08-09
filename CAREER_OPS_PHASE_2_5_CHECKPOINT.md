@@ -1,15 +1,22 @@
-# Career-Ops Phase 2.5 (Multi-Candidate) — Checkpoint
+# Career-Ops Phase 2.5 (Multi-Candidate) — Checkpoint (CLOSED)
 
-Written for a fresh coding agent picking up this work with no memory of prior sessions. Read this
-fully, then verify its claims against the actual repository — this document is a map, not a
-substitute for reading the code. This is a **mid-phase checkpoint**, not a finished-phase handoff:
-**Phase 2.5 is NOT complete.** Do not treat anything below as "done" beyond what §1 explicitly lists.
+**This document is now a closed, historical snapshot — Phase 2.5 is complete.**
+`CAREER_OPS_HANDOFF.md` is authoritative again; see its §16 (Phase 2 / Phase 2.5 Design Record) for
+the current, up-to-date architecture description, and its "Current Safe Checkpoint" section for the
+exact state as of completion. This file is kept for historical/audit context (what was true partway
+through the phase, and why decisions were made in the order they were) — do not treat anything below
+as the current state without cross-checking `CAREER_OPS_HANDOFF.md` and the actual code first.
 
-`CAREER_OPS_HANDOFF.md` is now stale with respect to Phase 2 and Phase 2.5 — it still describes the
-Phase 1 + shared-AI-infra checkpoint (commit `c564291`) and says "Phase 2... not designed here."
-Trust this document and the actual code for anything Phase 2/2.5-related; `CAREER_OPS_HANDOFF.md`
-itself should only be updated once Phase 2.5 is genuinely complete (see §5's exact remaining list) —
-do not update it prematurely.
+Everything §5 of this document once listed as "exactly what remains" was completed in the session
+that closed this checkpoint: For You wired into API/UI, candidate preferences UI, `safeFetch` +
+bounded ATS discovery, positive-evidence job validation, the unsupported-sources UI + Retry Discovery,
+freshness wiring, inline Not Interested actions, posting-date connector regression tests, live
+validation against 9 real external sources, and an automated multi-candidate E2E fixture. See
+`CAREER_OPS_HANDOFF.md` §16 for the full design record of each.
+
+---
+
+*(Original mid-phase checkpoint content below, preserved as-is for historical context.)*
 
 ---
 
@@ -211,4 +218,6 @@ Stage order (unchanged from the approved plan, picking up where this checkpoint 
 - **Git status immediately after this commit**: clean except the pre-existing, unrelated
   `.claude/settings.local.json` (harness-managed local permission state, deliberately excluded from
   every commit in this project's history)
-- **Phase 2.5 status: IN PROGRESS, NOT COMPLETE.** See §5 for the exact remaining work.
+- **Phase 2.5 status at the time this checkpoint was written: IN PROGRESS, NOT COMPLETE.** (Historical
+  — see §5 for what "remaining work" meant at that point.) **Superseded**: Phase 2.5 is now complete;
+  see `CAREER_OPS_HANDOFF.md` §16 and its "Current Safe Checkpoint" section for the current state.

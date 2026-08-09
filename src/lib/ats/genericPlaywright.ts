@@ -1,10 +1,14 @@
 import { chromium } from "playwright";
+import { extractJsonLdJobPostings, stripHtmlTags, validateJobCandidate } from "@/lib/ats/jobValidation";
 import type { NormalizedJob } from "@/types";
 
 const JOB_CONTAINER_SELECTOR =
   '[class*="job" i] a, [class*="posting" i] a, [class*="career" i] a, [class*="opening" i] a, [class*="position" i] a';
 
-const NAV_TEXT_BLOCKLIST = /^(home|about|contact|privacy|terms|login|sign in|careers|jobs|apply|search)$/i;
+// The container an anchor's surrounding listing-row/card text is pulled from — feeds jobValidation's
+// location/apply-action context signals. Falls back to the anchor's own parentElement.
+const LINK_CONTAINER_SELECTOR =
+  '[class*="job" i], [class*="posting" i], [class*="opening" i], [class*="position" i], [class*="listing" i], [class*="card" i], li, tr';
 
 const ATS_URL_PATTERNS: { pattern: RegExp; source: string }[] = [
   { pattern: /boards\.greenhouse\.io\/([^/?#]+)/i, source: "greenhouse" },
@@ -42,16 +46,46 @@ export async function scrapeCareerPageDetailed(careerPageUrl: string): Promise<S
       // Some career pages never go fully idle (polling/analytics); fall back to whatever loaded.
     });
 
-    const rawLinks = await page.evaluate((selector) => {
-      const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>(selector));
-      const generic = anchors.length > 0 ? anchors : Array.from(document.querySelectorAll("a"));
-      return generic
-        .map((a) => ({ href: a.href, text: a.textContent?.trim() ?? "" }))
-        .filter((a) => a.href && a.text.length >= 4 && a.text.length <= 120);
-    }, JOB_CONTAINER_SELECTOR);
+    // Strongest possible signal first: if the page publishes JobPosting structured data (schema.org,
+    // used for search-engine job indexing), it's authoritative — use it directly and skip anchor
+    // heuristics entirely. See src/lib/ats/jobValidation.ts's module doc comment.
+    const html = await page.content();
+    const jsonLdJobs = extractJsonLdJobPostings(html);
+    if (jsonLdJobs.length > 0) {
+      const jobs: NormalizedJob[] = jsonLdJobs.slice(0, 200).map((job) => ({
+        externalId: null,
+        title: job.title,
+        location: job.location,
+        department: null,
+        url: job.url!,
+        descriptionHtml: job.descriptionHtml,
+        descriptionText: job.descriptionHtml ? stripHtmlTags(job.descriptionHtml) : null,
+        employmentType: null,
+        workplaceType: null,
+        salaryText: null,
+        postedAt: job.datePosted,
+        raw: job,
+      }));
+      return { jobs };
+    }
+
+    const rawLinks = await page.evaluate(
+      ({ linkSelector, containerSelector }) => {
+        const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>(linkSelector));
+        const generic = anchors.length > 0 ? anchors : Array.from(document.querySelectorAll("a"));
+        return generic
+          .map((a) => {
+            const container = a.closest(containerSelector) ?? a.parentElement;
+            const contextText = (container instanceof HTMLElement ? container.innerText : "").slice(0, 300);
+            return { href: a.href, text: a.textContent?.trim() ?? "", contextText };
+          })
+          .filter((a) => a.href && a.text.length >= 4 && a.text.length <= 120);
+      },
+      { linkSelector: JOB_CONTAINER_SELECTOR, containerSelector: LINK_CONTAINER_SELECTOR }
+    );
 
     const seen = new Set<string>();
-    const deduped: { href: string; text: string }[] = [];
+    const deduped: { href: string; text: string; contextText: string }[] = [];
     for (const link of rawLinks) {
       if (seen.has(link.href)) continue;
       if (/^(mailto:|tel:|javascript:)/i.test(link.href)) continue;
@@ -77,6 +111,8 @@ export async function scrapeCareerPageDetailed(careerPageUrl: string): Promise<S
     const topAts = Array.from(atsCounts.values()).sort((a, b) => b.count - a.count)[0];
     const usesAts = topAts && topAts.count >= 3 && topAts.count >= deduped.length * 0.4;
 
+    // Non-ATS fallback: positive-evidence validation (src/lib/ats/jobValidation.ts), NOT a
+    // nav-word blocklist — "when uncertain, ingest nothing" (AGENTS.md §15/§16).
     const candidates = usesAts
       ? deduped.filter((l) =>
           ATS_URL_PATTERNS.some(
@@ -84,7 +120,7 @@ export async function scrapeCareerPageDetailed(careerPageUrl: string): Promise<S
               source === topAts.source && pattern.test(l.href) && l.href.includes(topAts.token)
           )
         )
-      : deduped.filter((l) => !NAV_TEXT_BLOCKLIST.test(l.text));
+      : deduped.filter((l) => validateJobCandidate({ url: l.href, text: l.text, contextText: l.contextText }).valid);
 
     const jobs: NormalizedJob[] = candidates.slice(0, 200).map((link) => ({
       externalId: null,
