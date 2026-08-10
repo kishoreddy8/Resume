@@ -31,6 +31,19 @@ export type PipelineStatus =
   | "Employer Rejected";
 
 /**
+ * Phase 3 V1 tailoring approval model. READY_DIRECT = the job was READY_FOR_TAILORING and approved
+ * without an override; NEEDS_REVIEW_OVERRIDE = the job was NEEDS_REVIEW and a human explicitly
+ * approved tailoring anyway, with the real blockingReasons shown first. BLOCKED jobs never reach
+ * either value — there is no approval path for them in V1. See candidate_job_state.tailoring_approval_type
+ * and tailoring_runs.approval_type.
+ */
+export type TailoringApprovalType = "READY_DIRECT" | "NEEDS_REVIEW_OVERRIDE";
+
+/** tailoring_runs.status — two-phase lifecycle: every row starts 'started', then transitions
+ *  exactly once to 'completed' or 'failed'. Terminal states are immutable at the query layer. */
+export type TailoringRunStatus = "started" | "completed" | "failed";
+
+/**
  * Scanner Reliability & Observability (see src/lib/scan/): categorized cause of a scan-run/company
  * failure, used both by the retry layer (which categories are worth retrying — see
  * src/lib/scan/retry.ts) and by the dashboard (src/app/scanner/page.tsx). No CHECK enum on the

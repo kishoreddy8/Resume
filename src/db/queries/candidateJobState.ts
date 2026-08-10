@@ -1,6 +1,6 @@
 import { getDb } from "@/db";
 import { PROTECTED_PIPELINE_STATUSES } from "@/lib/jobLifecycle";
-import type { PipelineStatus } from "@/types";
+import type { PipelineStatus, TailoringApprovalType } from "@/types";
 
 /**
  * Phase 2.5 — candidate_job_state: one candidate's personal relationship to one shared job, keyed on
@@ -18,6 +18,12 @@ export interface CandidateJobStateRow {
   pipeline_updated_at: string | null;
   marked_for_tailoring: 0 | 1;
   tailoring_marked_at: string | null;
+  /** Set only alongside marked_for_tailoring=1, cleared alongside marked_for_tailoring=0 — never
+   *  inferred/guessed when the caller omits approval context (see setMarkedForTailoring below). */
+  tailoring_approval_type: TailoringApprovalType | null;
+  /** The Phase 2 decision ('READY_FOR_TAILORING' | 'NEEDS_REVIEW') being approved, frozen at the
+   *  moment of approval — never re-derived from a later job_match_results row. */
+  tailoring_approved_decision: string | null;
   pinned: 0 | 1;
   not_interested: 0 | 1;
   not_interested_at: string | null;
@@ -33,6 +39,8 @@ const DEFAULTS = {
   pipeline_updated_at: null,
   marked_for_tailoring: 0 as const,
   tailoring_marked_at: null,
+  tailoring_approval_type: null,
+  tailoring_approved_decision: null,
   pinned: 0 as const,
   not_interested: 0 as const,
   not_interested_at: null,
@@ -105,15 +113,51 @@ export function setPinned(candidateId: number, dedupeKey: string, pinned: boolea
   return getCandidateJobState(candidateId, dedupeKey)!;
 }
 
-export function setMarkedForTailoring(candidateId: number, dedupeKey: string, marked: boolean): CandidateJobStateRow {
+/**
+ * Approval context for marking a job for tailoring — see the approved Phase 3 V1 approval model.
+ * `approvalType` distinguishes a direct READY_FOR_TAILORING approval from an explicit
+ * NEEDS_REVIEW override; `decision` is the actual Phase 2 decision being approved, frozen at this
+ * moment. Optional on this function (see below) so the existing, unmodified PATCH /api/jobs/[id]
+ * route — which predates this approval model and doesn't yet supply it — keeps working exactly as
+ * before; when omitted, both fields are simply left null, never guessed.
+ */
+export interface TailoringApprovalContext {
+  approvalType: TailoringApprovalType;
+  decision: string;
+}
+
+/**
+ * marked=true with no `approval` argument sets marked_for_tailoring the same way it always has,
+ * leaving tailoring_approval_type/tailoring_approved_decision null — this function never infers or
+ * guesses those two fields on its own. marked=false always clears both, regardless of whether they
+ * were previously set, so stale approval context never survives an un-mark.
+ */
+export function setMarkedForTailoring(
+  candidateId: number,
+  dedupeKey: string,
+  marked: boolean,
+  approval?: TailoringApprovalContext
+): CandidateJobStateRow {
   ensureRow(candidateId, dedupeKey);
   const current = getCandidateJobState(candidateId, dedupeKey)!;
   getDb()
     .prepare(
-      `UPDATE candidate_job_state SET marked_for_tailoring = ?, tailoring_marked_at = CASE WHEN ? THEN datetime('now') ELSE tailoring_marked_at END, updated_at = datetime('now')
+      `UPDATE candidate_job_state SET
+         marked_for_tailoring = ?,
+         tailoring_marked_at = CASE WHEN ? THEN datetime('now') ELSE tailoring_marked_at END,
+         tailoring_approval_type = ?,
+         tailoring_approved_decision = ?,
+         updated_at = datetime('now')
        WHERE candidate_id = ? AND dedupe_key = ?`
     )
-    .run(marked ? 1 : 0, marked ? 1 : 0, candidateId, dedupeKey);
+    .run(
+      marked ? 1 : 0,
+      marked ? 1 : 0,
+      marked && approval ? approval.approvalType : null,
+      marked && approval ? approval.decision : null,
+      candidateId,
+      dedupeKey
+    );
   if (Boolean(current.marked_for_tailoring) !== marked) recordHistory(candidateId, dedupeKey, "tailoring", String(current.marked_for_tailoring), String(marked ? 1 : 0), null);
   return getCandidateJobState(candidateId, dedupeKey)!;
 }

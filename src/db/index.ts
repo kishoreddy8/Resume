@@ -662,6 +662,27 @@ function runCompaniesDomainIdentityMigrations(db: Database.Database) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_companies_domain_identity_status ON companies(domain_identity_status)");
 }
 
+// --- Phase 3 V1: tailoring approval provenance ------------------------------------------------
+
+// Nullable, additive — set only when marked_for_tailoring becomes true (see
+// src/db/queries/candidateJobState.ts's setMarkedForTailoring), cleared when it becomes false.
+// Never inferred/guessed when approval context is absent; simply stays NULL.
+const CANDIDATE_JOB_STATE_TAILORING_APPROVAL_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
+  { name: "tailoring_approval_type", ddl: "ALTER TABLE candidate_job_state ADD COLUMN tailoring_approval_type TEXT" },
+  { name: "tailoring_approved_decision", ddl: "ALTER TABLE candidate_job_state ADD COLUMN tailoring_approved_decision TEXT" },
+];
+
+function runTailoringApprovalMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(candidate_job_state)").all() as { name: string }[]).map((c) => c.name)
+  );
+  for (const column of CANDIDATE_JOB_STATE_TAILORING_APPROVAL_ADDITIVE_COLUMNS) {
+    if (!existingColumns.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+}
+
 function ensureCandidateOne(db: Database.Database) {
   const existing = db.prepare("SELECT id FROM candidates WHERE id = 1").get();
   if (existing) return;
@@ -701,6 +722,7 @@ function createConnection(): Database.Database {
   ensureCandidateOne(db);
   runCandidateScopingMigrations(db, schema);
   runCompaniesDomainIdentityMigrations(db);
+  runTailoringApprovalMigrations(db);
   return db;
 }
 

@@ -704,3 +704,73 @@ CREATE TABLE IF NOT EXISTS discovery_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_discovery_runs_time ON discovery_runs(started_at DESC);
+
+-- Phase 3 V1 — Tailoring Run Persistence (see the approved Phase 3 V1 architecture: tailoring
+-- REASONING runs entirely in Claude Code or Codex via the repository-local /tailor-resume or
+-- $tailor-resume skill and the shared deterministic engine at tools/tailoring-engine/ — no
+-- Anthropic/OpenAI API involvement. This table is the application's own record of that work: it
+-- never generates content and never calls an LLM itself.
+--
+-- IDENTITY: candidate_id + dedupe_key is the authoritative candidate/job relationship, same
+-- philosophy as job_match_results/candidate_job_state (see their own IDENTITY SAFETY comments).
+-- job_id is convenience/debug metadata only, deliberately NOT a foreign key — jobs.id lacks
+-- AUTOINCREMENT and can be reused by an unrelated later row once the original job is deleted.
+--
+-- LIFECYCLE: two-phase, append-only per attempt — a row is created with status='started' the
+-- moment a human approves tailoring (before Claude Code/Codex is even invoked), then updated
+-- exactly once to 'completed' or 'failed'. A 'completed' row is never updated again afterward
+-- (the application layer enforces this, not a DB constraint — see tailoringRuns.ts). This is what
+-- gives "run 2 cannot overwrite run 1" its real meaning: each run's own row (and, in a later
+-- stage, its own output directory keyed by this row's id) exists independently of every other run
+-- for the same candidate/job.
+--
+-- APPROVAL PROVENANCE: approval_type/decision_at_approval are a PERMANENT COPY of
+-- candidate_job_state.tailoring_approval_type/tailoring_approved_decision at the moment this run
+-- was started — never re-derived later. If the candidate later un-marks and re-approves
+-- differently, or Phase 2 re-evaluates and the decision changes, already-completed runs' recorded
+-- provenance is untouched. This table never writes to job_match_results — Phase 2's decision stays
+-- authoritative and immutable from this workflow.
+--
+-- No provider/model/API-token/API-cost columns — Phase 3 V1 does not call the Anthropic or OpenAI
+-- APIs for tailoring at all; those fields would be speculative infrastructure for a capability
+-- that doesn't exist yet, not real observability. Add them only if/when that changes.
+CREATE TABLE IF NOT EXISTS tailoring_runs (
+  id INTEGER PRIMARY KEY,
+  candidate_id INTEGER NOT NULL REFERENCES candidates(id),
+  dedupe_key TEXT NOT NULL,
+  job_id INTEGER, -- convenience/debug only, never authoritative — see comment above
+
+  -- Approval provenance (copied from candidate_job_state at the moment this run was started)
+  approval_type TEXT NOT NULL, -- 'READY_DIRECT' | 'NEEDS_REVIEW_OVERRIDE' — app-layer validated
+  decision_at_approval TEXT NOT NULL, -- 'READY_FOR_TAILORING' | 'NEEDS_REVIEW' (BLOCKED never reaches here)
+  approved_at TEXT NOT NULL,
+
+  -- Source-material provenance — exactly what this run was tailored against
+  master_resume_hash TEXT,
+  master_skills_hash TEXT,
+  candidate_profile_hash TEXT,
+  jd_content_hash TEXT,
+  match_engine_version INTEGER,
+
+  -- Track
+  recommended_track TEXT, -- from job_match_results at run time
+  selected_track TEXT, -- what the skill actually tailored toward
+
+  -- System versioning (this project's own methodology/engine versions — not an LLM provider/model)
+  methodology_version INTEGER,
+  renderer_version INTEGER,
+
+  executed_by TEXT, -- 'claude-code' | 'codex' — free text, app-layer validated, taxonomy may grow
+
+  -- Outcome — NULL while status='started', set exactly once on completion or failure
+  status TEXT NOT NULL DEFAULT 'started', -- 'started' | 'completed' | 'failed'
+  job_fit_classification TEXT, -- 'STRONG APPLY' | 'APPLY' | 'STRETCH' | 'LOW MATCH'
+  output_files TEXT, -- JSON array of filenames, set on completion
+  validation_passed INTEGER, -- 0/1, set on completion
+  failure_reason TEXT, -- set only if status='failed'
+
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tailoring_runs_candidate_dedupe ON tailoring_runs(candidate_id, dedupe_key, created_at DESC);
