@@ -5,8 +5,9 @@ import { generateResumeDocx } from "./resume-template";
 import type { CoverLetterContent, ResumeContent } from "./types";
 import { formatValidationReport, validateDocx } from "./validate-docx";
 // Relative path back into the app's src/ — this is the same repo, just a different tree used by
-// Claude Code's skill runner rather than the Next.js build, so a plain relative import is fine.
-import { slugify } from "../../../../src/lib/slugify";
+// the tailoring skill runner (Claude Code or Codex) rather than the Next.js build, so a plain
+// relative import is fine. tools/tailoring-engine/ is two levels below the repo root.
+import { slugify } from "../../src/lib/slugify";
 
 interface GenerateInput {
   company: string;
@@ -53,7 +54,7 @@ function validateInput(input: GenerateInput): string[] {
 }
 
 /**
- * CLI: npx tsx .claude/skills/tailor-resume/engine/generate.ts <content.json>
+ * CLI: npx tsx tools/tailoring-engine/generate.ts <content.json>
  * <content.json> is written by the tailoring skill itself with the fully rewritten, reordered
  * content — this script only renders it. Writes to data/generated/<company-slug>/<job-id>/.
  * Fails (non-zero exit) if input is incomplete or the rendered output fails layout validation —

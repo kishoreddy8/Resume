@@ -80,7 +80,11 @@ export async function validateDocx(
 
   if (kind === "resume") {
     // --- Section heading dividers: identical border, zero indent (full content width) ---
-    const headingParagraphs = [...documentXml.matchAll(/<w:p>(?:(?!<\/w:p>).)*?w:pStyle w:val="Heading1"(?:(?!<\/w:p>).)*?<\/w:p>/gs)];
+    // [\s\S] in place of dotAll (`s` flag) `.` — identical matching semantics (every character is
+    // either whitespace or non-whitespace), compatible with this project's ES2017 target. The `s`
+    // flag requires ES2018+; this file is now included in the main app's tsc pass (see the Stage 1
+    // relocation report), which surfaced the incompatibility.
+    const headingParagraphs = [...documentXml.matchAll(/<w:p>(?:(?!<\/w:p>)[\s\S])*?w:pStyle w:val="Heading1"(?:(?!<\/w:p>)[\s\S])*?<\/w:p>/g)];
     if (headingParagraphs.length === 0) {
       violations.push("No section headings found (expected at least Professional Summary, Technical Skills, Professional Experience, Education)");
     }
@@ -102,7 +106,8 @@ export async function validateDocx(
 
     // --- Role header tab stops: real <w:tab/> element, correct right-tab position ---
     // This is the exact regression class the "\t"-in-text bug belongs to — assert it structurally.
-    const tabsParagraphs = [...documentXml.matchAll(/<w:p>(?:(?!<\/w:p>).)*?<w:tabs>(?:(?!<\/w:p>).)*?<\/w:p>/gs)];
+    // Same [\s\S]-for-dotAll substitution as headingParagraphs above.
+    const tabsParagraphs = [...documentXml.matchAll(/<w:p>(?:(?!<\/w:p>)[\s\S])*?<w:tabs>(?:(?!<\/w:p>)[\s\S])*?<\/w:p>/g)];
     if (tabsParagraphs.length === 0) {
       violations.push("No role-header tab-stop paragraphs found — expected one per Professional Experience entry");
     }

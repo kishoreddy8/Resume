@@ -14,7 +14,7 @@ export function generatedFilesDir(companyName: string, jobId: number): string {
  * Deletes a job's generated-output directory (Resume.docx, CoverLetter.docx, ATS/Recruiter reports,
  * cold email) when the job record itself is deleted — Not Interested, or the age-based sweep
  * removing an unapplied posting older than 10 days. Never touches the tailor-resume engine itself
- * (.claude/skills/tailor-resume/engine/), only its output under data/generated/.
+ * (tools/tailoring-engine/), only its output under data/generated/.
  *
  * Guarded to only ever delete a path that resolves inside data/generated/ — slugify() already can't
  * produce a traversal segment, but this is cheap, explicit defense in depth against ever deleting

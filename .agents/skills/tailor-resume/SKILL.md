@@ -35,7 +35,7 @@ MASTER SOURCES + JOB DESCRIPTION
 The renderer never decides what claims to make — it only lays out the `ResumeContent` /
 `CoverLetterContent` JSON it's given. This skill never hand-rolls document XML or manipulates Word
 layout directly — it writes content decisions, then calls the engine. If a layout bug shows up in
-output, the fix belongs in `.claude/skills/tailor-resume/engine/`, not in one run's content.
+output, the fix belongs in `tools/tailoring-engine/`, not in one run's content.
 
 ## Sources of truth (in precedence order)
 
@@ -231,11 +231,11 @@ a folder name.
 document code:**
 
 1. Write the fully-rewritten, fully-reordered content as JSON matching
-   `.claude/skills/tailor-resume/engine/types.ts` (`ResumeContent` / `CoverLetterContent`) —
+   `tools/tailoring-engine/types.ts` (`ResumeContent` / `CoverLetterContent`) —
    `{ company, jobId, resume, coverLetter }`.
 2. Run:
    ```bash
-   npx tsx .claude/skills/tailor-resume/engine/generate.ts <path-to-content.json>
+   npx tsx tools/tailoring-engine/generate.ts <path-to-content.json>
    ```
    This renders both `.docx` files with the full formatting spec (Calibri, 20-22pt name, 12-13pt
    bold section headings, 10.5-11pt role headers, 10.5-11pt body, 0.55-0.65in margins, hanging-
@@ -250,7 +250,7 @@ document code:**
 3. Recommended after any change to the engine templates, and worth doing for any run whose layout
    you're unsure about: visually spot-check the render —
    ```bash
-   node .claude/skills/tailor-resume/engine/visual-check/screenshot.mjs <path-to-Resume.docx> <output.png>
+   node tools/tailoring-engine/visual-check/screenshot.mjs <path-to-Resume.docx> <output.png>
    ```
    This renders the actual `.docx` client-side (docx-preview, no LibreOffice needed) and
    screenshots it via Playwright — this is how the one real layout bug found during hardening (a
@@ -346,7 +346,7 @@ fabricate around a missing input.
 npx tsc --noEmit -p tsconfig.json   # typecheck
 npm run lint                         # lint
 npm run build                        # production build — confirms dashboard unaffected
-npx tsx .claude/skills/tailor-resume/engine/fixtures/run-fixtures.ts   # engine regression fixtures
+npx tsx tools/tailoring-engine/fixtures/run-fixtures.ts   # engine regression fixtures
 ```
 The fixtures directory has synthetic `ResumeContent` inputs across a few different role families
 (not real scraped jobs — deterministic, no LLM calls, no token cost) that exercise the renderer and

@@ -20,7 +20,7 @@ const PATCH_SCHEMA = z.object({
 });
 
 /** Tailored output lives at data/generated/<company-slug>/<job-id>/ — written by the tailor-resume
- * skill's engine (.claude/skills/tailor-resume/engine/generate.ts), not by this app. */
+ * skill's engine (tools/tailoring-engine/generate.ts), not by this app. */
 function listGeneratedFiles(companyName: string, jobId: number): string[] {
   const dir = generatedFilesDir(companyName, jobId);
   if (!fs.existsSync(dir)) return [];
