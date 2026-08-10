@@ -15,8 +15,8 @@ import type { RequirementLevel, SkillCategory } from "@/types";
 
 export type SkillEvidenceSource = "employer" | "inventory_only";
 
-/** Persisted in data/master/candidate-profile.json, written only by the build-candidate-profile
- *  skill. `rawSkillName` is the authoritative truth; canonical-taxonomy resolution is deliberately
+/** Persisted in data/candidates/<candidateId>/candidate-profile.json, written only by the
+ *  build-candidate-profile skill. `rawSkillName` is the authoritative truth; canonical-taxonomy resolution is deliberately
  *  NOT stored here (see normalizeCandidateSkills.ts) so a later SKILL_TAXONOMY addition normalizes
  *  previously-unrecognized skills automatically, without ever rewriting this file. */
 export interface CandidateSkillEntry {

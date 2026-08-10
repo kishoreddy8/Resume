@@ -122,11 +122,11 @@ function TailoringToggle({ jobId, initial, candidateId }: { jobId: number; initi
   );
 }
 
-function CopyPromptButton({ job }: { job: JobWithCompany }) {
+function CopyPromptButton({ job, candidateId }: { job: JobWithCompany; candidateId: number }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
-    const prompt = `/tailor-resume job=${job.id}`;
+    const prompt = `/tailor-resume candidate=${candidateId} job=${job.id}`;
     await navigator.clipboard.writeText(prompt);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -895,7 +895,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
               Tailoring runs in Claude Code, not this app. Mark this job for tailoring, then in a
               Claude Code session in this project run the skill below.
             </p>
-            <CopyPromptButton job={job} />
+            <CopyPromptButton job={job} candidateId={candidateId} />
             <div className="mt-3">
               <div className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
                 Generated files ({generatedFiles.length})

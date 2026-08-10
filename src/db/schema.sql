@@ -458,7 +458,8 @@ CREATE TABLE IF NOT EXISTS job_match_results (
   -- readiness thresholds, track profiles, hands-on cue regex) — invalidates the cache the moment
   -- any of those change, with no manual version-bump discipline required for data-only edits.
   match_knowledge_hash TEXT NOT NULL,
-  -- data/master's resume+skills sha256 pair, combined (src/lib/match/candidateProfile.ts).
+  -- data/candidates/<candidateId>/master/ manifest's resume+skills sha256 pair, combined
+  -- (src/lib/match/candidateProfile.ts).
   candidate_profile_hash TEXT NOT NULL,
   -- Hash of Settings > Candidate (requiresSponsorship/clearance/etc.) at compute time — these are
   -- scoring-relevant facts too, independent of both the resume/skills files and the JD.

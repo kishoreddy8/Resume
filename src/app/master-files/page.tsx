@@ -163,11 +163,11 @@ export default function MasterFilesPage() {
         <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
           These are the source of truth for resume tailoring. They are never edited or overwritten
           programmatically — re-uploading archives the previous version. Tailoring itself happens
-          in Claude Code via the{" "}
+          through the Claude Code or Codex project skill with this explicit candidate id:{" "}
           <code className="rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-800">
-            /tailor-resume
+            candidate={candidateId}
           </code>{" "}
-          skill, not this app.
+          plus the target job id. Tailoring does not run inside this app.
         </p>
       </div>
 

@@ -1,6 +1,6 @@
 ---
 name: build-candidate-profile
-description: Rebuild the derived candidate-profile.json index from a specific candidate's Master Resume and Master Skills Inventory, for career-ops-project's Phase 2 job-matching engine. Use when the user asks to build/rebuild/refresh a candidate profile, after uploading a new Master Resume/Skills Inventory, or invokes /build-candidate-profile with a candidate_id.
+description: Rebuild the derived candidate-profile.json index from a specific candidate's Master Resume and Master Skills Inventory, for career-ops-project's Phase 2 job-matching engine. Use when the user asks to build/rebuild/refresh a candidate profile, after uploading a new Master Resume/Skills Inventory, or invokes $build-candidate-profile with a candidate_id.
 ---
 
 # How this skill works in career-ops-project
@@ -9,7 +9,7 @@ Phase 2's deterministic matching engine (`src/lib/match/`) needs a normalized, v
 what the candidate knows and has done, without re-parsing the Master Resume/Skills Inventory `.docx`
 files on every job evaluation. This skill builds that index. **It is the only V1 workflow that
 produces `data/candidates/<candidate_id>/candidate-profile.json`** — the app itself has no
-`.docx`-text-extraction code and never should; that reasoning stays here, in Claude Code, the same
+`.docx`-text-extraction code and never should; that reasoning stays here, in Codex, the same
 way `tailor-resume` already keeps deep resume reasoning out of the in-app AI layer.
 
 **Run this whenever the Master Resume or Master Skills Inventory changes** (re-upload via
@@ -19,7 +19,7 @@ never any decision at all) when they don't match.
 
 ## Invocation contract — Phase 2.5, candidate-scoped
 
-Invoked as `/build-candidate-profile <candidate_id>` — `candidate_id` is required and must match a
+Invoke as `$build-candidate-profile <candidate_id>` — `candidate_id` is required and must match a
 row in the `candidates` table (`data/app.db`). If no `candidate_id` is given, ask the user which
 candidate before doing anything else — **never guess or default to Candidate #1**, and never fall
 back to "the only candidate that currently has files" if more than one candidate exists.

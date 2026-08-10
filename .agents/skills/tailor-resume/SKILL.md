@@ -1,13 +1,13 @@
 ---
 name: tailor-resume
-description: Tailor Saikishore's resume, cover letter, and outreach messages for an explicit candidate and job description, following his master resume-tailoring instructions and guardrails exactly. Use when the user asks to tailor a resume, apply to a job in career-ops-project, or invokes /tailor-resume.
+description: Tailor Saikishore's resume, cover letter, and outreach messages for an explicit candidate and job description, following his master resume-tailoring instructions and guardrails exactly. Use when the user asks to tailor a resume, apply to a job in career-ops-project, or invokes $tailor-resume.
 ---
 
 # How this skill works in career-ops-project
 
 This project tracks jobs in a local SQLite database (`data/app.db`) via a Next.js dashboard. This
 skill is the tailoring step that dashboard deliberately does **not** automate — it runs here, in
-Claude Code, so every tailored document gets full reasoning and guardrail-checking rather than a
+Codex, so every tailored document gets full reasoning and guardrail-checking rather than a
 raw API call.
 
 **Deep rewrite, not light editing.** Swapping keywords into the Master Resume's existing sentences
@@ -91,7 +91,7 @@ responsibility, or accomplishment bullet unless the Master Resume actually suppo
 > Azure DevOps. Allowed: list GitHub Actions under Technical Skills. Not allowed: "Built GitHub
 > Actions pipelines at Comerica."
 
-**The job (4):** invoke as `/tailor-resume candidate=<candidateId> job=<job-id>` (`job-id` matches
+**The job (4):** invoke as `$tailor-resume candidate=<candidateId> job=<job-id>` (`job-id` matches
 `jobs.id` in the dashboard), or provide the explicit `candidateId` plus a pasted JD and unambiguous
 job identity. Both candidate identity and job identity are required; if either is missing, stop and
 ask rather than defaulting to Candidate 1 or inventing a job. For a job id, fetch the full record with:

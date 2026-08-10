@@ -2,7 +2,7 @@
 
 A personal job-search pipeline: scans company ATS boards (Greenhouse/Ashby/Lever) and your own
 manually-added career page links, tracks postings through a pipeline, flags likely H1B sponsors,
-and hands off resume tailoring to Claude Code via a project skill. Runs entirely locally — no
+and hands off resume tailoring to a Claude Code or Codex project skill. Runs entirely locally — no
 hosting, no external database, no LLM API key required for the app itself.
 
 Inspired by [santifer/career-ops](https://github.com/santifer/career-ops).
@@ -40,14 +40,19 @@ Requires Node 20+.
    (`.docx`, `.md`, or `.txt`). Re-uploading archives the previous version instead of overwriting
    it; nothing here is ever touched programmatically outside this upload flow.
 6. **Tailor a resume** — mark a job for tailoring (checkbox on `/jobs` or the job detail page),
-   then in a Claude Code session in this project directory, run:
+   then run the matching repository skill with the explicit candidate and job identities:
    ```
-   /tailor-resume job=<job-id>
+   # Claude Code
+   /tailor-resume candidate=<candidate-id> job=<job-id>
+
+   # Codex
+   $tailor-resume candidate=<candidate-id> job=<job-id>
    ```
-   This reads your master files and the job's stored description, follows the full tailoring
-   instructions and guardrails in [`.claude/skills/tailor-resume/SKILL.md`](.claude/skills/tailor-resume/SKILL.md)
-   exactly, and writes the tailored resume/cover letter to `data/generated/<job-id>/`. The app
-   itself never calls an LLM — this step only happens inside Claude Code.
+   Both entry points read only that candidate's master files and the job's stored description,
+   follow the same tailoring guardrails, and use the canonical engine in
+   [`.claude/skills/tailor-resume/engine/`](.claude/skills/tailor-resume/engine/). Outputs are
+   written under `data/generated/<company-slug>/<job-id>/`. The app itself does not run this
+   tailoring workflow.
 
 ## H1B data ingestion (optional but recommended)
 
@@ -132,9 +137,10 @@ project has been rolled out. No manual SQL, no data loss, no re-scan required.
 - `src/db/` — SQLite schema and query layer (`better-sqlite3`), including `job_status_history`
 - `src/db/queries/__tests__/`, `src/lib/__tests__/` — `node:test` suites (`npm test`)
 - `scripts/` — CLI entry points (`scan`, `ingest-h1b`, `match-h1b`)
-- `data/` — gitignored: `app.db`, `master/` (your resume files), `generated/` (tailored output),
+- `data/` — gitignored: `app.db`, `candidates/<candidate-id>/master/` (candidate resume files), `generated/` (tailored output),
   `h1b/` (raw downloaded DOL files)
-- `.claude/skills/tailor-resume/` — the resume tailoring skill and its guardrails
+- `.claude/skills/` — Claude Code skill entry points and the temporarily canonical tailoring engine
+- `.agents/skills/` — Codex repository-skill entry points
 
 ## Testing
 
