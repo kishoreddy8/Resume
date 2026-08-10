@@ -16,7 +16,15 @@ export type SafeFetchErrorReason =
   | "invalid_url"
   | "disallowed_scheme"
   | "disallowed_host"
+  // Temporary resolver failure (network blip, resolver timeout, SERVFAIL-like condition) — worth
+  // retrying later. Distinct from dns_hostname_not_found below; see classifyDnsLookupError.
   | "dns_resolution_failed"
+  // The resolver authoritatively reports no such host (NXDOMAIN/ENOTFOUND/ENODATA, or a lookup that
+  // succeeded but returned zero addresses) — retrying the identical hostname will produce the
+  // identical result. Callers must treat this as HARD/non-retryable, never bucketed with transient
+  // failures — see discovery.ts's/verifyDomain.ts's TRANSIENT_*REASONS sets, which deliberately
+  // exclude this one.
+  | "dns_hostname_not_found"
   | "too_many_redirects"
   | "redirect_loop"
   | "missing_redirect_location"
@@ -111,6 +119,19 @@ function isDisallowedIp(address: string, family: 4 | 6): boolean {
 
 const DISALLOWED_HOSTNAME_LITERALS = new Set(["localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"]);
 
+/** Node's dns.promises.lookup (getaddrinfo under the hood) throws a SystemError-shaped object with a
+ *  `.code` — ENOTFOUND/ENODATA mean the resolver authoritatively found no such host (equivalent to
+ *  NXDOMAIN for our purposes): retrying the identical hostname will never succeed, so this must be
+ *  classified as HARD, not transient. Everything else (EAI_AGAIN — temporary failure in name
+ *  resolution, ETIMEDOUT, or any other/unrecognized code) stays "dns_resolution_failed" — a genuine
+ *  network/resolver hiccup that retrying later might help. Exported so this mapping is directly unit
+ *  testable without depending on a real (inherently non-deterministic) DNS failure. */
+export function classifyDnsLookupError(err: unknown): "dns_hostname_not_found" | "dns_resolution_failed" {
+  const code = err && typeof err === "object" && "code" in err ? (err as { code?: unknown }).code : undefined;
+  if (code === "ENOTFOUND" || code === "ENODATA") return "dns_hostname_not_found";
+  return "dns_resolution_failed";
+}
+
 /**
  * Public, boolean-returning wrapper around this module's own private-network/scheme checks — the
  * SAME logic safeFetch itself uses for every hop, exported so a caller that needs boolean
@@ -165,11 +186,13 @@ async function assertSafeUrl(urlString: string, allowPrivateNetworksForTests: bo
   let addresses: { address: string; family: number }[];
   try {
     addresses = await dns.promises.lookup(hostname, { all: true, verbatim: true });
-  } catch {
-    throw new SafeFetchError("dns_resolution_failed", `Could not resolve host: ${hostname}`);
+  } catch (err) {
+    throw new SafeFetchError(classifyDnsLookupError(err), `Could not resolve host: ${hostname}`);
   }
   if (addresses.length === 0) {
-    throw new SafeFetchError("dns_resolution_failed", `No addresses resolved for host: ${hostname}`);
+    // A lookup that succeeded but returned zero addresses is the same authoritative "no such host"
+    // outcome as ENOTFOUND, just surfaced without an exception — same hard classification applies.
+    throw new SafeFetchError("dns_hostname_not_found", `No addresses resolved for host: ${hostname}`);
   }
   for (const { address, family } of addresses) {
     if (isDisallowedIp(address, family === 6 ? 6 : 4)) {

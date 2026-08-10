@@ -38,6 +38,10 @@ const PARKING_PAGE_PATTERNS: RegExp[] = [
   /parkingcrew/i,
 ];
 
+// dns_hostname_not_found (the resolver authoritatively reports no such host — e.g. a generated
+// domain candidate that was simply never real) is deliberately EXCLUDED here — it must resolve to
+// UNRESOLVED, not FAILED_TEMPORARY, since retrying the identical wrong hostname will never succeed.
+// See safeFetch.ts's classifyDnsLookupError for the transient/hard distinction.
 const TRANSIENT_REASONS = new Set<SafeFetchErrorReason>(["timeout", "network_error", "dns_resolution_failed"]);
 
 const ABOUT_PATHS = ["/about", "/about-us", "/company", "/who-we-are"];

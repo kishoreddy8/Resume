@@ -45,6 +45,7 @@ export type ErrorCategory =
   | "parse_error"
   | "invalid_config"
   | "blocked"
+  | "unsafe_url"
   | "unknown";
 
 export type ScanRunStatus = "success" | "partial" | "failed";

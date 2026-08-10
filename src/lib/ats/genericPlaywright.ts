@@ -1,5 +1,7 @@
 import { chromium } from "playwright";
 import { extractJsonLdJobPostings, stripHtmlTags, validateJobCandidate } from "@/lib/ats/jobValidation";
+import { ScanConnectorError } from "@/lib/scan/errors";
+import { isUrlSafeForNavigation } from "@/lib/net/safeFetch";
 import type { NormalizedJob } from "@/types";
 
 const JOB_CONTAINER_SELECTOR =
@@ -22,6 +24,11 @@ export interface ScrapeResult {
   detectedAts?: { source: string; token: string };
 }
 
+export interface ScrapeCareerPageOptions {
+  /** Test-only — see safeFetch's/discoveryBrowser's identical option. NEVER set true from production call sites. */
+  allowPrivateNetworksForTests?: boolean;
+}
+
 /**
  * Best-effort scraper for arbitrary company career pages the user adds manually.
  * Many "custom" career pages are actually a themed wrapper around a Greenhouse/Lever/Ashby
@@ -29,19 +36,56 @@ export interface ScrapeResult {
  * dedupe) and surface the detected board so the UI can suggest converting to a proper ATS entry.
  * Otherwise we fall back to raw link/title heuristics, which is inherently noisy — no per-posting
  * description text in either case, so these jobs fall back to the company-level H1B signal.
+ *
+ * SSRF safety: this runs a real headless browser against a stored `career_page_url` on every scan
+ * (unlike Tier-3 discovery, which only runs once at resolution time) — so it gets the SAME two-part
+ * guard as src/lib/ats/discoveryBrowser.ts, reusing the identical isUrlSafeForNavigation check (never
+ * a second/duplicate SSRF implementation): the seed URL is checked BEFORE Chromium launches, and
+ * every subsequent in-page navigation/redirect is independently re-checked via Playwright request
+ * interception (page.route) — a same-origin redirect to a private/loopback/link-local target is
+ * blocked exactly like a bad seed URL would be, since page.goto follows redirects transparently and
+ * a seed-only check can't see where a redirect actually lands.
  */
-export async function scrapeCareerPage(careerPageUrl: string): Promise<NormalizedJob[]> {
-  const { jobs } = await scrapeCareerPageDetailed(careerPageUrl);
+export async function scrapeCareerPage(
+  careerPageUrl: string,
+  options: ScrapeCareerPageOptions = {}
+): Promise<NormalizedJob[]> {
+  const { jobs } = await scrapeCareerPageDetailed(careerPageUrl, options);
   return jobs;
 }
 
-export async function scrapeCareerPageDetailed(careerPageUrl: string): Promise<ScrapeResult> {
+export async function scrapeCareerPageDetailed(
+  careerPageUrl: string,
+  options: ScrapeCareerPageOptions = {}
+): Promise<ScrapeResult> {
+  const allowPrivateNetworksForTests = options.allowPrivateNetworksForTests ?? false;
+
+  if (!(await isUrlSafeForNavigation(careerPageUrl, allowPrivateNetworksForTests))) {
+    throw new ScanConnectorError(
+      `Refused to scan an unsafe career_page_url: ${careerPageUrl}`,
+      "unsafe_url",
+      0
+    );
+  }
+
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({
       userAgent:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
     });
+
+    // Per-navigation SSRF guard — independent of the seed-URL check above, so a redirect or the
+    // page's own JS navigating to a disallowed target is blocked exactly like the seed URL was.
+    await page.route("**/*", async (route) => {
+      const safe = await isUrlSafeForNavigation(route.request().url(), allowPrivateNetworksForTests);
+      if (!safe) {
+        await route.abort();
+        return;
+      }
+      await route.continue();
+    });
+
     await page.goto(careerPageUrl, { waitUntil: "networkidle", timeout: 20000 }).catch(() => {
       // Some career pages never go fully idle (polling/analytics); fall back to whatever loaded.
     });

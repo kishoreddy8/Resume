@@ -267,7 +267,13 @@ an oversight — do not casually move it into the OpenAI API or the in-app AI la
   (the approved 10-key ranking order) — see §16.1/§16.3. Neither's core logic was touched by the
   Phase 2.5 work; only new callers were added around them.
 - `src/lib/net/safeFetch.ts`'s SSRF checks and `src/lib/ats/discoveryConfig.ts`'s bounded constants
-  (§16.4) — any future discovery-related change must go through `safeFetch`, never a raw `fetch()`.
+  (§16.4) — any future discovery-related change must go through `safeFetch`/`isUrlSafeForNavigation`,
+  never a raw `fetch()` or unchecked `page.goto()`. **This was violated by `genericPlaywright.ts`
+  until the pre-Phase-3 hardening pass (§16.8) fixed it** — the production career_link scraper ran an
+  unchecked headless browser against `company.career_page_url` with no SSRF guard, unlike the Tier-3
+  discovery browser (`discoveryBrowser.ts`), which always had one. Confirm any NEW Playwright/browser
+  code path also gets the same `isUrlSafeForNavigation` seed-check + `page.route` gate before assuming
+  this rule is automatically inherited.
 
 ## 10. Known Limitations
 
@@ -288,7 +294,7 @@ an oversight — do not casually move it into the OpenAI API or the in-app AI la
 ## 11. Testing / Safety Procedures
 
 ```bash
-npm test          # node:test, 571 tests, isolated temp SQLite per suite (never touches data/app.db)
+npm test          # node:test, 687 tests, isolated temp SQLite per suite (never touches data/app.db)
 npm run lint       # eslint, must be clean
 npm run build      # next build — this is also the real TypeScript check; npm test alone does not type-check as strictly
 npx tsx .claude/skills/tailor-resume/engine/fixtures/run-fixtures.ts   # resume-engine regression fixtures
@@ -297,14 +303,27 @@ npx tsx .claude/skills/tailor-resume/engine/fixtures/run-fixtures.ts   # resume-
 Test globs live in `package.json`'s `test` script as an explicit list of `__tests__` directories —
 **every new `__tests__` directory must be added to that list explicitly**, or `npm test` silently
 skips it (a real issue flagged and checked during the Phase 2.5 work). `src/lib/net/__tests__` and
-`src/lib/ats/__tests__` were added this session.
+`src/lib/ats/__tests__` were added in an earlier session; `src/app/api/companies/__tests__` and
+`src/app/api/ats-coverage/__tests__` were added in the pre-Phase-3 hardening pass (§16.8) — the
+first time this project tested a Next.js route handler directly (construct a plain `Request` +
+`{params: Promise.resolve({...})}`, no server needed; see either file for the pattern).
 
 **DB migration safety procedure** (only needed if a change touches `schema.sql`/`db/index.ts`):
-1. Back up `data/app.db` (+ `-wal`/`-shm`) to `data/backups/` — follow the existing naming
-   convention `app.db.pre-<feature>-<timestamp>.bak` (see `data/backups/` for examples).
-2. Copy to a throwaway location, run `CAREER_OPS_DB_PATH=<copy> npm run migrate`, verify table/row
-   counts unchanged, `PRAGMA integrity_check`, `PRAGMA foreign_keys=ON; PRAGMA foreign_key_check`.
+1. `npm run migrate` now takes this backup **automatically** (`src/db/migrate.ts`, added in the
+   pre-Phase-3 hardening pass, §16.8) — `data/app.db`(+`-wal`/`-shm`) to `data/backups/` using the
+   same `app.db.pre-migration-<timestamp>.bak` naming convention the earlier manual snapshots already
+   used, fail-open (a backup failure warns loudly but never blocks the migration). No separate manual
+   step needed for this part anymore.
+2. Still copy to a throwaway location first for anything non-trivial: run
+   `CAREER_OPS_DB_PATH=<copy> npm run migrate`, verify table/row counts unchanged,
+   `PRAGMA integrity_check`, `PRAGMA foreign_keys=ON; PRAGMA foreign_key_check`.
 3. Only then run `npm run migrate` against the real `data/app.db`, and re-verify the same checks.
+4. **Restore procedure** (if ever actually needed): copy the relevant `data/backups/app.db*.pre-*.bak`
+   files to a throwaway path (never overwrite the live `data/app.db` directly), rename off the
+   `.pre-...bak` suffix, then `sqlite3 <path> "PRAGMA integrity_check; PRAGMA foreign_key_check;"` and
+   spot-check row counts before trusting it — verified end-to-end during the hardening pass (§16.8).
+   Only copy the verified file over the live `data/app.db` once you're confident, and stop the app
+   first (or accept losing anything written since the backup).
 
 Most recent AI-infra changes needed **no** schema change at all — check whether a new feature
 genuinely needs one before assuming this procedure applies.
@@ -333,6 +352,32 @@ larger scale whenever it's explicitly prioritized: the 44k+ H1B-employer discove
 name → verified domain → careers page → ATS → job ingestion), reusing the bounded discovery
 architecture from §16 rather than redesigning it. Neither has been designed or started. Do not begin
 either without an explicit decision — this is a placeholder pointer, not a spec.
+
+**Phase 3 entry contract** (defined during the pre-Phase-3 hardening pass, §16.8 — not implemented,
+just the stable shape Phase 3 should consume so it never recomputes Phase 1/2 truth or scrapes UI
+state):
+
+```
+{
+  candidate_id, dedupe_key, job_id,
+  job:                { title, company, url, descriptionText, postedAt, location },
+  job_intelligence:    { skills, certifications, requirementUnits, sponsorshipSnippet },
+  job_match_result:   { decision, overall_score, requirement_coverage, employer_evidenced_share,
+                         recommended_track, blocking_reasons, match_engine_version, candidate_profile_hash },
+  candidate_profile:  { path to candidate-profile.json, sourceHashes },
+  master_files:       { resume path, skills path, manifest hashes },
+  candidate_settings: { relevant ranking/match-affecting fields },
+  readiness:          "READY_FOR_TAILORING" | "NOT_READY" | "MANUAL_OVERRIDE"
+}
+```
+
+This is already ~90% satisfiable today by existing tables/functions (`job_match_results`, the
+`jobIntel` queries, `candidateProfile.ts`, the `master-files` manifest) — Phase 3 needs one read-
+composition function assembling this shape, not new storage. `READY_FOR_TAILORING` =
+`job_match_results.decision === 'READY_FOR_TAILORING'` for the current non-superseded cache row.
+`MANUAL_OVERRIDE` is a named extension point only — no override column exists yet
+(`candidate_job_state.tailoring_override` would be the natural place if Phase 3 ever needs one); do
+not add it speculatively before Phase 3 actually asks for it.
 
 Known deferred items within Phase 2.5's own scope (not blocking, documented so they aren't rediscovered
 as "missing"):
@@ -603,26 +648,133 @@ degraded gracefully to `GENERIC_SUPPORTED`, no crash; a nonexistent domain → `
 an honest DNS-failure reason. Additionally ran the real generic scraper against the live-discovered
 HP jobs page: 17 genuine job postings extracted, zero navigation-clutter false positives.
 
+### 16.8 Pre-Phase-3 Hardening Pass (this session)
+
+A full repository-grounded audit (planning-only session, then a self-review/correction pass, then
+this implementation) found the system architecturally sound but flagged one live security gap and
+several smaller hardening items before Phase 3 should start consuming this data as a trusted source.
+
+**P0 fixed — SSRF in the production scan path.** `src/lib/ats/genericPlaywright.ts` (the career_link
+scraper run on every real scan) navigated a real headless browser to `company.career_page_url` with
+no `isUrlSafeForNavigation` check and no `page.route` interception — unlike `discoveryBrowser.ts`
+(Tier-3 discovery), which always had both. Fixed by porting the exact same seed-check +
+per-request-interception pattern (never a second SSRF implementation). `POST /api/companies`'s
+explicit-schema path also gained the same check as defense-in-depth at creation time. New tests:
+loopback/scheme-rejection, in-page-navigation-blocked, and a legitimate-redirect-still-works case, in
+`genericPlaywright.test.ts`.
+
+**P1 hardening completed:**
+- SQLite `busy_timeout = 5000` pragma (`src/db/index.ts`) — WAL mode allows one writer at a time;
+  without this, a second concurrent writer got an immediate `SQLITE_BUSY` instead of a bounded wait.
+- For You's STALE filter (`src/lib/rank/forYou.ts`) now exempts a candidate's own pinned/in-pipeline
+  jobs, mirroring the exemption `jobLifecycle.ts` already gives archival — previously a candidate's
+  pinned job older than 20 days silently vanished from their default For You view.
+- `src/db/migrate.ts` now takes an automatic pre-migration backup (`data/backups/`, same naming
+  convention as the 46+ manual snapshots already there) before applying schema changes — fail-open,
+  never blocks a migration. A restore drill (backup → throwaway copy → integrity_check → row counts)
+  was performed and confirmed clean; see the in-conversation implementation report for the exact
+  commands (they're safe to re-run: `cp` a `.bak` file somewhere temporary, `sqlite3` against it).
+- `POST /api/companies/[id]/discover` ("Retry Discovery") now has a 1-hour cooldown keyed off the
+  existing `discovery_attempted_at` column — previously unlimited, unlike the batch discovery
+  pipeline's own 24h `FAILED_TEMPORARY` cooldown.
+
+**Observability added — derived only, no new schema beyond the fixes above.** `GET /api/ats-coverage`
++ `/ats-coverage` page: groups companies into Supported (by connector, with job counts + connector
+health) / Needs Adapter (by suspected platform, so it's clear which one blocks the most companies) /
+Generic / Unresolved — all computed at read time from existing `companies`/`jobs` columns
+(`src/db/queries/atsCoverage.ts`). An earlier draft of this plan proposed 3-4 new tables/columns for
+this (`unknown_ats_evidence`, `dedupe_tier`, `discovery_failure_category`, extra `discovery_runs`
+counters); every one was found unnecessary on re-review — either derivable from existing columns
+(dedupe tier from `dedupe_key`'s own string prefix, browser-fallback rate from
+`discovery_reason LIKE '[Browser]%'`) or not yet justified by real data (zero genuinely-unknown ATS
+platforms have been encountered at the current company count). Revisit only once a larger discovery
+run actually produces evidence that would give such a table real shape.
+
+**Scale-test finding (bounded, stopped as designed).** A real `npm run discover-employers -- --batch-size 10`
+run against the live H1B employer table: 2 newly VERIFIED (Salesforce via SEC corroboration, Mphasis
+via multi-signal), 1 clean `UNRESOLVED`, but 7/10 `FAILED_TEMPORARY` — an 80% combined
+unresolved+failed rate, well past this plan's own 50% stop threshold. Root-caused (not a regression):
+Wikidata's `wbsearchentities` returns zero matches for verbose DOL legal-entity names like
+`"WAL-MART ASSOCIATES, INC."` or `"Amazon.com Services LLC"` (confirmed via a direct manual API
+query), so resolution falls to the deliberately "dumb" generated-domain-candidate path
+(`{words-joined}.com`), which guesses a domain that doesn't exist for these compound/subsidiary
+names — a real, deterministic DNS failure, just currently bucketed under the same
+`FAILED_TEMPORARY`/transient umbrella as an actual network blip. **Did not proceed to a 50-employer
+run** per this plan's own gate. The correct remediation path already exists and needs no code change:
+`h1b_employer_domain_overrides` (0 rows today) is exactly the curated-override mechanism for exactly
+this case — populate it for large/well-known subsidiary-named employers as they're encountered,
+rather than weakening the domain-candidate generator or the transient/permanent classification.
+
+**Follow-up correction (same session, before commit): the classifier itself had a real bug, now
+fixed.** `safeFetch.ts`'s DNS-lookup catch block bucketed BOTH genuinely transient resolver failures
+(EAI_AGAIN, ETIMEDOUT) AND authoritative "no such host" results (ENOTFOUND/ENODATA — i.e. a wrongly-
+generated candidate domain that simply doesn't exist) under one `dns_resolution_failed` reason,
+which `discovery.ts`/`verifyDomain.ts` both treat as retryable. Added a new
+`SafeFetchErrorReason` — `dns_hostname_not_found` — and a `classifyDnsLookupError` function
+(exported, unit-tested against synthetic error codes) that separates the two; only the genuinely
+hard case now resolves to `UNRESOLVED` instead of `FAILED_TEMPORARY`. Re-verified directly against
+the same real failing employer names from the batch above (not a second live batch — the cooldown
+would have picked different employers anyway): `Amazon.com Services LLC` and `HCL AMERICA INC` now
+correctly resolve `UNRESOLVED` (their generated candidate domains genuinely don't exist);
+`WAL-MART ASSOCIATES, INC.` still resolves `FAILED_TEMPORARY` on re-check — a *different*,
+genuinely transient condition this run, correctly left alone. This asymmetric result (2 fixed, 1
+unchanged) is the expected, honest signature of a precise fix, not a blanket reclassification.
+Regression coverage: `safeFetch.test.ts` (classifier unit tests + one live `.invalid`-TLD NXDOMAIN
+case), `discovery.test.ts`, `verifyDomain.test.ts` (both: hard-NXDOMAIN → `UNRESOLVED`, existing
+transient-failure case unchanged → `FAILED_TEMPORARY`). `priority.ts`'s existing "UNRESOLVED is
+excluded — no automatic retry" test already covers why this fix also prevents wasted retry cycles;
+no separate priority-layer test was needed.
+
+**Confirmed correct, no change made** (re-verified directly against source this session, not assumed):
+H1B/company-identity data never reaches `src/lib/match/decision.ts`/`scoring.ts` (grepped — zero
+references; the only coupling is a binary hard-blocker gate in `eligibility.ts`, exactly as intended);
+`posted_at` is always source-derived from each connector's own field, never substituted with
+`last_seen_at` or scan time; `job_match_results`' JSON columns round-trip symmetrically; `data/` stays
+gitignored and was confirmed never committed; `master-files` API responses never include raw file
+content, only manifest metadata; candidate isolation holds in every `job_match_results`/
+`candidate_job_state`/`candidate_settings` query (all explicitly filter on `candidate_id`).
+
+**Deferred, with reasoning (not silently dropped):** the H1B `normalizeEmployerName` fused-punctuation
+edge case (~45/44,697 rows, e.g. `"Freyr,Inc."` → `"FREYRINC"` instead of `"FREYR"`) is documented as
+a known-limitation test in `normalizeEmployerName.test.ts` rather than fixed — a real fix needs a full
+re-normalization + re-match migration across all sponsor rows, out of scope for a hardening pass;
+`h1b_employer_aliases` is the safer near-term lever for specific affected employers. Separating
+`WIKIDATA_CONCURRENCY` from `HTTP_DISCOVERY_CONCURRENCY` (`src/lib/discovery/batch.ts`) was
+investigated and found NOT simple to fix safely without restructuring the per-employer pipeline into
+decoupled stages — the outer per-employer concurrency gate is the actual binding constraint today, so
+a cosmetically-separate constant wouldn't change real throughput; left as a documented, honest
+non-fix rather than a token change. `redirectConfirmed` in `verifyDomain.ts` remains defined-but-
+unwired (its own module doc already discloses this) — useful eventually, not urgent.
+
 ---
 
 ## Current Safe Checkpoint
 
 - **Branch**: `main`
-- **Base commit**: `43b5fac316548095f11380d47581c5b8c2f155fc` — "feat: add multi-candidate Career-Ops
-  foundation" (the Phase 2.5 mid-phase checkpoint this session started from and reproduced exactly:
-  500/500 tests, clean lint/build, `PRAGMA integrity_check` ok, matching row counts).
-- **This session's work (Phase 2.5 completion) is uncommitted** as of this document update — see the
-  IMPLEMENTATION REPORT delivered in-conversation for the exact file list, and `git status`/`git diff
-  --stat` for the live state. Awaiting explicit approval to commit per this session's instructions.
-- **Full test count**: 571 passing, 0 failing (`npm test`) — 71 new tests across 7 new test files
-  (`roleFamily`: 8, `safeFetch`: 18, `discovery`: 9, `jobValidation`: 18, `genericPlaywright`: 3,
-  `connectorPostedAt`: 5, `multiCandidateE2E`: 10) plus the pre-existing 500 unchanged and still green.
-- **Git status**: `.claude/settings.local.json` remains the one pre-existing, unrelated local file —
-  not staged, not part of any feature work, per every prior session's convention.
-- **DB**: `data/app.db` row counts identical to the base checkpoint (companies=2, jobs=5,
-  h1b_sponsors=44,697, suppressed_jobs=29, job_match_results=48); `PRAGMA integrity_check`: ok;
-  `PRAGMA foreign_key_check`: no violations. All live verification this session (candidate
-  preferences, a test company add/retry/delete, Not Interested toggles) was performed against the
-  real DB and reverted/cleaned up afterward — no residual test data beyond one harmless
-  `candidate_job_state` row left at its all-default values (functionally identical to no row at all;
-  see `getCandidateJobState`'s own "absence = defaults" design).
+- **Base commit**: `0a0c3ec` — "feat: add H1B employer source discovery + ATS Tier-3 browser
+  fallback" (the last committed checkpoint; §16.4–§16.7 describe that feature's design record).
+- **This document's own checkpoint claims had drifted behind that commit** (wrong base commit, wrong
+  test count, wrong row counts, and the schema list below was missing entirely) until this update —
+  a concrete example of why every claim here should be spot-checked against `git log`/`sqlite3` rather
+  than trusted at face value, especially after a gap between sessions.
+- **Pre-Phase-3 hardening pass (§16.8, this document's newest section) is uncommitted** as of this
+  update — see `git status`/`git diff --stat` for the live file list. Awaiting explicit approval to
+  commit.
+- **Full test count**: 687 passing, 0 failing (`npm test`), lint clean, build clean (one non-blocking
+  Turbopack tracing warning on `candidateProfile.ts`, unchanged from prior sessions).
+- **DB** (`data/app.db`, live, gitignored): `PRAGMA integrity_check`: ok; `PRAGMA foreign_key_check`:
+  no violations. Row counts as of this update: companies=13, jobs=5, candidates=1,
+  h1b_sponsors=44,697, h1b_sponsor_filings=67,455, job_match_results=48, discovery_runs=2,
+  employer_identity_resolutions=22, suppressed_jobs=29. (companies/discovery_runs/
+  employer_identity_resolutions grew from the prior checkpoint because §16.8's hardening pass
+  included a real, bounded 10-employer discovery batch used to validate the pipeline — see §16.8.
+  `employer_identity_resolutions` grew by only 4, not 10 — its unique index on `h1b_sponsor_id`
+  upserts rather than appends, and 6 of the 10 batch-selected employers already had a row from
+  earlier sessions.)
+- **Schema additions since the last documented checkpoint** (all present in current `schema.sql`,
+  none were in this document before): `h1b_employer_domain_overrides`, `employer_identity_resolutions`,
+  `discovery_runs`, and `companies.domain_identity_status`/`verified_domain`/`resolution_status`/
+  `suspected_ats`/`discovered_jobs_url`/`discovery_reason`/`discovery_attempted_at` — all from the H1B
+  source-discovery feature (§16.4 already describes the design; this checkpoint just lists the tables).
+- **Git status**: `.claude/settings.local.json` remains the one pre-existing, harness-managed local
+  file — not staged, not part of any feature work, per every prior session's convention.

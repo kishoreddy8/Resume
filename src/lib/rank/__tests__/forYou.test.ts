@@ -134,6 +134,17 @@ test("stale (>20 day) jobs are excluded by default but included when includeStal
   assert.deepEqual(allJobsView.map((j) => j.jobId), [2, 1], "stale job included, but still ranked after the fresh one");
 });
 
+test("a pinned/in-pipeline job older than 20 days is exempt from the STALE filter, unlike an ordinary old job", () => {
+  const staleUnprotected = job({ jobId: 1, postedAt: daysAgo(30) });
+  const stalePinned = job({ jobId: 2, postedAt: daysAgo(30), protectedFromStale: true });
+  const fresh = job({ jobId: 3, postedAt: daysAgo(1) });
+  const ranked = rankForYou([staleUnprotected, stalePinned, fresh]);
+  // Job 1 (stale, unprotected) is excluded entirely; job 3 (PRIMARY freshness) outranks job 2
+  // (still tiered STALE for freshness purposes — protection only exempts it from the exclusion
+  // filter, it does not pretend the job is fresh).
+  assert.deepEqual(ranked.map((j) => j.jobId), [3, 2]);
+});
+
 test("explicit no-sponsorship never gets premium placement even at a high raw score (still sorted, just via the weakest sponsorship tier)", () => {
   const noSponsor = job({
     jobId: 1, h1bCombinedConfidence: "Not Sponsoring",

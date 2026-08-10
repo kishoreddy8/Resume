@@ -48,6 +48,21 @@ test("never strips down to nothing — a single-token name equal to a suffix wor
   assert.equal(normalizeEmployerName("Holdings"), "HOLDINGS");
 });
 
+test("KNOWN LIMITATION (deferred, see the approved pre-Phase-3 hardening plan §25): a legal suffix " +
+  "with NO space before it fuses into the preceding token and is never stripped. Confirmed live in " +
+  "h1b_sponsors on ~45/44,697 rows (e.g. 'Freyr,Inc.', 'Amazon.Com,Inc'). This test documents the " +
+  "current behavior so it's visible rather than silently rediscovered — it is NOT the desired " +
+  "behavior, and must be updated (not just flipped) if normalizeEmployerName is ever changed to fix " +
+  "this, since that change requires a full H1B re-normalization + re-match migration (out of scope " +
+  "for this hardening pass; the h1b_employer_aliases table is the safer near-term remediation for " +
+  "specific affected employers as they're encountered).", () => {
+  assert.equal(normalizeEmployerName("Freyr,Inc."), "FREYRINC", "suffix fused, not stripped — known gap");
+  assert.equal(normalizeEmployerName("Amazon.Com,Inc"), "AMAZONCOMINC", "suffix fused, not stripped — known gap");
+  // The space-separated form of the same name normalizes correctly and differently — proving these
+  // two spellings of what may be the same real employer do NOT collapse to the same identity today.
+  assert.equal(normalizeEmployerName("Freyr, Inc."), "FREYR");
+});
+
 test("normalizeEmployerNameCached returns the same result as the uncached function", () => {
   clearNormalizeCache();
   const inputs = ["Google LLC", "Acme Holdings Group LLC", "Group Health Cooperative"];

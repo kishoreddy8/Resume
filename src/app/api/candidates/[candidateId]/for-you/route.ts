@@ -6,6 +6,7 @@ import { listJobs } from "@/db/queries/jobs";
 import { listLatestDecisionsForDedupeKeys } from "@/db/queries/jobMatches";
 import { computeRoleFamilyTier } from "@/lib/rank/roleFamily";
 import { rankForYou, type ForYouJobInput, type FreshnessTier, type RoleFamilyTier } from "@/lib/rank/forYou";
+import { isLifecycleProtected } from "@/lib/jobLifecycle";
 import type { Decision } from "@/lib/match/types";
 import type { JobWithCompany } from "@/types";
 
@@ -76,6 +77,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
           }
         : undefined,
       notInterested: state?.not_interested === 1,
+      protectedFromStale: isLifecycleProtected({
+        pipelineStatus: state?.pipeline_status ?? "New",
+        pinned: state?.pinned ?? 0,
+      }),
       roleFamilyTier: computeRoleFamilyTier(job.title, preferences),
     };
   });

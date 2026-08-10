@@ -1,7 +1,42 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import { test } from "node:test";
-import { isDisallowedIPv4, isDisallowedIPv6, safeFetch, SafeFetchError } from "@/lib/net/safeFetch";
+import { classifyDnsLookupError, isDisallowedIPv4, isDisallowedIPv6, safeFetch, SafeFetchError } from "@/lib/net/safeFetch";
+
+// A reserved TLD (RFC 2606) — guaranteed to never resolve, real or forwarded resolver. Used for a
+// deterministic, real (not mocked) NXDOMAIN/ENOTFOUND case, distinct from a synthetic-error unit test.
+const GUARANTEED_NONEXISTENT_HOST = "this-definitely-does-not-exist-xyz123456.invalid";
+
+// --- DNS failure classification (hard NXDOMAIN vs. transient resolver failure) -------------------
+
+test("classifyDnsLookupError: ENOTFOUND (host does not exist) -> dns_hostname_not_found (hard)", () => {
+  assert.equal(classifyDnsLookupError({ code: "ENOTFOUND" }), "dns_hostname_not_found");
+});
+
+test("classifyDnsLookupError: ENODATA (no records for host) -> dns_hostname_not_found (hard)", () => {
+  assert.equal(classifyDnsLookupError({ code: "ENODATA" }), "dns_hostname_not_found");
+});
+
+test("classifyDnsLookupError: EAI_AGAIN (temporary resolver failure) -> dns_resolution_failed (transient)", () => {
+  assert.equal(classifyDnsLookupError({ code: "EAI_AGAIN" }), "dns_resolution_failed");
+});
+
+test("classifyDnsLookupError: ETIMEDOUT (resolver timeout) -> dns_resolution_failed (transient)", () => {
+  assert.equal(classifyDnsLookupError({ code: "ETIMEDOUT" }), "dns_resolution_failed");
+});
+
+test("classifyDnsLookupError: an unrecognized or missing code defaults to transient, never hard", () => {
+  assert.equal(classifyDnsLookupError({ code: "SOME_UNKNOWN_CODE" }), "dns_resolution_failed");
+  assert.equal(classifyDnsLookupError(new Error("plain error, no code")), "dns_resolution_failed");
+  assert.equal(classifyDnsLookupError(null), "dns_resolution_failed");
+});
+
+test("safeFetch: a hostname the resolver authoritatively reports does not exist throws dns_hostname_not_found, not dns_resolution_failed (real DNS lookup, RFC 2606 .invalid TLD)", async () => {
+  await assert.rejects(
+    () => safeFetch(`https://${GUARANTEED_NONEXISTENT_HOST}/`),
+    (err: unknown) => err instanceof SafeFetchError && err.reason === "dns_hostname_not_found"
+  );
+});
 
 // --- Pure range-check unit tests ----------------------------------------------------------------
 

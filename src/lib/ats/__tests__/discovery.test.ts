@@ -161,6 +161,12 @@ test("discoverCompanySource: an unreachable seed URL is FAILED_TEMPORARY (transi
   assert.equal(result.discoveredJobsUrl, null);
 });
 
+test("discoverCompanySource: a hostname that does not exist (e.g. a wrongly-generated domain candidate) is UNRESOLVED, not FAILED_TEMPORARY — retrying it would never help", async () => {
+  // RFC 2606 reserved TLD — guaranteed never to resolve, a real (not mocked) NXDOMAIN/ENOTFOUND.
+  const result = await discoverCompanySource("https://this-definitely-does-not-exist-xyz123456.invalid/");
+  assert.equal(result.status, "UNRESOLVED", "a hard DNS failure must not be classified as retryable");
+});
+
 test("discoverCompanySource: pages/depth bounds are enforced — a long link chain is truncated, never an unbounded crawl", async () => {
   const { url, close, requestCount } = await startServer((req, res) => {
     const n = Number((req.url ?? "/0").replace("/", "") || "0");

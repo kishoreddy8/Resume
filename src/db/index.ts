@@ -5,7 +5,9 @@ import path from "node:path";
 const DATA_DIR = path.join(process.cwd(), "data");
 // Override lets integration tests point at an isolated temp file instead of the real database —
 // unset in normal app/script usage, so production behavior is unchanged.
-const DB_PATH = process.env.CAREER_OPS_DB_PATH ?? path.join(DATA_DIR, "app.db");
+// Exported so migrate.ts can locate the live file for its pre-migration backup step — no other
+// consumer should need this (every other query module goes through getDb() below).
+export const DB_PATH = process.env.CAREER_OPS_DB_PATH ?? path.join(DATA_DIR, "app.db");
 
 function ensureDataDirs() {
   for (const dir of [
@@ -674,6 +676,11 @@ function createConnection(): Database.Database {
   const db = new Database(DB_PATH);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
+  // WAL allows concurrent readers + one writer, but a second writer (e.g. `npm run scan` running
+  // while the Next.js server also writes) hits SQLITE_BUSY immediately without this — better-sqlite3
+  // defaults busy_timeout to 0. 5s is a generous wait for a local single-process/single-machine app,
+  // not a distributed-locking scheme.
+  db.pragma("busy_timeout = 5000");
   const schema = fs.readFileSync(
     path.join(process.cwd(), "src", "db", "schema.sql"),
     "utf-8"

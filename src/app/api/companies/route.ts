@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createCompany, listCompanies, recordDiscoveryResult, updateCompanyH1bConfidence } from "@/db/queries/companies";
 import { discoverCompanySource } from "@/lib/ats/discovery";
 import { matchCompanyToSponsor, scoreCompanyConfidence } from "@/lib/h1b/fuzzyMatch";
+import { isUrlSafeForNavigation } from "@/lib/net/safeFetch";
 import type { Company } from "@/types";
 
 const EXPLICIT_SCHEMA = z
@@ -78,6 +79,17 @@ export async function POST(req: NextRequest) {
   if (!explicit.success) {
     return NextResponse.json(
       { error: autoDetect.error.flatten(), explicitShapeError: explicit.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+  // Defense-in-depth: career_page_url is later navigated to by a real headless browser on every
+  // scan (src/lib/ats/genericPlaywright.ts, which independently re-checks every navigation/redirect
+  // itself). Rejecting an unsafe URL here just avoids silently storing one in the first place — the
+  // scan-time check is the one that actually closes the SSRF gap, this is a second, cheap gate.
+  if (explicit.data.career_page_url && !(await isUrlSafeForNavigation(explicit.data.career_page_url))) {
+    return NextResponse.json(
+      { error: { message: "career_page_url resolves to a disallowed (private/loopback/link-local) address" } },
       { status: 400 }
     );
   }

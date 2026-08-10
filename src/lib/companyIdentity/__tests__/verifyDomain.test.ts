@@ -50,6 +50,26 @@ test("Path B: two distinct matching first-party channels (JSON-LD + footer) -> V
   }
 });
 
+test("a generated domain candidate that does not exist (NXDOMAIN) -> UNRESOLVED, not FAILED_TEMPORARY", async () => {
+  // No rootUrlOverride — this genuinely resolves `domain` via real DNS. RFC 2606 reserved TLD,
+  // guaranteed never to exist, so this is deterministic (not a mocked failure).
+  const result = await verifyDomainIdentity({
+    domain: "this-definitely-does-not-exist-xyz123456.invalid",
+    employerNameRaw: "Some Employer",
+  });
+  assert.equal(result.status, "UNRESOLVED", "a hostname that will never resolve must not be retried as FAILED_TEMPORARY");
+});
+
+test("a transient network failure (connection refused) at the homepage fetch -> FAILED_TEMPORARY, unchanged by the DNS-classification fix", async () => {
+  const result = await verifyDomainIdentity({
+    domain: "test.example",
+    rootUrlOverride: "http://127.0.0.1:1/", // nothing listening -> ECONNREFUSED -> network_error (transient)
+    employerNameRaw: "Some Employer",
+    allowPrivateNetworksForTests: true,
+  });
+  assert.equal(result.status, "FAILED_TEMPORARY");
+});
+
 test("only ONE strong channel matching (no second corroborating channel) -> UNRESOLVED", async () => {
   const { rootUrl, close } = await startServer((req, res) => {
     if (req.url === "/") {

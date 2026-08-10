@@ -156,8 +156,11 @@ export function findBestCareersLink(html: string, baseUrl: string, excludeUrl: s
   return best?.url ?? null;
 }
 
-// A hostname that's temporarily unreachable (network blip, DNS hiccup, slow server) is worth
-// retrying later; a malformed/disallowed input URL is not — retrying it will never succeed.
+// A hostname that's temporarily unreachable (network blip, resolver hiccup, slow server) is worth
+// retrying later; a malformed/disallowed input URL — or a hostname the resolver authoritatively
+// reports doesn't exist (dns_hostname_not_found, e.g. a wrongly-generated domain candidate that was
+// never real) — is not; retrying it will never succeed. See safeFetch.ts's classifyDnsLookupError
+// for exactly how dns_resolution_failed vs. dns_hostname_not_found is decided.
 const TRANSIENT_SAFE_FETCH_REASONS = new Set<SafeFetchErrorReason>(["timeout", "network_error", "dns_resolution_failed"]);
 
 function verified(sourceType: Exclude<SourceType, "career_link">, atsBoardToken: string, discoveredJobsUrl: string, reason: string): DiscoveryResult {

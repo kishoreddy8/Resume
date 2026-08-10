@@ -51,6 +51,12 @@ export interface ForYouJobInput {
   match?: ForYouMatch;
   /** From candidate_job_state; absent/false = not excluded. */
   notInterested: boolean;
+  /** From candidate_job_state, mirroring src/lib/jobLifecycle.ts's isLifecycleProtected for THIS
+   *  candidate (pinned or in an active pipeline stage) — exempts the job from the STALE filter below,
+   *  same protection concept the lifecycle sweep already gives archival/deletion, applied here so a
+   *  candidate's own pinned/in-pipeline job never silently vanishes from their default For You view
+   *  purely for being old. Absent/false = not exempt (default, matches "no candidate_job_state row"). */
+  protectedFromStale?: boolean;
   /** Precomputed by the caller from candidate_settings.primaryTargetRole/secondaryTargetRoles
    *  against this job's title/category — kept out of this module so it stays free of any keyword-
    *  matching policy, matching the "ranking-only, never touches score" boundary. */
@@ -130,7 +136,7 @@ export function rankForYou(jobs: ForYouJobInput[], options: ForYouOptions = {}):
       decisionRank: decisionRank(job.match),
       sponsorshipTier: sponsorshipTier(job),
     }))
-    .filter((job) => options.includeStale || job.freshnessTier !== "STALE");
+    .filter((job) => options.includeStale || job.freshnessTier !== "STALE" || job.protectedFromStale);
 
   enriched.sort((a, b) => {
     const roleFamilyDiff = ROLE_FAMILY_RANK[a.roleFamilyTier] - ROLE_FAMILY_RANK[b.roleFamilyTier];
