@@ -56,6 +56,9 @@ export interface CreateTailoringRunInput {
   jdContentHash?: string | null;
   matchEngineVersion?: number | null;
   recommendedTrack?: string | null;
+  /** Set only when the executor already knows the track at start time (rare — usually decided
+   *  during tailoring and set at completion instead, see CompleteTailoringRunInput.selectedTrack). */
+  selectedTrack?: string | null;
   methodologyVersion?: number | null;
   rendererVersion?: number | null;
   executedBy?: string | null;
@@ -71,11 +74,11 @@ export function createTailoringRun(input: CreateTailoringRunInput): TailoringRun
       `INSERT INTO tailoring_runs
         (candidate_id, dedupe_key, job_id, approval_type, decision_at_approval, approved_at,
          master_resume_hash, master_skills_hash, candidate_profile_hash, jd_content_hash,
-         match_engine_version, recommended_track, methodology_version, renderer_version, executed_by)
+         match_engine_version, recommended_track, selected_track, methodology_version, renderer_version, executed_by)
        VALUES
         (@candidateId, @dedupeKey, @jobId, @approvalType, @decisionAtApproval, @approvedAt,
          @masterResumeHash, @masterSkillsHash, @candidateProfileHash, @jdContentHash,
-         @matchEngineVersion, @recommendedTrack, @methodologyVersion, @rendererVersion, @executedBy)`
+         @matchEngineVersion, @recommendedTrack, @selectedTrack, @methodologyVersion, @rendererVersion, @executedBy)`
     )
     .run({
       candidateId: input.candidateId,
@@ -90,6 +93,7 @@ export function createTailoringRun(input: CreateTailoringRunInput): TailoringRun
       jdContentHash: input.jdContentHash ?? null,
       matchEngineVersion: input.matchEngineVersion ?? null,
       recommendedTrack: input.recommendedTrack ?? null,
+      selectedTrack: input.selectedTrack ?? null,
       methodologyVersion: input.methodologyVersion ?? null,
       rendererVersion: input.rendererVersion ?? null,
       executedBy: input.executedBy ?? null,
@@ -113,7 +117,7 @@ export function listTailoringRuns(candidateId: number, dedupeKey: string): Tailo
     .all(candidateId, dedupeKey) as TailoringRunRow[];
 }
 
-class TailoringRunNotFoundError extends Error {
+export class TailoringRunNotFoundError extends Error {
   constructor(candidateId: number, id: number) {
     super(`No tailoring run ${id} found for candidate ${candidateId}`);
     this.name = "TailoringRunNotFoundError";
