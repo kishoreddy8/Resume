@@ -9,7 +9,7 @@ import type { Company } from "@/types";
 const EXPLICIT_SCHEMA = z
   .object({
     name: z.string().min(1),
-    source_type: z.enum(["greenhouse", "ashby", "lever", "workday", "career_link"]),
+    source_type: z.enum(["greenhouse", "ashby", "lever", "workday", "smartrecruiters", "adp_wfn", "adp_rm", "eightfold", "cornerstone", "avature", "paylocity", "icims", "ukg_pro", "bamboohr", "oracle_recruiting_cloud", "workable", "rippling", "paycom", "jazzhr", "jobvite", "breezy", "teamtailor", "applicantpro", "pinpoint", "clearcompany", "personio", "applicantstack", "comeet", "cats", "gohire", "newton", "silkroad", "jobdiva", "taleo", "career_link"]),
     ats_board_token: z.string().min(1).optional(),
     career_page_url: z.string().url().optional(),
     notes: z.string().optional(),

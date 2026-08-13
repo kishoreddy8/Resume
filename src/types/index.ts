@@ -1,4 +1,4 @@
-export type SourceType = "greenhouse" | "ashby" | "lever" | "workday" | "career_link";
+export type SourceType = "greenhouse" | "ashby" | "lever" | "workday" | "smartrecruiters" | "adp_wfn" | "adp_rm" | "eightfold" | "cornerstone" | "avature" | "paylocity" | "icims" | "ukg_pro" | "bamboohr" | "oracle_recruiting_cloud" | "workable" | "rippling" | "paycom" | "jazzhr" | "jobvite" | "breezy" | "teamtailor" | "applicantpro" | "pinpoint" | "clearcompany" | "personio" | "applicantstack" | "comeet" | "cats" | "gohire" | "newton" | "silkroad" | "jobdiva" | "taleo" | "career_link";
 
 /**
  * Company-level H1B sponsorship confidence, derived purely from historical DOL H1B/LCA filing data
@@ -121,6 +121,64 @@ export interface Company {
   verified_domain: string | null;
   domain_identity_status: DomainIdentityStatus;
   last_successful_discovery_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// --- 50K organization / multi-source registry -----------------------------------------------
+// Additive compatibility model: companies remains the live scan interface while these entities
+// separate canonical organization identity from aliases, domains, and one-or-many job sources.
+export interface Organization {
+  id: number;
+  canonical_name: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationAlias {
+  id: number;
+  organization_id: number;
+  alias: string;
+  alias_normalized: string;
+  alias_type: string;
+  provenance_source: string;
+  provenance_key: string | null;
+  evidence: string | null;
+  is_primary: 0 | 1;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationDomain {
+  id: number;
+  organization_id: number;
+  domain: string;
+  identity_status: DomainIdentityStatus;
+  resolution_method: string | null;
+  resolution_confidence: string | null;
+  evidence: string | null;
+  is_primary: 0 | 1;
+  verified_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JobSource {
+  id: number;
+  organization_id: number;
+  provider: string;
+  source_key: string | null;
+  source_url: string | null;
+  resolution_status: CompanyResolutionStatus;
+  suspected_ats: string | null;
+  is_authoritative: 0 | 1;
+  is_active: 0 | 1;
+  review_status: "PENDING" | "APPROVED" | "REJECTED";
+  reviewed_at: string | null;
+  review_evidence: string | null;
+  legacy_company_id: number | null;
+  last_validated_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -559,6 +617,14 @@ export interface NormalizedJob {
   salaryText: string | null;
   postedAt: string | null;
   raw: unknown;
+  /** Provider confirmed this requisition still exists but omitted fields required for a safe
+   *  insert/update. The scanner counts it as seen and marks the run partial without overwriting
+   *  previously stored job content. */
+  sightingOnly?: boolean;
+  /** The provider confirmed this existing posting still exists, but the active scan scope excludes
+   * it (for example, a U.S.-only scan saw an explicitly non-U.S. location). Refresh lifecycle
+   * state without changing stored content or treating the scan as partial. */
+  lifecycleOnly?: boolean;
 }
 
 export interface ScanResult {

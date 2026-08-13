@@ -2,6 +2,7 @@ import { extractSalaryText } from "@/lib/extractSalary";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
 import { stripHtml } from "@/lib/stripHtml";
+import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
 import type { NormalizedJob } from "@/types";
 
 interface AshbyCompensation {
@@ -28,7 +29,8 @@ interface AshbyResponse {
   jobs: AshbyJob[];
 }
 
-export interface FetchAshbyJobsOptions extends FetchWithRetryOptions {
+export interface FetchAshbyJobsOptions extends FetchWithRetryOptions, LocationFilterOptions {
+  maxJobs?: number;
   /** Testing-only: overrides the https://api.ashbyhq.com origin so tests can point a real board
    *  name at a local HTTP server instead of the real host. Production callers never pass this. */
   hostOverride?: string;
@@ -38,12 +40,12 @@ export async function fetchAshbyJobs(
   boardName: string,
   options: FetchAshbyJobsOptions = {}
 ): Promise<NormalizedJob[]> {
-  const { hostOverride, ...retryOptions } = options;
+  const { hostOverride, maxJobs, usOnly, existingExternalIds, onLocationFiltered, ...retryOptions } = options;
   const origin = hostOverride ?? "https://api.ashbyhq.com";
   const url = `${origin}/posting-api/job-board/${encodeURIComponent(boardName)}?includeCompensation=true`;
   const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, retryOptions);
   const data = await parseJsonOrThrow<AshbyResponse>(res, url);
-  return data.jobs.map((job) => {
+  const normalized = data.jobs.map((job) => {
     // Ashby doesn't reliably include full descriptions on the list endpoint for every board.
     const descriptionText = job.descriptionPlain || stripHtml(job.descriptionHtml) || "";
     const salaryText =
@@ -65,4 +67,5 @@ export async function fetchAshbyJobs(
       raw: job,
     };
   });
+  return filterJobsToUs(normalized, { usOnly, existingExternalIds, onLocationFiltered }, maxJobs);
 }

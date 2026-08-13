@@ -25,7 +25,9 @@ const VALID_H1B: H1bJobConfidence[] = [
   "Unknown",
   "Not Sponsoring",
 ];
-const VALID_SOURCES: SourceType[] = ["greenhouse", "ashby", "lever", "workday", "career_link"];
+const VALID_SOURCES: SourceType[] = [
+  "greenhouse", "ashby", "lever", "workday", "smartrecruiters", "adp_wfn", "adp_rm", "eightfold", "cornerstone", "avature", "paylocity", "icims", "ukg_pro", "bamboohr", "oracle_recruiting_cloud", "workable", "rippling", "paycom", "jazzhr", "jobvite", "breezy", "teamtailor", "applicantpro", "pinpoint", "clearcompany", "personio", "applicantstack", "comeet", "cats", "gohire", "newton", "silkroad", "jobdiva", "taleo", "career_link",
+];
 const VALID_WORKPLACE_TYPES: WorkplaceTypeNormalized[] = ["Remote", "Hybrid", "Onsite"];
 const VALID_EMPLOYMENT_TYPES: EmploymentTypeNormalized[] = [
   "Full-Time",

@@ -1,4 +1,5 @@
 import { getDb } from "@/db";
+import { syncLegacyCompanyToOrganizationRegistry } from "@/db/organizationRegistryCore";
 import type { DiscoveryResult } from "@/lib/ats/discovery";
 import { computeConnectorHealth } from "@/lib/scan/health";
 import type { Company, ErrorCategory, H1bCompanyConfidence, H1bMatchTier, SourceType } from "@/types";
@@ -39,23 +40,37 @@ export interface CreateCompanyInput {
   ats_board_token?: string | null;
   career_page_url?: string | null;
   notes?: string | null;
+  /** Attach source discovery to an already-seeded canonical organization. */
+  organization_id?: number;
 }
 
 export function createCompany(input: CreateCompanyInput): Company {
   const db = getDb();
-  const result = db
-    .prepare(
-      `INSERT INTO companies (name, source_type, ats_board_token, career_page_url, notes)
-       VALUES (@name, @source_type, @ats_board_token, @career_page_url, @notes)`
-    )
-    .run({
-      name: input.name,
-      source_type: input.source_type,
-      ats_board_token: input.ats_board_token ?? null,
-      career_page_url: input.career_page_url ?? null,
-      notes: input.notes ?? null,
-    });
-  return getCompany(Number(result.lastInsertRowid))!;
+  const companyId = db.transaction(() => {
+    const result = db
+      .prepare(
+        `INSERT INTO companies (name, source_type, ats_board_token, career_page_url, notes)
+         VALUES (@name, @source_type, @ats_board_token, @career_page_url, @notes)`
+      )
+      .run({
+        name: input.name,
+        source_type: input.source_type,
+        ats_board_token: input.ats_board_token ?? null,
+        career_page_url: input.career_page_url ?? null,
+        notes: input.notes ?? null,
+      });
+    const id = Number(result.lastInsertRowid);
+    if (input.organization_id !== undefined) {
+      const target = db.prepare("SELECT id FROM organizations WHERE id = ?").get(input.organization_id);
+      if (!target) throw new Error(`Cannot attach company to missing organization ${input.organization_id}`);
+      db.prepare(
+        "INSERT INTO organization_company_links (company_id, organization_id) VALUES (?, ?)"
+      ).run(id, input.organization_id);
+    }
+    syncLegacyCompanyToOrganizationRegistry(db, id);
+    return id;
+  })();
+  return getCompany(companyId)!;
 }
 
 export interface UpdateCompanyInput {
@@ -70,8 +85,9 @@ export function updateCompany(id: number, input: UpdateCompanyInput): Company | 
   const existing = getCompany(id);
   if (!existing) return undefined;
   const merged = { ...existing, ...input };
-  getDb()
-    .prepare(
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare(
       `UPDATE companies SET
         name = @name,
         is_active = @is_active,
@@ -80,8 +96,7 @@ export function updateCompany(id: number, input: UpdateCompanyInput): Company | 
         career_page_url = @career_page_url,
         updated_at = datetime('now')
        WHERE id = @id`
-    )
-    .run({
+    ).run({
       id,
       name: merged.name,
       is_active: merged.is_active,
@@ -89,6 +104,8 @@ export function updateCompany(id: number, input: UpdateCompanyInput): Company | 
       ats_board_token: merged.ats_board_token,
       career_page_url: merged.career_page_url,
     });
+    syncLegacyCompanyToOrganizationRegistry(db, id);
+  })();
   return getCompany(id);
 }
 
@@ -202,28 +219,31 @@ export function recordDiscoveryResult(id: number, result: DiscoveryResult): Comp
   const shouldPromoteToAts = result.status === "VERIFIED" && result.sourceType && result.atsBoardToken;
   const shouldPromoteToGeneric = result.status === "GENERIC_SUPPORTED" && result.discoveredJobsUrl;
 
-  db.prepare(
-    `UPDATE companies SET
-      resolution_status = @resolutionStatus,
-      discovered_jobs_url = @discoveredJobsUrl,
-      discovery_attempted_at = datetime('now'),
-      discovery_reason = @discoveryReason,
-      suspected_ats = @suspectedAts,
-      source_type = @sourceType,
-      ats_board_token = @atsBoardToken,
-      career_page_url = @careerPageUrl,
-      updated_at = datetime('now')
-     WHERE id = @id`
-  ).run({
-    id,
-    resolutionStatus: result.status,
-    discoveredJobsUrl: result.discoveredJobsUrl,
-    discoveryReason: result.reason,
-    suspectedAts: result.suspectedAts,
-    sourceType: shouldPromoteToAts ? result.sourceType : shouldPromoteToGeneric ? "career_link" : existing.source_type,
-    atsBoardToken: shouldPromoteToAts ? result.atsBoardToken : existing.ats_board_token,
-    careerPageUrl: shouldPromoteToGeneric ? result.discoveredJobsUrl : existing.career_page_url,
-  });
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE companies SET
+        resolution_status = @resolutionStatus,
+        discovered_jobs_url = @discoveredJobsUrl,
+        discovery_attempted_at = datetime('now'),
+        discovery_reason = @discoveryReason,
+        suspected_ats = @suspectedAts,
+        source_type = @sourceType,
+        ats_board_token = @atsBoardToken,
+        career_page_url = @careerPageUrl,
+        updated_at = datetime('now')
+       WHERE id = @id`
+    ).run({
+      id,
+      resolutionStatus: result.status,
+      discoveredJobsUrl: result.discoveredJobsUrl,
+      discoveryReason: result.reason,
+      suspectedAts: result.suspectedAts,
+      sourceType: shouldPromoteToAts ? result.sourceType : shouldPromoteToGeneric ? "career_link" : existing.source_type,
+      atsBoardToken: shouldPromoteToAts ? result.atsBoardToken : existing.ats_board_token,
+      careerPageUrl: shouldPromoteToGeneric ? result.discoveredJobsUrl : existing.career_page_url,
+    });
+    syncLegacyCompanyToOrganizationRegistry(db, id);
+  })();
 
   return getCompany(id);
 }
@@ -242,16 +262,19 @@ export function updateCompanyDomainIdentity(
   id: number,
   input: { verifiedDomain: string; domainIdentityStatus: string }
 ): Company | undefined {
-  getDb()
-    .prepare(
+  const db = getDb();
+  if (!getCompany(id)) return undefined;
+  db.transaction(() => {
+    db.prepare(
       `UPDATE companies SET
         verified_domain = @verifiedDomain,
         domain_identity_status = @domainIdentityStatus,
         last_successful_discovery_at = datetime('now'),
         updated_at = datetime('now')
        WHERE id = @id`
-    )
-    .run({ id, ...input });
+    ).run({ id, ...input });
+    syncLegacyCompanyToOrganizationRegistry(db, id);
+  })();
   return getCompany(id);
 }
 

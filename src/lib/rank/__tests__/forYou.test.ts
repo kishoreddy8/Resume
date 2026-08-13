@@ -76,7 +76,7 @@ test("C vs D: C is READY (92, historical strong, 17d old) beats D NEEDS_REVIEW (
     jobId: 2, postedAt: daysAgo(2), sponsorshipMentioned: true, sponsorshipPolarity: "positive", h1bCombinedConfidence: "Very High",
     match: match({ decision: "NEEDS_REVIEW", overallScore: 64, employerEvidencedShare: 0.4, requirementCoverage: 0.6 }),
   });
-  const ranked = rankForYou([d, c]);
+  const ranked = rankForYou([d, c], { now: NOW });
   assert.deepEqual(ranked.map((j) => j.jobId), [1, 2], "READY must outrank NEEDS_REVIEW regardless of D's fresher posting or better sponsorship signal");
 });
 

@@ -1,6 +1,6 @@
 import pLimit from "p-limit";
 import { recordScanFailure, recordScanPartial, recordScanSuccess, updateCompany, updateCompanyScanStatus } from "@/db/queries/companies";
-import { closeStaleJobs, getJobByDedupeKey, getJobIdByDedupeKey, runAgeBasedSweep, upsertJob } from "@/db/queries/jobs";
+import { closeStaleJobs, getExistingJobExternalIds, getExistingJobRawListings, getJobByDedupeKey, getJobIdByDedupeKey, runAgeBasedSweep, touchJobSighting, upsertJob } from "@/db/queries/jobs";
 import { upsertJobIntel } from "@/db/queries/jobIntel";
 import { recordScanRun } from "@/db/queries/scanRuns";
 import { getAppSettings } from "@/db/queries/settings";
@@ -10,6 +10,8 @@ import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { scanSponsorshipLanguage } from "@/lib/h1b/keywordScan";
 import { extractJobIntel } from "@/lib/jobIntel/extractJobIntel";
 import { fetchJobsForCompany } from "@/lib/normalize";
+import { workdayListingFingerprint } from "@/lib/ats/workday";
+import { filterJobsToUs } from "@/lib/ats/locationFilter";
 import { parseDescriptionSections } from "@/lib/parseSections";
 import { categorizeThrownError } from "@/lib/scan/errors";
 import { canRunLifecycleActions, determineScanStatus, hasContentChanged } from "@/lib/scan/status";
@@ -22,10 +24,22 @@ import type { Company, ErrorCategory, NormalizedJob, ScanResult, ScanSummary } f
 const CAREER_LINK_CONCURRENCY = 2;
 const ATS_DETECTED_NOTE_PREFIX = "Detected embedded ATS:";
 
-async function scanCompany(company: Company, settings: AppSettings): Promise<ScanResult> {
+export interface RunScanOptions {
+  /** Verification-only bound. Sample scans never run closure, archive, or age-sweep actions. */
+  maxJobsPerCompany?: number;
+  /** Restrict persisted ATS jobs to explicit U.S. locations. Bare Remote/ambiguous locations are
+   * excluded. Defaults to true for Career-Ops; pass false only for a deliberate global audit. */
+  usOnly?: boolean;
+  /** Dedicated additive-only workflows can suppress the database-wide calendar age sweep. Source
+   * scanning/lifecycle rules remain unchanged. Defaults to true for normal full scans. */
+  runAgeSweep?: boolean;
+}
+
+async function scanCompany(company: Company, settings: AppSettings, options: RunScanOptions): Promise<ScanResult> {
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
   let retryCount = 0;
+  let unknownLocationCount = 0;
   const onRetry = () => {
     retryCount++;
   };
@@ -37,7 +51,17 @@ async function scanCompany(company: Company, settings: AppSettings): Promise<Sca
     if (company.source_type === "career_link") {
       const { scrapeCareerPageDetailed } = await import("@/lib/ats/genericPlaywright");
       const result = await scrapeCareerPageDetailed(company.career_page_url!);
-      jobs = result.jobs;
+      const usOnly = options.usOnly ?? true;
+      jobs = filterJobsToUs(
+        result.jobs,
+        {
+          usOnly,
+          onLocationFiltered: (scope) => {
+            if (scope === "UNKNOWN") unknownLocationCount++;
+          },
+        },
+        options.maxJobsPerCompany
+      );
       detectedAts = result.detectedAts;
 
       if (detectedAts) {
@@ -49,12 +73,29 @@ async function scanCompany(company: Company, settings: AppSettings): Promise<Sca
         }
       }
     } else {
+      const usOnly = options.usOnly ?? true;
+      const existingListingFingerprints =
+        usOnly && company.source_type === "workday"
+          ? new Map(
+              getExistingJobRawListings(company.id).map(({ externalId, listing }) => [
+                externalId,
+                workdayListingFingerprint(listing as Parameters<typeof workdayListingFingerprint>[0]),
+              ])
+            )
+          : undefined;
       jobs = await fetchJobsForCompany(company, {
         onRetry,
         timeoutMs: settings.scanner.timeoutMs,
         maxAttempts: settings.scanner.maxAttempts,
         baseDelayMs: settings.scanner.baseDelayMs,
         maxDelayMs: settings.scanner.maxDelayMs,
+        maxJobs: options.maxJobsPerCompany,
+        usOnly,
+        existingExternalIds: usOnly ? getExistingJobExternalIds(company.id) : undefined,
+        existingListingFingerprints,
+        onLocationFiltered: (scope) => {
+          if (scope === "UNKNOWN") unknownLocationCount++;
+        },
       });
     }
 
@@ -76,6 +117,19 @@ async function scanCompany(company: Company, settings: AppSettings): Promise<Sca
           ? dedupeKeyForCareerLink(company.id, job)
           : dedupeKeyForAts(company.source_type, company.id, job.externalId ?? normalizeJobUrl(job.url));
       seenDedupeKeys.push(dedupeKey);
+
+      // Some Workday boards transiently emit a requisition ID with no title/path. Preserve its
+      // lifecycle identity without replacing good stored content with blanks. Marking the scan
+      // partial also blocks all closure/archive actions for this source until complete data returns.
+      if (job.sightingOnly) {
+        descriptionFailures++;
+        continue;
+      }
+
+      if (job.lifecycleOnly) {
+        if (touchJobSighting(dedupeKey)) jobsUnchanged++;
+        continue;
+      }
 
       if (!job.descriptionText) descriptionFailures++;
 
@@ -137,15 +191,29 @@ async function scanCompany(company: Company, settings: AppSettings): Promise<Sca
     // see determineScanStatus) never closes/archives jobs, same as the pre-existing career_link
     // exclusion below (best-effort scrapes are never authoritative). Only a fully successful ATS
     // scan may act on "this job disappeared" — see canRunLifecycleActions's doc comment.
-    const scanStatus = determineScanStatus(descriptionFailures);
-    const { jobsClosed, jobsArchived } = canRunLifecycleActions(scanStatus, company.source_type)
+    const isSampleScan = options.maxJobsPerCompany !== undefined;
+    const scanStatus = determineScanStatus(descriptionFailures + unknownLocationCount + (isSampleScan ? 1 : 0));
+    const { jobsClosed, jobsArchived } = !isSampleScan && canRunLifecycleActions(scanStatus, company.source_type)
       ? closeStaleJobs(company.id, seenDedupeKeys)
       : { jobsClosed: 0, jobsArchived: 0 };
 
     const finishedAt = new Date().toISOString();
     const durationMs = Date.now() - t0;
     const partialErrorMessage =
-      scanStatus === "partial" ? `${descriptionFailures} job description(s) failed to fetch after retries` : null;
+      scanStatus === "partial"
+        ? isSampleScan
+          ? `Verification sample limited to ${options.maxJobsPerCompany} job(s); lifecycle actions disabled`
+          : [
+              descriptionFailures > 0
+                ? `${descriptionFailures} job description(s) failed to fetch after retries`
+                : null,
+              unknownLocationCount > 0
+                ? `${unknownLocationCount} job location(s) remained UNKNOWN and were not loaded`
+                : null,
+            ]
+              .filter(Boolean)
+              .join("; ")
+        : null;
 
     recordScanRun({
       companyId: company.id,
@@ -232,7 +300,7 @@ async function scanCompany(company: Company, settings: AppSettings): Promise<Sca
   }
 }
 
-export async function runScan(companies: Company[]): Promise<ScanSummary> {
+export async function runScan(companies: Company[], options: RunScanOptions = {}): Promise<ScanSummary> {
   // Read once per runScan call (not per company) — Settings > Scanner governs this whole run
   // uniformly, and avoids a settings-table read per company.
   const settings = getAppSettings();
@@ -242,8 +310,8 @@ export async function runScan(companies: Company[]): Promise<ScanSummary> {
   const results = await Promise.all(
     companies.map((company) =>
       company.source_type === "career_link"
-        ? careerLinkLimit(() => scanCompany(company, settings))
-        : atsLimit(() => scanCompany(company, settings))
+        ? careerLinkLimit(() => scanCompany(company, settings, options))
+        : atsLimit(() => scanCompany(company, settings, options))
     )
   );
 
@@ -252,7 +320,10 @@ export async function runScan(companies: Company[]): Promise<ScanSummary> {
   // calendar-time check ("how old is this job"), independent of scan results. Deliberately outside
   // the per-company try/catch above: a fetch failure for one company must never block the sweep
   // from running for everyone else's jobs.
-  const ageSweep = runAgeBasedSweep();
+  const ageSweep =
+    options.maxJobsPerCompany === undefined && options.runAgeSweep !== false
+      ? runAgeBasedSweep()
+      : { archived: 0, deleted: [] };
   // The query layer (runAgeBasedSweep) only touches the DB — deleting a job's generated-output
   // directory is a filesystem side effect and stays here, same separation as markNotInterested's
   // API route caller. Best-effort: a missing/already-cleaned directory is not an error.

@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import { extractJsonLdJobPostings, stripHtmlTags, validateJobCandidate } from "@/lib/ats/jobValidation";
 import { ScanConnectorError } from "@/lib/scan/errors";
 import { isUrlSafeForNavigation } from "@/lib/net/safeFetch";
+import { classifyJobLocation } from "@/lib/jobLocationScope";
 import type { NormalizedJob } from "@/types";
 
 const JOB_CONTAINER_SELECTOR =
@@ -16,10 +17,14 @@ const ATS_URL_PATTERNS: { pattern: RegExp; source: string }[] = [
   { pattern: /boards\.greenhouse\.io\/([^/?#]+)/i, source: "greenhouse" },
   { pattern: /jobs\.lever\.co\/([^/?#]+)/i, source: "lever" },
   { pattern: /jobs\.ashbyhq\.com\/([^/?#]+)/i, source: "ashby" },
+  { pattern: /(?:jobs|careers)\.smartrecruiters\.com\/([^/?#]+)/i, source: "smartrecruiters" },
 ];
 
 export interface ScrapeResult {
   jobs: NormalizedJob[];
+  /** Evidence strength used by source validation. None of these values prove list completeness;
+   * generic pages remain additive-only even when their individual postings are well structured. */
+  extractorType: "JSON_LD" | "EMBEDDED_SUPPORTED_ATS" | "HTML_LINK_HEURISTIC";
   /** If most links pointed at a single ATS board, surfaces it so the UI can suggest converting. */
   detectedAts?: { source: string; token: string };
 }
@@ -27,6 +32,20 @@ export interface ScrapeResult {
 export interface ScrapeCareerPageOptions {
   /** Test-only — see safeFetch's/discoveryBrowser's identical option. NEVER set true from production call sites. */
   allowPrivateNetworksForTests?: boolean;
+}
+
+/** Pulls only an explicit location-bearing line out of the rendered listing card. The full card is
+ * never used as a location: that could turn unrelated prose containing a state abbreviation into
+ * false evidence. If no individual short line classifies, location remains unknown. */
+export function extractLocationEvidence(contextText: string, title: string): string | null {
+  const normalizedTitle = title.trim().replace(/\s+/g, " ").toLowerCase();
+  const lines = contextText
+    .split(/[\r\n|•]+/)
+    .map((line) => line.trim().replace(/\s+/g, " "))
+    .filter((line) => line.length >= 2 && line.length <= 120)
+    .filter((line) => line.toLowerCase() !== normalizedTitle)
+    .filter((line) => !/^(apply|apply now|view job|view details|learn more)$/i.test(line));
+  return lines.find((line) => classifyJobLocation(line) !== "UNKNOWN") ?? null;
 }
 
 /**
@@ -110,7 +129,7 @@ export async function scrapeCareerPageDetailed(
         postedAt: job.datePosted,
         raw: job,
       }));
-      return { jobs };
+      return { jobs, extractorType: "JSON_LD" };
     }
 
     const rawLinks = await page.evaluate(
@@ -169,7 +188,7 @@ export async function scrapeCareerPageDetailed(
     const jobs: NormalizedJob[] = candidates.slice(0, 200).map((link) => ({
       externalId: null,
       title: link.text,
-      location: null,
+      location: extractLocationEvidence(link.contextText, link.text),
       department: null,
       url: link.href,
       descriptionHtml: null,
@@ -182,8 +201,12 @@ export async function scrapeCareerPageDetailed(
     }));
 
     return usesAts
-      ? { jobs, detectedAts: { source: topAts.source, token: topAts.token } }
-      : { jobs };
+      ? {
+          jobs,
+          extractorType: "EMBEDDED_SUPPORTED_ATS",
+          detectedAts: { source: topAts.source, token: topAts.token },
+        }
+      : { jobs, extractorType: "HTML_LINK_HEURISTIC" };
   } finally {
     await browser.close();
   }

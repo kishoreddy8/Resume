@@ -137,6 +137,36 @@ test("conflicting identity: footer names a genuinely different legal entity -> A
   }
 });
 
+test("domain identity keeps descriptive legal-name words: Quantum Technologies is not Quantum Corporation", async () => {
+  const { rootUrl, close } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(
+        html(
+          `<script type="application/ld+json">{"@type":"Organization","legalName":"Quantum Corporation"}</script>` +
+            `<footer>© 2026 Quantum Corporation. All rights reserved</footer>`
+        )
+      );
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  try {
+    const result = await verifyDomainIdentity({
+      domain: "test.example",
+      rootUrlOverride: rootUrl,
+      employerNameRaw: "Quantum Technologies, Inc.",
+      allowPrivateNetworksForTests: true,
+    });
+    assert.equal(result.status, "AMBIGUOUS");
+    assert.equal(result.channelsChecked.jsonLd, "conflict");
+    assert.equal(result.channelsChecked.footer, "conflict");
+  } finally {
+    await close();
+  }
+});
+
 test("unrelated but reachable domain -> UNRESOLVED", async () => {
   const { rootUrl, close } = await startServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/html" });
@@ -219,7 +249,7 @@ test("careers/ATS discovery is never invoked by verifyDomainIdentity — careers
   }
 });
 
-test("Wikidata authoritative signal alone (self-sufficient) -> VERIFIED, high confidence, even with zero first-party channels", async () => {
+test("Wikidata alone is not sufficient when the claimed website has zero first-party identity evidence", async () => {
   const { rootUrl, close } = await startServer((req, res) => {
     if (req.url === "/") {
       res.writeHead(200, { "Content-Type": "text/html" });
@@ -237,9 +267,8 @@ test("Wikidata authoritative signal alone (self-sufficient) -> VERIFIED, high co
       authoritative: { wikidataConfirmed: true },
       allowPrivateNetworksForTests: true,
     });
-    assert.equal(result.status, "VERIFIED");
-    assert.equal(result.method, "wikidata");
-    assert.equal(result.confidence, "high");
+    assert.equal(result.status, "UNRESOLVED");
+    assert.equal(result.domain, null);
   } finally {
     await close();
   }

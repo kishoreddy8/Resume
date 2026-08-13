@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.careerops.ats-browser-discovery</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/npm</string>
+    <string>run</string>
+    <string>discover-organization-sources-browser-continuous</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/kishoreReddy/Documents/career-ops-project</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>300</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/kishoreReddy/Documents/career-ops-project/data/logs/ats-browser-discovery-worker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kishoreReddy/Documents/career-ops-project/data/logs/ats-browser-discovery-worker.error.log</string>
+</dict>
+</plist>

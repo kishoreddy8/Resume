@@ -2,6 +2,7 @@ import pLimit from "p-limit";
 import { createCompany, getCompanyByName, recordDiscoveryResult, updateCompanyDomainIdentity } from "@/db/queries/companies";
 import { recordDiscoveryRun } from "@/db/queries/discoveryRuns";
 import { recordEmployerIdentityResolution } from "@/db/queries/employerIdentityResolutions";
+import { getOrganizationIdForEmployerRecord } from "@/db/queries/organizationRegistry";
 import { discoverCompanySource } from "@/lib/ats/discovery";
 import { discoverCompanySourceBrowser } from "@/lib/ats/discoveryBrowser";
 import { resolveDomainIdentity } from "@/lib/companyIdentity/resolveDomain";
@@ -116,10 +117,12 @@ export async function runDiscoveryBatch(options: DiscoveryBatchOptions = {}): Pr
 
             let company = getCompanyByName(sponsor.employer_name_raw);
             if (!company) {
+              const seededOrganizationId = getOrganizationIdForEmployerRecord("dol_lca", sponsor.id);
               company = createCompany({
                 name: sponsor.employer_name_raw,
                 source_type: "career_link" as SourceType,
                 career_page_url: `https://${domainResult.domain}/`,
+                organization_id: seededOrganizationId,
               });
             }
             updateCompanyDomainIdentity(company.id, { verifiedDomain: domainResult.domain, domainIdentityStatus: domainResult.status });

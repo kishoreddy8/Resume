@@ -122,7 +122,14 @@ export async function discoverCompanySourceBrowser(inputUrl: string, options: Di
       const html = await page.content();
 
       const finalMatch = detectAtsFromUrlString(finalUrl);
-      if (finalMatch) return verified(finalMatch.sourceType, finalMatch.atsBoardToken, finalUrl, `[Browser] Final URL after client-side navigation is a known ATS (${finalMatch.sourceType})`);
+      if (finalMatch) {
+        return verified(
+          finalMatch.sourceType,
+          finalMatch.atsBoardToken,
+          finalMatch.canonicalSourceUrl ?? finalUrl,
+          `[Browser] Final URL after client-side navigation is a known ATS (${finalMatch.sourceType})`
+        );
+      }
 
       const finalUnsupported = detectUnsupportedAts(finalUrl);
       if (finalUnsupported) return needsAdapter(finalUnsupported, finalUrl, `[Browser] Final URL after client-side navigation matches a recognized-but-unsupported ATS: ${finalUnsupported}`);

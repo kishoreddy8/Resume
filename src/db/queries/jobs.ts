@@ -210,6 +210,47 @@ export function getJobByDedupeKey(dedupeKey: string): Job | undefined {
   return getDb().prepare("SELECT * FROM jobs WHERE dedupe_key = ?").get(dedupeKey) as Job | undefined;
 }
 
+/** Provider identities already stored for a company. U.S.-scoped connectors use these to carry
+ * excluded postings as lifecycle-only sightings, so introducing/changing a location filter cannot
+ * masquerade as a provider-side closure. */
+export function getExistingJobExternalIds(companyId: number): Set<string> {
+  const rows = getDb()
+    .prepare("SELECT external_id FROM jobs WHERE company_id = ? AND external_id IS NOT NULL")
+    .all(companyId) as { external_id: string }[];
+  return new Set(rows.map((row) => row.external_id));
+}
+
+export function getExistingJobRawListings(companyId: number): { externalId: string; listing: unknown }[] {
+  const rows = getDb()
+    .prepare("SELECT external_id, raw_json FROM jobs WHERE company_id = ? AND external_id IS NOT NULL")
+    .all(companyId) as { external_id: string; raw_json: string | null }[];
+  const result: { externalId: string; listing: unknown }[] = [];
+  for (const row of rows) {
+    if (!row.raw_json) continue;
+    try {
+      const raw = JSON.parse(row.raw_json) as { listing?: unknown } | null;
+      if (raw?.listing) result.push({ externalId: row.external_id, listing: raw.listing });
+    } catch {
+      // Old/corrupt raw provider payloads simply force a detail refresh on the next scan.
+    }
+  }
+  return result;
+}
+
+/** Refreshes lifecycle state for a posting the provider still exposes without overwriting its
+ * stored content. Used for unchanged/out-of-scope sightings. */
+export function touchJobSighting(dedupeKey: string): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE jobs SET
+         last_seen_at = datetime('now'), is_active = 1, closed_at = NULL,
+         missed_scan_count = 0, updated_at = datetime('now')
+       WHERE dedupe_key = ?`
+    )
+    .run(dedupeKey);
+  return result.changes > 0;
+}
+
 export function updateJobPipeline(
   id: number,
   updates: {

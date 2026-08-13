@@ -26,6 +26,40 @@ const SUFFIX_WORDS = new Set([
   "holdings",
 ]);
 
+// Domain ownership needs a stricter comparison than DOL-record consolidation. Words such as
+// "Technologies", "Systems", "Group", and "Holdings" may be safely peeled for sponsor rollups,
+// but they distinguish real legal entities when deciding whether a public website belongs to an
+// employer (for example, Quantum Technologies Inc. is not Quantum Corporation).
+const LEGAL_SUFFIX_WORDS = new Set([
+  "incorporated",
+  "corporation",
+  "company",
+  "limited",
+  "inc",
+  "llc",
+  "llp",
+  "ltd",
+  "corp",
+  "co",
+  "plc",
+  "pllc",
+]);
+
+function cleanAndStripSuffixes(name: string, suffixes: Set<string>): string {
+  const cleaned = name
+    .toUpperCase()
+    .replace(/[.,'’]/g, "")
+    .replace(/[^A-Z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const tokens = cleaned.split(" ").filter(Boolean);
+  while (tokens.length > 1 && suffixes.has(tokens[tokens.length - 1].toLowerCase())) {
+    tokens.pop();
+  }
+  return tokens.join(" ");
+}
+
 /**
  * Normalizes an employer name into a stable identity for exact-match lookup: uppercase, punctuation
  * and whitespace normalized, then trailing corporate-suffix words iteratively stripped. Pure and
@@ -35,18 +69,12 @@ const SUFFIX_WORDS = new Set([
  * "Google LLC", "Google Inc.", "GOOGLE" all resolve to "GOOGLE".
  */
 export function normalizeEmployerName(name: string): string {
-  const cleaned = name
-    .toUpperCase()
-    .replace(/[.,'’]/g, "")
-    .replace(/[^A-Z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return cleanAndStripSuffixes(name, SUFFIX_WORDS);
+}
 
-  const tokens = cleaned.split(" ").filter(Boolean);
-  while (tokens.length > 1 && SUFFIX_WORDS.has(tokens[tokens.length - 1].toLowerCase())) {
-    tokens.pop();
-  }
-  return tokens.join(" ");
+/** Strict legal-identity normalization for first-party domain ownership checks. */
+export function normalizeEmployerLegalName(name: string): string {
+  return cleanAndStripSuffixes(name, LEGAL_SUFFIX_WORDS);
 }
 
 const normalizeCache = new Map<string, string>();

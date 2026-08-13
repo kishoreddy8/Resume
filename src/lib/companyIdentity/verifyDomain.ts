@@ -1,5 +1,5 @@
 import { safeFetch, SafeFetchError, type SafeFetchErrorReason } from "@/lib/net/safeFetch";
-import { normalizeEmployerName } from "@/lib/h1b/normalizeEmployerName";
+import { normalizeEmployerLegalName } from "@/lib/h1b/normalizeEmployerName";
 import type {
   DomainEvidenceChannelResult,
   DomainIdentityChannelsChecked,
@@ -14,9 +14,9 @@ import type {
  * discoverCompanySource and never lets its outcome affect status/confidence below.
  *
  * Two paths to VERIFIED:
- *   PATH A (authoritative) — a confidently-disambiguated Wikidata P856 hit, SEC EDGAR
- *     corroboration, or a strong same-entity redirect. Any ONE is sufficient, PROVIDED no checked
- *     first-party channel states a conflicting identity.
+ *   PATH A (externally corroborated) — a confidently-disambiguated Wikidata P856 hit, SEC EDGAR
+ *     corroboration, or a strong same-entity redirect COMBINED with >=1 matching first-party
+ *     channel. External metadata is never self-sufficient because it can be stale or incorrect.
  *   PATH B (multi-signal first-party) — for real private employers with no Wikidata/SEC record:
  *     >=2 of four independently-checked first-party channels (CH1 JSON-LD Organization,
  *     CH2 footer/copyright, CH3 About page, CH4 Terms/Privacy page) agree on the same normalized
@@ -145,7 +145,7 @@ function classify(html: string | null, extractor: (html: string) => string | nul
   if (html === null) return { result: "not_checked", extractedIdentity: null };
   const extracted = extractor(html);
   if (!extracted) return { result: "no_match", extractedIdentity: null };
-  const extractedNormalized = normalizeEmployerName(extracted);
+  const extractedNormalized = normalizeEmployerLegalName(extracted);
   if (!extractedNormalized) return { result: "no_match", extractedIdentity: extracted };
   if (extractedNormalized === targetNormalized) return { result: "match", extractedIdentity: extracted };
   return { result: "conflict", extractedIdentity: extracted };
@@ -208,7 +208,7 @@ async function fetchOptionalPage(baseUrl: string, paths: string[], allowPrivateN
 
 export async function verifyDomainIdentity(options: VerifyDomainOptions): Promise<DomainIdentityResult> {
   const allowPrivateNetworksForTests = options.allowPrivateNetworksForTests ?? false;
-  const targetNormalized = normalizeEmployerName(options.employerNameRaw);
+  const targetNormalized = normalizeEmployerLegalName(options.employerNameRaw);
   const rootUrl = options.rootUrlOverride ?? `https://${options.domain}/`;
 
   // Step B1 — reachability.
@@ -271,13 +271,10 @@ export async function verifyDomainIdentity(options: VerifyDomainOptions): Promis
   const authoritative = options.authoritative ?? {};
   const matchingChannelCount = [ch1, ch2, ch3, ch4].filter((c) => c.result === "match").length;
 
-  // Wikidata/redirect corroboration are SELF-SUFFICIENT authoritative signals (Path A). SEC
-  // corroboration is deliberately NOT self-sufficient on its own — per the approved design, SEC
-  // only counts as authoritative when COMBINED with at least one first-party channel match; SEC's
-  // company_tickers.json confirms the LEGAL NAME is a real registered filer, but says nothing
-  // about which domain is correct, so it needs at least one first-party signal to anchor it to
-  // THIS specific domain.
-  if (authoritative.wikidataConfirmed || authoritative.redirectConfirmed) {
+  // External corroboration is never self-sufficient: the live canary found a real Wikidata P856
+  // claim pointing Qualcomm at an unrelated consumer-rights wiki. Require at least one independent
+  // first-party identity channel to bind ANY external domain assertion to this employer.
+  if ((authoritative.wikidataConfirmed || authoritative.redirectConfirmed) && matchingChannelCount >= 1) {
     const method = authoritative.wikidataConfirmed ? "wikidata" : "redirect_corroborated";
     if (authoritative.wikidataConfirmed) evidence.push("wikidata_p856_confirmed");
     if (authoritative.redirectConfirmed) evidence.push("same_entity_redirect_confirmed");

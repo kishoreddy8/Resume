@@ -49,7 +49,9 @@ const STATUSES: PipelineStatus[] = [
   "Offer",
   "Employer Rejected",
 ];
-const SOURCES: SourceType[] = ["greenhouse", "ashby", "lever", "workday", "career_link"];
+const SOURCES: SourceType[] = [
+  "greenhouse", "ashby", "lever", "workday", "smartrecruiters", "adp_wfn", "adp_rm", "eightfold", "cornerstone", "avature", "paylocity", "icims", "ukg_pro", "bamboohr", "oracle_recruiting_cloud", "workable", "rippling", "paycom", "jazzhr", "jobvite", "breezy", "teamtailor", "applicantpro", "pinpoint", "clearcompany", "personio", "applicantstack", "comeet", "cats", "gohire", "newton", "silkroad", "jobdiva", "taleo", "career_link",
+];
 const H1B_CONFIDENCE_LEVELS: H1bJobConfidence[] = [
   "Very High",
   "High",

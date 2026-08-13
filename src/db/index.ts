@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
+import { backfillOrganizationDiscoveryState, runOrganizationRegistryBackfill } from "@/db/organizationRegistryCore";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 // Override lets integration tests point at an isolated temp file instead of the real database —
@@ -662,6 +663,30 @@ function runCompaniesDomainIdentityMigrations(db: Database.Database) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_companies_domain_identity_status ON companies(domain_identity_status)");
 }
 
+function runJobSourceReviewMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(job_sources)").all() as { name: string }[]).map((c) => c.name)
+  );
+  const reviewStatusIsNew = !existingColumns.has("review_status");
+  if (reviewStatusIsNew) {
+    db.exec("ALTER TABLE job_sources ADD COLUMN review_status TEXT NOT NULL DEFAULT 'PENDING'");
+  }
+  if (!existingColumns.has("reviewed_at")) db.exec("ALTER TABLE job_sources ADD COLUMN reviewed_at TEXT");
+  if (!existingColumns.has("review_evidence")) db.exec("ALTER TABLE job_sources ADD COLUMN review_evidence TEXT");
+  // One-time compatibility authorization: every structured source predating this gate was manually
+  // audited in the bounded cohorts. Future automated discoveries remain PENDING.
+  if (reviewStatusIsNew) {
+    db.exec(
+      `UPDATE job_sources
+       SET review_status = 'APPROVED', reviewed_at = datetime('now'),
+           review_evidence = 'Approved during pre-bulk bounded connector audit'
+       WHERE is_active = 1 AND resolution_status = 'VERIFIED'
+         AND provider IN ('greenhouse', 'lever', 'ashby', 'workday')`
+    );
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_job_sources_review_status ON job_sources(review_status)");
+}
+
 // --- Phase 3 V1: tailoring approval provenance ------------------------------------------------
 
 // Nullable, additive — set only when marked_for_tailoring becomes true (see
@@ -695,13 +720,14 @@ function ensureCandidateOne(db: Database.Database) {
 function createConnection(): Database.Database {
   ensureDataDirs();
   const db = new Database(DB_PATH);
+  // Configure contention handling before any pragma/schema operation that may itself need SQLite's
+  // single writer slot. Five independent local workers share this WAL database; short overlapping
+  // checkpoints are normal and should wait rather than fail a whole cohort at process startup.
+  db.pragma("busy_timeout = 30000");
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  // WAL allows concurrent readers + one writer, but a second writer (e.g. `npm run scan` running
-  // while the Next.js server also writes) hits SQLITE_BUSY immediately without this — better-sqlite3
-  // defaults busy_timeout to 0. 5s is a generous wait for a local single-process/single-machine app,
-  // not a distributed-locking scheme.
-  db.pragma("busy_timeout = 5000");
+  // This remains a bounded local wait, not a distributed-locking scheme. Long operations still
+  // fail visibly after 30 seconds so a wedged writer cannot silently stall the system forever.
   const schema = fs.readFileSync(
     path.join(process.cwd(), "src", "db", "schema.sql"),
     "utf-8"
@@ -723,6 +749,11 @@ function createConnection(): Database.Database {
   runCandidateScopingMigrations(db, schema);
   runCompaniesDomainIdentityMigrations(db);
   runTailoringApprovalMigrations(db);
+  runJobSourceReviewMigrations(db);
+  // 50K ATS/company registry: schema.sql creates the additive tables; this idempotent projection
+  // runs only after every legacy company discovery/domain column is guaranteed to exist.
+  runOrganizationRegistryBackfill(db);
+  backfillOrganizationDiscoveryState(db);
   return db;
 }
 

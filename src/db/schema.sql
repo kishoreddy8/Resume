@@ -59,6 +59,267 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_career_url
   ON companies(career_page_url) WHERE career_page_url IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_companies_active ON companies(is_active);
 
+-- 50K employer/ATS registry compatibility foundation. The existing companies table remains the
+-- live application interface during the additive transition; these tables separate canonical
+-- organization identity from legal-name aliases, domains, and one-or-many job sources. A company
+-- row is linked explicitly rather than treated as the canonical identity itself, allowing a later
+-- reviewed merge to attach several legacy company/source rows to one organization without changing
+-- jobs.company_id or any current route/query contract.
+CREATE TABLE IF NOT EXISTS organizations (
+  id INTEGER PRIMARY KEY,
+  canonical_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_organizations_name ON organizations(canonical_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_organizations_status ON organizations(status);
+
+CREATE TABLE IF NOT EXISTS organization_company_links (
+  company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_organization_company_links_org
+  ON organization_company_links(organization_id);
+
+CREATE TABLE IF NOT EXISTS organization_aliases (
+  id INTEGER PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  alias TEXT NOT NULL,
+  alias_normalized TEXT NOT NULL,
+  alias_type TEXT NOT NULL DEFAULT 'legal',
+  provenance_source TEXT NOT NULL,
+  provenance_key TEXT,
+  evidence TEXT,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_aliases_provenance
+  ON organization_aliases(provenance_source, provenance_key) WHERE provenance_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_aliases_identity
+  ON organization_aliases(organization_id, alias_normalized, provenance_source);
+CREATE INDEX IF NOT EXISTS idx_organization_aliases_normalized
+  ON organization_aliases(alias_normalized);
+
+CREATE TABLE IF NOT EXISTS organization_domains (
+  id INTEGER PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,
+  identity_status TEXT NOT NULL DEFAULT 'UNRESOLVED',
+  resolution_method TEXT,
+  resolution_confidence TEXT,
+  evidence TEXT,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  verified_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_domains_org_domain
+  ON organization_domains(organization_id, domain);
+CREATE INDEX IF NOT EXISTS idx_organization_domains_domain ON organization_domains(domain);
+CREATE INDEX IF NOT EXISTS idx_organization_domains_status ON organization_domains(identity_status);
+
+CREATE TABLE IF NOT EXISTS job_sources (
+  id INTEGER PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  source_key TEXT,
+  source_url TEXT,
+  resolution_status TEXT NOT NULL DEFAULT 'UNRESOLVED',
+  suspected_ats TEXT,
+  is_authoritative INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  -- Automated discovery may identify a structured board, but only a reviewed approval authorizes
+  -- the job scanner. This is deliberately independent of provider-level resolution_status.
+  review_status TEXT NOT NULL DEFAULT 'PENDING',
+  reviewed_at TEXT,
+  review_evidence TEXT,
+  -- Compatibility pointer while companies remains the live scan interface. Unique because one
+  -- legacy company row represents exactly one source; NULL for future native multi-source rows.
+  legacy_company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+  last_validated_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_sources_provider_key
+  ON job_sources(provider, source_key) WHERE source_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_sources_url
+  ON job_sources(source_url) WHERE source_url IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_sources_legacy_company
+  ON job_sources(legacy_company_id) WHERE legacy_company_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_job_sources_org ON job_sources(organization_id);
+CREATE INDEX IF NOT EXISTS idx_job_sources_resolution ON job_sources(resolution_status);
+CREATE INDEX IF NOT EXISTS idx_job_sources_due_active ON job_sources(is_active);
+
+-- One durable row per canonical organization searched by the registry-wide discovery runner.
+-- This generalizes the older H1B-sponsor-only employer_identity_resolutions table so PERM-only
+-- organizations participate in the same resumable campaign.
+CREATE TABLE IF NOT EXISTS organization_discovery_state (
+  organization_id INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  resolved_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+  domain_identity_status TEXT NOT NULL DEFAULT 'UNRESOLVED',
+  domain TEXT,
+  resolution_method TEXT,
+  resolution_confidence TEXT,
+  evidence TEXT,
+  channels_checked TEXT,
+  source_resolution_status TEXT,
+  discovered_jobs_url TEXT,
+  attempted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_organization_discovery_state_status
+  ON organization_discovery_state(domain_identity_status, attempted_at);
+
+-- Audited Tier-3/browser second pass for organizations whose domain is already VERIFIED but whose
+-- HTTP-only source discovery found only a generic page or no supported ATS. Append-only attempts
+-- keep the original first-pass checkpoint intact and make retries/cooldowns independently visible.
+CREATE TABLE IF NOT EXISTS organization_source_discovery_attempts (
+  id INTEGER PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+  pass_type TEXT NOT NULL,
+  input_url TEXT NOT NULL,
+  prior_status TEXT,
+  result_status TEXT NOT NULL,
+  provider TEXT,
+  source_key TEXT,
+  source_url TEXT,
+  suspected_ats TEXT,
+  reason TEXT,
+  error_message TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_org_source_attempts_queue
+  ON organization_source_discovery_attempts(organization_id, pass_type, finished_at);
+CREATE INDEX IF NOT EXISTS idx_org_source_attempts_result
+  ON organization_source_discovery_attempts(result_status, finished_at);
+
+-- Append-only connector/generic-source validation evidence. Validation samples deliberately live
+-- outside `jobs`: probing a source must never publish test rows to the candidate-facing job board.
+-- can_ingest authorizes additive U.S.-only loads; can_close_missing requires separately-proven
+-- pagination/completeness and is always 0 for generic career pages.
+CREATE TABLE IF NOT EXISTS job_source_validation_runs (
+  id INTEGER PRIMARY KEY,
+  job_source_id INTEGER NOT NULL REFERENCES job_sources(id) ON DELETE CASCADE,
+  validation_kind TEXT NOT NULL,
+  connector_version TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  extractor_type TEXT,
+  validation_scope TEXT,
+  sample_limit INTEGER NOT NULL DEFAULT 3,
+  jobs_seen INTEGER NOT NULL DEFAULT 0,
+  us_jobs_seen INTEGER NOT NULL DEFAULT 0,
+  samples_saved INTEGER NOT NULL DEFAULT 0,
+  pagination_verified INTEGER NOT NULL DEFAULT 0,
+  completeness_verified INTEGER NOT NULL DEFAULT 0,
+  can_ingest INTEGER NOT NULL DEFAULT 0,
+  can_close_missing INTEGER NOT NULL DEFAULT 0,
+  error_category TEXT,
+  reason TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_validation_runs_source
+  ON job_source_validation_runs(job_source_id, finished_at);
+CREATE INDEX IF NOT EXISTS idx_source_validation_runs_outcome
+  ON job_source_validation_runs(outcome, finished_at);
+
+CREATE TABLE IF NOT EXISTS job_source_validation_samples (
+  id INTEGER PRIMARY KEY,
+  validation_run_id INTEGER NOT NULL REFERENCES job_source_validation_runs(id) ON DELETE CASCADE,
+  sample_index INTEGER NOT NULL,
+  external_id TEXT,
+  title TEXT NOT NULL,
+  location TEXT,
+  location_scope TEXT NOT NULL,
+  job_url TEXT NOT NULL,
+  description_present INTEGER NOT NULL DEFAULT 0,
+  posted_at TEXT,
+  evidence_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(validation_run_id, sample_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_validation_samples_run
+  ON job_source_validation_samples(validation_run_id, sample_index);
+
+-- Passive research evidence for recognized ATS families that do not yet have connectors. These
+-- runs can identify public endpoint shapes and tenant/pagination clues, but never authorize job
+-- ingestion: adapter implementation plus the separate connector validator remain mandatory.
+CREATE TABLE IF NOT EXISTS ats_adapter_profile_runs (
+  id INTEGER PRIMARY KEY,
+  job_source_id INTEGER NOT NULL REFERENCES job_sources(id) ON DELETE CASCADE,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  suspected_ats TEXT NOT NULL,
+  profiler_version TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  source_host TEXT NOT NULL,
+  final_url_shape TEXT,
+  http_status INTEGER,
+  endpoint_candidates INTEGER NOT NULL DEFAULT 0,
+  api_evidence INTEGER NOT NULL DEFAULT 0,
+  pagination_evidence INTEGER NOT NULL DEFAULT 0,
+  tenant_evidence INTEGER NOT NULL DEFAULT 0,
+  evidence_json TEXT NOT NULL,
+  error_category TEXT,
+  error_message TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_adapter_profile_source
+  ON ats_adapter_profile_runs(job_source_id, profiler_version, finished_at);
+CREATE INDEX IF NOT EXISTS idx_adapter_profile_provider
+  ON ats_adapter_profile_runs(suspected_ats, profiler_version, outcome, finished_at);
+
+-- Read-only health probes for approved structured connectors. This is intentionally separate from
+-- scan_runs/company.connector_health: a probe never loads or closes jobs and cannot revoke approval.
+CREATE TABLE IF NOT EXISTS connector_health_check_runs (
+  id INTEGER PRIMARY KEY,
+  job_source_id INTEGER NOT NULL REFERENCES job_sources(id) ON DELETE CASCADE,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  checker_version TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  jobs_seen INTEGER NOT NULL DEFAULT 0,
+  sample_external_id TEXT,
+  sample_title TEXT,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  error_category TEXT,
+  error_message TEXT,
+  evidence_json TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_connector_health_source
+  ON connector_health_check_runs(job_source_id, checker_version, finished_at);
+CREATE INDEX IF NOT EXISTS idx_connector_health_outcome
+  ON connector_health_check_runs(outcome, provider, finished_at);
+
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY,
   company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -209,6 +470,62 @@ CREATE TABLE IF NOT EXISTS h1b_sponsors (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_h1b_employer_norm ON h1b_sponsors(employer_name_normalized);
+
+-- PERM employer filings mirror the durable H-1B import pattern above. FY2024 contains separate
+-- legacy and revised ETA-9089 disclosure files, so dataset_variant is part of the idempotency key:
+-- re-importing one exact dataset replaces its counts while the two official form datasets remain
+-- additive. perm_employers is a derived fast-lookup rollup and is never edited directly.
+CREATE TABLE IF NOT EXISTS perm_employer_filings (
+  id INTEGER PRIMARY KEY,
+  employer_name_raw TEXT NOT NULL,
+  employer_name_normalized TEXT NOT NULL,
+  fiscal_year INTEGER NOT NULL,
+  dataset_variant TEXT NOT NULL DEFAULT 'main',
+  certified INTEGER NOT NULL DEFAULT 0,
+  denied INTEGER NOT NULL DEFAULT 0,
+  withdrawn INTEGER NOT NULL DEFAULT 0,
+  source_file TEXT NOT NULL,
+  ingested_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_perm_filings_employer_year_variant
+  ON perm_employer_filings(employer_name_normalized, fiscal_year, dataset_variant);
+
+CREATE TABLE IF NOT EXISTS perm_employers (
+  id INTEGER PRIMARY KEY,
+  employer_name_raw TEXT NOT NULL,
+  employer_name_normalized TEXT NOT NULL,
+  total_certified INTEGER NOT NULL DEFAULT 0,
+  total_denied INTEGER NOT NULL DEFAULT 0,
+  total_withdrawn INTEGER NOT NULL DEFAULT 0,
+  fiscal_years_covered TEXT,
+  most_recent_fiscal_year INTEGER,
+  source_file TEXT,
+  ingested_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_perm_employer_norm
+  ON perm_employers(employer_name_normalized);
+
+-- Explicit provenance links between a public employer record and one canonical organization.
+-- The normalized name is retained here for exact cross-source matching and auditability; it is
+-- deliberately not a fuzzy/parent-company assertion. A source row can link to exactly one org.
+CREATE TABLE IF NOT EXISTS organization_employer_records (
+  id INTEGER PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  source_type TEXT NOT NULL,
+  source_record_id INTEGER NOT NULL,
+  employer_name_raw TEXT NOT NULL,
+  employer_name_normalized TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(source_type, source_record_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_org_employer_records_org
+  ON organization_employer_records(organization_id);
+CREATE INDEX IF NOT EXISTS idx_org_employer_records_normalized
+  ON organization_employer_records(employer_name_normalized);
 
 -- Approved alias tier for matching (see src/lib/h1b/fuzzyMatch.ts's layered matcher): maps a name
 -- variant that normalization alone can't bridge (a former legal name, a common brand name that

@@ -90,7 +90,11 @@ test("LAYER 1: a confidently-disambiguated Wikidata hit that verifies -> VERIFIE
   const target = await startServer((req, res) => {
     if (req.url === "/") {
       res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(html("plain homepage"));
+      res.end(
+        html(
+          `<script type="application/ld+json">{"@type":"Organization","legalName":"Wikico Corporation"}</script>`
+        )
+      );
     } else {
       res.writeHead(404);
       res.end();

@@ -1,5 +1,7 @@
 import pLimit from "p-limit";
 import { extractSalaryText } from "@/lib/extractSalary";
+import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { classifyJobLocation } from "@/lib/jobLocationScope";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
 import { stripHtml } from "@/lib/stripHtml";
@@ -41,9 +43,21 @@ function cxsBaseUrl(id: WorkdayIdentifier, hostOverride?: string): string {
 }
 
 interface WorkdayListJob {
-  title: string;
-  externalPath: string;
+  title?: string;
+  externalPath?: string;
   locationsText?: string;
+  bulletFields?: string[];
+}
+
+/** Stable representation of the fields Workday exposes before a detail request. Stored raw list
+ * payloads from the prior scan can be compared with this to skip details for unchanged postings. */
+export function workdayListingFingerprint(listing: WorkdayListJob): string {
+  return JSON.stringify({
+    title: listing.title ?? null,
+    externalPath: listing.externalPath ?? null,
+    locationsText: listing.locationsText ?? null,
+    bulletFields: listing.bulletFields ?? [],
+  });
 }
 
 interface WorkdayListResponse {
@@ -85,16 +99,31 @@ async function fetchListPage(
 
 async function fetchAllListings(
   cxsBase: string,
-  options: FetchWithRetryOptions
+  options: FetchWithRetryOptions,
+  maxJobs?: number,
+  countsTowardLimit: (listing: WorkdayListJob) => boolean = () => true
 ): Promise<WorkdayListJob[]> {
   const first = await fetchListPage(cxsBase, 0, options);
-  const all = [...first.jobPostings];
+  const all: WorkdayListJob[] = [];
+  let eligibleCount = 0;
+  const appendUntilLimit = (postings: WorkdayListJob[]) => {
+    for (const listing of postings) {
+      all.push(listing);
+      if (countsTowardLimit(listing)) eligibleCount++;
+      if (maxJobs !== undefined && eligibleCount >= maxJobs) break;
+    }
+  };
+  appendUntilLimit(first.jobPostings);
 
   // Sequential paging (mirrors Workday's own frontend) — a company's board is a handful of pages
   // at most in practice, so this isn't a meaningful latency concern and is gentler on the API.
-  for (let offset = PAGE_SIZE; offset < first.total; offset += PAGE_SIZE) {
+  for (
+    let offset = PAGE_SIZE;
+    offset < first.total && (maxJobs === undefined || eligibleCount < maxJobs);
+    offset += PAGE_SIZE
+  ) {
     const page = await fetchListPage(cxsBase, offset, options);
-    all.push(...page.jobPostings);
+    appendUntilLimit(page.jobPostings);
   }
   return all;
 }
@@ -120,12 +149,14 @@ async function fetchDetail(
  * posting had disappeared once the detail fetch recovers. Falls back to the raw path — today's
  * existing behavior — when a tenant's paths don't follow this convention.
  */
-function reqIdFromExternalPath(externalPath: string): string | null {
+export function reqIdFromExternalPath(externalPath: string): string | null {
   const match = externalPath.match(/_([A-Za-z0-9]+)(?:-\d+)?$/);
   return match ? match[1] : null;
 }
 
-export interface FetchWorkdayJobsOptions extends FetchWithRetryOptions {
+export interface FetchWorkdayJobsOptions extends FetchWithRetryOptions, LocationFilterOptions {
+  /** Optional bounded sample used only for connector verification; production scans omit it. */
+  maxJobs?: number;
   /** Testing-only: overrides the `https://{tenant}.{host}.myworkdayjobs.com` origin both the list
    *  and detail requests are built from, so tests can point a real Workday token shape at a local
    *  HTTP server instead of the real host. Production callers never pass this. */
@@ -136,16 +167,87 @@ export async function fetchWorkdayJobs(
   token: string,
   options: FetchWorkdayJobsOptions = {}
 ): Promise<NormalizedJob[]> {
-  const { hostOverride, ...retryOptions } = options;
+  const { hostOverride, maxJobs, usOnly, existingExternalIds, existingListingFingerprints, onLocationFiltered, ...retryOptions } = options;
   const identifier = decodeWorkdayToken(token);
   const cxsBase = cxsBaseUrl(identifier, hostOverride);
   const siteBase = siteBaseUrl(identifier, hostOverride);
-  const listings = await fetchAllListings(cxsBase, retryOptions);
+  // A U.S.-only sample limit applies to eligible jobs, not to the first N global listings. Workday
+  // exposes location in its lightweight list response, so fetch listing pages first and avoid the
+  // much heavier detail request for every explicitly non-U.S. posting.
+  const listings = await fetchAllListings(
+    cxsBase,
+    retryOptions,
+    maxJobs,
+    usOnly ? (listing) => classifyJobLocation(listing.locationsText) !== "NON_US" : undefined
+  );
+
+  const lifecycleSightings: NormalizedJob[] = [];
+  const detailCandidates = usOnly
+    ? listings.filter((listing) => {
+        const externalId = listing.externalPath
+          ? reqIdFromExternalPath(listing.externalPath) ?? listing.externalPath
+          : listing.bulletFields?.find((field): field is string => typeof field === "string" && field.trim().length > 0);
+        const listingScope = classifyJobLocation(listing.locationsText);
+        const isUnchanged = Boolean(
+          externalId && existingListingFingerprints?.get(externalId) === workdayListingFingerprint(listing)
+        );
+        if (listingScope !== "NON_US" && !isUnchanged) return true;
+        if (listingScope !== "US") {
+          onLocationFiltered?.(listingScope, {
+            externalId: externalId ?? null, title: listing.title ?? "", location: listing.locationsText ?? null,
+            department: null, url: listing.externalPath ? `${siteBase}${listing.externalPath}` : siteBase,
+            descriptionHtml: null, descriptionText: null, employmentType: null, workplaceType: null,
+            salaryText: null, postedAt: null, raw: { listing },
+          });
+        }
+        if (externalId && existingExternalIds?.has(externalId)) {
+          lifecycleSightings.push({
+            externalId,
+            title: listing.title ?? "",
+            location: listing.locationsText ?? null,
+            department: null,
+            url: listing.externalPath ? `${siteBase}${listing.externalPath}` : siteBase,
+            descriptionHtml: null,
+            descriptionText: null,
+            employmentType: null,
+            workplaceType: null,
+            salaryText: null,
+            postedAt: null,
+            raw: { listing, locationScope: listingScope, unchangedListing: isUnchanged },
+            lifecycleOnly: true,
+          });
+        }
+        return false;
+      })
+    : listings;
 
   const limit = pLimit(DETAIL_CONCURRENCY);
-  return Promise.all(
-    listings.map((listing) =>
+  const normalized = await Promise.all(
+    detailCandidates.map((listing) =>
       limit(async (): Promise<NormalizedJob> => {
+        if (!listing.externalPath || !listing.title) {
+          const requisitionId = listing.bulletFields?.find(
+            (field): field is string => typeof field === "string" && field.trim().length > 0
+          );
+          if (!requisitionId) {
+            throw new Error("Workday returned a listing without title, externalPath, or requisition ID");
+          }
+          return {
+            externalId: requisitionId,
+            title: "",
+            location: null,
+            department: null,
+            url: siteBase,
+            descriptionHtml: null,
+            descriptionText: null,
+            employmentType: null,
+            workplaceType: null,
+            salaryText: null,
+            postedAt: null,
+            raw: { listing, listingError: "missing title or externalPath" },
+            sightingOnly: true,
+          };
+        }
         const fallbackUrl = `${siteBase}${listing.externalPath}`;
         try {
           const info = await fetchDetail(cxsBase, listing.externalPath, retryOptions);
@@ -189,4 +291,8 @@ export async function fetchWorkdayJobs(
       })
     )
   );
+  return [
+    ...filterJobsToUs(normalized, { usOnly, existingExternalIds, onLocationFiltered }, maxJobs),
+    ...lifecycleSightings,
+  ];
 }

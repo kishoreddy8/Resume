@@ -11,7 +11,7 @@ import type { DomainIdentityResult } from "@/types";
  *
  *   LAYER 0 — curated override (h1b_employer_domain_overrides) -> instant VERIFIED, no live check.
  *   LAYER 1 — Wikidata entity resolution (disambiguated, see wikidataLookup.ts) -> if it yields a
- *             single confidently-matched domain, verify it (authoritative, self-sufficient).
+ *             single confidently-matched domain, require independent first-party verification.
  *   LAYER 2 — a small, conservative set of generated domain candidates (domainCandidates.ts),
  *             each run through the SAME verification gate — SEC corroboration (secLookup.ts,
  *             corroborative only, never self-sufficient) is attempted once and offered to every

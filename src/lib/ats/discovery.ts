@@ -1,5 +1,6 @@
 import { MAX_DISCOVERY_DEPTH, MAX_DISCOVERY_PAGES, MAX_REDIRECTS, MAX_RESPONSE_BYTES, DISCOVERY_TIMEOUT_MS } from "@/lib/ats/discoveryConfig";
 import { detectAtsFromUrlString } from "@/lib/ats/detect";
+import { detectUnsupportedAtsUrl, UNSUPPORTED_ATS_SIGNATURES } from "@/lib/ats/unsupportedCatalog";
 import { safeFetch, SafeFetchError, type SafeFetchErrorReason } from "@/lib/net/safeFetch";
 import type { CompanyResolutionStatus, SourceType } from "@/types";
 
@@ -32,18 +33,6 @@ export interface DiscoveryResult {
 // detect.ts's SUPPORTED provider regexes (Workday/Greenhouse/Lever/Ashby) — this list must never be
 // used to fetch/parse jobs, only to label "this looks like X, no connector yet" honestly instead of
 // leaving the company silently UNRESOLVED when we actually recognize the platform.
-const UNSUPPORTED_ATS_SIGNATURES: { pattern: RegExp; name: string }[] = [
-  { pattern: /jobs\.smartrecruiters\.com/i, name: "SmartRecruiters" },
-  { pattern: /\.icims\.com\//i, name: "iCIMS" },
-  { pattern: /\.taleo\.net\//i, name: "Taleo" },
-  { pattern: /successfactors\.com\//i, name: "SuccessFactors" },
-  { pattern: /jobs\.jobvite\.com/i, name: "Jobvite" },
-  { pattern: /apply\.workable\.com/i, name: "Workable" },
-  { pattern: /[a-z0-9-]+\.bamboohr\.com\/careers/i, name: "BambooHR" },
-  { pattern: /breezy\.hr\//i, name: "Breezy HR" },
-  { pattern: /recruitee\.com\//i, name: "Recruitee" },
-];
-
 // Exported (unlike the rest of this module's private helpers) specifically so
 // src/lib/ats/discoveryBrowser.ts (Tier 3, the bounded browser-rendered fallback) can reuse the
 // EXACT SAME unsupported-ATS signature list, embedded-URL scanner, and careers-link scorer against
@@ -51,11 +40,10 @@ const UNSUPPORTED_ATS_SIGNATURES: { pattern: RegExp; name: string }[] = [
 // Tier 3 is where the HTML comes from (page.content() after JS execution vs. safeFetch's raw
 // response body), never how it's interpreted. See AGENTS.md's "reuse, don't duplicate" precedent.
 export function detectUnsupportedAts(text: string): string | null {
-  for (const sig of UNSUPPORTED_ATS_SIGNATURES) {
-    if (sig.pattern.test(text)) return sig.name;
-  }
-  return null;
+  return detectUnsupportedAtsUrl(text);
 }
+
+export { UNSUPPORTED_ATS_SIGNATURES };
 
 const URL_TOKEN_RE = /https?:\/\/[^\s"'<>\\]+/gi;
 
@@ -71,7 +59,13 @@ export function findEmbeddedAtsUrl(html: string): { sourceType: Exclude<SourceTy
   for (const token of tokens) {
     const trimmed = trimTrailingPunctuation(token);
     const detection = detectAtsFromUrlString(trimmed);
-    if (detection) return { ...detection, url: trimmed };
+    if (detection) {
+      return {
+        sourceType: detection.sourceType,
+        atsBoardToken: detection.atsBoardToken,
+        url: detection.canonicalSourceUrl ?? trimmed,
+      };
+    }
   }
   return null;
 }
@@ -185,7 +179,14 @@ export interface DiscoverCompanySourceOptions {
 export async function discoverCompanySource(inputUrl: string, options: DiscoverCompanySourceOptions = {}): Promise<DiscoveryResult> {
   // Tier 1 (existing detect.ts logic, no network): the input URL is itself a known/recognized ATS URL.
   const direct = detectAtsFromUrlString(inputUrl);
-  if (direct) return verified(direct.sourceType, direct.atsBoardToken, inputUrl, `Direct ATS URL match (${direct.sourceType})`);
+  if (direct) {
+    return verified(
+      direct.sourceType,
+      direct.atsBoardToken,
+      direct.canonicalSourceUrl ?? inputUrl,
+      `Direct ATS URL match (${direct.sourceType})`
+    );
+  }
 
   const directUnsupported = detectUnsupportedAts(inputUrl);
   if (directUnsupported) return needsAdapter(directUnsupported, inputUrl, `Recognized ATS URL pattern with no connector yet: ${directUnsupported}`);
@@ -226,7 +227,14 @@ export async function discoverCompanySource(inputUrl: string, options: DiscoverC
     pagesFetched++;
 
     const finalUrlMatch = detectAtsFromUrlString(fetched.finalUrl);
-    if (finalUrlMatch) return verified(finalUrlMatch.sourceType, finalUrlMatch.atsBoardToken, fetched.finalUrl, `Final URL after redirects is a known ATS (${finalUrlMatch.sourceType})`);
+    if (finalUrlMatch) {
+      return verified(
+        finalUrlMatch.sourceType,
+        finalUrlMatch.atsBoardToken,
+        finalUrlMatch.canonicalSourceUrl ?? fetched.finalUrl,
+        `Final URL after redirects is a known ATS (${finalUrlMatch.sourceType})`
+      );
+    }
 
     const finalUnsupported = detectUnsupportedAts(fetched.finalUrl);
     if (finalUnsupported) return needsAdapter(finalUnsupported, fetched.finalUrl, `Final URL after redirects matches a recognized-but-unsupported ATS: ${finalUnsupported}`);

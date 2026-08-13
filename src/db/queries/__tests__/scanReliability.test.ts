@@ -455,6 +455,46 @@ test("workday e2e: a detail fetch that permanently fails still recovers the same
   }
 });
 
+test("workday e2e: a listing with only a requisition ID becomes a sighting-only partial record", async () => {
+  const { origin, server, getCount } = await startWorkdayServer({
+    list: (_req, res) =>
+      jsonRes(res, 200, { total: 1, jobPostings: [{ bulletFields: ["JR196045"] }] }),
+    detail: (_req, res) => jsonRes(res, 500, { error: "detail must not be requested" }),
+  });
+  try {
+    const jobs = await fetchWorkdayJobs(WORKDAY_TOKEN, { hostOverride: origin });
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0].externalId, "JR196045");
+    assert.equal(jobs[0].sightingOnly, true);
+    assert.equal(jobs[0].descriptionText, null);
+    assert.equal(getCount(), 1, "an unusable path must never trigger a detail request");
+    assert.equal(determineScanStatus(jobs.filter((job) => job.sightingOnly || !job.descriptionText).length), "partial");
+  } finally {
+    server.close();
+  }
+});
+
+test("workday e2e: maxJobs bounds list paging and detail fetches for connector verification", async () => {
+  const postings = Array.from({ length: 20 }, (_, index) => ({
+    title: `Role ${index + 1}`,
+    externalPath: `${CXS_PREFIX}/job/Role-${index + 1}_JR${index + 1}`,
+  }));
+  const { origin, server, getCount } = await startWorkdayServer({
+    list: (_req, res) => jsonRes(res, 200, { total: 100, jobPostings: postings }),
+    detail: (_req, res, path) =>
+      jsonRes(res, 200, {
+        jobPostingInfo: { title: path, jobDescription: "<p>Sample</p>" },
+      }),
+  });
+  try {
+    const jobs = await fetchWorkdayJobs(WORKDAY_TOKEN, { hostOverride: origin, maxJobs: 3 });
+    assert.equal(jobs.length, 3);
+    assert.equal(getCount(), 4, "one list request plus exactly three detail requests");
+  } finally {
+    server.close();
+  }
+});
+
 test("workday e2e: list-phase retry exhaustion fails the whole scan (never reaches job data)", async () => {
   const { origin, server, getCount } = await startWorkdayServer({
     list: (_req, res) => jsonRes(res, 500, { error: "boom" }),

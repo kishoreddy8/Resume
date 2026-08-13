@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import { after, test } from "node:test";
-import { scrapeCareerPageDetailed } from "@/lib/ats/genericPlaywright";
+import { extractLocationEvidence, scrapeCareerPageDetailed } from "@/lib/ats/genericPlaywright";
 import { ScanConnectorError } from "@/lib/scan/errors";
 
 /**
@@ -73,6 +73,17 @@ test("genericPlaywright: positive-evidence validation rejects nav clutter even w
   for (const navTitle of ["Privacy", "Benefits", "Locations", "Talent Network"]) {
     assert.ok(!titles.includes(navTitle), `"${navTitle}" should have been rejected, not ingested as a job`);
   }
+});
+
+test("genericPlaywright: listing-card location evidence is retained only from an explicit short line", () => {
+  assert.equal(
+    extractLocationEvidence("Data Engineer\nAustin, TX\nApply Now", "Data Engineer"),
+    "Austin, TX"
+  );
+  assert.equal(
+    extractLocationEvidence("Data Engineer\nJoin our growing engineering team\nApply Now", "Data Engineer"),
+    null
+  );
 });
 
 test("SSRF: a loopback seed URL is refused BEFORE the browser ever launches", async () => {

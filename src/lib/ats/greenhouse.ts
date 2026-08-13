@@ -2,6 +2,7 @@ import { extractSalaryText } from "@/lib/extractSalary";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
 import { decodeHtmlEntities, stripHtml } from "@/lib/stripHtml";
+import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
 import type { NormalizedJob } from "@/types";
 
 interface GreenhouseJob {
@@ -18,7 +19,8 @@ interface GreenhouseResponse {
   jobs: GreenhouseJob[];
 }
 
-export interface FetchGreenhouseJobsOptions extends FetchWithRetryOptions {
+export interface FetchGreenhouseJobsOptions extends FetchWithRetryOptions, LocationFilterOptions {
+  maxJobs?: number;
   /** Testing-only: overrides the https://boards-api.greenhouse.io origin so tests can point a real
    *  board token at a local HTTP server instead of the real host. Production callers never pass this. */
   hostOverride?: string;
@@ -28,12 +30,12 @@ export async function fetchGreenhouseJobs(
   boardToken: string,
   options: FetchGreenhouseJobsOptions = {}
 ): Promise<NormalizedJob[]> {
-  const { hostOverride, ...retryOptions } = options;
+  const { hostOverride, maxJobs, usOnly, existingExternalIds, onLocationFiltered, ...retryOptions } = options;
   const origin = hostOverride ?? "https://boards-api.greenhouse.io";
   const url = `${origin}/v1/boards/${encodeURIComponent(boardToken)}/jobs?content=true`;
   const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, retryOptions);
   const data = await parseJsonOrThrow<GreenhouseResponse>(res, url);
-  return data.jobs.map((job) => {
+  const normalized = data.jobs.map((job) => {
     const descriptionText = stripHtml(job.content);
     return {
       externalId: String(job.id),
@@ -53,4 +55,5 @@ export async function fetchGreenhouseJobs(
       raw: job,
     };
   });
+  return filterJobsToUs(normalized, { usOnly, existingExternalIds, onLocationFiltered }, maxJobs);
 }
