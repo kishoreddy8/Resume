@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractJsonLdJobPostings, validateJobCandidate } from "@/lib/ats/jobValidation";
+import {
+  extractJsonLdJobPostings,
+  filterRealJobs,
+  isRealJobPosting,
+  validateJobCandidate,
+  validateNormalizedJob,
+} from "@/lib/ats/jobValidation";
+import type { NormalizedJob } from "@/types";
 
 // --- The exact real-world false positives this module exists to fix (AGENTS.md §15) -------------
 
@@ -82,6 +89,190 @@ test("validateJobCandidate: reason string explains acceptance and rejection", ()
   assert.match(accepted.reason, /Accepted/);
   const rejected = validateJobCandidate({ url: "https://example.com/x", text: "Home" });
   assert.match(rejected.reason, /Rejected/);
+});
+
+// --- Shared Normalized Job Real-Job Validation Across ATS Adapters -------------------------------
+
+function makeBaseNormalizedJob(overrides: Partial<NormalizedJob> = {}): NormalizedJob {
+  return {
+    externalId: "12345",
+    title: "Senior Software Engineer",
+    location: "Austin, TX, USA",
+    department: "Engineering",
+    url: "https://recruiting.paylocity.com/Recruiting/Jobs/Details/12345",
+    descriptionHtml: "<p>We are looking for a Senior Software Engineer with 5+ years TypeScript experience.</p>",
+    descriptionText: "We are looking for a Senior Software Engineer with 5+ years TypeScript experience.",
+    employmentType: "Full-Time",
+    workplaceType: "Hybrid",
+    salaryText: "$130,000 - $160,000",
+    postedAt: "2026-08-01",
+    raw: {},
+    ...overrides,
+  };
+}
+
+test("validateNormalizedJob: 1. 'Careers' is rejected as a non-job generic heading", () => {
+  const job = makeBaseNormalizedJob({ title: "Careers" });
+  const result = validateNormalizedJob(job);
+  assert.equal(result.valid, false);
+  assert.equal(isRealJobPosting(job), false);
+  assert.match(result.reason, /generic_portal_heading/);
+});
+
+test("validateNormalizedJob: 2. 'Search Jobs' is rejected as a non-job search action", () => {
+  const job = makeBaseNormalizedJob({ title: "Search Jobs" });
+  const result = validateNormalizedJob(job);
+  assert.equal(result.valid, false);
+  assert.match(result.reason, /job_alerts_search/);
+});
+
+test("validateNormalizedJob: 3. 'Join Our Talent Community' is rejected as a pseudo-job", () => {
+  const job = makeBaseNormalizedJob({ title: "Join Our Talent Community" });
+  const result = validateNormalizedJob(job);
+  assert.equal(result.valid, false);
+  assert.match(result.reason, /talent_community/);
+});
+
+test("validateNormalizedJob: 4. 'Talent Community' and 'Lumitex Talent Community' are rejected", () => {
+  const job1 = makeBaseNormalizedJob({ title: "Talent Community" });
+  const job2 = makeBaseNormalizedJob({
+    title: "Lumitex Talent Community",
+    location: "Strongsville, OH, USA",
+    externalId: "341533",
+    url: "https://recruiting.paylocity.com/Recruiting/Jobs/Details/341533",
+  });
+  assert.equal(isRealJobPosting(job1), false);
+  assert.equal(isRealJobPosting(job2), false);
+  assert.match(validateNormalizedJob(job2).reason, /talent_community/);
+});
+
+test("validateNormalizedJob: 5. 'General Application' / 'General Consideration' are rejected", () => {
+  const job1 = makeBaseNormalizedJob({ title: "General Application" });
+  const job2 = makeBaseNormalizedJob({ title: "General Consideration" });
+  const job3 = makeBaseNormalizedJob({ title: "General Interest" });
+  const job4 = makeBaseNormalizedJob({ title: "Open Application" });
+  assert.equal(isRealJobPosting(job1), false);
+  assert.equal(isRealJobPosting(job2), false);
+  assert.equal(isRealJobPosting(job3), false);
+  assert.equal(isRealJobPosting(job4), false);
+  assert.match(validateNormalizedJob(job1).reason, /general_application/);
+});
+
+test("validateNormalizedJob: 6. 'Future Opportunities' / 'Future Openings' are rejected", () => {
+  const job1 = makeBaseNormalizedJob({ title: "Future Opportunities" });
+  const job2 = makeBaseNormalizedJob({ title: "Future Opportunities at Haus" });
+  const job3 = makeBaseNormalizedJob({ title: "Future Openings at TopQuadrant" });
+  assert.equal(isRealJobPosting(job1), false);
+  assert.equal(isRealJobPosting(job2), false);
+  assert.equal(isRealJobPosting(job3), false);
+  assert.match(validateNormalizedJob(job1).reason, /future_opportunities/);
+});
+
+test("validateNormalizedJob: 7. 'Job Alerts' / 'Email Alerts' are rejected", () => {
+  const job1 = makeBaseNormalizedJob({ title: "Job Alerts" });
+  const job2 = makeBaseNormalizedJob({ title: "Get Job Alerts" });
+  assert.equal(isRealJobPosting(job1), false);
+  assert.equal(isRealJobPosting(job2), false);
+  assert.match(validateNormalizedJob(job1).reason, /job_alerts_search/);
+});
+
+test("validateNormalizedJob: 8. 'Talent Acquisition Partner' is accepted (real job false-positive protection)", () => {
+  const job = makeBaseNormalizedJob({ title: "Talent Acquisition Partner" });
+  const result = validateNormalizedJob(job);
+  assert.equal(result.valid, true);
+  assert.equal(isRealJobPosting(job), true);
+});
+
+test("validateNormalizedJob: 9. 'Community Manager' is accepted (real job false-positive protection)", () => {
+  const job = makeBaseNormalizedJob({ title: "Community Manager" });
+  const result = validateNormalizedJob(job);
+  assert.equal(result.valid, true);
+  assert.equal(isRealJobPosting(job), true);
+});
+
+test("validateNormalizedJob: 10. Genuine technical & professional jobs are accepted", () => {
+  const jobs = [
+    makeBaseNormalizedJob({ title: "Data Scientist - AI Solutions" }),
+    makeBaseNormalizedJob({ title: "SQL Server DBA" }),
+    makeBaseNormalizedJob({ title: "General Counsel" }),
+    makeBaseNormalizedJob({ title: "General Manager" }),
+    makeBaseNormalizedJob({ title: "HR Generalist" }),
+    makeBaseNormalizedJob({ title: "Career Development Manager" }),
+    makeBaseNormalizedJob({ title: "Staff Accountant" }),
+  ];
+  for (const job of jobs) {
+    const result = validateNormalizedJob(job);
+    assert.equal(result.valid, true, `"${job.title}" should be accepted`);
+  }
+});
+
+test("validateNormalizedJob: 11. Missing/empty/whitespace-only title is rejected", () => {
+  const job1 = makeBaseNormalizedJob({ title: "" });
+  const job2 = makeBaseNormalizedJob({ title: "   " });
+  const job3 = makeBaseNormalizedJob({ title: "A" });
+  assert.equal(isRealJobPosting(job1), false);
+  assert.equal(isRealJobPosting(job2), false);
+  assert.equal(isRealJobPosting(job3), false);
+});
+
+test("validateNormalizedJob: 12. Obvious navigation-only description is rejected", () => {
+  const job = makeBaseNormalizedJob({
+    descriptionText: "Home About Us Privacy Terms Careers Contact",
+    descriptionHtml: "<div>Home About Us Privacy Terms Careers Contact</div>",
+  });
+  const result = validateNormalizedJob(job);
+  assert.equal(result.valid, false);
+  assert.match(result.reason, /navigation_only_description/);
+});
+
+test("validateNormalizedJob: 13. Careers-root URL without posting identity is rejected", () => {
+  const job1 = makeBaseNormalizedJob({ url: "https://example.com/careers" });
+  const job2 = makeBaseNormalizedJob({ url: "https://example.com/jobs/" });
+  const job3 = makeBaseNormalizedJob({ url: "https://example.com/" });
+  assert.equal(isRealJobPosting(job1), false);
+  assert.equal(isRealJobPosting(job2), false);
+  assert.equal(isRealJobPosting(job3), false);
+  assert.match(validateNormalizedJob(job1).reason, /careers_root_url_without_posting_identity/);
+});
+
+test("validateNormalizedJob: 14. Legitimate structured postings across different ATS adapters are accepted", () => {
+  const greenhouseJob = makeBaseNormalizedJob({
+    externalId: "4013947",
+    title: "Senior Product Manager",
+    url: "https://job-boards.greenhouse.io/acme/jobs/4013947",
+  });
+  const leverJob = makeBaseNormalizedJob({
+    externalId: "00233828-cc45-49b5-855c-2aba5bc68f37",
+    title: "Customer Support Specialist",
+    url: "https://jobs.lever.co/acme/00233828-cc45-49b5-855c-2aba5bc68f37",
+  });
+  const ashbyJob = makeBaseNormalizedJob({
+    externalId: "7263f6a6-7b05-4f75-a83f-c330882e1098",
+    title: "Staff Infrastructure Engineer",
+    url: "https://jobs.ashbyhq.com/acme/7263f6a6-7b05-4f75-a83f-c330882e1098",
+  });
+  const workdayJob = makeBaseNormalizedJob({
+    externalId: "R-10294",
+    title: "Financial Analyst",
+    url: "https://acme.wd5.myworkdayjobs.com/Careers/job/Austin-TX/Financial-Analyst_R-10294",
+  });
+  const smartRecruitersJob = makeBaseNormalizedJob({
+    externalId: "743999912345678",
+    title: "Cloud Solutions Architect",
+    url: "https://jobs.smartrecruiters.com/Acme/743999912345678-cloud-solutions-architect",
+  });
+  const paylocityJob = makeBaseNormalizedJob({
+    externalId: "4408236",
+    title: "Part-time Weekend SQL Server DBA",
+    url: "https://recruiting.paylocity.com/Recruiting/Jobs/Details/4408236",
+  });
+
+  const jobs = [greenhouseJob, leverJob, ashbyJob, workdayJob, smartRecruitersJob, paylocityJob];
+  for (const job of jobs) {
+    assert.equal(isRealJobPosting(job), true);
+  }
+  const filtered = filterRealJobs([...jobs, makeBaseNormalizedJob({ title: "Join Our Talent Community" })]);
+  assert.equal(filtered.length, jobs.length);
 });
 
 // --- JSON-LD JobPosting extraction ----------------------------------------------------------------

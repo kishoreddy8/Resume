@@ -12,6 +12,7 @@ import { extractJobIntel } from "@/lib/jobIntel/extractJobIntel";
 import { fetchJobsForCompany } from "@/lib/normalize";
 import { workdayListingFingerprint } from "@/lib/ats/workday";
 import { filterJobsToUs } from "@/lib/ats/locationFilter";
+import { isRealJobPosting } from "@/lib/ats/jobValidation";
 import { parseDescriptionSections } from "@/lib/parseSections";
 import { categorizeThrownError } from "@/lib/scan/errors";
 import { canRunLifecycleActions, determineScanStatus, hasContentChanged } from "@/lib/scan/status";
@@ -112,6 +113,10 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
     let descriptionFailures = 0;
 
     for (const job of jobs) {
+      if (!isRealJobPosting(job)) {
+        continue;
+      }
+
       const dedupeKey =
         company.source_type === "career_link"
           ? dedupeKeyForCareerLink(company.id, job)
