@@ -1091,3 +1091,95 @@ CREATE TABLE IF NOT EXISTS tailoring_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tailoring_runs_candidate_dedupe ON tailoring_runs(candidate_id, dedupe_key, created_at DESC);
+
+-- Phase 3 Stage 7 — foundation for a future multi-stage AI resume quality pipeline:
+-- Application -> Tailoring Run -> AI Writer -> AI Reviewer -> Improvement -> Reviewer -> Final
+-- Approved Resume. FOUNDATION ONLY: no row in either table below is ever written by an AI call in
+-- this stage — nothing here executes a writer/reviewer, it only persists the state/data shape a
+-- future orchestrator will populate.
+--
+-- APPLICATION IDENTITY: this project does not have (and Stage 7 deliberately does not invent) a
+-- dedicated "applications" table. candidate_job_state already IS the durable, unique-per-
+-- (candidate_id, dedupe_key) identity for "this candidate's relationship to this job" — its own
+-- `id` is reused here as application_id rather than creating a second, competing concept. Every
+-- tailoring_runs row already requires marked_for_tailoring=1 on that same candidate_job_state row
+-- (see tailoringRuns.ts/tailoringExecution.ts), so a candidate_job_state row is guaranteed to exist
+-- for every tailoring_run — application_id is never dangling.
+--
+-- HIERARCHY: candidates -> candidate_job_state (application) -> tailoring_runs (run) ->
+-- resume_quality_workflows (one quality-improvement attempt over a run's output) ->
+-- resume_quality_iterations (one immutable snapshot per improvement cycle, 1..max_iterations).
+-- candidate_id/dedupe_key are denormalized onto both new tables (never derived only via a join),
+-- matching job_match_results/candidate_job_state/tailoring_runs' own established identity-safety
+-- discipline — every candidate-scoped query filters on candidate_id explicitly.
+CREATE TABLE IF NOT EXISTS resume_quality_workflows (
+  id INTEGER PRIMARY KEY,
+  candidate_id INTEGER NOT NULL REFERENCES candidates(id),
+  application_id INTEGER NOT NULL REFERENCES candidate_job_state(id),
+  tailoring_run_id INTEGER NOT NULL REFERENCES tailoring_runs(id),
+  dedupe_key TEXT NOT NULL, -- convenience/debug, mirrors tailoring_runs' own identity discipline
+
+  -- CREATED | WRITER_RUNNING | WRITER_COMPLETED | REVIEW_RUNNING | REVIEW_COMPLETED |
+  -- IMPROVEMENT_RUNNING | READY | FAILED — see src/lib/resumeQuality/stateMachine.ts for the legal
+  -- transition graph between these; enforced at the query layer, not a DB CHECK/trigger.
+  status TEXT NOT NULL DEFAULT 'CREATED',
+  current_iteration INTEGER NOT NULL DEFAULT 0,
+  max_iterations INTEGER NOT NULL DEFAULT 3,
+  latest_overall_score REAL,
+  final_approved_iteration INTEGER, -- set only once status reaches READY
+
+  failure_reason TEXT, -- set only if status='FAILED' — includes the "max iterations reached, gate
+                        -- still failing, human review required" case; there is no separate terminal
+                        -- status for that case, by design (see the Stage 7 spec's fixed 8-status list)
+
+  -- Provider/model metadata — deliberately generic (no Anthropic/OpenAI-specific columns or CHECK
+  -- constraints). NULL until a future stage actually wires an agent implementation.
+  writer_provider TEXT,
+  writer_model TEXT,
+  reviewer_provider TEXT,
+  reviewer_model TEXT,
+
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_resume_quality_workflows_candidate_run
+  ON resume_quality_workflows(candidate_id, tailoring_run_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_resume_quality_workflows_application
+  ON resume_quality_workflows(candidate_id, application_id);
+
+-- One immutable row per completed improvement cycle. "Immutable" is enforced at the query layer
+-- (resumeQualityWorkflows.ts's createResumeQualityIteration only ever INSERTs, never UPDATEs an
+-- existing iteration_number) plus the UNIQUE constraint below as a second, DB-level guarantee —
+-- iteration 2 can never overwrite iteration 1's row.
+CREATE TABLE IF NOT EXISTS resume_quality_iterations (
+  id INTEGER PRIMARY KEY,
+  workflow_id INTEGER NOT NULL REFERENCES resume_quality_workflows(id),
+  candidate_id INTEGER NOT NULL REFERENCES candidates(id), -- denormalized, same discipline as above
+  iteration_number INTEGER NOT NULL, -- 1, 2, 3 (default max) — never 0, never reused within a workflow
+
+  output_files TEXT, -- JSON array of relative filenames only (e.g. ["Resume.docx","CoverLetter.docx",
+                      -- "review.json","review_feedback.md"]) — same portability contract as
+                      -- tailoring_runs.output_files; never an absolute path.
+  review_json TEXT,   -- full StructuredResumeReview (src/lib/resumeQuality/types.ts), authoritative
+
+  -- Denormalized from review_json for cheap gate-checking without JSON parsing — mirrors
+  -- job_match_results' own "dedicated columns for gate-relevant scalars, full detail in one JSON
+  -- bucket" convention.
+  overall_score REAL,
+  ats_score REAL,
+  keyword_alignment_score REAL,
+  truthfulness_score REAL,
+  architecture_consistency_score REAL,
+  recruiter_readability_score REAL,
+  formatting_score REAL,
+  blocking_issue_count INTEGER NOT NULL DEFAULT 0,
+
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+
+  UNIQUE(workflow_id, iteration_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_resume_quality_iterations_workflow
+  ON resume_quality_iterations(candidate_id, workflow_id, iteration_number);
