@@ -13,6 +13,7 @@ import { fetchJobsForCompany } from "@/lib/normalize";
 import { workdayListingFingerprint } from "@/lib/ats/workday";
 import { filterJobsToUs } from "@/lib/ats/locationFilter";
 import { isRealJobPosting } from "@/lib/ats/jobValidation";
+import { isJobFreshForIngestion } from "@/lib/ats/jobFreshness";
 import { parseDescriptionSections } from "@/lib/parseSections";
 import { categorizeThrownError } from "@/lib/scan/errors";
 import { canRunLifecycleActions, determineScanStatus, hasContentChanged } from "@/lib/scan/status";
@@ -121,6 +122,18 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
         company.source_type === "career_link"
           ? dedupeKeyForCareerLink(company.id, job)
           : dedupeKeyForAts(company.source_type, company.id, job.externalId ?? normalizeJobUrl(job.url));
+
+      // Snapshotted before upsertJob so an "updated" outcome can be split into "content genuinely
+      // changed" vs. "re-seen, nothing changed" for scan_runs — read-only, does not affect upsertJob.
+      const before = getJobByDedupeKey(dedupeKey);
+
+      // Centralized 20-Day Freshness Gate: New discoveries must be <= 20 days old (or missing date fallback).
+      // Rescans of existing database jobs are always eligible so their lifecycle is preserved.
+      const freshness = isJobFreshForIngestion(job, before ? { id: before.id } : undefined, 20);
+      if (!freshness.eligible) {
+        continue;
+      }
+
       seenDedupeKeys.push(dedupeKey);
 
       // Some Workday boards transiently emit a requisition ID with no title/path. Preserve its
@@ -137,10 +150,6 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
       }
 
       if (!job.descriptionText) descriptionFailures++;
-
-      // Snapshotted before upsertJob so an "updated" outcome can be split into "content genuinely
-      // changed" vs. "re-seen, nothing changed" for scan_runs — read-only, does not affect upsertJob.
-      const before = getJobByDedupeKey(dedupeKey);
 
       const { mentioned, polarity, snippet } = scanSponsorshipLanguage(job.descriptionText);
       const { confidence: h1bCombinedConfidence } = combineH1bConfidence(company.h1b_confidence, polarity);
