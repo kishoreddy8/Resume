@@ -28,6 +28,11 @@ const STORAGE_KEYS = {
   usCitizen: "candidate.us_citizen",
   workAuthorizedUS: "candidate.work_authorized_us",
   clearanceLevel: "candidate.clearance_level",
+  schedulerEnabled: "scheduler.enabled",
+  schedulerIntervalMinutes: "scheduler.interval_minutes",
+  schedulerWindowStartHour: "scheduler.window_start_hour",
+  schedulerWindowEndHour: "scheduler.window_end_hour",
+  schedulerTimezone: "scheduler.timezone",
 } as const;
 
 // Removed: explicit "Not Interested" suppression is permanent and was never actually meant to be
@@ -77,6 +82,13 @@ function rowsToSettings(rows: SettingsRow[]): AppSettings {
       workAuthorizedUS: bool(STORAGE_KEYS.workAuthorizedUS, DEFAULT_SETTINGS.candidate.workAuthorizedUS),
       clearanceLevel: str(STORAGE_KEYS.clearanceLevel, DEFAULT_SETTINGS.candidate.clearanceLevel) as AppSettings["candidate"]["clearanceLevel"],
     },
+    scheduler: {
+      enabled: bool(STORAGE_KEYS.schedulerEnabled, DEFAULT_SETTINGS.scheduler.enabled),
+      intervalMinutes: num(STORAGE_KEYS.schedulerIntervalMinutes, DEFAULT_SETTINGS.scheduler.intervalMinutes),
+      windowStartHour: num(STORAGE_KEYS.schedulerWindowStartHour, DEFAULT_SETTINGS.scheduler.windowStartHour),
+      windowEndHour: num(STORAGE_KEYS.schedulerWindowEndHour, DEFAULT_SETTINGS.scheduler.windowEndHour),
+      timezone: str(STORAGE_KEYS.schedulerTimezone, DEFAULT_SETTINGS.scheduler.timezone),
+    },
   };
 }
 
@@ -120,6 +132,7 @@ export function updateAppSettings(patch: unknown): UpdateSettingsResult {
     suppression: { ...current.suppression, ...patchParsed.data.suppression },
     scanner: { ...current.scanner, ...patchParsed.data.scanner },
     candidate: { ...current.candidate, ...patchParsed.data.candidate },
+    scheduler: { ...current.scheduler, ...patchParsed.data.scheduler },
   };
 
   const fullParsed = appSettingsSchema.safeParse(merged);
@@ -154,6 +167,11 @@ export function updateAppSettings(patch: unknown): UpdateSettingsResult {
     upsert.run({ key: STORAGE_KEYS.usCitizen, value: String(settings.candidate.usCitizen) });
     upsert.run({ key: STORAGE_KEYS.workAuthorizedUS, value: String(settings.candidate.workAuthorizedUS) });
     upsert.run({ key: STORAGE_KEYS.clearanceLevel, value: settings.candidate.clearanceLevel });
+    upsert.run({ key: STORAGE_KEYS.schedulerEnabled, value: String(settings.scheduler.enabled) });
+    upsert.run({ key: STORAGE_KEYS.schedulerIntervalMinutes, value: String(settings.scheduler.intervalMinutes) });
+    upsert.run({ key: STORAGE_KEYS.schedulerWindowStartHour, value: String(settings.scheduler.windowStartHour) });
+    upsert.run({ key: STORAGE_KEYS.schedulerWindowEndHour, value: String(settings.scheduler.windowEndHour) });
+    upsert.run({ key: STORAGE_KEYS.schedulerTimezone, value: settings.scheduler.timezone });
     for (const key of LEGACY_KEYS) dropLegacy.run(key);
   })();
 

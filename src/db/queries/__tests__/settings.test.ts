@@ -460,3 +460,74 @@ test("a failed scan under tightened Settings > Scanner values still never closes
   assert.equal(job.is_active, 1, "a failed scan must never close an existing job, regardless of scanner settings");
   assert.equal(job.is_archived, 0, "a failed scan must never archive an existing job, regardless of scanner settings");
 });
+
+// --- Scheduler group persistence (Phase 4 Stage 1) ----------------------------------------------
+
+test("48. getAppSettings falls back to DEFAULT_SETTINGS.scheduler on an empty settings table", () => {
+  resetAppSettings();
+  const settings = getAppSettings();
+  assert.deepEqual(settings.scheduler, DEFAULT_SETTINGS.scheduler);
+});
+
+test("49. updateAppSettings persists a scheduler patch and getAppSettings reads it back exactly", () => {
+  resetAppSettings();
+  const result = updateAppSettings({
+    scheduler: { enabled: true, intervalMinutes: 90, windowStartHour: 8, windowEndHour: 18, timezone: "America/Denver" },
+  });
+  assert.equal(result.ok, true);
+
+  const reloaded = getAppSettings();
+  assert.deepEqual(reloaded.scheduler, {
+    enabled: true,
+    intervalMinutes: 90,
+    windowStartHour: 8,
+    windowEndHour: 18,
+    timezone: "America/Denver",
+  });
+  resetAppSettings();
+});
+
+test("50. updateAppSettings rejects an invalid scheduler patch and leaves stored settings untouched", () => {
+  resetAppSettings();
+  updateAppSettings({ scheduler: { enabled: true, intervalMinutes: 90 } });
+
+  const badPatch = updateAppSettings({ scheduler: { intervalMinutes: 5 } }); // below the 30-minute floor
+  assert.equal(badPatch.ok, false);
+
+  const stillIntact = getAppSettings();
+  assert.equal(stillIntact.scheduler.intervalMinutes, 90, "a rejected patch must not partially apply");
+  resetAppSettings();
+});
+
+test("51. updateAppSettings rejects a scheduler patch whose MERGED window would be invalid (partial patch, cross-field check against current settings)", () => {
+  resetAppSettings();
+  updateAppSettings({ scheduler: { windowStartHour: 9, windowEndHour: 17 } });
+
+  // Patching only windowStartHour to 20 makes the MERGED window (20, 17) invalid, even though this
+  // patch alone never mentions windowEndHour.
+  const badPatch = updateAppSettings({ scheduler: { windowStartHour: 20 } });
+  assert.equal(badPatch.ok, false);
+
+  const stillIntact = getAppSettings();
+  assert.equal(stillIntact.scheduler.windowStartHour, 9, "a rejected merged-cross-field patch must not partially apply");
+  resetAppSettings();
+});
+
+test("52. resetAppSettings clears a persisted scheduler group back to defaults", () => {
+  updateAppSettings({ scheduler: { enabled: true, intervalMinutes: 45 } });
+  assert.equal(getAppSettings().scheduler.enabled, true);
+
+  resetAppSettings();
+  assert.deepEqual(getAppSettings().scheduler, DEFAULT_SETTINGS.scheduler);
+});
+
+test("53. a scheduler PATCH does not disturb previously-set lifecycle/scanner/candidate settings (independent groups)", () => {
+  resetAppSettings();
+  updateAppSettings({ lifecycle: { freshDays: 5, archiveAfterDays: 9, deleteAfterDays: 15 } });
+  updateAppSettings({ scheduler: { enabled: true } });
+
+  const settings = getAppSettings();
+  assert.equal(settings.lifecycle.freshDays, 5, "an unrelated scheduler patch must not reset lifecycle settings");
+  assert.equal(settings.scheduler.enabled, true);
+  resetAppSettings();
+});

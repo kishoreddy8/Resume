@@ -30,6 +30,76 @@ test("DEFAULT_SETTINGS reproduces today's previously-hardcoded lifecycle/scanner
   assert.equal(DEFAULT_SETTINGS.scanner.concurrency, 6);
 });
 
+test("41. DEFAULT_SETTINGS.scheduler is disabled with a full-day window in UTC", () => {
+  assert.equal(DEFAULT_SETTINGS.scheduler.enabled, false);
+  assert.equal(DEFAULT_SETTINGS.scheduler.intervalMinutes, 60);
+  assert.equal(DEFAULT_SETTINGS.scheduler.windowStartHour, 0);
+  assert.equal(DEFAULT_SETTINGS.scheduler.windowEndHour, 24);
+  assert.equal(DEFAULT_SETTINGS.scheduler.timezone, "UTC");
+});
+
+test("42. validateAppSettings rejects an intervalMinutes below the 30-minute floor", () => {
+  const candidate: AppSettings = {
+    ...DEFAULT_SETTINGS,
+    scheduler: { ...DEFAULT_SETTINGS.scheduler, intervalMinutes: 5 },
+  };
+  const errors = validateAppSettings(candidate);
+  assert.ok(errors.some((e) => e.path === "scheduler.intervalMinutes"));
+});
+
+test("43. validateAppSettings accepts intervalMinutes exactly at the 30-minute floor", () => {
+  const candidate: AppSettings = {
+    ...DEFAULT_SETTINGS,
+    scheduler: { ...DEFAULT_SETTINGS.scheduler, intervalMinutes: 30 },
+  };
+  assert.deepEqual(validateAppSettings(candidate), []);
+});
+
+test("44. validateAppSettings rejects windowStartHour >= windowEndHour (overnight windows not supported)", () => {
+  const equalHours: AppSettings = {
+    ...DEFAULT_SETTINGS,
+    scheduler: { ...DEFAULT_SETTINGS.scheduler, windowStartHour: 9, windowEndHour: 9 },
+  };
+  assert.ok(validateAppSettings(equalHours).some((e) => e.path === "scheduler.windowEndHour"));
+
+  const wrapping: AppSettings = {
+    ...DEFAULT_SETTINGS,
+    scheduler: { ...DEFAULT_SETTINGS.scheduler, windowStartHour: 22, windowEndHour: 6 },
+  };
+  assert.ok(validateAppSettings(wrapping).some((e) => e.path === "scheduler.windowEndHour"));
+});
+
+test("45. validateAppSettings rejects an invalid IANA timezone string", () => {
+  const candidate: AppSettings = {
+    ...DEFAULT_SETTINGS,
+    scheduler: { ...DEFAULT_SETTINGS.scheduler, timezone: "Not/A_Real_Zone" },
+  };
+  const errors = validateAppSettings(candidate);
+  assert.ok(errors.some((e) => e.path === "scheduler.timezone"));
+});
+
+test("46. validateAppSettings accepts a real non-UTC IANA timezone", () => {
+  const candidate: AppSettings = {
+    ...DEFAULT_SETTINGS,
+    scheduler: { ...DEFAULT_SETTINGS.scheduler, timezone: "America/Los_Angeles" },
+  };
+  assert.deepEqual(validateAppSettings(candidate), []);
+});
+
+test("47. validateAppSettings rejects windowStartHour/windowEndHour outside 0-24 bounds", () => {
+  const negative: AppSettings = {
+    ...DEFAULT_SETTINGS,
+    scheduler: { ...DEFAULT_SETTINGS.scheduler, windowStartHour: -1 },
+  };
+  assert.ok(validateAppSettings(negative).some((e) => e.path === "scheduler.windowStartHour"));
+
+  const tooHigh: AppSettings = {
+    ...DEFAULT_SETTINGS,
+    scheduler: { ...DEFAULT_SETTINGS.scheduler, windowEndHour: 25 },
+  };
+  assert.ok(validateAppSettings(tooHigh).some((e) => e.path === "scheduler.windowEndHour"));
+});
+
 test("validateAppSettings accepts the defaults with no errors", () => {
   assert.deepEqual(validateAppSettings(DEFAULT_SETTINGS), []);
 });

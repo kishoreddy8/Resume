@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * Settings / Configuration (see src/db/queries/settings.ts for the persistence layer).
  *
- * Three groups, each mirroring a previously hardcoded value elsewhere in the app:
+ * Groups, each mirroring a previously hardcoded value elsewhere in the app:
  *   - lifecycle:   src/lib/jobLifecycle.ts's FRESH_MAX_DAYS/ACTIVE_MAX_DAYS/ARCHIVE_MAX_DAYS.
  *   - suppression: new — how long a SYSTEM-GENERATED (age-based sweep) suppression fingerprint
  *                  keeps a job from reappearing on a later scan. Explicit "Not Interested"
@@ -12,6 +12,14 @@ import { z } from "zod";
  *                  strictly separate.
  *   - scanner:     src/lib/scan/retry.ts's DEFAULT_MAX_ATTEMPTS/DEFAULT_BASE_DELAY_MS/
  *                  DEFAULT_MAX_DELAY_MS/DEFAULT_TIMEOUT_MS and src/lib/scan.ts's ATS_CONCURRENCY.
+ *   - scheduler:   Phase 4 Stage 1 — user-configurable automatic-scan settings only (enabled,
+ *                  interval, allowed time-of-day window, timezone). Deliberately does NOT include
+ *                  runtime/lock state (lock_acquired_at, last_started_at, last_error, etc.) — those
+ *                  are program-only and live in src/lib/scheduler/state.ts under their own raw
+ *                  settings keys, readable via GET /api/scheduler but never PATCH-writable through
+ *                  this schema. Mixing user-editable config with program-owned runtime state in one
+ *                  PATCH-validated surface would let a client overwrite the lock/last-run bookkeeping
+ *                  by accident — kept strictly separate on purpose.
  *
  * DEFAULT_SETTINGS' lifecycle/scanner values are exactly those prior hardcoded constants, so an
  * empty settings table (nothing saved yet) reproduces today's behavior exactly — see
@@ -28,6 +36,20 @@ export const SCANNER_BOUNDS = {
 
 export const SUPPRESSION_BOUNDS = {
   expiredJobSuppressionDays: { min: 1, max: 3650 },
+} as const;
+
+// Per explicit instruction: given prior production scan cost, sub-minute scheduling is not
+// permitted — 30 minutes is the enforced floor. 1440 (24h) is a generous ceiling; nothing about the
+// lock/window design requires a smaller one.
+//
+// windowHour's max is 24, not 23: window.ts's isWithinWindow treats windowEndHour as EXCLUSIVE
+// (hour < windowEndHour), so a true full-day window is {start: 0, end: 24} — capping end at 23
+// would make hour 23 (11pm-midnight) permanently unreachable, silently breaking the "full day by
+// default" intent. windowStartHour never needs to be 24 itself (a start of 24 is always rejected by
+// the windowStartHour < windowEndHour superRefine check below), so sharing one bound is harmless.
+export const SCHEDULER_BOUNDS = {
+  intervalMinutes: { min: 30, max: 1440 },
+  windowHour: { min: 0, max: 24 },
 } as const;
 
 const lifecycleSchema = z.object({
@@ -69,6 +91,39 @@ const scannerSchema = z.object({
   concurrency: z.number().int().min(SCANNER_BOUNDS.concurrency.min).max(SCANNER_BOUNDS.concurrency.max),
 });
 
+/** Constructing Intl.DateTimeFormat with an invalid IANA identifier throws — the standard,
+ *  dependency-free way to validate a timezone string without a hardcoded allowlist. */
+function isValidIanaTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Scheduler (Phase 4 Stage 1). User-configurable automatic-scan controls only — see the module doc
+ * comment above for why runtime/lock state is deliberately excluded from this schema.
+ *   - windowStartHour/windowEndHour: local hour-of-day (in `timezone`) during which a scheduled tick
+ *     is allowed to start a scan. Overnight windows (start >= end) are not supported in v1 — see the
+ *     superRefine check below; a window that wraps midnight is a real feature but adds enough
+ *     ambiguity (which calendar day does "23 to 2" belong to?) that it's deliberately deferred.
+ */
+const schedulerSchema = z.object({
+  enabled: z.boolean(),
+  intervalMinutes: z
+    .number()
+    .int()
+    .min(SCHEDULER_BOUNDS.intervalMinutes.min)
+    .max(SCHEDULER_BOUNDS.intervalMinutes.max),
+  windowStartHour: z.number().int().min(SCHEDULER_BOUNDS.windowHour.min).max(SCHEDULER_BOUNDS.windowHour.max),
+  windowEndHour: z.number().int().min(SCHEDULER_BOUNDS.windowHour.min).max(SCHEDULER_BOUNDS.windowHour.max),
+  timezone: z.string().min(1).refine(isValidIanaTimezone, {
+    message: "timezone must be a valid IANA timezone identifier",
+  }),
+});
+
 /**
  * Full-object schema — cross-field ordering rules live here (superRefine) rather than on the
  * individual field schemas, since they depend on more than one field at once. Always validated
@@ -81,6 +136,7 @@ export const appSettingsSchema = z
     suppression: suppressionSchema,
     scanner: scannerSchema,
     candidate: candidateSchema,
+    scheduler: schedulerSchema,
   })
   .strict()
   .superRefine((s, ctx) => {
@@ -105,6 +161,13 @@ export const appSettingsSchema = z
         message: "max_delay_ms must be greater than or equal to base_delay_ms",
       });
     }
+    if (!(s.scheduler.windowStartHour < s.scheduler.windowEndHour)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["scheduler", "windowEndHour"],
+        message: "window_end_hour must be greater than window_start_hour (overnight windows are not supported)",
+      });
+    }
   });
 
 /** Shape/bounds-only validation for a raw PATCH body, before it's merged onto current settings.
@@ -116,6 +179,7 @@ export const appSettingsPatchSchema = z
     suppression: suppressionSchema.partial().strict().optional(),
     scanner: scannerSchema.partial().strict().optional(),
     candidate: candidateSchema.partial().strict().optional(),
+    scheduler: schedulerSchema.partial().strict().optional(),
   })
   .strict();
 
@@ -147,6 +211,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
     usCitizen: false,
     workAuthorizedUS: false,
     clearanceLevel: "None",
+  },
+  // Disabled by default: starting the application must never begin automatic production scans on
+  // its own — the user must explicitly opt in via PATCH /api/settings. windowStartHour/windowEndHour
+  // default to a full-day window (0-23) and timezone defaults to UTC (no assumption about the user's
+  // location) so that once enabled, only intervalMinutes actually constrains scheduling out of the box.
+  scheduler: {
+    enabled: false,
+    intervalMinutes: 60,
+    windowStartHour: 0,
+    windowEndHour: 24,
+    timezone: "UTC",
   },
 };
 
