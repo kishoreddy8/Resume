@@ -45,15 +45,46 @@ const US_STATE_CODE_RE = new RegExp(`(?:,|\\(|\\-|/)\\s*(?:${US_STATE_CODES.join
 // applying the U.S. state-code rule.
 const CANADIAN_PROVINCE_COUNTRY_RE = /(?:,|\()\s*(?:AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\s*,\s*CA(?:\s|\)|$)/i;
 
+// Indian state/territory abbreviations (ISO 3166-2:IN) followed by the ISO country code IN.
+// Matches shapes like "Bangalore, KA, IN", "Chennai, TN, IN", "Hyderabad, TS, IN".
+// Evaluated before U.S. state codes so country-level evidence outranks state-abbreviation matching.
+const INDIAN_STATE_COUNTRY_RE = /(?:,|\()\s*(?:AN|AP|AR|AS|BR|CG|CH|DD|DL|GA|GJ|HP|HR|JH|JK|KA|KL|LA|LD|MH|ML|MN|MP|MZ|NL|OD|PB|PY|RJ|SK|TN|TR|TS|UK|UP|WB)\s*,\s*IN(?:\s|,|\)|\/|$)/i;
+
+// Known non-U.S. cities that appear in feeds with the ambiguous ", IN" suffix (India).
+// Guards against "Bangalore, IN", "Chennai, IN" being classified as Indiana.
+const INDIAN_CITY_NAMES = [
+  "bangalore", "bengaluru", "chennai", "hyderabad", "mumbai", "pune", "delhi",
+  "new delhi", "noida", "gurugram", "gurgaon", "kolkata", "indore", "jaipur",
+  "ahmedabad", "kochi", "coimbatore", "chandigarh", "raipur", "lucknow",
+  "thiruvananthapuram", "bhubaneswar", "nagpur", "visakhapatnam", "mysore",
+  "mangalore", "mysuru", "mangaluru",
+] as const;
+const INDIAN_CITY_RE = new RegExp(
+  `(?:^|[^a-z])(?:${INDIAN_CITY_NAMES.join("|")})\\s*(?:,|\\/)\\s*(?:IN|india)(?:\\s|,|\\)|\\/$|$)`, "i"
+);
+
+// Known non-U.S. cities with slash-separated locations (e.g. "Indore/Gurugram, IN").
+const INDIAN_SLASH_CITY_RE = new RegExp(
+  `(?:${INDIAN_CITY_NAMES.join("|")})\\s*(?:\\/[^,]+)?\\s*,\\s*IN(?:\\s|,|\\)|$)`, "i"
+);
+
 /** Classifies only explicit evidence. Bare "Remote", blank strings, regions, and ambiguous city
  * names remain UNKNOWN. A multi-location value is US when any location explicitly includes the US. */
 export function classifyJobLocation(location: string | null | undefined): JobLocationScope {
   const value = location?.trim();
   if (!value) return "UNKNOWN";
 
+  // 1. Explicit U.S. country evidence — highest priority
   if (/\b(?:united states(?: of america)?|u\.?s\.?(?:a\.?)?|usa)\b/i.test(value)) return "US";
   if (/\b(?:remote|anywhere)\s*[-–—,(]?\s*(?:us|u\.s\.|usa|united states)\b/i.test(value)) return "US";
+
+  // 2. Non-U.S. country-level evidence — outranks state abbreviation matching
   if (CANADIAN_PROVINCE_COUNTRY_RE.test(value)) return "NON_US";
+  if (INDIAN_STATE_COUNTRY_RE.test(value)) return "NON_US";
+  if (INDIAN_CITY_RE.test(value)) return "NON_US";
+  if (INDIAN_SLASH_CITY_RE.test(value)) return "NON_US";
+
+  // 3. U.S. state codes/names — only after country-level evidence is exhausted
   if (US_STATE_CODE_RE.test(value) || US_STATE_NAME_RE.test(value)) return "US";
 
   if (/(?:^|[^a-z])u\.?k\.?(?:$|[^a-z])/i.test(value)) return "NON_US";

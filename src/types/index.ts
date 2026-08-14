@@ -1,4 +1,4 @@
-export type SourceType = "greenhouse" | "ashby" | "lever" | "workday" | "smartrecruiters" | "adp_wfn" | "adp_rm" | "eightfold" | "cornerstone" | "avature" | "paylocity" | "icims" | "ukg_pro" | "bamboohr" | "oracle_recruiting_cloud" | "workable" | "rippling" | "paycom" | "jazzhr" | "jobvite" | "breezy" | "teamtailor" | "applicantpro" | "pinpoint" | "clearcompany" | "personio" | "applicantstack" | "comeet" | "cats" | "gohire" | "newton" | "silkroad" | "jobdiva" | "taleo" | "career_link";
+export type SourceType = "greenhouse" | "ashby" | "lever" | "workday" | "smartrecruiters" | "adp_wfn" | "adp_rm" | "eightfold" | "cornerstone" | "avature" | "paylocity" | "icims" | "ukg_pro" | "bamboohr" | "oracle_recruiting_cloud" | "workable" | "rippling" | "paycom" | "jazzhr" | "jobvite" | "breezy" | "teamtailor" | "applicantpro" | "pinpoint" | "clearcompany" | "personio" | "applicantstack" | "comeet" | "cats" | "gohire" | "newton" | "silkroad" | "jobdiva" | "taleo" | "phenom" | "career_link";
 
 /**
  * Company-level H1B sponsorship confidence, derived purely from historical DOL H1B/LCA filing data

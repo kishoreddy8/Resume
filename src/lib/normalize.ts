@@ -27,6 +27,7 @@ import { fetchNewtonJobs } from "@/lib/ats/newton";
 import { fetchSilkRoadJobs } from "@/lib/ats/silkroad";
 import { fetchJobDivaJobs } from "@/lib/ats/jobdiva";
 import { fetchTaleoJobs } from "@/lib/ats/taleo";
+import { fetchPhenomJobs } from "@/lib/ats/phenom";
 import { fetchAdpRmJobs } from "@/lib/ats/adpRecruitingManagement";
 import { fetchEightfoldJobs } from "@/lib/ats/eightfold";
 import { fetchCornerstoneJobs } from "@/lib/ats/cornerstone";
@@ -147,6 +148,9 @@ export async function fetchJobsForCompany(
     case "taleo":
       if (!company.ats_board_token) throw new Error("Missing Taleo host/career-section token");
       return fetchTaleoJobs(company.ats_board_token, options);
+    case "phenom":
+      if (!company.ats_board_token) throw new Error("Missing Phenom host/locale token");
+      return fetchPhenomJobs(company.ats_board_token, options);
     case "career_link": {
       if (!company.career_page_url) throw new Error("Missing career page URL");
       const { scrapeCareerPage } = await import("@/lib/ats/genericPlaywright");

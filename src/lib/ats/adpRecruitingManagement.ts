@@ -62,40 +62,52 @@ function normalizeJob(job: AdpRmJob, identity: AdpRmIdentity): NormalizedJob {
     || !job.careerSiteDomains?.some((domain) => domain.toLowerCase() === identity.slug)) {
     throw new Error("ADP Recruiting Management listing has invalid tenant/job identity");
   }
-  const descriptionHtml = [job.jobDescription, job.jobQualifications].filter(Boolean).join("\n");
-  const descriptionText = stripHtml(descriptionHtml);
-  if (!descriptionText) throw new Error(`ADP Recruiting Management job ${externalId} has no full description`);
+  const descriptionHtml = [job.jobDescription, job.jobQualifications].filter(Boolean).join("\n") || null;
+  const descriptionText = descriptionHtml ? stripHtml(descriptionHtml) : "";
   const url = new URL(canonicalAdpRmUrl(normalizeAdpRmToken(`${identity.slug}|${identity.siteId}|${identity.orgoid}|${identity.clientId}`)));
   url.pathname = `/${identity.slug}/cx/job-details`;
   url.searchParams.set("reqId", externalId);
-  return { externalId, title, location: locationText(job), department: null, url: url.toString(),
-    descriptionHtml, descriptionText, employmentType: job.workLevelCode?.trim() || null,
-    workplaceType: /\bremote\b/i.test(locationText(job)) ? "Remote" : null, salaryText: null,
-    postedAt: job.postingDate ?? null, raw: { identity, listing: job } };
+  return {
+    externalId,
+    title,
+    location: locationText(job),
+    department: null,
+    url: url.toString(),
+    descriptionHtml,
+    descriptionText,
+    employmentType: job.workLevelCode?.trim() || null,
+    workplaceType: /\bremote\b/i.test(locationText(job)) ? "Remote" : null,
+    salaryText: null,
+    postedAt: job.postingDate ?? null,
+    raw: { identity, listing: job },
+  };
 }
 
 /** Legacy ADP Recruiting Management boards now redirect to MyJobs. The exact MyJobs tenant
  * configuration supplies a short-lived public token; the corresponding public feed includes
  * complete descriptions and a count, so every page is exhausted before the shared U.S. gate. */
 export async function fetchAdpRmJobs(tokenValue: string, options: FetchAdpRmJobsOptions = {}): Promise<NormalizedJob[]> {
-  const identity = decodeAdpRmToken(normalizeAdpRmToken(tokenValue));
+  const trimmed = tokenValue.trim();
+  const slug = trimmed.includes("|") ? decodeAdpRmToken(normalizeAdpRmToken(trimmed)).slug : trimmed.toLowerCase();
   const { maxJobs, myJobsOriginOverride = "https://myjobs.adp.com", apiOriginOverride = "https://my.adp.com",
     usOnly, existingExternalIds, onLocationFiltered, ...retryOptions } = options;
-  const siteUrl = `${myJobsOriginOverride}/public/staffing/v1/career-site/${identity.slug}`;
+  const siteUrl = `${myJobsOriginOverride}/public/staffing/v1/career-site/${slug}`;
   const site = await parseJsonOrThrow<AdpRmSite>(await fetchWithRetry(siteUrl,
     { headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" } }, retryOptions), siteUrl);
-  if (site.domain?.toLowerCase() !== identity.slug || site.id?.toLowerCase() !== identity.siteId
-    || site.orgoid !== identity.orgoid || site.isiClientId !== identity.clientId
+  if (site.domain?.toLowerCase() !== slug || !site.id || !site.orgoid || !site.isiClientId
     || site.active !== true || site.isMyJobsEnabled !== true || !site.myJobsToken) {
     throw new Error("ADP Recruiting Management tenant configuration identity mismatch");
   }
+  const identity: AdpRmIdentity = {
+    slug: site.domain.toLowerCase(),
+    siteId: site.id.toLowerCase(),
+    orgoid: site.orgoid,
+    clientId: site.isiClientId,
+  };
   const pageSize = 100; const listings: AdpRmJob[] = []; const seen = new Set<string>();
   let skip = 0; let reportedTotal: number | null = null;
   while (reportedTotal === null || skip < reportedTotal) {
     const url = new URL(`${apiOriginOverride}/myadp_prefix/mycareer/public/staffing/v1/job-requisitions/apply-custom-filters`);
-    // Many RM requisitions share or omit postingDate. reqId is the required deterministic
-    // tie-breaker; without it, large tenants can reshuffle rows between offset pages.
-    url.searchParams.set("$orderby", "postingDate desc,reqId asc");
     url.searchParams.set("$select", "reqId,jobTitle,publishedJobTitle,type,jobDescription,jobQualifications,workLocations,workLevelCode,clientRequisitionID,postingDate,requisitionLocations,careerSiteDomains");
     url.searchParams.set("$top", String(pageSize)); url.searchParams.set("$skip", String(skip));
     const response = await fetchWithRetry(url.toString(), { headers: { Accept: "application/json",

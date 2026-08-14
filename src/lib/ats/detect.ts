@@ -28,6 +28,7 @@ import { canonicalEightfoldUrl, normalizeEightfoldToken } from "@/lib/ats/eightf
 import { canonicalCornerstoneUrl, normalizeCornerstoneToken } from "@/lib/ats/cornerstone";
 import { canonicalAvatureUrl, normalizeAvatureToken } from "@/lib/ats/avature";
 import { canonicalClearCompanyUrl, normalizeClearCompanyTenant } from "@/lib/ats/clearcompany";
+import { canonicalSmartRecruitersUrl, normalizeSmartRecruitersToken } from "@/lib/ats/smartrecruiters";
 import type { SourceType } from "@/types";
 
 export interface AtsDetection {
@@ -77,18 +78,24 @@ function detectWorkday(url: string): AtsDetection | null {
 function detectSmartRecruiters(value: string): AtsDetection | null {
   let url: URL;
   try {
-    url = new URL(value.replace(/&amp;/gi, "&"));
+    url = new URL(decodeSavedUrl(value));
   } catch {
     return null;
   }
   if (!/^(?:jobs|careers)\.smartrecruiters\.com$/i.test(url.hostname)) return null;
-  const token = url.pathname.split("/").filter(Boolean)[0];
-  // Reject source-code templates and other page assets accidentally captured as URLs.
-  if (!token || !/^[a-z0-9_-]+$/i.test(token)) return null;
+  const segments = url.pathname.split("/").filter(Boolean);
+  const rawToken = segments[0];
+  if (!rawToken) return null;
+  let token: string;
+  try {
+    token = normalizeSmartRecruitersToken(rawToken);
+  } catch {
+    return null;
+  }
   return {
     sourceType: "smartrecruiters",
     atsBoardToken: token,
-    canonicalSourceUrl: `https://careers.smartrecruiters.com/${token}`,
+    canonicalSourceUrl: canonicalSmartRecruitersUrl(token),
   };
 }
 
@@ -108,7 +115,7 @@ function detectAdpWorkforceNow(value: string): AtsDetection | null {
     return null;
   }
   if (url.hostname.toLowerCase() !== "workforcenow.adp.com") return null;
-  if (!/\/mascsr\/default\/mdf\/recruitment\/recruitment\.html$/i.test(url.pathname)) return null;
+  if (!/\/mascsr\/default\/mdf\/recruitment\/(?:recruitment|intermediateRedirect)\.html$/i.test(url.pathname)) return null;
   const cid = url.searchParams.get("cid")?.trim();
   const ccId = url.searchParams.get("ccId")?.trim() || "19000101_000001";
   const lang = url.searchParams.get("lang")?.trim() || "en_US";
@@ -129,9 +136,10 @@ function detectPaylocity(value: string): AtsDetection | null {
     return null;
   }
   if (url.hostname.toLowerCase() !== "recruiting.paylocity.com") return null;
-  const match = url.pathname.match(/^\/recruiting\/jobs\/All\/([a-f0-9-]{36})\/([a-z0-9_-]+)\/?$/i);
+  const match = url.pathname.match(/^\/recruiting\/jobs\/All\/([a-f0-9-]{36})(?:\/([a-z0-9_-]+))?\/?$/i);
   if (!match) return null;
-  const token = encodePaylocityToken({ companyId: match[1], slug: match[2] });
+  const slug = match[2] || "_";
+  const token = encodePaylocityToken({ companyId: match[1], slug });
   return { sourceType: "paylocity", atsBoardToken: token, canonicalSourceUrl: canonicalPaylocityUrl(token) };
 }
 
@@ -143,7 +151,7 @@ function detectIcims(value: string): AtsDetection | null {
     return null;
   }
   if (!/^(?!www\.)[a-z0-9.-]+\.icims\.com$/i.test(url.hostname)) return null;
-  if (!/^\/jobs?(?:\/|$)/i.test(url.pathname)) return null;
+  if (url.pathname !== "/" && url.pathname !== "" && !/^\/jobs?(?:\/|$)/i.test(url.pathname)) return null;
   const token = normalizeIcimsHost(url.hostname);
   return { sourceType: "icims", atsBoardToken: token, canonicalSourceUrl: canonicalIcimsUrl(token) };
 }
@@ -186,8 +194,8 @@ function detectOracleRecruitingCloud(value: string): AtsDetection | null {
   } catch {
     return null;
   }
-  if (!/^[a-z0-9-]+\.fa(?:\.[a-z0-9-]+)?\.oraclecloud\.com$/i.test(url.hostname)) return null;
-  const match = url.pathname.match(/^\/hcmUI\/CandidateExperience\/[a-z]{2}(?:-[A-Z]{2})?\/sites\/([a-z0-9_-]+)(?:\/|$)/i);
+  if (!/^[a-z0-9.-]+\.oraclecloud\.com$/i.test(url.hostname)) return null;
+  const match = url.pathname.match(/^\/hcmUI\/CandidateExperience\/[a-z]{2}\/sites\/([a-z0-9_-]+)/i);
   if (!match) return null;
   const token = encodeOracleRecruitingCloudToken({ host: url.hostname, site: match[1] });
   return {
@@ -204,11 +212,30 @@ function detectWorkable(value: string): AtsDetection | null {
   } catch {
     return null;
   }
-  if (url.hostname.toLowerCase() !== "apply.workable.com") return null;
-  const slug = url.pathname.split("/").filter(Boolean)[0];
-  if (!slug || /^(?:j|api)$/i.test(slug)) return null;
-  const token = normalizeWorkableSlug(slug);
-  return { sourceType: "workable", atsBoardToken: token, canonicalSourceUrl: canonicalWorkableUrl(token) };
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "apply.workable.com" || hostname === "jobs.workable.com") {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const slug = parts[0] === "company" ? parts[1] : parts[0];
+    if (!slug || /^(?:j|api)$/i.test(slug)) return null;
+    try {
+      const token = normalizeWorkableSlug(slug);
+      return { sourceType: "workable", atsBoardToken: token, canonicalSourceUrl: canonicalWorkableUrl(token) };
+    } catch {
+      return null;
+    }
+  }
+  if (hostname.endsWith(".workable.com")) {
+    const sub = hostname.split(".")[0];
+    if (sub && !/^(?:apply|jobs|www|api)$/i.test(sub)) {
+      try {
+        const token = normalizeWorkableSlug(sub);
+        return { sourceType: "workable", atsBoardToken: token, canonicalSourceUrl: canonicalWorkableUrl(token) };
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
 }
 
 function detectRippling(value: string): AtsDetection | null {
@@ -268,9 +295,7 @@ function detectJobvite(value: string): AtsDetection | null {
   const segments = url.pathname.split("/").filter(Boolean);
   if (segments[0]?.toLowerCase() === "careers") segments.shift();
   const tenant = segments[0];
-  if (!tenant || segments[1]?.toLowerCase() === "__assets__") return null;
-  if (segments[1] && !/^(?:jobs?|search)$/i.test(segments[1]) &&
-      !(segments[1].toLowerCase() === "job" && /^[a-z0-9_-]+$/i.test(segments[2] ?? ""))) return null;
+  if (!tenant || /^(?:__assets__|images|scripts|styles|fonts|api)$/i.test(tenant)) return null;
   let token: string;
   try {
     token = normalizeJobviteTenant(tenant);
@@ -443,15 +468,24 @@ function detectAdpRecruitingManagement(value: string): AtsDetection | null {
   let url: URL;
   try { url = new URL(decodeSavedUrl(value)); } catch { return null; }
   if (url.hostname.toLowerCase() !== "myjobs.adp.com") return null;
-  const slug = url.pathname.split("/").filter(Boolean)[0];
+  const slug = url.pathname.split("/").filter(Boolean)[0]?.toLowerCase();
+  if (!slug || !/^[a-z0-9-]+$/.test(slug) || ["public", "api", "static", "cx", "assets"].includes(slug)) return null;
   const siteId = url.searchParams.get("siteId");
   const orgoid = url.searchParams.get("orgoid");
   const clientId = url.searchParams.get("clientId");
-  if (!slug || !siteId || !orgoid || !clientId) return null;
-  try {
-    const token = normalizeAdpRmToken(`${slug}|${siteId}|${orgoid}|${clientId}`);
-    return { sourceType: "adp_rm", atsBoardToken: token, canonicalSourceUrl: canonicalAdpRmUrl(token) };
-  } catch { return null; }
+  if (siteId && orgoid && clientId) {
+    try {
+      const token = normalizeAdpRmToken(`${slug}|${siteId}|${orgoid}|${clientId}`);
+      return { sourceType: "adp_rm", atsBoardToken: token, canonicalSourceUrl: canonicalAdpRmUrl(token) };
+    } catch {
+      // Fall back to slug detection
+    }
+  }
+  return {
+    sourceType: "adp_rm",
+    atsBoardToken: slug,
+    canonicalSourceUrl: `https://myjobs.adp.com/${slug}`,
+  };
 }
 
 function detectEightfold(value: string): AtsDetection | null {

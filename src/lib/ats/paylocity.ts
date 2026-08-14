@@ -145,6 +145,58 @@ function extractJobPosting(html: string): PaylocityJsonLd | null {
   return null;
 }
 
+export interface PaylocityDetailParsed {
+  title?: string;
+  descriptionHtml: string;
+  datePosted?: string;
+  source: "JSON-LD" | "HTML";
+}
+
+/**
+ * Extracts structured job description from Paylocity detail page HTML.
+ * Paylocity renders detail descriptions via:
+ * 1. Schema.org JobPosting JSON-LD `<script type="application/ld+json">`, OR
+ * 2. Dedicated structured HTML section headers:
+ *    `<div class="job-listing-header">Description</div><div data-bind="...">...</div>`
+ *    and optional Requirements/Summary/Qualifications sections.
+ * Generic navigation, headers, and footers are never extracted.
+ */
+export function extractPaylocityDetail(html: string): PaylocityDetailParsed | null {
+  // 1. Primary: JobPosting JSON-LD
+  const jsonLd = extractJobPosting(html);
+  if (jsonLd?.description && jsonLd.description.trim().length > 20) {
+    return {
+      title: typeof jsonLd.title === "string" ? jsonLd.title.trim() : undefined,
+      descriptionHtml: jsonLd.description.trim(),
+      datePosted: typeof jsonLd.datePosted === "string" ? jsonLd.datePosted.trim() : undefined,
+      source: "JSON-LD",
+    };
+  }
+
+  // 2. Structured HTML section headers on Paylocity detail pages
+  const sections: string[] = [];
+  const headerRe = /<div[^>]*class=["'][^"']*job-listing-header[^"']*["'][^>]*>\s*(Description|Requirements|Summary|Qualifications)\s*<\/div>\s*<div[^>]*>([\s\S]*?)<\/div>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = headerRe.exec(html)) !== null) {
+    const content = match[2].trim();
+    if (content.length > 0) {
+      sections.push(content);
+    }
+  }
+
+  if (sections.length > 0) {
+    const combined = sections.join("\n\n");
+    if (combined.length > 20) {
+      return {
+        descriptionHtml: combined,
+        source: "HTML",
+      };
+    }
+  }
+
+  return null;
+}
+
 function locationText(job: PaylocityJob): string | null {
   const location = job.JobLocation;
   const country = location?.Country?.toUpperCase();
@@ -174,7 +226,7 @@ function listingJob(job: PaylocityJob): NormalizedJob {
 
 /** Paylocity publishes the complete current listing in window.pageData on the public board. The
  * adapter filters that listing before requesting details, then reads the full JobPosting JSON-LD
- * from each selected detail page. */
+ * or structured HTML container from each selected detail page. */
 export async function fetchPaylocityJobs(
   token: string,
   options: FetchPaylocityJobsOptions = {}
@@ -199,6 +251,15 @@ export async function fetchPaylocityJobs(
   const pageData = extractAssignedJson<PaylocityPageData>(html, "window.pageData");
   if (!Array.isArray(pageData.Jobs)) throw new Error("Paylocity pageData has no Jobs array");
 
+  const seenIds = new Set<string>();
+  for (const job of pageData.Jobs) {
+    const idStr = String(job.JobId);
+    if (seenIds.has(idStr)) {
+      throw new Error(`Paylocity board returned duplicate job ID ${idStr}`);
+    }
+    seenIds.add(idStr);
+  }
+
   const listings = pageData.Jobs.map(listingJob);
   const selected = filterJobsToUs(listings, { usOnly, existingExternalIds, onLocationFiltered }, maxJobs);
   const limit = pLimit(Math.max(1, Math.min(Math.trunc(detailConcurrency), 8)));
@@ -209,13 +270,13 @@ export async function fetchPaylocityJobs(
       const detailResponse = await fetchPaylocityPage(detailUrl, retryOptions, isPublicHost);
       if (!detailResponse.ok) throw new Error(`Paylocity detail failed with status ${detailResponse.status}`);
       const detailHtml = await detailResponse.text();
-      const detail = extractJobPosting(detailHtml);
-      if (!detail?.description?.trim()) throw new Error(`Paylocity job ${listing.externalId} has no full JobPosting description`);
-      const descriptionHtml = detail.description;
+      const detail = extractPaylocityDetail(detailHtml);
+      if (!detail?.descriptionHtml?.trim()) throw new Error(`Paylocity job ${listing.externalId} has no full JobPosting description`);
+      const descriptionHtml = detail.descriptionHtml;
       const descriptionText = stripHtml(descriptionHtml);
       return {
         ...listing,
-        title: detail.title?.trim() || listing.title,
+        title: detail.title || listing.title,
         url: `https://recruiting.paylocity.com/Recruiting/Jobs/Details/${listing.externalId}`,
         descriptionHtml,
         descriptionText,

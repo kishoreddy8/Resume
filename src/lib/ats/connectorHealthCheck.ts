@@ -5,7 +5,7 @@ import { categorizeThrownError, isRetryableCategory } from "@/lib/scan/errors";
 import type { Company, ErrorCategory } from "@/types";
 
 export const CONNECTOR_HEALTH_CHECKER_VERSION = "careerops.connector-health.v1";
-type SupportedProvider = "greenhouse" | "lever" | "ashby" | "workday" | "smartrecruiters" | "adp_wfn" | "adp_rm" | "eightfold" | "cornerstone" | "avature" | "paylocity" | "icims" | "ukg_pro" | "bamboohr" | "oracle_recruiting_cloud" | "workable" | "rippling" | "paycom" | "jazzhr" | "jobvite" | "breezy" | "teamtailor" | "applicantpro" | "pinpoint" | "clearcompany" | "personio" | "applicantstack" | "comeet" | "cats" | "gohire" | "newton" | "silkroad" | "jobdiva" | "taleo";
+type SupportedProvider = "greenhouse" | "lever" | "ashby" | "workday" | "smartrecruiters" | "adp_wfn" | "adp_rm" | "eightfold" | "cornerstone" | "avature" | "paylocity" | "icims" | "ukg_pro" | "bamboohr" | "oracle_recruiting_cloud" | "workable" | "rippling" | "paycom" | "jazzhr" | "jobvite" | "breezy" | "teamtailor" | "applicantpro" | "pinpoint" | "clearcompany" | "personio" | "applicantstack" | "comeet" | "cats" | "gohire" | "newton" | "silkroad" | "jobdiva" | "taleo" | "phenom";
 
 export type ConnectorHealthOutcome = "HEALTHY_JOBS" | "HEALTHY_EMPTY" | "FAILED_TEMPORARY" | "FAILED_HARD";
 
@@ -79,7 +79,7 @@ export function listConnectorHealthCandidates(
        JOIN companies c ON c.id=js.legacy_company_id
        WHERE js.is_active=1 AND js.is_authoritative=1 AND js.resolution_status='VERIFIED'
          AND js.review_status='APPROVED'
-         AND js.provider IN ('greenhouse','lever','ashby','workday','smartrecruiters','adp_wfn','adp_rm','eightfold','cornerstone','avature','paylocity','icims','ukg_pro','bamboohr','oracle_recruiting_cloud','workable','rippling','paycom','jazzhr','jobvite','breezy','teamtailor','applicantpro','pinpoint','clearcompany','personio','applicantstack','comeet','cats','gohire','newton','silkroad','jobdiva','taleo')
+         AND js.provider IN ('greenhouse','lever','ashby','workday','smartrecruiters','adp_wfn','adp_rm','eightfold','cornerstone','avature','paylocity','icims','ukg_pro','bamboohr','oracle_recruiting_cloud','workable','rippling','paycom','jazzhr','jobvite','breezy','teamtailor','applicantpro','pinpoint','clearcompany','personio','applicantstack','comeet','cats','gohire','newton','silkroad','jobdiva','taleo','phenom')
          AND c.is_active=1 ${eligibility}
      )
      SELECT job_source_id, organization_id, legacy_company_id, canonical_name, provider

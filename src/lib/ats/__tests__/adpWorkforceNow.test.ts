@@ -7,6 +7,9 @@ import {
   encodeAdpWorkforceNowToken,
   fetchAdpWorkforceNowJobs,
 } from "@/lib/ats/adpWorkforceNow";
+import { detectAtsFromUrlString } from "@/lib/ats/detect";
+import { isRealJobPosting } from "@/lib/ats/jobValidation";
+import type { NormalizedJob } from "@/types";
 
 const identity = {
   cid: "4aad6ff8-f078-4009-9c60-a05e5489cec6",
@@ -22,6 +25,24 @@ test("ADP Workforce Now identity token round-trips and generates a stable board 
   assert.equal(url.searchParams.get("cid"), identity.cid);
   assert.equal(url.searchParams.get("ccId"), identity.ccId);
   assert.equal(url.searchParams.get("lang"), identity.lang);
+});
+
+test("detectAtsFromUrlString detects ADP Workforce Now across recruitment and intermediateRedirect URLs", () => {
+  const standard = detectAtsFromUrlString(
+    "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=4aad6ff8-f078-4009-9c60-a05e5489cec6&ccId=19000101_000001&type=JS&lang=en_US"
+  );
+  assert.equal(standard?.sourceType, "adp_wfn");
+  assert.equal(standard?.atsBoardToken, "4aad6ff8-f078-4009-9c60-a05e5489cec6|19000101_000001|en_US");
+
+  const intermediate = detectAtsFromUrlString(
+    "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/intermediateRedirect.html?cid=0025d30d-4243-498e-9345-1197ec6bd23d&ccId=19000101_000001&type=MP&lang=en_US"
+  );
+  assert.equal(intermediate?.sourceType, "adp_wfn");
+  assert.equal(intermediate?.atsBoardToken, "0025d30d-4243-498e-9345-1197ec6bd23d|19000101_000001|en_US");
+
+  // Rejects invalid hostname or missing cid
+  assert.equal(detectAtsFromUrlString("https://workforcenow.adp.com/other/path"), null);
+  assert.equal(detectAtsFromUrlString("https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html"), null);
 });
 
 test("ADP Workforce Now adapter exhausts $skip pagination, fetches details, and keeps explicit U.S. jobs", async () => {
@@ -75,4 +96,29 @@ test("ADP Workforce Now adapter exhausts $skip pagination, fetches details, and 
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("shared real-job validation filters ADP WFN jobs correctly", () => {
+  const realJob: NormalizedJob = {
+    externalId: "item-12345",
+    title: "Platform Engineer",
+    location: "Austin, TX, US",
+    department: "Engineering",
+    url: "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=4aad6ff8-f078-4009-9c60-a05e5489cec6&ccId=19000101_000001&type=JS&lang=en_US&jobId=item-12345",
+    descriptionHtml: "<p>Build cloud infrastructure.</p>",
+    descriptionText: "Build cloud infrastructure.",
+    employmentType: "Full Time",
+    workplaceType: null,
+    salaryText: "120000.00 To 150000.00 (USD) Annually",
+    postedAt: "2026-08-01T00:00:00Z",
+    raw: null,
+  };
+
+  assert.equal(isRealJobPosting(realJob), true);
+
+  const pseudoJob: NormalizedJob = {
+    ...realJob,
+    title: "General Application",
+  };
+  assert.equal(isRealJobPosting(pseudoJob), false);
 });

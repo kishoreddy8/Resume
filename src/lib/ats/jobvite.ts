@@ -158,9 +158,8 @@ export async function fetchJobviteJobs(
       } catch {
         detail = { identifier: listing.externalId!, "@type": "JobPosting" };
       }
-      const descriptionHtml = detail.description?.trim() || extractLegacyDescription(detailHtml, listing.externalId!);
-      if (!descriptionHtml) throw new Error(`Jobvite job ${listing.externalId} has no full description`);
-      const descriptionText = stripHtml(descriptionHtml);
+      const descriptionHtml = detail.description?.trim() || extractLegacyDescription(detailHtml, listing.externalId!) || null;
+      const descriptionText = descriptionHtml ? stripHtml(descriptionHtml) : "";
       return {
         ...listing,
         title: detail.title?.trim() || listing.title,
