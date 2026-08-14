@@ -27,15 +27,20 @@ MASTER SOURCES + JOB DESCRIPTION
   → TAILORING DECISION (scoring, selection, ordering, rewriting) (this skill's reasoning)
   → STRUCTURED RESUME CONTENT        (JSON matching engine/types.ts — the handoff point)
   → TRUTHFULNESS / LANGUAGE VALIDATION (this skill's reasoning — see "Validation gate")
+  → EXECUTION BRIDGE                 (tools/tailoring-engine/execute-run.ts — Phase 3 Stage 6)
+  → RUN AUTHORIZATION + PERSISTENCE  (src/lib/tailoringExecution.ts — Phase 3 Stage 5, reuses
+                                       Stage 3's tailoring_runs + Stage 4's artifact-path storage)
   → DOCX RENDERING                   (engine/resume-template.ts, engine/cover-letter-template.ts)
-  → LAYOUT VALIDATION                (engine/validate-docx.ts, runs automatically in generate.ts)
+  → LAYOUT VALIDATION                (engine/validate-docx.ts, runs automatically)
   → FINAL OUTPUTS
 ```
 
 The renderer never decides what claims to make — it only lays out the `ResumeContent` /
 `CoverLetterContent` JSON it's given. This skill never hand-rolls document XML or manipulates Word
-layout directly — it writes content decisions, then calls the engine. If a layout bug shows up in
-output, the fix belongs in `tools/tailoring-engine/`, not in one run's content.
+layout directly — it writes content decisions, then hands them to the execution bridge, which calls
+the engine. If a layout bug shows up in output, the fix belongs in `tools/tailoring-engine/`, not in
+one run's content. The tailoring reasoning above this line is entirely unchanged by Phase 3 Stage
+6 — only how finalized content enters rendering/persistence changed.
 
 ## Sources of truth (in precedence order)
 
@@ -213,7 +218,8 @@ reported, not gate-kept.
 
 ## Output
 
-Five files per tailoring run, under `data/generated/<company-slug>/<job-id>/`:
+Five files per tailoring run, all written into ONE run-scoped directory that the Phase 3 Stage 6
+execution bridge resolves for you — never construct this path yourself (see step 2 below):
 
 - `Resume.docx`
 - `CoverLetter.docx`
@@ -221,58 +227,78 @@ Five files per tailoring run, under `data/generated/<company-slug>/<job-id>/`:
 - `Recruiter_Report.md`
 - `ColdFollowupEmail.md`
 
-`<company-slug>` is the job's company name slugified (lowercase, non-alphanumeric runs collapsed to
-`-`) — the dashboard resolves the same slug when listing generated files on the job detail page, so
-don't invent a different naming scheme. If tailoring against a pasted JD with no job id, ask the
-user which job this is for (or whether to create one on the dashboard first) rather than inventing
-a folder name.
+**Before generating anything, confirm this candidate/job is approved for tailoring.** The bridge's
+execution step (`executeTailoringRun`, Phase 3 Stage 5) refuses to create a run unless
+`candidate_job_state.marked_for_tailoring` is true for this candidate/job AND real approval
+provenance (`tailoring_approval_type` + `tailoring_approved_decision`) is recorded and still matches
+the current Phase 2 decision. Check directly:
+```bash
+sqlite3 -json data/app.db "SELECT marked_for_tailoring, tailoring_approval_type, tailoring_approved_decision FROM candidate_job_state WHERE candidate_id = <candidateId> AND dedupe_key = (SELECT dedupe_key FROM jobs WHERE id = <job-id>)"
+```
+If `marked_for_tailoring` is not `1`, or either approval field is null, **stop** — this job has not
+been through a human-reviewed approval yet. Never set these fields yourself (e.g. via a raw
+`UPDATE`) to get past this check — that would be the skill approving its own authorization, which
+defeats the entire point of the gate. A dedicated approval UI is a later stage; until it exists, tell
+the user this specific job needs to be approved first, in plain language, rather than working around it.
 
-**Generate the two `.docx` files with the project's own rendering engine, not hand-rolled per-run
-document code:**
+**Generate the two `.docx` files through the project's execution bridge — not hand-rolled per-run
+document code, and not by calling `generate.ts` directly:**
 
 1. Write the fully-rewritten, fully-reordered content as JSON matching
    `tools/tailoring-engine/types.ts` (`ResumeContent` / `CoverLetterContent`) —
-   `{ company, jobId, resume, coverLetter }`.
+   `{ "resume": ..., "coverLetter": ... }`. `candidateId`/`jobId` are not part of this file; they're
+   CLI flags on the bridge (step 2), so run identity is never ambiguous with the content payload.
 2. Run:
    ```bash
-   npx tsx tools/tailoring-engine/generate.ts <path-to-content.json>
+   npx tsx tools/tailoring-engine/execute-run.ts \
+     --candidate-id <candidateId> --job-id <job-id> --input <path-to-content.json> \
+     --executed-by codex
    ```
-   This renders both `.docx` files with the full formatting spec (Calibri, 20-22pt name, 12-13pt
+   This is the Phase 3 Stage 6 bridge: it authorizes the run (the check above, enforced again here —
+   never trust your own pre-check alone), creates the `tailoring_runs` row, resolves a
+   candidate/job/run-scoped artifact directory (Phase 3 Stage 4 — you never compute this path
+   yourself), renders both `.docx` files with the full formatting spec (Calibri, 20-22pt name, 12-13pt
    bold section headings, 10.5-11pt role headers, 10.5-11pt body, 0.55-0.65in margins, hanging-
    indent bullets, company-left/dates-right tab stops via a real `<w:tab/>` element, keepNext/
    keepLines/widowControl pagination hints, clickable email/LinkedIn hyperlinks) already baked into
    `resume-template.ts` / `cover-letter-template.ts` — **then automatically validates both files**
-   against `validate-docx.ts` (page size/margins, font, divider width, tab-stop math, bullet
-   hanging indent, no tables/text-boxes/frames/header-footer content, hyperlinks present) and
-   **fails the run (non-zero exit) if any check fails**, printing exactly which rule was violated.
-   Never write a one-off docx-generation script per job, and never hand-patch a generated `.docx` —
-   if formatting needs to change, change the engine so every future run inherits the fix.
+   against `validate-docx.ts` and **marks the run `failed` (non-zero exit) if any check fails**,
+   printing a typed error (`INVALID_INPUT` / `AUTHORIZATION_FAILURE` / `EXECUTION_FAILURE` /
+   `UNEXPECTED_ERROR`) explaining exactly what went wrong. On success it prints a JSON summary
+   (`runId`, `outputFiles`, `rendererVersion`) plus the resolved artifact directory — write the three
+   markdown reports below into that exact directory. Never write a one-off docx-generation script per
+   job, and never hand-patch a generated `.docx` — if formatting needs to change, change the engine so
+   every future run inherits the fix. (Claude Code: use `/tailor-resume`'s mirror of this file, which
+   passes `--executed-by claude-code` instead.)
 3. Recommended after any change to the engine templates, and worth doing for any run whose layout
    you're unsure about: visually spot-check the render —
    ```bash
    node tools/tailoring-engine/visual-check/screenshot.mjs <path-to-Resume.docx> <output.png>
    ```
-   This renders the actual `.docx` client-side (docx-preview, no LibreOffice needed) and
-   screenshots it via Playwright — this is how the one real layout bug found during hardening (a
-   literal tab character instead of a proper OOXML tab element, which broke date right-alignment)
-   was actually caught; the raw XML and generated code both looked correct without it. **Known
-   limitation:** docx-preview renders continuously rather than truly paginating, so the page count
-   it reports is a height-based *estimate*, not verified real Word pagination — say so if you cite
-   it, don't claim a verified page count. If this script isn't run for a given tailoring pass, say
-   so plainly rather than implying a visual check happened.
+   Point it at the `Resume.docx` inside the run directory the bridge printed. This renders the actual
+   `.docx` client-side (docx-preview, no LibreOffice needed) and screenshots it via Playwright — this
+   is how the one real layout bug found during hardening (a literal tab character instead of a proper
+   OOXML tab element, which broke date right-alignment) was actually caught; the raw XML and generated
+   code both looked correct without it. **Known limitation:** docx-preview renders continuously rather
+   than truly paginating, so the page count it reports is a height-based *estimate*, not verified real
+   Word pagination — say so if you cite it, don't claim a verified page count. If this script isn't
+   run for a given tailoring pass, say so plainly rather than implying a visual check happened.
 4. Write `ATS_Report.md`, `Recruiter_Report.md`, and `ColdFollowupEmail.md` directly (plain
-   markdown) into the same output directory — see the required sections below.
+   markdown) into that same run-scoped directory — see the required sections below. These three are
+   not tracked in `tailoring_runs.output_files` (which records only what the deterministic renderer
+   itself produced — `Resume.docx`/`CoverLetter.docx`); they live alongside those tracked artifacts
+   as supporting reports.
 
 Never write to `data/candidates/<candidateId>/master/`; that candidate-specific directory is only
 ever touched by the dashboard's upload route, which archives previous versions automatically.
 Never read or write legacy `data/master/` as a fallback.
 
-After generating the files, if a job id was given, mark the job as tailored in the dashboard:
-```bash
-curl -s -X PATCH "http://localhost:3000/api/jobs/<job-id>" -H "Content-Type: application/json" -d '{"candidateId": <candidateId>, "markedForTailoring": true}'
-```
-(Only if the dev server is running — nice-to-have sync, not a hard requirement; files on disk are
-the source of truth regardless.)
+The bridge already records this run against the candidate/job in `tailoring_runs` the moment it
+authorizes (before rendering even starts) and marks it completed/failed itself — there is no
+separate "mark as tailored" API call to make afterward. (The legacy generator path,
+`npx tsx tools/tailoring-engine/generate.ts <content.json>`, still exists for compatibility/testing —
+see its own doc comment — but the documented CareerOps workflow above is the bridge, not that direct
+call.)
 
 ### ATS_Report.md — required sections (per section 45 of the production-hardening spec)
 Role / Company / Job ID · Job-fit classification (STRONG APPLY / APPLY / STRETCH / LOW MATCH) ·
@@ -370,8 +396,11 @@ via a real tab stop · hanging bullet indent · no tables/text boxes/shapes · c
 page-flow controls present · DOCX package integrity.
 
 Output: `Resume.docx`, `CoverLetter.docx`, `ATS_Report.md`, `Recruiter_Report.md`,
-`ColdFollowupEmail.md` all written to `data/generated/<company-slug>/<job-id>/` · dashboard
-resolves them (spot-check `GET /api/jobs/<job-id>` returns all five in `generatedFiles`).
+`ColdFollowupEmail.md` all written to the run-scoped directory the Stage 6 bridge printed
+(`data/generated/candidates/<candidateId>/jobs/<jobHash>/runs/<runId>/`) · the bridge's JSON output
+(`runId`, `outputFiles`, `rendererVersion`) is the source of truth for this run — the dashboard does
+not yet display this new location (`GET /api/jobs/<job-id>`'s `generatedFiles` still only resolves
+the legacy company-slug path; wiring the dashboard to candidate/run-scoped runs is a later UI stage).
 
 Engineering: typecheck, lint, and build clean · existing scanning/H1B/company-management/pipeline
 functionality unaffected.
