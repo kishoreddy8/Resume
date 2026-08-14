@@ -26,8 +26,12 @@ import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring
 import {
   structuredResumeReviewSchema,
   type RequiredCorrection,
+  type ResumeQualityLoopResult,
   type ResumeReviewerAgent,
   type ResumeReviewerInput,
+  type ResumeWriterAgent,
+  type ResumeWriterInput,
+  type ResumeWriterOutput,
   type StructuredResumeReview,
   type WorkflowStatus,
 } from "./types";
@@ -39,33 +43,43 @@ import {
   getWorkspaceDirectory,
   type QualityWorkflowLocation,
 } from "./workspace";
+import { buildWorkspacePackage } from "./workspacePackage";
 
 /**
- * Phase 3 Stage 9 — Deterministic Resume Quality Pipeline Orchestrator.
+ * Phase 3 Stage 9 & 10 — Deterministic Multi-Iteration Resume Quality Orchestrator.
  *
- * Connects the completed Stage 6 tailoring output, Stage 7 quality workflow state machine & persistence,
- * and Stage 8 deterministic reviewer into a fully-validated, reproducible quality orchestration pipeline:
+ * Connects tailoring output, quality workflow state machine, deterministic reviewer,
+ * and writer agents into a complete, reproducible multi-turn improvement loop:
  *
- *   Input Resume (Stage 6)
+ *   Iteration 1 (Initial Tailored Resume)
  *          ↓
- *   State Transition: CREATED -> WRITER_RUNNING -> WRITER_COMPLETED -> REVIEW_RUNNING
+ *   Reviewer (Stage 8 DeterministicReviewer)
  *          ↓
- *   Deterministic Resume Reviewer (Stage 8)
- *          ↓
- *   State Transition: REVIEW_RUNNING -> REVIEW_COMPLETED
- *          ↓
- *   Persist Iteration Artifacts (review.json, review_feedback.md, docx)
- *          ↓
- *   Persist Immutable DB Iteration (resume_quality_iterations)
- *          ↓
- *   Evaluate Quality Gate (evaluateQualityGate)
- *          ↓
- *   Branch:
- *     - READY: Finalize approved artifacts (<FirstName>_Resume.docx, feedback) -> status: READY
- *     - IMPROVEMENT_NEEDED: Transition to IMPROVEMENT_RUNNING -> report required corrections
- *     - NEEDS_HUMAN_REVIEW: Transition to FAILED (with human-review failureReason)
+ *   Quality Gate (evaluateQualityGate)
+ *     ├── READY → Final approved artifacts in final/ (<FirstName>_Resume.docx, feedback)
+ *     └── IMPROVEMENT_RUNNING
+ *              ↓
+ *          Writer Agent (ResumeWriterAgent)
+ *              ↓
+ *          Iteration 2 (Improved Resume)
+ *              ↓
+ *          Reviewer (DeterministicReviewer)
+ *              ↓
+ *          Quality Gate
+ *            ├── READY
+ *            └── IMPROVEMENT_RUNNING
+ *                     ↓
+ *                 Iteration 3 (Improved Resume)
+ *                     ↓
+ *                 Reviewer (DeterministicReviewer)
+ *                     ↓
+ *                 Quality Gate
+ *                   ├── READY
+ *                   └── NEEDS_HUMAN_REVIEW (Workflow FAILED with explanatory reason)
  *
- * Zero external AI provider calls (no Anthropic, OpenAI, or Gemini SDK).
+ * Max iterations: 3 (strictly enforced).
+ * Immutability: Iterations 1, 2, and 3 have independent non-overwriting directories and DB records.
+ * Zero external AI provider SDKs required; works with provider-independent interfaces and test doubles.
  */
 
 export interface ExecuteResumeQualityIterationInput {
@@ -120,6 +134,46 @@ export interface StartAndExecuteResumeQualityWorkflowInput {
   reviewer?: ResumeReviewerAgent;
 }
 
+export interface ExecuteResumeImprovementIterationInput {
+  candidateId: number;
+  workflowId: number;
+  writer: ResumeWriterAgent;
+  reviewer?: ResumeReviewerAgent;
+  jobRequirements?: RequirementUnit[];
+  masterResumeProfile?: CandidateProfile;
+  resumeDocxPath?: string;
+  coverLetterDocxPath?: string;
+}
+
+export interface RunResumeQualityLoopInput {
+  candidateId: number;
+  workflowId: number;
+  initialResume?: ResumeContent;
+  initialCoverLetter?: CoverLetterContent;
+  initialResumeDocxPath?: string;
+  initialCoverLetterDocxPath?: string;
+  jobRequirements?: RequirementUnit[];
+  masterResumeProfile?: CandidateProfile;
+  reviewer?: ResumeReviewerAgent;
+  writer?: ResumeWriterAgent;
+}
+
+export interface StartAndRunResumeQualityLoopInput {
+  candidateId: number;
+  applicationId: number;
+  tailoringRunId: number;
+  dedupeKey: string;
+  maxIterations?: number;
+  initialResume: ResumeContent;
+  initialCoverLetter?: CoverLetterContent;
+  initialResumeDocxPath?: string;
+  initialCoverLetterDocxPath?: string;
+  jobRequirements?: RequirementUnit[];
+  masterResumeProfile?: CandidateProfile;
+  reviewer?: ResumeReviewerAgent;
+  writer?: ResumeWriterAgent;
+}
+
 export class ResumeQualityOrchestrationError extends Error {
   constructor(
     public readonly code: string,
@@ -132,7 +186,8 @@ export class ResumeQualityOrchestrationError extends Error {
 }
 
 /**
- * Validates and drives a resume quality iteration through the deterministic review and quality gate pipeline.
+ * Validates and drives a single resume quality iteration through deterministic review,
+ * artifact generation, immutable DB persistence, and quality gate evaluation.
  */
 export async function executeResumeQualityIteration(
   input: ExecuteResumeQualityIterationInput
@@ -269,7 +324,7 @@ export async function executeResumeQualityIteration(
   }
 
   try {
-    // 1. Invoke Deterministic Reviewer
+    // 1. Invoke Reviewer
     const reviewer = input.reviewer ?? new DeterministicResumeReviewer();
     const resumeDocxPath = input.resumeDocxPath ?? path.join(iterDir, "Resume.docx");
     const jobDescriptionPath = path.join(workspaceDir, "job_description.md");
@@ -297,6 +352,10 @@ export async function executeResumeQualityIteration(
     // 3. Write iteration artifacts to disk
     fs.mkdirSync(iterDir, { recursive: true });
 
+    // Persist authoritative structured content JSON
+    const resumeJsonPath = path.join(iterDir, "resume_content.json");
+    fs.writeFileSync(resumeJsonPath, JSON.stringify(resume, null, 2), "utf-8");
+
     const reviewJsonPath = path.join(iterDir, "review.json");
     fs.writeFileSync(reviewJsonPath, JSON.stringify(review, null, 2), "utf-8");
 
@@ -304,7 +363,13 @@ export async function executeResumeQualityIteration(
     const reviewFeedbackPath = path.join(iterDir, "review_feedback.md");
     fs.writeFileSync(reviewFeedbackPath, feedbackMarkdown, "utf-8");
 
-    const outputFiles: string[] = ["review.json", "review_feedback.md"];
+    const outputFiles: string[] = ["resume_content.json", "review.json", "review_feedback.md"];
+
+    if (input.coverLetter) {
+      const coverJsonPath = path.join(iterDir, "cover_letter_content.json");
+      fs.writeFileSync(coverJsonPath, JSON.stringify(input.coverLetter, null, 2), "utf-8");
+      outputFiles.push("cover_letter_content.json");
+    }
 
     // Copy Resume.docx into iteration dir if available
     const iterResumeDocx = path.join(iterDir, "Resume.docx");
@@ -314,7 +379,6 @@ export async function executeResumeQualityIteration(
       }
       outputFiles.unshift("Resume.docx");
     } else {
-      // Check parent run directory
       const runDir = getTailoringArtifactDirectory({
         candidateId,
         dedupeKey: workflow.dedupe_key,
@@ -393,6 +457,14 @@ export async function executeResumeQualityIteration(
       const finalFeedbackPath = path.join(finalDir, "resume_review_feedback.md");
       fs.writeFileSync(finalFeedbackPath, feedbackMarkdown, "utf-8");
 
+      const finalResumeJson = path.join(finalDir, "resume_content.json");
+      fs.writeFileSync(finalResumeJson, JSON.stringify(resume, null, 2), "utf-8");
+
+      if (input.coverLetter) {
+        const finalCoverJson = path.join(finalDir, "cover_letter_content.json");
+        fs.writeFileSync(finalCoverJson, JSON.stringify(input.coverLetter, null, 2), "utf-8");
+      }
+
       return {
         workflow: updatedWorkflow,
         iteration: iterationRow,
@@ -452,7 +524,6 @@ export async function executeResumeQualityIteration(
       failureReason,
     };
   } catch (err) {
-    // If the workflow was moved to a non-terminal running state, record failure safely
     try {
       const current = getResumeQualityWorkflow(candidateId, workflowId);
       if (current && (current.status === "WRITER_RUNNING" || current.status === "REVIEW_RUNNING" || current.status === "REVIEW_COMPLETED")) {
@@ -493,5 +564,392 @@ export async function startAndExecuteResumeQualityWorkflow(
     jobRequirements: input.jobRequirements,
     masterResumeProfile: input.masterResumeProfile,
     reviewer: input.reviewer,
+  });
+}
+
+/**
+ * Assembles the authoritative ResumeWriterInput package for an improvement iteration.
+ */
+export function buildResumeWriterInput(candidateId: number, workflowId: number): ResumeWriterInput {
+  const workflow = getResumeQualityWorkflow(candidateId, workflowId);
+  if (!workflow) {
+    throw new ResumeQualityWorkflowNotFoundError(candidateId, workflowId);
+  }
+
+  const tailoringRun = getTailoringRun(candidateId, workflow.tailoring_run_id);
+  if (!tailoringRun) {
+    throw new ResumeQualityOrchestrationError(
+      "TAILORING_RUN_NOT_FOUND",
+      `Tailoring run ${workflow.tailoring_run_id} not found for candidate ${candidateId}`
+    );
+  }
+  if (tailoringRun.dedupe_key !== workflow.dedupe_key) {
+    throw new ResumeQualityOrchestrationError(
+      "IDENTITY_MISMATCH",
+      `Tailoring run dedupe_key (${tailoringRun.dedupe_key}) does not match workflow dedupe_key (${workflow.dedupe_key})`
+    );
+  }
+
+  const appState = getCandidateJobState(candidateId, workflow.dedupe_key);
+  if (appState && appState.id !== workflow.application_id) {
+    throw new ResumeQualityOrchestrationError(
+      "APPLICATION_MISMATCH",
+      `Application ID mismatch: candidate_job_state id is ${appState.id}, workflow application_id is ${workflow.application_id}`
+    );
+  }
+
+  const location: QualityWorkflowLocation = {
+    candidateId,
+    dedupeKey: workflow.dedupe_key,
+    runId: workflow.tailoring_run_id,
+    workflowId: workflow.id,
+  };
+
+  const wsPkg = buildWorkspacePackage({
+    candidateId,
+    applicationId: workflow.application_id,
+    dedupeKey: workflow.dedupe_key,
+    tailoringRunId: workflow.tailoring_run_id,
+    workflowId: workflow.id,
+    runId: workflow.tailoring_run_id,
+    selectedTrack: null,
+    phase2Context: null,
+  });
+
+  let priorIteration: ResumeWriterInput["priorIteration"] = null;
+  let currentResume: ResumeContent | undefined;
+  let currentCoverLetter: CoverLetterContent | undefined;
+  let latestReview: StructuredResumeReview | undefined;
+  let requiredCorrections: RequiredCorrection[] | undefined;
+  let blockingIssues: string[] | undefined;
+
+  if (workflow.current_iteration > 0) {
+    const priorIterNum = workflow.current_iteration;
+    const priorIterDir = getIterationDirectory(location, priorIterNum);
+    const priorResumeDocx = path.join(priorIterDir, "Resume.docx");
+    const priorResumeJson = path.join(priorIterDir, "resume_content.json");
+    const priorFeedbackMd = path.join(priorIterDir, "review_feedback.md");
+    const priorReviewJson = path.join(priorIterDir, "review.json");
+    const priorCoverJson = path.join(priorIterDir, "cover_letter_content.json");
+
+    priorIteration = {
+      iterationNumber: priorIterNum,
+      resumePath: fs.existsSync(priorResumeDocx) ? priorResumeDocx : priorResumeJson,
+      reviewFeedbackPath: priorFeedbackMd,
+    };
+
+    if (fs.existsSync(priorResumeJson)) {
+      try {
+        currentResume = JSON.parse(fs.readFileSync(priorResumeJson, "utf-8")) as ResumeContent;
+      } catch {
+        // Fall back to undefined if unparseable
+      }
+    }
+    if (fs.existsSync(priorCoverJson)) {
+      try {
+        currentCoverLetter = JSON.parse(fs.readFileSync(priorCoverJson, "utf-8")) as CoverLetterContent;
+      } catch {
+        // Fall back to undefined if unparseable
+      }
+    }
+    if (fs.existsSync(priorReviewJson)) {
+      try {
+        latestReview = JSON.parse(fs.readFileSync(priorReviewJson, "utf-8")) as StructuredResumeReview;
+        requiredCorrections = latestReview.requiredCorrections;
+        blockingIssues = latestReview.blockingIssues;
+      } catch {
+        // Fall back to undefined if unparseable
+      }
+    }
+  }
+
+  let jobRequirements: RequirementUnit[] | undefined;
+  if (wsPkg.extractedJobRequirementsPath && fs.existsSync(wsPkg.extractedJobRequirementsPath)) {
+    try {
+      const rawReqs = JSON.parse(fs.readFileSync(wsPkg.extractedJobRequirementsPath, "utf-8"));
+      if (Array.isArray(rawReqs)) {
+        jobRequirements = rawReqs as RequirementUnit[];
+      }
+    } catch {
+      // Fall back to undefined if unparseable
+    }
+  }
+
+  let jobDescriptionMarkdown: string | undefined;
+  if (wsPkg.jobDescriptionPath && fs.existsSync(wsPkg.jobDescriptionPath)) {
+    try {
+      jobDescriptionMarkdown = fs.readFileSync(wsPkg.jobDescriptionPath, "utf-8");
+    } catch {
+      // Fall back to undefined if unparseable
+    }
+  }
+
+  const profileRes = loadCandidateProfile(candidateId);
+  const masterProfile = profileRes.status === "ok" ? profileRes.profile : undefined;
+
+  return {
+    applicationId: workflow.application_id,
+    candidateId,
+    tailoringRunId: workflow.tailoring_run_id,
+    workflowId: workflow.id,
+    jobDescriptionPath: wsPkg.jobDescriptionPath,
+    extractedJobRequirementsPath: fs.existsSync(wsPkg.extractedJobRequirementsPath)
+      ? wsPkg.extractedJobRequirementsPath
+      : null,
+    masterResumePath: wsPkg.masterResumePath,
+    masterSkillsInventoryPath: wsPkg.masterSkillsInventoryPath,
+    tailoringInstructionsPath: wsPkg.tailoringInstructionsPath,
+    selectedTrack: wsPkg.selectedTrack,
+    priorIteration,
+    currentResume,
+    currentCoverLetter,
+    latestReview,
+    requiredCorrections,
+    blockingIssues,
+    dedupeKey: workflow.dedupe_key,
+    iterationNumber: workflow.current_iteration + 1,
+    masterProfile,
+    jobRequirements,
+    jobDescriptionMarkdown,
+  };
+}
+
+/**
+ * Executes a single resume quality improvement iteration (Stage 10).
+ *
+ * Reads prior iteration feedback, invokes ResumeWriterAgent to produce improved content,
+ * and drives the next deterministic review & gate evaluation.
+ */
+export async function executeResumeImprovementIteration(
+  input: ExecuteResumeImprovementIterationInput
+): Promise<ResumeQualityOrchestrationResult> {
+  const { candidateId, workflowId, writer } = input;
+
+  if (!Number.isInteger(candidateId) || candidateId <= 0) {
+    throw new ResumeQualityOrchestrationError("INVALID_CANDIDATE_ID", `Invalid candidateId: ${candidateId}`);
+  }
+  if (!Number.isInteger(workflowId) || workflowId <= 0) {
+    throw new ResumeQualityOrchestrationError("INVALID_WORKFLOW_ID", `Invalid workflowId: ${workflowId}`);
+  }
+  if (!writer || typeof writer.generate !== "function") {
+    throw new ResumeQualityOrchestrationError("INVALID_WRITER_AGENT", "A valid ResumeWriterAgent is required");
+  }
+
+  const candidate = getCandidate(candidateId);
+  if (!candidate) {
+    throw new ResumeQualityOrchestrationError("CANDIDATE_NOT_FOUND", `Candidate ${candidateId} not found`);
+  }
+  if (candidate.status !== "active") {
+    throw new ResumeQualityOrchestrationError("NOT_ACTIVE_CANDIDATE", `Candidate ${candidateId} is not active`);
+  }
+
+  const workflow = getResumeQualityWorkflow(candidateId, workflowId);
+  if (!workflow) {
+    throw new ResumeQualityWorkflowNotFoundError(candidateId, workflowId);
+  }
+
+  if (workflow.status === "READY" || workflow.status === "FAILED") {
+    throw new ResumeQualityOrchestrationError(
+      "WORKFLOW_ALREADY_TERMINAL",
+      `Cannot execute improvement iteration on terminal workflow ${workflowId} (status: ${workflow.status})`
+    );
+  }
+
+  if (workflow.current_iteration >= workflow.max_iterations) {
+    throw new IterationExceedsMaxError(workflowId, workflow.current_iteration + 1, workflow.max_iterations);
+  }
+
+  if (workflow.current_iteration === 0) {
+    throw new ResumeQualityOrchestrationError(
+      "INVALID_WORKFLOW_STATE",
+      `Cannot execute improvement iteration on a workflow that has not executed iteration 1 (current status: ${workflow.status})`
+    );
+  }
+
+  const writerInput = buildResumeWriterInput(candidateId, workflowId);
+
+  if (input.jobRequirements) {
+    writerInput.jobRequirements = input.jobRequirements;
+  }
+  if (input.masterResumeProfile) {
+    writerInput.masterProfile = input.masterResumeProfile;
+  }
+
+  // 1. Invoke writer agent with error handling
+  let writerOutput: ResumeWriterOutput;
+  try {
+    writerOutput = await writer.generate(writerInput);
+  } catch (err) {
+    const failureReason = err instanceof Error ? err.message : String(err);
+    transitionWorkflowStatus(candidateId, workflowId, "FAILED", { failureReason });
+    throw err;
+  }
+
+  if (!writerOutput || !writerOutput.resume) {
+    const failureReason = "Writer agent returned invalid or empty resume output";
+    transitionWorkflowStatus(candidateId, workflowId, "FAILED", { failureReason });
+    throw new ResumeQualityOrchestrationError("INVALID_WRITER_OUTPUT", failureReason);
+  }
+
+  // 2. Transition and drive next review iteration
+  return executeResumeQualityIteration({
+    candidateId,
+    workflowId,
+    resume: writerOutput.resume,
+    coverLetter: writerOutput.coverLetter ?? writerInput.currentCoverLetter,
+    resumeDocxPath: input.resumeDocxPath,
+    coverLetterDocxPath: input.coverLetterDocxPath,
+    jobRequirements: input.jobRequirements ?? writerInput.jobRequirements,
+    masterResumeProfile: input.masterResumeProfile ?? writerInput.masterProfile,
+    reviewer: input.reviewer,
+  });
+}
+
+function buildLoopResult(
+  candidateId: number,
+  jobId: number | null,
+  workflow: ResumeQualityWorkflowRow,
+  latestResult: ResumeQualityOrchestrationResult | undefined,
+  history: ResumeQualityOrchestrationResult[]
+): ResumeQualityLoopResult {
+  return {
+    candidateId,
+    applicationId: workflow.application_id,
+    jobId,
+    tailoringRunId: workflow.tailoring_run_id,
+    workflowId: workflow.id,
+    finalIteration: workflow.current_iteration,
+    workflowStatus: workflow.status,
+    qualityGateOutcome: latestResult ? latestResult.qualityGateOutcome : "NEEDS_HUMAN_REVIEW",
+    overallScore: latestResult ? latestResult.review.overallScore : (workflow.latest_overall_score ?? 0),
+    iterationsCompleted: history.length,
+    requiredCorrections: latestResult ? latestResult.requiredCorrections : [],
+    finalOutputFiles: latestResult?.finalArtifacts ? latestResult.outputFiles : undefined,
+    finalDirectory: latestResult?.finalDirectory,
+    finalArtifacts: latestResult?.finalArtifacts,
+    failureReason: workflow.failure_reason,
+    latestReview: latestResult ? latestResult.review : ({} as StructuredResumeReview),
+    history: history.map((h) => ({
+      iterationNumber: h.iterationNumber,
+      overallScore: h.review.overallScore,
+      status: h.status,
+      qualityGateOutcome: h.qualityGateOutcome,
+      outputFiles: h.outputFiles,
+    })),
+  };
+}
+
+/**
+ * Runs the end-to-end multi-iteration resume quality improvement loop (Stage 10).
+ *
+ * Drives initial review (iteration 1), checks the quality gate, and if improvements are needed,
+ * invokes the ResumeWriterAgent to generate and review subsequent iterations up to max_iterations.
+ */
+export async function runResumeQualityLoop(
+  input: RunResumeQualityLoopInput
+): Promise<ResumeQualityLoopResult> {
+  const { candidateId, workflowId } = input;
+
+  let workflow = getResumeQualityWorkflow(candidateId, workflowId);
+  if (!workflow) {
+    throw new ResumeQualityWorkflowNotFoundError(candidateId, workflowId);
+  }
+
+  const tailoringRun = getTailoringRun(candidateId, workflow.tailoring_run_id);
+  if (!tailoringRun) {
+    throw new ResumeQualityOrchestrationError(
+      "TAILORING_RUN_NOT_FOUND",
+      `Tailoring run ${workflow.tailoring_run_id} not found for candidate ${candidateId}`
+    );
+  }
+
+  const history: ResumeQualityOrchestrationResult[] = [];
+
+  // Step A: Iteration 1 execution if starting from CREATED
+  if (workflow.current_iteration === 0) {
+    if (!input.initialResume) {
+      throw new ResumeQualityOrchestrationError(
+        "INVALID_INPUT",
+        "initialResume is required to execute iteration 1 of resume quality workflow"
+      );
+    }
+
+    const iter1Res = await executeResumeQualityIteration({
+      candidateId,
+      workflowId,
+      resume: input.initialResume,
+      coverLetter: input.initialCoverLetter,
+      resumeDocxPath: input.initialResumeDocxPath,
+      coverLetterDocxPath: input.initialCoverLetterDocxPath,
+      jobRequirements: input.jobRequirements,
+      masterResumeProfile: input.masterResumeProfile,
+      reviewer: input.reviewer,
+    });
+
+    history.push(iter1Res);
+    workflow = iter1Res.workflow;
+
+    if (iter1Res.status === "READY" || iter1Res.status === "FAILED") {
+      return buildLoopResult(candidateId, tailoringRun.job_id, workflow, iter1Res, history);
+    }
+  }
+
+  // Step B: Improvement loops (iterations 2..max)
+  if (workflow.status === "IMPROVEMENT_RUNNING") {
+    if (!input.writer) {
+      const latestRes = history[history.length - 1];
+      return buildLoopResult(candidateId, tailoringRun.job_id, workflow, latestRes, history);
+    }
+
+    while (workflow.status === "IMPROVEMENT_RUNNING" && workflow.current_iteration < workflow.max_iterations) {
+      const improvementRes = await executeResumeImprovementIteration({
+        candidateId,
+        workflowId,
+        writer: input.writer,
+        reviewer: input.reviewer,
+        jobRequirements: input.jobRequirements,
+        masterResumeProfile: input.masterResumeProfile,
+        resumeDocxPath: input.initialResumeDocxPath,
+        coverLetterDocxPath: input.initialCoverLetterDocxPath,
+      });
+
+      history.push(improvementRes);
+      workflow = improvementRes.workflow;
+
+      if (improvementRes.status === "READY" || improvementRes.status === "FAILED") {
+        break;
+      }
+    }
+  }
+
+  const latestRes = history[history.length - 1];
+  return buildLoopResult(candidateId, tailoringRun.job_id, workflow, latestRes, history);
+}
+
+/**
+ * Creates a new quality workflow and drives the full improvement loop to completion.
+ */
+export async function startAndRunResumeQualityLoop(
+  input: StartAndRunResumeQualityLoopInput
+): Promise<ResumeQualityLoopResult> {
+  const workflow = createResumeQualityWorkflow({
+    candidateId: input.candidateId,
+    applicationId: input.applicationId,
+    tailoringRunId: input.tailoringRunId,
+    dedupeKey: input.dedupeKey,
+    maxIterations: input.maxIterations,
+  });
+
+  return runResumeQualityLoop({
+    candidateId: input.candidateId,
+    workflowId: workflow.id,
+    initialResume: input.initialResume,
+    initialCoverLetter: input.initialCoverLetter,
+    initialResumeDocxPath: input.initialResumeDocxPath,
+    initialCoverLetterDocxPath: input.initialCoverLetterDocxPath,
+    jobRequirements: input.jobRequirements,
+    masterResumeProfile: input.masterResumeProfile,
+    reviewer: input.reviewer,
+    writer: input.writer,
   });
 }

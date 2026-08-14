@@ -134,15 +134,58 @@ export interface ResumeWriterInput {
   /** Present only on an improvement cycle (iteration > 1) — the prior iteration's output and the
    *  reviewer's feedback on it, so the writer can address specific required corrections. */
   priorIteration: { iterationNumber: number; resumePath: string; reviewFeedbackPath: string } | null;
+
+  /** Phase 3 Stage 10 additive in-memory context fields — assembled from authoritative state */
+  currentResume?: ResumeContent;
+  currentCoverLetter?: CoverLetterContent;
+  latestReview?: StructuredResumeReview;
+  requiredCorrections?: RequiredCorrection[];
+  blockingIssues?: string[];
+  dedupeKey?: string;
+  iterationNumber?: number;
+  masterProfile?: CandidateProfile;
+  jobRequirements?: RequirementUnit[];
+  jobDescriptionMarkdown?: string;
 }
 
 export interface ResumeWriterOutput {
   resume: ResumeContent;
-  coverLetter: CoverLetterContent;
+  coverLetter?: CoverLetterContent;
 }
 
 export interface ResumeWriterAgent {
   generate(input: ResumeWriterInput): Promise<ResumeWriterOutput>;
+}
+
+/** Complete result of driving the multi-iteration resume quality improvement loop (Stage 10) */
+export interface ResumeQualityLoopResult {
+  candidateId: number;
+  applicationId: number;
+  jobId: number | null;
+  tailoringRunId: number;
+  workflowId: number;
+  finalIteration: number;
+  workflowStatus: WorkflowStatus;
+  qualityGateOutcome: import("./qualityGate").QualityGateOutcome;
+  overallScore: number;
+  iterationsCompleted: number;
+  requiredCorrections: RequiredCorrection[];
+  finalOutputFiles?: string[];
+  finalDirectory?: string;
+  finalArtifacts?: {
+    resumePath?: string;
+    coverLetterPath?: string;
+    reviewFeedbackPath: string;
+  };
+  failureReason?: string | null;
+  latestReview: StructuredResumeReview;
+  history: Array<{
+    iterationNumber: number;
+    overallScore: number;
+    status: WorkflowStatus;
+    qualityGateOutcome: import("./qualityGate").QualityGateOutcome;
+    outputFiles: string[];
+  }>;
 }
 
 export interface ResumeReviewerInput {
