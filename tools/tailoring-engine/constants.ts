@@ -5,6 +5,12 @@
 // production-hardening typography spec; values are pinned to one exact number per role rather
 // than left to vary per run, so every generated resume is visually consistent with every other.
 
+// Phase 3 Stage 4: bump whenever the rendering/layout logic changes in a way that would make an
+// artifact regenerated under a new version meaningfully different from one already on disk. Not a
+// DB column itself — tailoring_runs.renderer_version (Stage 2) stores this value once execution is
+// wired (Stage 5+); this constant is the single source of truth for "what version am I right now."
+export const RENDERER_VERSION = 1;
+
 export const FONT = "Calibri";
 export const BLACK = "000000";
 export const HEADING_RULE_COLOR = "444444";

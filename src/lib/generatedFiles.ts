@@ -3,8 +3,10 @@ import path from "node:path";
 import { slugify } from "@/lib/slugify";
 
 // Mirrors the layout the tailor-resume skill's engine writes to (see generate.ts) and the job
-// detail API route already reads from — kept in one place so both stay in sync.
-const GENERATED_ROOT = path.join(process.cwd(), "data", "generated");
+// detail API route already reads from — kept in one place so both stay in sync. Exported so
+// src/lib/tailoringArtifacts.ts (Phase 3 Stage 4's candidate/run-scoped layout) can nest its own
+// subtree under the exact same root rather than duplicating the "data/generated" path segment.
+export const GENERATED_ROOT = path.join(process.cwd(), "data", "generated");
 
 export function generatedFilesDir(companyName: string, jobId: number): string {
   return path.join(GENERATED_ROOT, slugify(companyName), String(jobId));

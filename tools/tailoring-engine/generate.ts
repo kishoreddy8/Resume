@@ -9,7 +9,7 @@ import { formatValidationReport, validateDocx } from "./validate-docx";
 // relative import is fine. tools/tailoring-engine/ is two levels below the repo root.
 import { slugify } from "../../src/lib/slugify";
 
-interface GenerateInput {
+export interface GenerateInput {
   company: string;
   jobId: string | number;
   resume: ResumeContent;
@@ -53,36 +53,38 @@ function validateInput(input: GenerateInput): string[] {
   return problems;
 }
 
+export interface GenerateOptions {
+  /** Phase 3 Stage 4: an explicit, already-validated directory (see
+   *  src/lib/tailoringArtifacts.ts's resolveTailoringArtifactPaths) always wins when supplied. This
+   *  generator does not itself decide the candidate/job/run storage hierarchy anymore — it only
+   *  writes wherever it's told, trusting the caller to have resolved a safe path. Omitting it falls
+   *  back to the legacy company+job-slug directory below, for backward compatibility with existing
+   *  callers (the job detail UI's generatedFilesDir(), the tailor-resume skill invoked with no 2nd
+   *  CLI arg) that don't yet know about candidate/run scoping. */
+  outputDir?: string;
+}
+
+export interface GenerateResult {
+  resumePath: string;
+  coverLetterPath: string;
+}
+
 /**
- * CLI: npx tsx tools/tailoring-engine/generate.ts <content.json>
- * <content.json> is written by the tailoring skill itself with the fully rewritten, reordered
- * content — this script only renders it. Writes to data/generated/<company-slug>/<job-id>/.
- * Fails (non-zero exit) if input is incomplete or the rendered output fails layout validation —
- * never leaves a questionable document in place silently.
+ * Renders, validates, and writes both documents for one tailoring attempt. Throws (never exits the
+ * process itself) on invalid input or a failed layout check, so it's safe to call directly as well
+ * as from the CLI wrapper below — never leaves a questionable document in place silently.
  */
-async function main() {
-  const inputPath = process.argv[2];
-  if (!inputPath) {
-    console.error("Usage: tsx generate.ts <content.json>");
-    process.exit(1);
-  }
-
-  const input = JSON.parse(fs.readFileSync(inputPath, "utf-8")) as GenerateInput;
-
+export async function generateTailoringOutputs(input: GenerateInput, options: GenerateOptions = {}): Promise<GenerateResult> {
   const inputProblems = validateInput(input);
   if (inputProblems.length > 0) {
-    console.error("Content JSON failed validation — fix these and re-run:");
-    for (const p of inputProblems) console.error(`  - ${p}`);
-    process.exit(1);
+    throw new Error(`Content JSON failed validation — fix these and re-run:\n${inputProblems.map((p) => `  - ${p}`).join("\n")}`);
   }
 
-  const outDir = path.join(
-    process.cwd(),
-    "data",
-    "generated",
-    slugify(input.company),
-    String(input.jobId)
-  );
+  // Legacy fallback: data/generated/<company-slug>/<job-id>/ — kept only for callers that haven't
+  // been updated to pass an explicit, candidate/run-scoped outputDir yet (see GenerateOptions above).
+  const outDir = options.outputDir
+    ? path.resolve(options.outputDir)
+    : path.join(process.cwd(), "data", "generated", slugify(input.company), String(input.jobId));
 
   const resumePath = path.join(outDir, "Resume.docx");
   const coverLetterPath = path.join(outDir, "CoverLetter.docx");
@@ -97,15 +99,45 @@ async function main() {
   console.log(formatValidationReport("CoverLetter.docx", coverLetterCheck));
 
   if (!resumeCheck.valid || !coverLetterCheck.valid) {
-    console.error("\nOutput failed layout validation — critical ATS-layout rule(s) violated. Not marking this run successful.");
+    throw new Error("Output failed layout validation — critical ATS-layout rule(s) violated. Not marking this run successful.");
+  }
+
+  return { resumePath, coverLetterPath };
+}
+
+/**
+ * CLI: npx tsx tools/tailoring-engine/generate.ts <content.json> [outputDir]
+ * <content.json> is written by the tailoring skill itself with the fully rewritten, reordered
+ * content — this script only renders it. [outputDir] is optional; omitting it preserves the legacy
+ * data/generated/<company-slug>/<job-id>/ behavior. Fails (non-zero exit) if input is incomplete or
+ * the rendered output fails layout validation.
+ */
+async function main() {
+  const inputPath = process.argv[2];
+  const outputDirArg = process.argv[3];
+  if (!inputPath) {
+    console.error("Usage: tsx generate.ts <content.json> [outputDir]");
     process.exit(1);
   }
 
-  console.log(`\nWrote ${resumePath}`);
-  console.log(`Wrote ${coverLetterPath}`);
+  const input = JSON.parse(fs.readFileSync(inputPath, "utf-8")) as GenerateInput;
+
+  try {
+    const { resumePath, coverLetterPath } = await generateTailoringOutputs(input, { outputDir: outputDirArg });
+    console.log(`\nWrote ${resumePath}`);
+    console.log(`Wrote ${coverLetterPath}`);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
 }
 
-main().catch((err) => {
-  console.error("generate.ts failed:", err);
-  process.exit(1);
-});
+// Only auto-run when executed directly (npx tsx generate.ts ...), not when imported as a module —
+// lets tests import generateTailoringOutputs() without triggering a CLI run as a side effect.
+const isDirectlyExecuted = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;
+if (isDirectlyExecuted) {
+  main().catch((err) => {
+    console.error("generate.ts failed:", err);
+    process.exit(1);
+  });
+}
