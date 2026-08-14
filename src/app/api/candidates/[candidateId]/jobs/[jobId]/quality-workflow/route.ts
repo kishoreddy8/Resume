@@ -23,8 +23,16 @@ import {
   getFinalDirectory,
   getHandoffDirectory,
   getIterationDirectory,
+  getWorkspaceDirectory,
   type QualityWorkflowLocation,
 } from "@/lib/resumeQuality/workspace";
+import { getJobCertifications, getJobSkills } from "@/db/queries/jobIntel";
+import {
+  buildCertificationUnits,
+  buildEducationUnit,
+  collapseSkillUnits,
+} from "@/lib/match/requirementUnits";
+import { detectUnclaimedRequirements } from "@/lib/match/unclaimedRequirementDetector";
 import type { ResumeContent, StructuredResumeReview } from "@/lib/resumeQuality/types";
 
 function parsePositiveInt(raw: string): number | null {
@@ -297,10 +305,58 @@ export async function POST(
         dedupeKey: job.dedupe_key,
       });
 
+      // Initialize workspace with authoritative job context
+      const wsDir = getWorkspaceDirectory({
+        candidateId,
+        dedupeKey: job.dedupe_key,
+        runId,
+        workflowId: createdWorkflow.id,
+      });
+      fs.mkdirSync(wsDir, { recursive: true });
+      fs.writeFileSync(path.join(wsDir, "job_description.md"), `# ${job.title}\n\n${job.description_text ?? ""}`);
+
+      const skills = getJobSkills(job.id);
+      const certs = getJobCertifications(job.id);
+      const edu = {
+        level: job.education_level,
+        field: job.education_field,
+        requirement: job.education_requirement,
+        equivalentExperienceAllowed: job.education_equivalent_experience_allowed === 1,
+        evidence: job.education_evidence,
+      };
+      const skillUnits = collapseSkillUnits(skills, job.title);
+      const certUnits = buildCertificationUnits(certs, job.title);
+      const eduUnit = buildEducationUnit(edu);
+      let reqQualText: string | null = null;
+      let prefQualText: string | null = null;
+      if (job.description_sections) {
+        try {
+          const parsedSections = JSON.parse(job.description_sections);
+          reqQualText = parsedSections.requiredQualifications ?? null;
+          prefQualText = parsedSections.preferredQualifications ?? null;
+        } catch {
+          // Ignore parse errors
+        }
+      }
+
+      const unclaimed = detectUnclaimedRequirements({
+        jobTitle: job.title,
+        requiredQualificationsText: reqQualText,
+        preferredQualificationsText: prefQualText,
+        alreadyClaimedEvidence: [
+          ...skillUnits.flatMap((u) => u.evidenceSnippets),
+          ...certUnits.flatMap((u) => u.evidenceSnippets),
+          ...(eduUnit ? eduUnit.evidenceSnippets : []),
+        ],
+      });
+      const allReqs = [...skillUnits, ...certUnits, ...(eduUnit ? [eduUnit] : []), ...unclaimed];
+      fs.writeFileSync(path.join(wsDir, "extracted_job_requirements.json"), JSON.stringify(allReqs, null, 2));
+
       const execResult = await executeResumeQualityIteration({
         candidateId,
         workflowId: createdWorkflow.id,
         resume: initialResume,
+        jobRequirements: allReqs,
         reviewer: new DeterministicResumeReviewer(),
       });
 

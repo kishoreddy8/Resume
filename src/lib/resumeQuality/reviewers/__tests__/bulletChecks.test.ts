@@ -85,3 +85,22 @@ test("empty bullet strings are ignored, not flagged as defects", () => {
   const result = evaluateBulletChecks([role("Acme", [""])]);
   assert.deepEqual(result.genericBullets, []);
 });
+
+test("dynamic data masking and dynamic tables are recognized as technical terms and not flagged as banned AI language", () => {
+  const result = evaluateBulletChecks([
+    role("Acme", [
+      "Implemented dynamic data masking and row-level security policies in Snowflake to protect sensitive financial records.",
+      "Configured Snowflake dynamic tables to automate continuous ELT pipeline refreshes.",
+    ]),
+  ]);
+  assert.ok(!result.corrections.some((c) => c.description.includes("Banned AI-sounding language")));
+});
+
+test("buzzword usage of dynamic is still flagged as banned AI language", () => {
+  const result = evaluateBulletChecks([
+    role("Acme", [
+      "Thrived in a dynamic environment delivering cutting-edge data solutions.",
+    ]),
+  ]);
+  assert.ok(result.corrections.some((c) => c.description.includes("Banned AI-sounding language")));
+});

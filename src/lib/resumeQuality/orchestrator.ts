@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { getCandidate } from "@/db/queries/candidates";
 import { getCandidateJobState } from "@/db/queries/candidateJobState";
+import { getCompany } from "@/db/queries/companies";
+import { getJobByDedupeKey } from "@/db/queries/jobs";
 import { getTailoringRun } from "@/db/queries/tailoringRuns";
 import {
   createResumeQualityIteration,
@@ -22,6 +24,7 @@ import { evaluateQualityGate, type QualityGateOutcome } from "./qualityGate";
 import { renderReviewFeedbackMarkdown } from "./reviewFeedback";
 import { DeterministicResumeReviewer } from "./reviewers/deterministicReviewer";
 import { assertValidWorkflowTransition } from "./stateMachine";
+import { generateTailoringOutputs } from "../../../tools/tailoring-engine/generate";
 import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring-engine/types";
 import {
   structuredResumeReviewSchema,
@@ -371,7 +374,7 @@ export async function executeResumeQualityIteration(
       outputFiles.push("cover_letter_content.json");
     }
 
-    // Copy Resume.docx into iteration dir if available
+    // Copy or generate Resume.docx in iteration dir
     const iterResumeDocx = path.join(iterDir, "Resume.docx");
     if (input.resumeDocxPath && fs.existsSync(input.resumeDocxPath)) {
       if (path.resolve(input.resumeDocxPath) !== path.resolve(iterResumeDocx)) {
@@ -391,7 +394,7 @@ export async function executeResumeQualityIteration(
       }
     }
 
-    // Copy CoverLetter.docx into iteration dir if available
+    // Copy or generate CoverLetter.docx in iteration dir
     const iterCoverDocx = path.join(iterDir, "CoverLetter.docx");
     if (input.coverLetterDocxPath && fs.existsSync(input.coverLetterDocxPath)) {
       if (path.resolve(input.coverLetterDocxPath) !== path.resolve(iterCoverDocx)) {
@@ -408,6 +411,39 @@ export async function executeResumeQualityIteration(
       if (fs.existsSync(runCoverDocx) && !fs.existsSync(iterCoverDocx)) {
         fs.copyFileSync(runCoverDocx, iterCoverDocx);
         outputFiles.push("CoverLetter.docx");
+      }
+    }
+
+    // If docx files were not copied from previous run or input path, generate them directly
+    if (!fs.existsSync(iterResumeDocx)) {
+      try {
+        const job = getJobByDedupeKey(workflow.dedupe_key);
+        const company = job ? getCompany(job.company_id) : undefined;
+        generateTailoringOutputs(
+          {
+            company: company?.name ?? "Company",
+            jobId: job?.id ?? workflow.id,
+            resume,
+            coverLetter: input.coverLetter ?? {
+              name: resume.name,
+              location: resume.location,
+              email: resume.email,
+              phone: resume.phone,
+              salutation: "Dear Hiring Team,",
+              paragraphs: ["I am excited to apply for this position."],
+              closing: `Sincerely,\n${resume.name}`,
+            },
+          },
+          { outputDir: iterDir }
+        );
+        if (fs.existsSync(iterResumeDocx) && !outputFiles.includes("Resume.docx")) {
+          outputFiles.unshift("Resume.docx");
+        }
+        if (input.coverLetter && fs.existsSync(iterCoverDocx) && !outputFiles.includes("CoverLetter.docx")) {
+          outputFiles.push("CoverLetter.docx");
+        }
+      } catch {
+        // Fall back gracefully if docx generation is not possible
       }
     }
 
