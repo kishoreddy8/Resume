@@ -6,7 +6,12 @@ import { slugify } from "@/lib/slugify";
 // detail API route already reads from — kept in one place so both stay in sync. Exported so
 // src/lib/tailoringArtifacts.ts (Phase 3 Stage 4's candidate/run-scoped layout) can nest its own
 // subtree under the exact same root rather than duplicating the "data/generated" path segment.
-export const GENERATED_ROOT = path.join(process.cwd(), "data", "generated");
+//
+// CAREER_OPS_GENERATED_DIR is a test-only override (mirroring src/db/index.ts's CAREER_OPS_DB_PATH
+// and src/lib/match/candidateProfile.ts's CAREER_OPS_CANDIDATES_DIR conventions) — real app code
+// never sets this env var. Without it, Phase 3 Stage 5's executeTailoringRun tests would write real
+// files into this project's actual data/generated/ tree.
+export const GENERATED_ROOT = process.env.CAREER_OPS_GENERATED_DIR ?? path.join(process.cwd(), "data", "generated");
 
 export function generatedFilesDir(companyName: string, jobId: number): string {
   return path.join(GENERATED_ROOT, slugify(companyName), String(jobId));
