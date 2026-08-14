@@ -1,5 +1,11 @@
 import { z } from "zod";
 import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring-engine/types";
+// Type-only reuse of Phase 2's own JD-requirement and candidate-profile models — read-only import,
+// zero Phase 2 logic touched. This is exactly "reuse existing types, don't invent a duplicate
+// schema": RequirementUnit already IS the structured JD-side requirement model (criticality,
+// requirementLevel, canonical memberSkillNames) and CandidateProfile already IS the structured
+// Master Resume/Skills Inventory model Stage 8's deterministic reviewer needs to compare against.
+import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
 
 /**
  * Phase 3 Stage 7 — data contracts for the future multi-stage AI resume quality pipeline
@@ -147,6 +153,18 @@ export interface ResumeReviewerInput {
   resumePath: string;
   jobDescriptionPath: string;
   resume: ResumeContent;
+  /**
+   * Phase 3 Stage 8 additions — Stage 7 defined the identity/output shape only ("foundation only");
+   * a real reviewer implementation needs structured data to compare against, not just a resume and a
+   * file path. Both are OPTIONAL and reuse Phase 2's own types directly rather than a duplicate
+   * schema: jobRequirements is the same RequirementUnit[] Phase 2's own scoring.ts consumes,
+   * masterResumeProfile is the same CandidateProfile loadCandidateProfile() already returns. A
+   * reviewer must never silently invent either when absent — see DeterministicResumeReviewer's own
+   * handling (src/lib/resumeQuality/reviewers/deterministicReviewer.ts) for how it surfaces the
+   * limitation instead of fabricating a score.
+   */
+  jobRequirements?: RequirementUnit[];
+  masterResumeProfile?: CandidateProfile;
 }
 
 export interface ResumeReviewerOutput {
