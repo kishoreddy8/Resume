@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring-engine/types";
+export type { CoverLetterContent, ResumeContent };
 // Type-only reuse of Phase 2's own JD-requirement and candidate-profile models — read-only import,
 // zero Phase 2 logic touched. This is exactly "reuse existing types, don't invent a duplicate
 // schema": RequirementUnit already IS the structured JD-side requirement model (criticality,

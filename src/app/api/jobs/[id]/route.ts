@@ -14,6 +14,12 @@ const PATCH_SCHEMA = z.object({
     .enum(["New", "Interested", "Applied", "Interviewing", "Offer", "Employer Rejected"])
     .optional(),
   markedForTailoring: z.boolean().optional(),
+  approval: z
+    .object({
+      approvalType: z.enum(["READY_DIRECT", "NEEDS_REVIEW_OVERRIDE"]),
+      decision: z.string(),
+    })
+    .optional(),
   notes: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
   pinned: z.boolean().optional(),
@@ -89,7 +95,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     setPipelineStatus(candidateId, dedupeKey, parsed.data.pipelineStatus as PipelineStatus);
   }
   if (parsed.data.markedForTailoring !== undefined) {
-    setMarkedForTailoring(candidateId, dedupeKey, parsed.data.markedForTailoring);
+    setMarkedForTailoring(candidateId, dedupeKey, parsed.data.markedForTailoring, parsed.data.approval);
   }
   if (parsed.data.notes !== undefined || parsed.data.tags !== undefined) {
     const currentState = getJob(jobId, candidateId)!;

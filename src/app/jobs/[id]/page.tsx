@@ -8,6 +8,7 @@ import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { AiInsightsCard } from "./AiInsightsCard";
 import { MatchCard } from "./MatchCard";
+import { ResumeQualityPipeline } from "./ResumeQualityPipeline";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
@@ -870,6 +871,8 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
               <TailoringToggle jobId={job.id} initial={job.marked_for_tailoring === 1} candidateId={candidateId} />
             </div>
           </div>
+
+          <ResumeQualityPipeline jobId={job.id} jobTitle={job.title} companyName={job.company_name} />
 
           <MatchCard jobId={job.id} />
 

@@ -1,0 +1,692 @@
+"use client";
+
+import { useEffect, useState, useRef } from "react";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import type { StructuredResumeReview, RequiredCorrection } from "@/lib/resumeQuality/types";
+
+interface QualityWorkflowResponse {
+  candidateId: number;
+  jobId: number;
+  jobTitle: string;
+  companyName: string;
+  applicationId: number | null;
+  tailoringRun: { id: number; status: string; created_at: string } | null;
+  workflow: {
+    id: number;
+    status: string;
+    current_iteration: number;
+    max_iterations: number;
+    latest_overall_score: number | null;
+    final_approved_iteration: number | null;
+    failure_reason: string | null;
+    created_at: string;
+  } | null;
+  authorization: {
+    isMarked: boolean;
+    markedAt: string | null;
+    approvalType: string | null;
+    approvedDecision: string | null;
+    isAuthorized: boolean;
+    blockingReason: string | null;
+    matchDecision: string;
+  };
+  iterations: Array<{
+    id: number;
+    iteration_number: number;
+    overall_score: number | null;
+    ats_score: number | null;
+    keyword_alignment_score: number | null;
+    truthfulness_score: number | null;
+    architecture_consistency_score: number | null;
+    recruiter_readability_score: number | null;
+    formatting_score: number | null;
+    blocking_issue_count: number;
+    review_json: string | null;
+    created_at: string;
+  }>;
+  latestReview: StructuredResumeReview | null;
+  qualityGate: {
+    passed: boolean;
+    outcome: string;
+    reasons: string[];
+    blockingIssues: string[];
+  } | null;
+  availableArtifacts: {
+    hasFinalResume: boolean;
+    hasFinalCoverLetter: boolean;
+    hasFinalFeedback: boolean;
+    hasIterationResume: boolean;
+    hasIterationCoverLetter: boolean;
+    hasIterationFeedback: boolean;
+    hasHandoffPackage: boolean;
+  };
+  waitingFor: "EXTERNAL_WRITER" | "HUMAN_REVIEW" | "COMPLETED" | "NOT_WAITING";
+}
+
+function getStepIndex(status: string): number {
+  switch (status) {
+    case "CREATED":
+      return 0;
+    case "WRITER_RUNNING":
+    case "WRITER_COMPLETED":
+      return 1;
+    case "REVIEW_RUNNING":
+    case "REVIEW_COMPLETED":
+      return 2;
+    case "IMPROVEMENT_RUNNING":
+      return 3;
+    case "READY":
+      return 4;
+    case "FAILED":
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function PriorityBadge({ priority }: { priority: string }) {
+  const colors: Record<string, string> = {
+    CRITICAL: "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300 border-red-200 dark:border-red-800",
+    HIGH: "bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-300 border-orange-200 dark:border-orange-800",
+    MEDIUM: "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 border-amber-200 dark:border-amber-800",
+    LOW: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700",
+  };
+  return (
+    <span
+      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${
+        colors[priority] ?? colors.LOW
+      }`}
+    >
+      {priority}
+    </span>
+  );
+}
+
+function ScoreBar({ label, score, target = 95 }: { label: string; score: number | null; target?: number }) {
+  const val = score ?? 0;
+  const isPass = val >= target;
+  return (
+    <div>
+      <div className="flex justify-between text-xs mb-1">
+        <span className="text-zinc-600 dark:text-zinc-400 font-medium">{label}</span>
+        <span className={`font-semibold ${isPass ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-800 dark:text-zinc-200"}`}>
+          {score !== null ? `${score}/100` : "—"}
+        </span>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+        <div
+          className={`h-full transition-all duration-300 ${
+            val >= 95 ? "bg-emerald-500" : val >= 80 ? "bg-blue-500" : val >= 60 ? "bg-amber-500" : "bg-red-500"
+          }`}
+          style={{ width: `${Math.min(Math.max(val, 0), 100)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+export function ResumeQualityPipeline({
+  jobId,
+  jobTitle,
+  companyName,
+}: {
+  jobId: number;
+  jobTitle: string;
+  companyName: string;
+}) {
+  const candidateId = useActiveCandidateId();
+  const [data, setData] = useState<QualityWorkflowResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [selectedIterationNumber, setSelectedIterationNumber] = useState<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function loadData() {
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow`);
+      if (!res.ok) throw new Error("Failed to load workflow state");
+      const json = (await res.json()) as QualityWorkflowResponse;
+      setData(json);
+      if (selectedIterationNumber === null && json.workflow?.current_iteration) {
+        setSelectedIterationNumber(json.workflow.current_iteration);
+      }
+    } catch {
+      // Ignored
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateId, jobId]);
+
+  async function handleStartTailoring(approvalType?: "READY_DIRECT" | "NEEDS_REVIEW_OVERRIDE") {
+    setActionBusy(true);
+    setActionMessage(null);
+    try {
+      if (approvalType && data?.authorization.matchDecision) {
+        // First mark with approval context
+        await fetch(`/api/jobs/${jobId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            candidateId,
+            markedForTailoring: true,
+            approval: {
+              approvalType,
+              decision: data.authorization.matchDecision,
+            },
+          }),
+        });
+      }
+
+      const res = await fetch(`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error ?? "Failed to start tailoring workflow");
+      }
+
+      setActionMessage({ type: "success", text: "Quality workflow initialized and evaluated successfully." });
+      await loadData();
+    } catch (err: unknown) {
+      setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Error starting tailoring" });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleExportPackage() {
+    setActionBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ overwrite: true }),
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error ?? "Failed to export writer package");
+      }
+
+      setActionMessage({
+        type: "success",
+        text: `Handoff package exported for iteration ${body.exportResult.targetIterationNumber}.`,
+      });
+      await loadData();
+    } catch (err: unknown) {
+      setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Error exporting package" });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setActionBusy(true);
+    setActionMessage(null);
+
+    try {
+      const text = await file.text();
+      // Test parse
+      JSON.parse(text);
+
+      const res = await fetch(`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: text,
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error ?? "Failed to import writer output");
+      }
+
+      setActionMessage({
+        type: "success",
+        text: `Successfully imported writer output and completed iteration review (Score: ${body.result.review.overallScore}/100).`,
+      });
+
+      await loadData();
+      if (body.workflow?.current_iteration) {
+        setSelectedIterationNumber(body.workflow.current_iteration);
+      }
+    } catch (err: unknown) {
+      setActionMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Invalid JSON or import error",
+      });
+    } finally {
+      setActionBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Resume Tailoring Pipeline</h2>
+        <p className="mt-2 text-xs text-zinc-500">Loading pipeline status…</p>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const { workflow, authorization, applicationId, tailoringRun, iterations, availableArtifacts } = data;
+
+  // Selected iteration data for historical view
+  const activeIterNum = selectedIterationNumber ?? workflow?.current_iteration ?? 1;
+  const selectedIterRow = iterations.find((it) => it.iteration_number === activeIterNum);
+  let displayedReview: StructuredResumeReview | null = null;
+  if (selectedIterRow?.review_json) {
+    try {
+      displayedReview = JSON.parse(selectedIterRow.review_json) as StructuredResumeReview;
+    } catch {
+      displayedReview = data.latestReview;
+    }
+  } else {
+    displayedReview = data.latestReview;
+  }
+
+  const currentStep = workflow ? getStepIndex(workflow.status) : -1;
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900 space-y-5">
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 pb-4 dark:border-zinc-800">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Resume Tailoring Pipeline</h2>
+            {workflow && (
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                  workflow.status === "READY"
+                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                    : workflow.status === "FAILED"
+                    ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
+                    : workflow.status === "IMPROVEMENT_RUNNING"
+                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                    : "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
+                }`}
+              >
+                {workflow.status.replace(/_/g, " ")}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">
+            {companyName} — {jobTitle}
+            {applicationId && <span className="ml-2">· Application #{applicationId}</span>}
+            {tailoringRun && <span className="ml-2">· Run #{tailoringRun.id}</span>}
+          </p>
+        </div>
+
+        {workflow && (
+          <div className="text-right">
+            <div className="text-xs text-zinc-500">Iteration</div>
+            <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+              {workflow.current_iteration} of {workflow.max_iterations}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Action Notification */}
+      {actionMessage && (
+        <div
+          className={`rounded-md p-3 text-xs ${
+            actionMessage.type === "success"
+              ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800"
+              : "bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-200 border border-red-200 dark:border-red-800"
+          }`}
+        >
+          {actionMessage.text}
+        </div>
+      )}
+
+      {/* State Visualization */}
+      {workflow && (
+        <div className="py-2">
+          <div className="grid grid-cols-5 gap-2 text-center text-xs">
+            {["Created", "Writer", "Review", "Improvement", "Ready"].map((stepLabel, idx) => {
+              const isPast = currentStep > idx;
+              const isCurrent = currentStep === idx;
+              const isReady = workflow.status === "READY" && idx === 4;
+              const isFailed = workflow.status === "FAILED" && idx === 3;
+              return (
+                <div key={stepLabel} className="flex flex-col items-center gap-1.5">
+                  <div
+                    className={`h-2 w-full rounded-full transition-colors ${
+                      isReady
+                        ? "bg-emerald-500"
+                        : isFailed
+                        ? "bg-red-500"
+                        : isCurrent
+                        ? "bg-blue-600"
+                        : isPast
+                        ? "bg-blue-300 dark:bg-blue-800"
+                        : "bg-zinc-100 dark:bg-zinc-800"
+                    }`}
+                  />
+                  <span
+                    className={`text-[11px] font-medium ${
+                      isCurrent || isReady || isFailed
+                        ? "text-zinc-900 dark:text-zinc-100 font-semibold"
+                        : "text-zinc-400 dark:text-zinc-600"
+                    }`}
+                  >
+                    {stepLabel}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 1. Unstarted or Unapproved State */}
+      {!workflow && (
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-4 dark:border-zinc-800 dark:bg-zinc-800/30 space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Tailoring Authorization</h3>
+            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+              {authorization.isAuthorized
+                ? "This posting is approved and ready for automated deterministic tailoring."
+                : authorization.blockingReason ?? "Tailoring approval required."}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            {authorization.isAuthorized ? (
+              <button
+                onClick={() => handleStartTailoring()}
+                disabled={actionBusy}
+                className="rounded bg-zinc-900 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              >
+                {actionBusy ? "Starting Pipeline…" : "Start Tailoring Pipeline"}
+              </button>
+            ) : authorization.matchDecision === "READY_FOR_TAILORING" ? (
+              <button
+                onClick={() => handleStartTailoring("READY_DIRECT")}
+                disabled={actionBusy}
+                className="rounded bg-emerald-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {actionBusy ? "Authorizing…" : "Approve & Start Tailoring"}
+              </button>
+            ) : authorization.matchDecision === "NEEDS_REVIEW" ? (
+              <button
+                onClick={() => handleStartTailoring("NEEDS_REVIEW_OVERRIDE")}
+                disabled={actionBusy}
+                className="rounded bg-amber-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                {actionBusy ? "Authorizing…" : "Approve Override & Start Tailoring"}
+              </button>
+            ) : (
+              <span className="text-xs font-medium text-zinc-500 italic">
+                Match decision is {authorization.matchDecision}. Resolve profile gaps before tailoring.
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 2. Success Banner when READY */}
+      {workflow?.status === "READY" && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/30">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+                ✓ Resume Ready for Application
+              </h3>
+              <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
+                Quality score: <strong>{workflow.latest_overall_score ?? 96}/100</strong>. Approved at Iteration{" "}
+                {workflow.final_approved_iteration ?? workflow.current_iteration}.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/resume`}
+                download
+                className="inline-flex items-center rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+              >
+                Download Resume (.docx)
+              </a>
+              {availableArtifacts.hasFinalCoverLetter && (
+                <a
+                  href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/coverLetter`}
+                  download
+                  className="inline-flex items-center rounded border border-emerald-600 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100 dark:text-emerald-200 dark:hover:bg-emerald-900/40"
+                >
+                  Download Cover Letter (.docx)
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Human Review / FAILED Banner */}
+      {workflow?.status === "FAILED" && (
+        <div className="rounded-lg border border-red-200 bg-red-50/80 p-4 dark:border-red-900/60 dark:bg-red-950/30">
+          <h3 className="text-sm font-semibold text-red-900 dark:text-red-200">Human Review Required</h3>
+          <p className="mt-1 text-xs text-red-700 dark:text-red-300">
+            {workflow.failure_reason ?? "Max improvement iterations reached without meeting quality threshold."}
+          </p>
+        </div>
+      )}
+
+      {/* 4. External Writer Handoff Controls (when IMPROVEMENT_RUNNING) */}
+      {workflow?.status === "IMPROVEMENT_RUNNING" && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900/50 dark:bg-amber-950/20 space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">Needs Resume Improvement</h3>
+              <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">
+                Target Iteration: {workflow.current_iteration + 1} of {workflow.max_iterations}
+              </p>
+            </div>
+            <button
+              onClick={handleExportPackage}
+              disabled={actionBusy}
+              className="rounded bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              {actionBusy ? "Exporting…" : "Export Writer Package"}
+            </button>
+          </div>
+
+          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+            Use this package with <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>Antigravity</strong>, or
+            another external writer agent. After it writes <code>writer_output.json</code>, return here and import the
+            result.
+          </p>
+
+          <div className="pt-2 border-t border-amber-200/60 dark:border-amber-900/40 flex items-center gap-3">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".json"
+              onChange={handleFileUpload}
+              className="hidden"
+              id="writer-output-upload"
+            />
+            <label
+              htmlFor="writer-output-upload"
+              className={`inline-flex items-center cursor-pointer rounded border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 ${
+                actionBusy ? "opacity-50 pointer-events-none" : ""
+              }`}
+            >
+              {actionBusy ? "Processing Import…" : "Import writer_output.json"}
+            </label>
+            <span className="text-[11px] text-zinc-500">Upload the completed writer JSON output</span>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Quality Score & Deterministic Sub-scores */}
+      {displayedReview && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+          {/* Prominent Overall Score Card */}
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-800/40 flex flex-col justify-between">
+            <div>
+              <div className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Overall Quality Score</div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">
+                  {displayedReview.overallScore}
+                </span>
+                <span className="text-sm font-semibold text-zinc-400">/ 100</span>
+              </div>
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-700 text-xs">
+              <div className="font-medium text-zinc-700 dark:text-zinc-300 mb-1">Quality Gate Status</div>
+              {displayedReview.overallScore >= 95 &&
+              displayedReview.truthfulnessScore === 100 &&
+              displayedReview.architectureConsistencyScore === 100 &&
+              displayedReview.blockingIssues.length === 0 ? (
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">✓ Ready for Application</span>
+              ) : (
+                <span className="font-semibold text-amber-600 dark:text-amber-400">⚠ Needs Improvement</span>
+              )}
+            </div>
+          </div>
+
+          {/* Component Sub-scores */}
+          <div className="md:col-span-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-800/40 space-y-2.5">
+            <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 uppercase tracking-wider mb-2">
+              Deterministic Review Components
+            </div>
+            <ScoreBar label="ATS Keyword Alignment" score={displayedReview.atsScore} target={90} />
+            <ScoreBar label="Truthfulness / Master Consistency" score={displayedReview.truthfulnessScore} target={100} />
+            <ScoreBar label="Architecture Consistency" score={displayedReview.architectureConsistencyScore} target={100} />
+            <ScoreBar label="Recruiter Readability" score={displayedReview.recruiterReadabilityScore} target={85} />
+            <ScoreBar label="Document Formatting" score={displayedReview.formattingScore} target={95} />
+          </div>
+        </div>
+      )}
+
+      {/* 6. Review Feedback & Diagnostics */}
+      {displayedReview && (
+        <div className="space-y-4 pt-2">
+          {/* Blocking Issues */}
+          {displayedReview.blockingIssues.length > 0 && (
+            <div className="rounded-md border border-red-200 bg-red-50 p-3.5 dark:border-red-900 dark:bg-red-950/40">
+              <h4 className="text-xs font-semibold text-red-900 dark:text-red-200 mb-1.5">
+                Blocking Issues ({displayedReview.blockingIssues.length})
+              </h4>
+              <ul className="list-disc pl-4 space-y-1 text-xs text-red-800 dark:text-red-300">
+                {displayedReview.blockingIssues.map((issue, i) => (
+                  <li key={i}>{issue}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Required Corrections */}
+          {displayedReview.requiredCorrections && displayedReview.requiredCorrections.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                Required Corrections ({displayedReview.requiredCorrections.length})
+              </h4>
+              <div className="space-y-2">
+                {displayedReview.requiredCorrections.map((corr: RequiredCorrection, i: number) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-2.5 rounded-md border border-zinc-200 bg-white p-2.5 text-xs dark:border-zinc-800 dark:bg-zinc-900/60"
+                  >
+                    <PriorityBadge priority={corr.priority} />
+                    <p className="text-zinc-800 dark:text-zinc-200 flex-1">{corr.description}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Detailed Diagnostic Pills */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            {displayedReview.missingRequiredSkills.length > 0 && (
+              <div className="rounded border border-zinc-200 p-3 dark:border-zinc-800">
+                <div className="font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">Missing Required Skills</div>
+                <div className="flex flex-wrap gap-1">
+                  {displayedReview.missingRequiredSkills.map((s, i) => (
+                    <span key={i} className="rounded bg-red-100 px-2 py-0.5 text-red-800 dark:bg-red-900/40 dark:text-red-300">
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {displayedReview.truthfulnessIssues.length > 0 && (
+              <div className="rounded border border-zinc-200 p-3 dark:border-zinc-800">
+                <div className="font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">Truthfulness Diagnostics</div>
+                <ul className="list-disc pl-4 space-y-0.5 text-zinc-700 dark:text-zinc-300">
+                  {displayedReview.truthfulnessIssues.map((t, i) => (
+                    <li key={i}>{t}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {displayedReview.incorrectTechnologyUsage.length > 0 && (
+              <div className="rounded border border-zinc-200 p-3 dark:border-zinc-800">
+                <div className="font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">Technology Usage Warnings</div>
+                <ul className="list-disc pl-4 space-y-0.5 text-zinc-700 dark:text-zinc-300">
+                  {displayedReview.incorrectTechnologyUsage.map((c, i) => (
+                    <li key={i}>{c}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {displayedReview.genericBullets.length > 0 && (
+              <div className="rounded border border-zinc-200 p-3 dark:border-zinc-800">
+                <div className="font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">Generic / Weak Bullets</div>
+                <p className="text-zinc-500">{displayedReview.genericBullets.length} bullet(s) flagged for generic phrasing.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 7. Iteration History */}
+      {iterations.length > 0 && (
+        <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Iteration History</div>
+          <div className="flex flex-wrap gap-2">
+            {iterations.map((iter) => {
+              const isSelected = iter.iteration_number === activeIterNum;
+              const isReady = iter.overall_score && iter.overall_score >= 95 && iter.blocking_issue_count === 0;
+              return (
+                <button
+                  key={iter.id}
+                  onClick={() => setSelectedIterationNumber(iter.iteration_number)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium border transition-colors ${
+                    isSelected
+                      ? "bg-zinc-900 text-white border-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 dark:border-zinc-100"
+                      : "bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800 dark:hover:bg-zinc-800"
+                  }`}
+                >
+                  Iteration {iter.iteration_number} — {iter.overall_score ?? "—"}/100
+                  {isReady && " ✓"}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

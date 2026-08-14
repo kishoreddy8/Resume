@@ -1,0 +1,341 @@
+import fs from "node:fs";
+import path from "node:path";
+import { NextRequest, NextResponse } from "next/server";
+import { getCandidateJobState } from "@/db/queries/candidateJobState";
+import { requireActiveCandidate, getCandidate } from "@/db/queries/candidates";
+import { getJob } from "@/db/queries/jobs";
+import { getLatestJobMatchResult } from "@/db/queries/jobMatches";
+import {
+  createResumeQualityWorkflow,
+  getLatestResumeQualityWorkflowForJob,
+  getResumeQualityWorkflow,
+  listResumeQualityIterations,
+} from "@/db/queries/resumeQualityWorkflows";
+import { listTailoringRuns } from "@/db/queries/tailoringRuns";
+import { loadCandidateProfile } from "@/lib/match/candidateProfile";
+import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
+import { startTailoringRun, type TailoringRunAuthorizationError } from "@/lib/tailoringExecution";
+import { executeResumeQualityIteration } from "@/lib/resumeQuality/orchestrator";
+import { DeterministicResumeReviewer } from "@/lib/resumeQuality/reviewers/deterministicReviewer";
+import {
+  finalCoverLetterFilename,
+  finalResumeFilename,
+  getFinalDirectory,
+  getHandoffDirectory,
+  getIterationDirectory,
+  type QualityWorkflowLocation,
+} from "@/lib/resumeQuality/workspace";
+import type { ResumeContent, StructuredResumeReview } from "@/lib/resumeQuality/types";
+
+function parsePositiveInt(raw: string): number | null {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ candidateId: string; jobId: string }> }
+): Promise<NextResponse> {
+  const { candidateId: candidateIdParam, jobId: jobIdParam } = await params;
+  const candidateId = parsePositiveInt(candidateIdParam);
+  if (candidateId === null) return NextResponse.json({ error: "Invalid candidate id" }, { status: 400 });
+  if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+
+  const jobId = parsePositiveInt(jobIdParam);
+  if (jobId === null) return NextResponse.json({ error: "Invalid job id" }, { status: 400 });
+  const job = getJob(jobId);
+  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+
+  const candidate = getCandidate(candidateId);
+  const state = getCandidateJobState(candidateId, job.dedupe_key);
+  const matchResult = getLatestJobMatchResult(candidateId, job.dedupe_key);
+  const runs = listTailoringRuns(candidateId, job.dedupe_key);
+  const latestRun = runs[0] ?? null;
+
+  const workflow = getLatestResumeQualityWorkflowForJob(candidateId, job.dedupe_key) ?? null;
+
+  // Authorization check
+  let isAuthorized = false;
+  let authorizationBlockingReason: string | null = null;
+  if (!state || !state.marked_for_tailoring) {
+    authorizationBlockingReason = "Job is not marked for tailoring.";
+  } else if (!state.tailoring_approval_type || !state.tailoring_approved_decision) {
+    authorizationBlockingReason = "Tailoring approval required: no approval context recorded.";
+  } else if (!matchResult) {
+    authorizationBlockingReason = "Tailoring approval required: job has not been evaluated against candidate profile.";
+  } else if (state.tailoring_approved_decision !== matchResult.decision) {
+    authorizationBlockingReason = `Tailoring approval stale: approved for ${state.tailoring_approved_decision}, but current match decision is ${matchResult.decision}.`;
+  } else {
+    isAuthorized = true;
+  }
+
+  // Iterations & Review data
+  let iterations: ReturnType<typeof listResumeQualityIterations> = [];
+  let latestReview: StructuredResumeReview | null = null;
+  let qualityGate: {
+    passed: boolean;
+    outcome: string;
+    criteria: {
+      overallScorePass: boolean;
+      truthfulnessPass: boolean;
+      architecturePass: boolean;
+      blockingIssuesPass: boolean;
+    };
+  } | null = null;
+
+  const availableArtifacts = {
+    hasFinalResume: false,
+    hasFinalCoverLetter: false,
+    hasFinalFeedback: false,
+    hasIterationResume: false,
+    hasIterationCoverLetter: false,
+    hasIterationFeedback: false,
+    hasHandoffPackage: false,
+  };
+
+  if (workflow) {
+    iterations = listResumeQualityIterations(candidateId, workflow.id);
+    const latestIter = iterations[iterations.length - 1];
+    if (latestIter?.review_json) {
+      try {
+        latestReview = JSON.parse(latestIter.review_json) as StructuredResumeReview;
+        const outcome = evaluateQualityGate(latestReview, latestIter.iteration_number, workflow.max_iterations);
+        qualityGate = {
+          passed: outcome === "READY",
+          outcome,
+          criteria: {
+            overallScorePass: latestReview.overallScore >= 95,
+            truthfulnessPass: latestReview.truthfulnessScore === 100,
+            architecturePass: latestReview.architectureConsistencyScore === 100,
+            blockingIssuesPass: latestReview.blockingIssues.length === 0,
+          },
+        };
+      } catch {
+        // Fallback
+      }
+    }
+
+    const location: QualityWorkflowLocation = {
+      candidateId,
+      dedupeKey: workflow.dedupe_key,
+      runId: workflow.tailoring_run_id,
+      workflowId: workflow.id,
+    };
+
+    if (workflow.status === "READY" && candidate) {
+      const finalDir = getFinalDirectory(location);
+      const resFile = path.join(finalDir, finalResumeFilename(candidate.first_name));
+      const covFile = path.join(finalDir, finalCoverLetterFilename(candidate.first_name));
+      const fbFile = path.join(finalDir, "resume_review_feedback.md");
+      availableArtifacts.hasFinalResume = fs.existsSync(resFile);
+      availableArtifacts.hasFinalCoverLetter = fs.existsSync(covFile);
+      availableArtifacts.hasFinalFeedback = fs.existsSync(fbFile);
+    }
+
+    if (workflow.current_iteration > 0) {
+      const iterDir = getIterationDirectory(location, workflow.current_iteration);
+      availableArtifacts.hasIterationResume = fs.existsSync(path.join(iterDir, "Resume.docx"));
+      availableArtifacts.hasIterationCoverLetter = fs.existsSync(path.join(iterDir, "CoverLetter.docx"));
+      availableArtifacts.hasIterationFeedback = fs.existsSync(path.join(iterDir, "review_feedback.md"));
+    }
+
+    if (workflow.status === "IMPROVEMENT_RUNNING") {
+      const targetIter = workflow.current_iteration + 1;
+      const handoffDir = getHandoffDirectory(location, targetIter);
+      availableArtifacts.hasHandoffPackage = fs.existsSync(path.join(handoffDir, "writer_input.json"));
+    }
+  }
+
+  const waitingFor =
+    workflow?.status === "IMPROVEMENT_RUNNING"
+      ? "EXTERNAL_WRITER"
+      : workflow?.status === "FAILED"
+      ? "HUMAN_REVIEW"
+      : workflow?.status === "READY"
+      ? "COMPLETED"
+      : "NOT_WAITING";
+
+  const safeWorkflow = workflow
+    ? {
+        id: workflow.id,
+        status: workflow.status,
+        current_iteration: workflow.current_iteration,
+        max_iterations: workflow.max_iterations,
+        latest_overall_score: workflow.latest_overall_score,
+        final_approved_iteration: workflow.final_approved_iteration,
+        failure_reason: workflow.failure_reason,
+        created_at: workflow.created_at,
+      }
+    : null;
+
+  return NextResponse.json({
+    candidateId,
+    jobId,
+    jobTitle: job.title,
+    companyName: job.company_name,
+    applicationId: state?.id ?? null,
+    tailoringRun: latestRun
+      ? {
+          id: latestRun.id,
+          status: latestRun.status,
+          created_at: latestRun.created_at,
+        }
+      : null,
+    workflow: safeWorkflow,
+    authorization: {
+      isMarked: Boolean(state?.marked_for_tailoring),
+      markedAt: state?.tailoring_marked_at ?? null,
+      approvalType: state?.tailoring_approval_type ?? null,
+      approvedDecision: state?.tailoring_approved_decision ?? null,
+      isAuthorized,
+      blockingReason: authorizationBlockingReason,
+      matchDecision: matchResult?.decision ?? "NO_MATCH",
+    },
+    iterations,
+    latestReview,
+    qualityGate,
+    availableArtifacts,
+    waitingFor,
+  });
+}
+
+/**
+ * Starts or advances the resume quality pipeline for this candidate and job.
+ */
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ candidateId: string; jobId: string }> }
+): Promise<NextResponse> {
+  const { candidateId: candidateIdParam, jobId: jobIdParam } = await params;
+  const candidateId = parsePositiveInt(candidateIdParam);
+  if (candidateId === null) return NextResponse.json({ error: "Invalid candidate id" }, { status: 400 });
+  if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+
+  const jobId = parsePositiveInt(jobIdParam);
+  if (jobId === null) return NextResponse.json({ error: "Invalid job id" }, { status: 400 });
+  const job = getJob(jobId);
+  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+
+  const candidate = getCandidate(candidateId);
+  if (!candidate) return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
+
+  const state = getCandidateJobState(candidateId, job.dedupe_key);
+  if (!state || !state.marked_for_tailoring) {
+    return NextResponse.json(
+      { error: "Tailoring approval required: job must be marked for tailoring.", code: "NOT_MARKED_FOR_TAILORING" },
+      { status: 400 }
+    );
+  }
+
+  // Load candidate profile
+  const profileResult = loadCandidateProfile(candidateId);
+  if (profileResult.status !== "ok") {
+    const errorMsg = "error" in profileResult ? profileResult.error : `Candidate profile is ${profileResult.status}`;
+    return NextResponse.json(
+      { error: errorMsg, code: "PROFILE_UNAVAILABLE" },
+      { status: 400 }
+    );
+  }
+
+  // Check if a workflow already exists
+  let workflow = getLatestResumeQualityWorkflowForJob(candidateId, job.dedupe_key);
+
+  if (!workflow || workflow.status === "CREATED") {
+    // 1. Ensure tailoring run exists
+    let runId: number;
+    const runs = listTailoringRuns(candidateId, job.dedupe_key);
+    if (runs.length > 0 && runs[0].status === "started") {
+      runId = runs[0].id;
+    } else {
+      try {
+        const { run } = startTailoringRun({ candidateId, jobId });
+        runId = run.id;
+      } catch (err: unknown) {
+        const authErr = err as TailoringRunAuthorizationError;
+        return NextResponse.json(
+          { error: authErr.message, code: authErr.code ?? "AUTHORIZATION_FAILED" },
+          { status: 400 }
+        );
+      }
+    }
+
+    // 2. Build baseline initial resume from master profile
+    const profile = profileResult.profile;
+    const initialResume: ResumeContent = {
+      name: `${candidate.first_name} ${candidate.last_name}`.trim(),
+      tagline: "Software Professional",
+      location: "Remote, US",
+      email: "candidate@example.com",
+      phone: "555-0100",
+      summary: [
+        `Experienced software and data professional with a proven track record of architecting and deploying scalable solutions.`,
+      ],
+      skillGroups: [
+        {
+          label: "Core Technologies",
+          items: profile.skills.slice(0, 8).map((s) => s.rawSkillName),
+        },
+      ],
+      experience: profile.experience.map((e) => ({
+        title: e.title,
+        company: e.employer,
+        dates: `${e.startDate ?? "2020"} - ${e.endDate ?? "Present"}`,
+        bullets: [`Engineered data platforms and core workflows at ${e.employer}.`],
+      })),
+      education: profile.education.map(
+        (ed) => `${ed.level} in ${ed.field ?? "Computer Science"}, ${ed.institution ?? "University"}`
+      ),
+      certifications: profile.certifications.map((c) => c.name),
+    };
+
+    // 3. Start & execute iteration 1 review
+    try {
+      const createdWorkflow = createResumeQualityWorkflow({
+        candidateId,
+        applicationId: state.id,
+        tailoringRunId: runId,
+        dedupeKey: job.dedupe_key,
+      });
+
+      const execResult = await executeResumeQualityIteration({
+        candidateId,
+        workflowId: createdWorkflow.id,
+        resume: initialResume,
+        reviewer: new DeterministicResumeReviewer(),
+      });
+
+      workflow = getResumeQualityWorkflow(candidateId, execResult.workflow.id);
+      const safeWf = workflow
+        ? {
+            id: workflow.id,
+            status: workflow.status,
+            current_iteration: workflow.current_iteration,
+            max_iterations: workflow.max_iterations,
+            latest_overall_score: workflow.latest_overall_score,
+            final_approved_iteration: workflow.final_approved_iteration,
+            failure_reason: workflow.failure_reason,
+            created_at: workflow.created_at,
+          }
+        : null;
+      return NextResponse.json({ ok: true, workflow: safeWf, result: execResult });
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : "Failed to execute quality iteration";
+      return NextResponse.json({ error: errorMsg }, { status: 500 });
+    }
+  }
+
+  const safeWf = workflow
+    ? {
+        id: workflow.id,
+        status: workflow.status,
+        current_iteration: workflow.current_iteration,
+        max_iterations: workflow.max_iterations,
+        latest_overall_score: workflow.latest_overall_score,
+        final_approved_iteration: workflow.final_approved_iteration,
+        failure_reason: workflow.failure_reason,
+        created_at: workflow.created_at,
+      }
+    : null;
+
+  return NextResponse.json({ ok: true, workflow: safeWf });
+}

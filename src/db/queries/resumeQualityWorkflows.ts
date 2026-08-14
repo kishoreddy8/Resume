@@ -87,6 +87,18 @@ export function listResumeQualityWorkflowsForRun(candidateId: number, tailoringR
     .all(candidateId, tailoringRunId) as ResumeQualityWorkflowRow[];
 }
 
+export function listResumeQualityWorkflowsForJob(candidateId: number, dedupeKey: string): ResumeQualityWorkflowRow[] {
+  return getDb()
+    .prepare("SELECT * FROM resume_quality_workflows WHERE candidate_id = ? AND dedupe_key = ? ORDER BY created_at DESC, id DESC")
+    .all(candidateId, dedupeKey) as ResumeQualityWorkflowRow[];
+}
+
+export function getLatestResumeQualityWorkflowForJob(candidateId: number, dedupeKey: string): ResumeQualityWorkflowRow | undefined {
+  return getDb()
+    .prepare("SELECT * FROM resume_quality_workflows WHERE candidate_id = ? AND dedupe_key = ? ORDER BY created_at DESC, id DESC LIMIT 1")
+    .get(candidateId, dedupeKey) as ResumeQualityWorkflowRow | undefined;
+}
+
 export interface TransitionWorkflowStatusOptions {
   failureReason?: string;
   latestOverallScore?: number;
