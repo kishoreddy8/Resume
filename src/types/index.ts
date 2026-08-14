@@ -604,6 +604,37 @@ export interface H1bCompanyConfidenceResult {
   evidence: string;
 }
 
+export type FreshnessDateType =
+  | "POSTED"
+  | "PUBLISHED"
+  | "CREATED"
+  | "UPDATED"
+  | "FIRST_SEEN"
+  | "UNKNOWN";
+
+export type FreshnessConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
+
+export interface FreshnessProvenance {
+  dateType: FreshnessDateType;
+  confidence: FreshnessConfidence;
+  basisDate: string | null;
+  rawDate: string | null;
+  ageDays: number | null;
+  reason: string;
+}
+
+export interface ScanFreshnessMetrics {
+  providerDateFresh: number;
+  firstSeenFallbackFresh: number;
+  staleRejected: number;
+  invalidDateCount: number;
+  futureDateCount: number;
+  unknownDateCount: number;
+  existingJobBypass: number;
+  foreignFiltered: number;
+  pseudoJobFiltered: number;
+}
+
 export interface NormalizedJob {
   externalId: string | null;
   title: string;
@@ -617,6 +648,10 @@ export interface NormalizedJob {
   salaryText: string | null;
   postedAt: string | null;
   raw: unknown;
+  /** Explicit provenance if set by adapter, otherwise derived from provider date type. */
+  freshnessDateType?: FreshnessDateType;
+  freshnessConfidence?: FreshnessConfidence;
+  freshnessBasisDate?: string | null;
   /** Provider confirmed this requisition still exists but omitted fields required for a safe
    *  insert/update. The scanner counts it as seen and marks the run partial without overwriting
    *  previously stored job content. */
@@ -640,6 +675,8 @@ export interface ScanResult {
   /** Postings whose exact identity (dedupe_key) was previously deleted (Not Interested, or aged
    *  out unapplied) and so were not re-inserted as "new" this scan. */
   jobsSuppressed: number;
+  /** Detailed freshness and filter counts for observability during production scans. */
+  freshnessMetrics?: ScanFreshnessMetrics;
   /** Set when a career_link scrape found most links funnel through one embedded ATS board. */
   detectedAts?: { source: string; token: string };
 }
@@ -655,4 +692,6 @@ export interface ScanSummary {
    *  runs once per runScan() call, across all companies, not per-company. */
   jobsDeletedByAge: number;
   errors: number;
+  /** Aggregated freshness and filter counts across all companies scanned. */
+  freshnessMetrics?: ScanFreshnessMetrics;
 }

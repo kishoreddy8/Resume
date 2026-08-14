@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isJobFreshForIngestion, parseAtsDate } from "@/lib/ats/jobFreshness";
+import { getProviderDateType, isJobFreshForIngestion, parseAtsDate } from "@/lib/ats/jobFreshness";
 import type { NormalizedJob } from "@/types";
 
 function createJob(overrides: Partial<NormalizedJob> = {}): NormalizedJob {
@@ -20,6 +20,25 @@ function createJob(overrides: Partial<NormalizedJob> = {}): NormalizedJob {
     ...overrides,
   };
 }
+
+test("getProviderDateType maps providers to semantic date types correctly", () => {
+  assert.equal(getProviderDateType("greenhouse"), "UPDATED");
+  assert.equal(getProviderDateType("comeet"), "UPDATED");
+  assert.equal(getProviderDateType("lever"), "CREATED");
+  assert.equal(getProviderDateType("rippling"), "CREATED");
+  assert.equal(getProviderDateType("eightfold"), "CREATED");
+  assert.equal(getProviderDateType("ashby"), "PUBLISHED");
+  assert.equal(getProviderDateType("workable"), "PUBLISHED");
+  assert.equal(getProviderDateType("teamtailor"), "PUBLISHED");
+  assert.equal(getProviderDateType("smartrecruiters"), "PUBLISHED");
+  assert.equal(getProviderDateType("paylocity"), "PUBLISHED");
+  assert.equal(getProviderDateType("workday"), "POSTED");
+  assert.equal(getProviderDateType("icims"), "POSTED");
+  assert.equal(getProviderDateType("adp_wfn"), "POSTED");
+  assert.equal(getProviderDateType("jobvite"), "POSTED");
+  assert.equal(getProviderDateType("clearcompany"), "FIRST_SEEN");
+  assert.equal(getProviderDateType("career_link"), "FIRST_SEEN");
+});
 
 test("parseAtsDate parses diverse timestamp formats accurately", () => {
   // ISO 8601
@@ -48,63 +67,80 @@ test("parseAtsDate parses diverse timestamp formats accurately", () => {
   assert.equal(parseAtsDate("not-a-date"), null);
 });
 
-test("isJobFreshForIngestion evaluates new jobs against the 20-day rule", () => {
+test("isJobFreshForIngestion generates complete provenance across semantic types", () => {
   const now = new Date("2026-08-14T12:00:00Z");
 
-  // 0 days old (today)
-  const todayJob = createJob({ postedAt: "2026-08-14T08:00:00Z" });
-  const eval0 = isJobFreshForIngestion(todayJob, undefined, 20, now);
-  assert.equal(eval0.eligible, true);
-  assert.equal(eval0.ageDays, 0);
+  // 1. POSTED (1 day old) -> HIGH confidence fresh
+  const postedJob = createJob({ postedAt: "2026-08-13T12:00:00Z" });
+  const evalPosted = isJobFreshForIngestion(postedJob, undefined, "workday", 20, now);
+  assert.equal(evalPosted.eligible, true);
+  assert.equal(evalPosted.provenance.dateType, "POSTED");
+  assert.equal(evalPosted.provenance.confidence, "HIGH");
+  assert.equal(evalPosted.provenance.ageDays, 1);
 
-  // 10 days old
-  const job10 = createJob({ postedAt: "2026-08-04T12:00:00Z" });
-  const eval10 = isJobFreshForIngestion(job10, undefined, 20, now);
-  assert.equal(eval10.eligible, true);
-  assert.equal(eval10.ageDays, 10);
+  // 2. PUBLISHED (19 days old) -> HIGH confidence fresh
+  const pubJob = createJob({ postedAt: "2026-07-26T12:00:00Z" });
+  const evalPub = isJobFreshForIngestion(pubJob, undefined, "ashby", 20, now);
+  assert.equal(evalPub.eligible, true);
+  assert.equal(evalPub.provenance.dateType, "PUBLISHED");
+  assert.equal(evalPub.provenance.confidence, "HIGH");
+  assert.equal(evalPub.provenance.ageDays, 19);
 
-  // Exactly 20 days old (inclusive boundary)
-  const job20 = createJob({ postedAt: "2026-07-25T12:00:00Z" });
-  const eval20 = isJobFreshForIngestion(job20, undefined, 20, now);
-  assert.equal(eval20.eligible, true);
-  assert.equal(eval20.ageDays, 20);
+  // 3. CREATED (20 days old exact boundary) -> MEDIUM confidence fresh
+  const createdJob = createJob({ postedAt: "2026-07-25T12:00:00Z" });
+  const evalCreated = isJobFreshForIngestion(createdJob, undefined, "lever", 20, now);
+  assert.equal(evalCreated.eligible, true);
+  assert.equal(evalCreated.provenance.dateType, "CREATED");
+  assert.equal(evalCreated.provenance.confidence, "MEDIUM");
+  assert.equal(evalCreated.provenance.ageDays, 20);
 
-  // 21 days old (stale)
-  const job21 = createJob({ postedAt: "2026-07-24T12:00:00Z" });
-  const eval21 = isJobFreshForIngestion(job21, undefined, 20, now);
-  assert.equal(eval21.eligible, false);
-  assert.equal(eval21.ageDays, 21);
+  // 4. UPDATED (2 days old on Greenhouse) -> MEDIUM confidence fresh
+  const updatedJob = createJob({ postedAt: "2026-08-12T12:00:00Z" });
+  const evalUpdated = isJobFreshForIngestion(updatedJob, undefined, "greenhouse", 20, now);
+  assert.equal(evalUpdated.eligible, true);
+  assert.equal(evalUpdated.provenance.dateType, "UPDATED");
+  assert.equal(evalUpdated.provenance.confidence, "MEDIUM");
+  assert.equal(evalUpdated.provenance.ageDays, 2);
 
-  // 60 days old (stale)
-  const job60 = createJob({ postedAt: "2026-06-15T00:00:00Z" });
-  const eval60 = isJobFreshForIngestion(job60, undefined, 20, now);
-  assert.equal(eval60.eligible, false);
-  assert.equal(eval60.ageDays, 60);
+  // 5. Stale (> 20 days on Greenhouse updated_at) -> correctly rejected
+  const staleUpdatedJob = createJob({ postedAt: "2026-06-01T12:00:00Z" });
+  const evalStaleUpdated = isJobFreshForIngestion(staleUpdatedJob, undefined, "greenhouse", 20, now);
+  assert.equal(evalStaleUpdated.eligible, false);
+  assert.equal(evalStaleUpdated.provenance.dateType, "UPDATED");
+  assert.equal(evalStaleUpdated.provenance.ageDays! > 20, true);
 
-  // Missing date -> allowed via discovery fallback
-  const jobNoDate = createJob({ postedAt: null });
-  const evalNoDate = isJobFreshForIngestion(jobNoDate, undefined, 20, now);
+  // 6. Missing provider date -> FIRST_SEEN fallback, LOW confidence
+  const noDateJob = createJob({ postedAt: null });
+  const evalNoDate = isJobFreshForIngestion(noDateJob, undefined, "clearcompany", 20, now);
   assert.equal(evalNoDate.eligible, true);
-  assert.equal(evalNoDate.ageDays, null);
+  assert.equal(evalNoDate.provenance.dateType, "FIRST_SEEN");
+  assert.equal(evalNoDate.provenance.confidence, "LOW");
+  assert.equal(evalNoDate.provenance.rawDate, null);
 
-  // Invalid date -> allowed via discovery fallback
-  const jobBadDate = createJob({ postedAt: "invalid-date-string" });
-  const evalBadDate = isJobFreshForIngestion(jobBadDate, undefined, 20, now);
+  // 7. Invalid date -> UNKNOWN fallback, NONE confidence
+  const badDateJob = createJob({ postedAt: "malformed-string" });
+  const evalBadDate = isJobFreshForIngestion(badDateJob, undefined, "workday", 20, now);
   assert.equal(evalBadDate.eligible, true);
-  assert.equal(evalBadDate.ageDays, null);
+  assert.equal(evalBadDate.provenance.dateType, "UNKNOWN");
+  assert.equal(evalBadDate.provenance.confidence, "NONE");
 
-  // Future date -> allowed via discovery fallback
-  const jobFutureDate = createJob({ postedAt: "2026-09-01T00:00:00Z" });
-  const evalFutureDate = isJobFreshForIngestion(jobFutureDate, undefined, 20, now);
-  assert.equal(evalFutureDate.eligible, true);
-});
+  // 8. Future date (> 24h ahead) -> UNKNOWN fallback, NONE confidence
+  const futureJob = createJob({ postedAt: "2026-09-01T00:00:00Z" });
+  const evalFuture = isJobFreshForIngestion(futureJob, undefined, "workday", 20, now);
+  assert.equal(evalFuture.eligible, true);
+  assert.equal(evalFuture.provenance.dateType, "UNKNOWN");
+  assert.equal(evalFuture.provenance.confidence, "NONE");
 
-test("isJobFreshForIngestion always permits rescan updates of existing database jobs", () => {
-  const now = new Date("2026-08-14T12:00:00Z");
+  // 9. Timezone drift (+12h ahead within 24h) -> age 0 days, HIGH confidence
+  const timezoneDriftJob = createJob({ postedAt: "2026-08-14T20:00:00Z" });
+  const evalDrift = isJobFreshForIngestion(timezoneDriftJob, undefined, "workday", 20, now);
+  assert.equal(evalDrift.eligible, true);
+  assert.equal(evalDrift.provenance.ageDays, 0);
+  assert.equal(evalDrift.provenance.confidence, "HIGH");
 
-  // An existing job that is 90 days old should NOT be dropped during a rescan
-  const oldExistingJob = createJob({ postedAt: "2026-05-15T00:00:00Z" });
-  const evalExisting = isJobFreshForIngestion(oldExistingJob, { id: 456 }, 20, now);
+  // 10. Existing job in database (90 days old) -> rescan bypass, HIGH confidence
+  const existingStaleJob = createJob({ postedAt: "2026-05-01T00:00:00Z" });
+  const evalExisting = isJobFreshForIngestion(existingStaleJob, { id: 999 }, "workday", 20, now);
   assert.equal(evalExisting.eligible, true);
   assert.equal(evalExisting.reason.includes("Existing job in database"), true);
 });

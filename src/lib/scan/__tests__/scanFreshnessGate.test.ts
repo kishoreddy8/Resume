@@ -74,7 +74,7 @@ test("Centralized Ingestion Freshness Gate filters stale new jobs while preservi
   for (const job of jobsFromAts) {
     const dedupeKey = dedupeKeyForAts("greenhouse", company.id, job.externalId!);
     const before = getJobByDedupeKey(dedupeKey);
-    const freshness = isJobFreshForIngestion(job, before ? { id: before.id } : undefined, 20, now);
+    const freshness = isJobFreshForIngestion(job, before ? { id: before.id } : undefined, company.source_type, 20, now);
 
     if (freshness.eligible) {
       upsertJob({
@@ -108,7 +108,7 @@ test("Centralized Ingestion Freshness Gate filters stale new jobs while preservi
   for (const job of rescanJobs) {
     const dedupeKey = dedupeKeyForAts("greenhouse", company.id, job.externalId!);
     const before = getJobByDedupeKey(dedupeKey);
-    const freshness = isJobFreshForIngestion(job, before ? { id: before.id } : undefined, 20, now);
+    const freshness = isJobFreshForIngestion(job, before ? { id: before.id } : undefined, company.source_type, 20, now);
 
     assert.equal(freshness.eligible, true, "Both existing job and new fresh job must be eligible");
 

@@ -46,6 +46,18 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
     retryCount++;
   };
 
+  const freshnessMetrics = {
+    providerDateFresh: 0,
+    firstSeenFallbackFresh: 0,
+    staleRejected: 0,
+    invalidDateCount: 0,
+    futureDateCount: 0,
+    unknownDateCount: 0,
+    existingJobBypass: 0,
+    foreignFiltered: 0,
+    pseudoJobFiltered: 0,
+  };
+
   try {
     let jobs: NormalizedJob[];
     let detectedAts: { source: string; token: string } | undefined;
@@ -60,6 +72,7 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
           usOnly,
           onLocationFiltered: (scope) => {
             if (scope === "UNKNOWN") unknownLocationCount++;
+            else freshnessMetrics.foreignFiltered++;
           },
         },
         options.maxJobsPerCompany
@@ -97,6 +110,7 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
         existingListingFingerprints,
         onLocationFiltered: (scope) => {
           if (scope === "UNKNOWN") unknownLocationCount++;
+          else freshnessMetrics.foreignFiltered++;
         },
       });
     }
@@ -115,6 +129,7 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
 
     for (const job of jobs) {
       if (!isRealJobPosting(job)) {
+        freshnessMetrics.pseudoJobFiltered++;
         continue;
       }
 
@@ -127,11 +142,29 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
       // changed" vs. "re-seen, nothing changed" for scan_runs — read-only, does not affect upsertJob.
       const before = getJobByDedupeKey(dedupeKey);
 
-      // Centralized 20-Day Freshness Gate: New discoveries must be <= 20 days old (or missing date fallback).
+      // Centralized 20-Day Freshness Gate with Provenance:
+      // Evaluates against provider date semantics (POSTED, PUBLISHED, CREATED, UPDATED, FIRST_SEEN).
       // Rescans of existing database jobs are always eligible so their lifecycle is preserved.
-      const freshness = isJobFreshForIngestion(job, before ? { id: before.id } : undefined, 20);
-      if (!freshness.eligible) {
+      const freshness = isJobFreshForIngestion(
+        job,
+        before ? { id: before.id } : undefined,
+        company.source_type,
+        20
+      );
+
+      if (before) {
+        freshnessMetrics.existingJobBypass++;
+      } else if (!freshness.eligible) {
+        freshnessMetrics.staleRejected++;
         continue;
+      } else if (freshness.provenance.dateType === "FIRST_SEEN") {
+        freshnessMetrics.firstSeenFallbackFresh++;
+        freshnessMetrics.unknownDateCount++;
+      } else if (freshness.provenance.dateType === "UNKNOWN") {
+        freshnessMetrics.firstSeenFallbackFresh++;
+        freshnessMetrics.invalidDateCount++;
+      } else {
+        freshnessMetrics.providerDateFresh++;
       }
 
       seenDedupeKeys.push(dedupeKey);
@@ -265,6 +298,7 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
       jobsClosed,
       jobsArchived,
       jobsSuppressed,
+      freshnessMetrics,
       detectedAts,
     };
   } catch (err) {
@@ -310,6 +344,7 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
       jobsClosed: 0,
       jobsArchived: 0,
       jobsSuppressed: 0,
+      freshnessMetrics,
     };
   }
 }
@@ -345,6 +380,34 @@ export async function runScan(companies: Company[], options: RunScanOptions = {}
     deleteGeneratedFiles(job.companyName, job.jobId);
   }
 
+  const aggregatedFreshness = results.reduce(
+    (acc, r) => {
+      if (r.freshnessMetrics) {
+        acc.providerDateFresh += r.freshnessMetrics.providerDateFresh;
+        acc.firstSeenFallbackFresh += r.freshnessMetrics.firstSeenFallbackFresh;
+        acc.staleRejected += r.freshnessMetrics.staleRejected;
+        acc.invalidDateCount += r.freshnessMetrics.invalidDateCount;
+        acc.futureDateCount += r.freshnessMetrics.futureDateCount;
+        acc.unknownDateCount += r.freshnessMetrics.unknownDateCount;
+        acc.existingJobBypass += r.freshnessMetrics.existingJobBypass;
+        acc.foreignFiltered += r.freshnessMetrics.foreignFiltered;
+        acc.pseudoJobFiltered += r.freshnessMetrics.pseudoJobFiltered;
+      }
+      return acc;
+    },
+    {
+      providerDateFresh: 0,
+      firstSeenFallbackFresh: 0,
+      staleRejected: 0,
+      invalidDateCount: 0,
+      futureDateCount: 0,
+      unknownDateCount: 0,
+      existingJobBypass: 0,
+      foreignFiltered: 0,
+      pseudoJobFiltered: 0,
+    }
+  );
+
   return {
     results,
     jobsNew: results.reduce((sum, r) => sum + r.jobsNew, 0),
@@ -354,5 +417,6 @@ export async function runScan(companies: Company[], options: RunScanOptions = {}
     jobsSuppressed: results.reduce((sum, r) => sum + r.jobsSuppressed, 0),
     jobsDeletedByAge: ageSweep.deleted.length,
     errors: results.filter((r) => r.status === "error").length,
+    freshnessMetrics: aggregatedFreshness,
   };
 }
