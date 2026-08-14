@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import path from "node:path";
-import { GENERATED_ROOT } from "@/lib/generatedFiles";
+import { getGeneratedRoot } from "@/lib/generatedFiles";
 
 /**
  * Phase 3 Stage 4 — candidate/job/run-scoped tailoring artifact storage.
@@ -71,7 +71,7 @@ function validateLocation(location: TailoringArtifactLocation): void {
  *  escaping GENERATED_ROOT should be structurally impossible — this assertion makes that guarantee
  *  explicit and loud rather than silently trusted. */
 function assertInsideGeneratedRoot(dir: string): void {
-  const resolvedRoot = path.resolve(GENERATED_ROOT) + path.sep;
+  const resolvedRoot = path.resolve(getGeneratedRoot()) + path.sep;
   const resolvedDir = path.resolve(dir);
   if (!resolvedDir.startsWith(resolvedRoot)) {
     throw new Error(`Refusing to resolve a tailoring artifact path outside the generated-artifact root: ${resolvedDir}`);
@@ -83,7 +83,7 @@ export function getTailoringArtifactDirectory(location: TailoringArtifactLocatio
   validateLocation(location);
   const jobHash = hashJobIdentity(location.dedupeKey);
   const dir = path.join(
-    GENERATED_ROOT,
+    getGeneratedRoot(),
     "candidates",
     String(location.candidateId),
     "jobs",

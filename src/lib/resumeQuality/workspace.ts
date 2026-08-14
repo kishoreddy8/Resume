@@ -65,6 +65,12 @@ export function getIterationDirectory(location: QualityWorkflowLocation, iterati
   return path.join(getQualityWorkflowDirectory(location), "iterations", String(iterationNumber));
 }
 
+/** One immutable per-iteration handoff directory for external subscription agents (Stage 11). */
+export function getHandoffDirectory(location: QualityWorkflowLocation, iterationNumber: number): string {
+  validatePositiveInt("iterationNumber", iterationNumber);
+  return path.join(getQualityWorkflowDirectory(location), "handoffs", `iteration-${iterationNumber}`);
+}
+
 export function getFinalDirectory(location: QualityWorkflowLocation): string {
   return path.join(getQualityWorkflowDirectory(location), "final");
 }

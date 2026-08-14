@@ -141,8 +141,12 @@ before(async () => {
   process.env.CAREER_OPS_CANDIDATES_DIR = tmpCandidatesDir;
   process.env.CAREER_OPS_GENERATED_DIR = tmpGeneratedDir;
 
-  // Reset DB singleton so it opens the fresh test.db
-  global.__careerOpsDb = undefined;
+  if (global.__careerOpsDb) {
+    try {
+      global.__careerOpsDb.close();
+    } catch {}
+    global.__careerOpsDb = undefined;
+  }
 
   const { getDb } = await import("@/db/index");
   ({ createCandidate } = await import("@/db/queries/candidates"));
@@ -329,6 +333,12 @@ before(async () => {
 });
 
 after(() => {
+  if (global.__careerOpsDb) {
+    try {
+      global.__careerOpsDb.close();
+    } catch {}
+    global.__careerOpsDb = undefined;
+  }
   fs.rmSync(tmpDbDir, { recursive: true, force: true });
   fs.rmSync(tmpCandidatesDir, { recursive: true, force: true });
   fs.rmSync(tmpGeneratedDir, { recursive: true, force: true });

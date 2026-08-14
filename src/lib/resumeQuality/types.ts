@@ -157,6 +157,71 @@ export interface ResumeWriterAgent {
   generate(input: ResumeWriterInput): Promise<ResumeWriterOutput>;
 }
 
+// --- External subscription-agent handoff contracts (Stage 11) -----------------------
+
+export interface ExternalWriterAgentMetadata {
+  provider?: string;
+  model?: string;
+  agentVersion?: string;
+  completedAt?: string;
+}
+
+/** The strict JSON contract produced by external subscription agents (Claude Code, Codex, Antigravity, local agents) */
+export interface ExternalWriterOutput {
+  schemaVersion: 1;
+  candidateId: number;
+  applicationId: number;
+  jobId: number | null;
+  tailoringRunId: number;
+  workflowId: number;
+  iterationNumber: number;
+  resume: ResumeContent;
+  coverLetter?: CoverLetterContent;
+  agentMetadata?: ExternalWriterAgentMetadata;
+}
+
+/** Informational snapshot written to handoffs/iteration-<n>/workflow_status.json */
+export interface WorkflowStatusFile {
+  candidateId: number;
+  applicationId: number;
+  jobId: number | null;
+  tailoringRunId: number;
+  workflowId: number;
+  currentIteration: number;
+  targetIteration: number;
+  maxIterations: number;
+  workflowStatus: WorkflowStatus;
+  latestOverallScore: number | null;
+  qualityGateResult: string | null;
+  waitingFor: "EXTERNAL_WRITER" | "HUMAN_REVIEW" | "COMPLETED" | "NOT_WAITING";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalHandoffExportResult {
+  candidateId: number;
+  applicationId: number;
+  jobId: number | null;
+  tailoringRunId: number;
+  workflowId: number;
+  targetIterationNumber: number;
+  handoffDirectory: string;
+  packageFiles: string[];
+  waitingStatus: "WAITING_FOR_EXTERNAL_WRITER";
+}
+
+export interface ExternalHandoffImportResult {
+  candidateId: number;
+  applicationId: number;
+  jobId: number | null;
+  tailoringRunId: number;
+  workflowId: number;
+  iterationNumber: number;
+  writerOutput: ResumeWriterOutput;
+  agentMetadata?: ExternalWriterAgentMetadata;
+  validated: true;
+}
+
 /** Complete result of driving the multi-iteration resume quality improvement loop (Stage 10) */
 export interface ResumeQualityLoopResult {
   candidateId: number;

@@ -42,6 +42,14 @@ the engine. If a layout bug shows up in output, the fix belongs in `tools/tailor
 one run's content. The tailoring reasoning above this line is entirely unchanged by Phase 3 Stage
 6 — only how finalized content enters rendering/persistence changed.
 
+### Phase 3 Stage 11 External Writer Package Mode
+
+When CareerOps exports a Stage 11 external writer package (`quality/<workflowId>/handoffs/iteration-<n>/`):
+1. **Read Package Context**: Read `writer_prompt.md`, `job_description.md`, `extracted_job_requirements.json`, `master_resume_reference.json`, `master_skills_inventory.md`, `previous_resume_content.json`, and `review_feedback.md`.
+2. **Apply Tailoring & Improvement**: Follow all tailoring rules, evidence discipline, and guardrails in this skill to address required corrections and eliminate blocking issues.
+3. **Produce Structured JSON**: Write the finalized output to `writer_output.json` in the package directory conforming strictly to `schemaVersion: 1`.
+4. **Safety Invariants**: Never call paid AI APIs, never mutate database files directly, never construct ad-hoc file paths, and never bypass the Stage 10 deterministic review gate.
+
 ## Sources of truth (in precedence order)
 
 Every run requires an explicit `candidateId`. Before reading any candidate files:

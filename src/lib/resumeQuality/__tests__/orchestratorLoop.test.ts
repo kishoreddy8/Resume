@@ -158,7 +158,12 @@ before(async () => {
   process.env.CAREER_OPS_CANDIDATES_DIR = tmpCandidatesDir;
   process.env.CAREER_OPS_GENERATED_DIR = tmpGeneratedDir;
 
-  global.__careerOpsDb = undefined;
+  if (global.__careerOpsDb) {
+    try {
+      global.__careerOpsDb.close();
+    } catch {}
+    global.__careerOpsDb = undefined;
+  }
 
   const { getDb } = await import("@/db/index");
   ({ createCandidate } = await import("@/db/queries/candidates"));
@@ -346,6 +351,12 @@ before(async () => {
 });
 
 after(() => {
+  if (global.__careerOpsDb) {
+    try {
+      global.__careerOpsDb.close();
+    } catch {}
+    global.__careerOpsDb = undefined;
+  }
   if (tmpDbDir && fs.existsSync(tmpDbDir)) fs.rmSync(tmpDbDir, { recursive: true, force: true });
   if (tmpCandidatesDir && fs.existsSync(tmpCandidatesDir)) fs.rmSync(tmpCandidatesDir, { recursive: true, force: true });
   if (tmpGeneratedDir && fs.existsSync(tmpGeneratedDir)) fs.rmSync(tmpGeneratedDir, { recursive: true, force: true });

@@ -11,10 +11,13 @@ import { slugify } from "@/lib/slugify";
 // and src/lib/match/candidateProfile.ts's CAREER_OPS_CANDIDATES_DIR conventions) — real app code
 // never sets this env var. Without it, Phase 3 Stage 5's executeTailoringRun tests would write real
 // files into this project's actual data/generated/ tree.
+export function getGeneratedRoot(): string {
+  return process.env.CAREER_OPS_GENERATED_DIR ?? path.join(process.cwd(), "data", "generated");
+}
 export const GENERATED_ROOT = process.env.CAREER_OPS_GENERATED_DIR ?? path.join(process.cwd(), "data", "generated");
 
 export function generatedFilesDir(companyName: string, jobId: number): string {
-  return path.join(GENERATED_ROOT, slugify(companyName), String(jobId));
+  return path.join(getGeneratedRoot(), slugify(companyName), String(jobId));
 }
 
 /**
@@ -32,7 +35,7 @@ export function generatedFilesDir(companyName: string, jobId: number): string {
  */
 export function deleteGeneratedFiles(companyName: string, jobId: number): boolean {
   const dir = generatedFilesDir(companyName, jobId);
-  const resolvedRoot = path.resolve(GENERATED_ROOT) + path.sep;
+  const resolvedRoot = path.resolve(getGeneratedRoot()) + path.sep;
   const resolvedDir = path.resolve(dir);
   if (!resolvedDir.startsWith(resolvedRoot)) {
     throw new Error(`Refusing to delete a path outside data/generated/: ${resolvedDir}`);

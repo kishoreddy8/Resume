@@ -7,16 +7,19 @@ const DATA_DIR = path.join(process.cwd(), "data");
 // Override lets integration tests point at an isolated temp file instead of the real database —
 // unset in normal app/script usage, so production behavior is unchanged.
 // Exported so migrate.ts can locate the live file for its pre-migration backup step — no other
-// consumer should need this (every other query module goes through getDb() below).
+export function getDbPath(): string {
+  return process.env.CAREER_OPS_DB_PATH ?? path.join(DATA_DIR, "app.db");
+}
 export const DB_PATH = process.env.CAREER_OPS_DB_PATH ?? path.join(DATA_DIR, "app.db");
 
 function ensureDataDirs() {
+  const currentDbPath = getDbPath();
   for (const dir of [
     DATA_DIR,
     path.join(DATA_DIR, "master", "history"),
     path.join(DATA_DIR, "generated"),
     path.join(DATA_DIR, "h1b"),
-    path.dirname(DB_PATH),
+    path.dirname(currentDbPath),
   ]) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -719,7 +722,7 @@ function ensureCandidateOne(db: Database.Database) {
 
 function createConnection(): Database.Database {
   ensureDataDirs();
-  const db = new Database(DB_PATH);
+  const db = new Database(getDbPath());
   // Configure contention handling before any pragma/schema operation that may itself need SQLite's
   // single writer slot. Five independent local workers share this WAL database; short overlapping
   // checkpoints are normal and should wait rather than fail a whole cohort at process startup.
