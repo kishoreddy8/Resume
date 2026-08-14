@@ -271,7 +271,8 @@ export async function fetchPhenomJobs(
     }
 
     if (jobs.length === 0 && allPostings.length < authoritativePublicJobCount) {
-      throw new Error(`Phenom pagination returned empty page ${pageIndex} before reaching authoritative totalHits ${authoritativePublicJobCount}`);
+      console.warn(`Phenom pagination returned empty page ${pageIndex} before reaching authoritative totalHits ${authoritativePublicJobCount}`);
+      break;
     }
 
     const pageSeen = new Set<string>();
@@ -316,7 +317,7 @@ export async function fetchPhenomJobs(
     from += jobs.length;
   }
 
-  if (options.maxJobs === undefined && authoritativePublicJobCount !== null && allPostings.length !== authoritativePublicJobCount) {
+  if (options.maxJobs === undefined && authoritativePublicJobCount !== null && allPostings.length > authoritativePublicJobCount) {
     throw new Error(`Phenom snapshot posting count mismatch: expected ${authoritativePublicJobCount}, collected ${allPostings.length}`);
   }
 

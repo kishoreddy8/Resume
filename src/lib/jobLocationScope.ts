@@ -45,27 +45,47 @@ const US_STATE_CODE_RE = new RegExp(`(?:,|\\(|\\-|/)\\s*(?:${US_STATE_CODES.join
 // applying the U.S. state-code rule.
 const CANADIAN_PROVINCE_COUNTRY_RE = /(?:,|\()\s*(?:AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\s*,\s*CA(?:\s|\)|$)/i;
 
-// Indian state/territory abbreviations (ISO 3166-2:IN) followed by the ISO country code IN.
+// Indian state/territory abbreviations (ISO 3166-2:IN) followed by the ISO country code IN or IND.
 // Matches shapes like "Bangalore, KA, IN", "Chennai, TN, IN", "Hyderabad, TS, IN".
 // Evaluated before U.S. state codes so country-level evidence outranks state-abbreviation matching.
-const INDIAN_STATE_COUNTRY_RE = /(?:,|\()\s*(?:AN|AP|AR|AS|BR|CG|CH|DD|DL|GA|GJ|HP|HR|JH|JK|KA|KL|LA|LD|MH|ML|MN|MP|MZ|NL|OD|PB|PY|RJ|SK|TN|TR|TS|UK|UP|WB)\s*,\s*IN(?:\s|,|\)|\/|$)/i;
+const INDIAN_STATE_COUNTRY_RE = /(?:,|\()\s*(?:AN|AP|AR|AS|BR|CG|CH|DD|DL|GA|GJ|HP|HR|JH|JK|KA|KL|LA|LD|MH|ML|MN|MP|MZ|NL|OD|PB|PY|RJ|SK|TN|TR|TS|UK|UP|WB)\s*,\s*(?:IN|IND)(?:\s|,|\)|\/|$)/i;
 
-// Known non-U.S. cities that appear in feeds with the ambiguous ", IN" suffix (India).
+// Full Indian state/territory names directly preceding the ISO country code IN, IND, or country name India.
+// Without this, a shape like "Bengaluru, Karnataka, IN" or bare "Karnataka, IN" falls through every other
+// check and gets caught by the U.S. state-code rule below (the trailing ", IN" reads as Indiana),
+// silently misclassifying a real Indian posting as a U.S. one.
+const INDIAN_STATE_NAMES = [
+  "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh", "goa", "gujarat",
+  "haryana", "himachal pradesh", "jharkhand", "karnataka", "kerala", "madhya pradesh",
+  "maharashtra", "manipur", "meghalaya", "mizoram", "nagaland", "odisha", "orissa", "punjab",
+  "rajasthan", "sikkim", "tamil nadu", "telangana", "tripura", "uttar pradesh",
+  "uttarakhand", "uttaranchal", "west bengal", "jammu and kashmir", "puducherry", "pondicherry",
+  "chandigarh", "ladakh",
+] as const;
+const INDIAN_STATE_NAME_RE = new RegExp(
+  `(?:^|[^a-z])(?:${INDIAN_STATE_NAMES.join("|")})\\s*,\\s*(?:IN|IND|India)(?:\\s|,|\\)|\\/|$)`,
+  "i"
+);
+
+// Known non-U.S. cities that appear in feeds with the ambiguous ", IN" or ", IND" suffix (India).
 // Guards against "Bangalore, IN", "Chennai, IN" being classified as Indiana.
 const INDIAN_CITY_NAMES = [
-  "bangalore", "bengaluru", "chennai", "hyderabad", "mumbai", "pune", "delhi",
-  "new delhi", "noida", "gurugram", "gurgaon", "kolkata", "indore", "jaipur",
-  "ahmedabad", "kochi", "coimbatore", "chandigarh", "raipur", "lucknow",
-  "thiruvananthapuram", "bhubaneswar", "nagpur", "visakhapatnam", "mysore",
-  "mangalore", "mysuru", "mangaluru",
+  "bangalore", "bengaluru", "chennai", "madras", "hyderabad", "secunderabad", "mumbai", "bombay",
+  "pune", "delhi", "new delhi", "noida", "greater noida", "gurugram", "gurgaon", "kolkata",
+  "calcutta", "indore", "jaipur", "ahmedabad", "kochi", "cochin", "ernakulam", "coimbatore",
+  "chandigarh", "mohali", "panchkula", "raipur", "lucknow", "thiruvananthapuram", "trivandrum",
+  "bhubaneswar", "nagpur", "visakhapatnam", "vizag", "mysore", "mysuru", "mangalore", "mangaluru",
+  "vadodara", "baroda", "surat", "nashik", "bhopal", "patna", "ranchi", "guwahati", "dehradun",
 ] as const;
 const INDIAN_CITY_RE = new RegExp(
-  `(?:^|[^a-z])(?:${INDIAN_CITY_NAMES.join("|")})\\s*(?:,|\\/)\\s*(?:IN|india)(?:\\s|,|\\)|\\/$|$)`, "i"
+  `(?:^|[^a-z])(?:${INDIAN_CITY_NAMES.join("|")})\\s*(?:,|\\/|\\s*-\\s*)\\s*(?:IN|IND|india)(?:\\s|,|\\)|\\/$|$)`,
+  "i"
 );
 
 // Known non-U.S. cities with slash-separated locations (e.g. "Indore/Gurugram, IN").
 const INDIAN_SLASH_CITY_RE = new RegExp(
-  `(?:${INDIAN_CITY_NAMES.join("|")})\\s*(?:\\/[^,]+)?\\s*,\\s*IN(?:\\s|,|\\)|$)`, "i"
+  `(?:${INDIAN_CITY_NAMES.join("|")})\\s*(?:\\/[^,]+)?\\s*,\\s*(?:IN|IND|india)(?:\\s|,|\\)|$)`,
+  "i"
 );
 
 /** Classifies only explicit evidence. Bare "Remote", blank strings, regions, and ambiguous city
@@ -81,6 +101,7 @@ export function classifyJobLocation(location: string | null | undefined): JobLoc
   // 2. Non-U.S. country-level evidence — outranks state abbreviation matching
   if (CANADIAN_PROVINCE_COUNTRY_RE.test(value)) return "NON_US";
   if (INDIAN_STATE_COUNTRY_RE.test(value)) return "NON_US";
+  if (INDIAN_STATE_NAME_RE.test(value)) return "NON_US";
   if (INDIAN_CITY_RE.test(value)) return "NON_US";
   if (INDIAN_SLASH_CITY_RE.test(value)) return "NON_US";
 

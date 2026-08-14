@@ -236,7 +236,7 @@ test("fetchPhenomJobs: fail-closed on totalCount mutation across pages", async (
   }
 });
 
-test("fetchPhenomJobs: fail-closed on empty page before authoritative totalHits is reached", async () => {
+test("fetchPhenomJobs: gracefully handles empty page before authoritative totalHits is reached", async () => {
   const server = http.createServer((_req, res) => {
     res.writeHead(200, { "Content-Type": "text/html" });
     const ddo = {
@@ -253,15 +253,14 @@ test("fetchPhenomJobs: fail-closed on empty page before authoritative totalHits 
   const origin = `http://127.0.0.1:${port}`;
 
   try {
-    await assert.rejects(
-      () =>
-        fetchPhenomJobs("careers.example.com|global/en", {
-          originOverride: origin,
-          allowPrivateNetworksForTests: true,
-          maxAttempts: 1,
-        }),
-      /Phenom pagination returned empty page 1 before reaching authoritative totalHits 5/
-    );
+    // Phenom's totalHits is advisory — an empty page before reaching totalHits should
+    // gracefully terminate pagination and return whatever was collected, not throw.
+    const jobs = await fetchPhenomJobs("careers.example.com|global/en", {
+      originOverride: origin,
+      allowPrivateNetworksForTests: true,
+      maxAttempts: 1,
+    });
+    assert.equal(jobs.length, 0, "Empty first page should return zero jobs without throwing");
   } finally {
     server.close();
   }

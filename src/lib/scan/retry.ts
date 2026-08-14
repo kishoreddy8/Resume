@@ -15,6 +15,13 @@ const DEFAULT_MAX_ATTEMPTS = 3; // 1 initial attempt + 2 retries
 const DEFAULT_BASE_DELAY_MS = 300;
 const DEFAULT_MAX_DELAY_MS = 4000;
 const DEFAULT_TIMEOUT_MS = 20000;
+// Hard ceiling for Retry-After delays — honoring the server's requested wait without letting a
+// pathological header stall the scanner indefinitely. Separate from maxDelayMs (the normal
+// exponential-backoff cap) because a legitimate 429 Retry-After often exceeds the backoff range.
+const RETRY_AFTER_HARD_CAP_MS = 60_000;
+// 429 responses get more retry budget than other transient failures because rate-limit recovery
+// depends on wait duration (honoring Retry-After), not on the number of attempts being small.
+const RATE_LIMITED_MAX_ATTEMPTS = 5;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -24,7 +31,14 @@ function computeDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: number
   const backoff = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
   const jitter = Math.random() * Math.min(100, backoff);
   const computed = backoff + jitter;
-  return retryAfterMs !== undefined ? Math.min(maxDelayMs, Math.max(computed, retryAfterMs)) : computed;
+  // When the server provides a Retry-After header, honor it up to the hard cap — independently
+  // of maxDelayMs, which is designed for exponential backoff of generic transient failures, not
+  // for server-requested 429 cooldowns that legitimately exceed a few seconds.
+  if (retryAfterMs !== undefined) {
+    const serverDelay = Math.min(RETRY_AFTER_HARD_CAP_MS, retryAfterMs);
+    return Math.max(computed, serverDelay);
+  }
+  return computed;
 }
 
 function parseRetryAfterMs(res: Response): number | undefined {
@@ -49,11 +63,18 @@ export async function fetchWithRetry(
   init: RequestInit = {},
   options: FetchWithRetryOptions = {}
 ): Promise<Response> {
-  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const baseMaxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // 429s get a higher retry budget because recovery depends on honoring the server's Retry-After
+  // delay, not on giving up quickly. The expanded budget only activates if the caller hasn't
+  // explicitly overridden maxAttempts (so test fixtures still control their own retry count).
+  const rateLimitedMaxAttempts = options.maxAttempts !== undefined
+    ? baseMaxAttempts
+    : Math.max(baseMaxAttempts, RATE_LIMITED_MAX_ATTEMPTS);
 
+  let maxAttempts = baseMaxAttempts;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -64,6 +85,11 @@ export async function fetchWithRetry(
 
       const category = categorizeHttpError(res, undefined);
       const message = `Request to ${url} failed with status ${res.status}`;
+      // Dynamically expand max attempts for rate-limited responses so the scanner honors
+      // Retry-After delays across more attempts rather than giving up after 3 tries.
+      if (category === "rate_limited" && maxAttempts < rateLimitedMaxAttempts) {
+        maxAttempts = rateLimitedMaxAttempts;
+      }
       if (!isRetryableCategory(category) || attempt === maxAttempts) {
         throw new ScanConnectorError(message, category, attempt - 1, res.status);
       }

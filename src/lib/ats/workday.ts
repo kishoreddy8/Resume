@@ -4,6 +4,7 @@ import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFi
 import { classifyJobLocation } from "@/lib/jobLocationScope";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
+import { workdayDomainLimiter } from "@/lib/scan/domainLimiter";
 import { stripHtml } from "@/lib/stripHtml";
 import type { NormalizedJob } from "@/types";
 
@@ -84,17 +85,19 @@ async function fetchListPage(
   offset: number,
   options: FetchWithRetryOptions
 ): Promise<WorkdayListResponse> {
-  const url = `${cxsBase}/jobs`;
-  const res = await fetchWithRetry(
-    url,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ appliedFacets: {}, limit: PAGE_SIZE, offset, searchText: "" }),
-    },
-    options
-  );
-  return parseJsonOrThrow<WorkdayListResponse>(res, url);
+  return workdayDomainLimiter(async () => {
+    const url = `${cxsBase}/jobs`;
+    const res = await fetchWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ appliedFacets: {}, limit: PAGE_SIZE, offset, searchText: "" }),
+      },
+      options
+    );
+    return parseJsonOrThrow<WorkdayListResponse>(res, url);
+  });
 }
 
 async function fetchAllListings(
@@ -133,10 +136,12 @@ async function fetchDetail(
   externalPath: string,
   options: FetchWithRetryOptions
 ): Promise<WorkdayJobPostingInfo> {
-  const url = `${cxsBase}${externalPath}`;
-  const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, options);
-  const data = await parseJsonOrThrow<WorkdayDetailResponse>(res, url);
-  return data.jobPostingInfo;
+  return workdayDomainLimiter(async () => {
+    const url = `${cxsBase}${externalPath}`;
+    const res = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, options);
+    const data = await parseJsonOrThrow<WorkdayDetailResponse>(res, url);
+    return data.jobPostingInfo;
+  });
 }
 
 /**

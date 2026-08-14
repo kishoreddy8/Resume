@@ -2,6 +2,7 @@ import pLimit from "p-limit";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
+import { adpWfnDomainLimiter } from "@/lib/scan/domainLimiter";
 import { stripHtml } from "@/lib/stripHtml";
 import type { NormalizedJob } from "@/types";
 
@@ -163,8 +164,10 @@ export async function fetchAdpWorkforceNowJobs(
       "$top": String(pageSize),
       "$skip": String(skip),
     })}`;
-    const response = await fetchWithRetry(listUrl, { headers: { Accept: "application/json" } }, retryOptions);
-    const page = await parseJsonOrThrow<AdpListResponse>(response, listUrl);
+    const page = await adpWfnDomainLimiter(async () => {
+      const res = await fetchWithRetry(listUrl, { headers: { Accept: "application/json" } }, retryOptions);
+      return parseJsonOrThrow<AdpListResponse>(res, listUrl);
+    });
     if (!Array.isArray(page.jobRequisitions)) throw new Error("ADP Workforce Now response has no jobRequisitions array");
     for (const listing of page.jobRequisitions) {
       if (!seenItemIds.has(listing.itemID)) {
@@ -184,9 +187,11 @@ export async function fetchAdpWorkforceNowJobs(
   const limit = pLimit(Math.max(1, Math.min(Math.trunc(detailConcurrency), 8)));
   const jobs = await Promise.all(selected.map((listing) => limit(async () => {
     const detailUrl = `${origin}${basePath}/${encodeURIComponent(listing.itemID)}?${query(identity)}`;
-    const response = await fetchWithRetry(detailUrl, { headers: { Accept: "application/json" } }, retryOptions);
-    const detail = await parseJsonOrThrow<AdpRequisition>(response, detailUrl);
-    return normalizedJob(identity, boardUrl, listing, detail);
+    return adpWfnDomainLimiter(async () => {
+      const response = await fetchWithRetry(detailUrl, { headers: { Accept: "application/json" } }, retryOptions);
+      const detail = await parseJsonOrThrow<AdpRequisition>(response, detailUrl);
+      return normalizedJob(identity, boardUrl, listing, detail);
+    });
   })));
 
   return filterJobsToUs(jobs, { usOnly, existingExternalIds, onLocationFiltered }, maxJobs);

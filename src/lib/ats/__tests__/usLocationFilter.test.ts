@@ -34,6 +34,21 @@ test("location classifier requires explicit U.S. evidence and preserves ambiguit
   assert.equal(classifyJobLocation(null), "UNKNOWN");
 });
 
+test("India vs Indiana: full Indian state names + IN suffix are classified as NON_US", () => {
+  assert.equal(classifyJobLocation("Bengaluru, Karnataka, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Bangalore, Karnataka, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Hyderabad, Telangana, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Chennai, Tamil Nadu, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Mumbai, Maharashtra, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Pune, Maharashtra, IN"), "NON_US");
+  assert.equal(classifyJobLocation("New Delhi, Delhi, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Noida, Uttar Pradesh, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Gurugram, Haryana, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Kochi, Kerala, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Ahmedabad, Gujarat, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Kolkata, West Bengal, IN"), "NON_US");
+});
+
 test("India vs Indiana: Indian state + IN suffix is classified as NON_US", () => {
   assert.equal(classifyJobLocation("Bangalore, KA, IN"), "NON_US");
   assert.equal(classifyJobLocation("Chennai, TN, IN"), "NON_US");
@@ -41,10 +56,15 @@ test("India vs Indiana: Indian state + IN suffix is classified as NON_US", () =>
   assert.equal(classifyJobLocation("Gurugram, HR, IN"), "NON_US");
   assert.equal(classifyJobLocation("Mumbai, MH, IN"), "NON_US");
   assert.equal(classifyJobLocation("Pune, MH, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Noida, UP, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Kochi, KL, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Ahmedabad, GJ, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Kolkata, WB, IN"), "NON_US");
 });
 
 test("India vs Indiana: known Indian city + IN is classified as NON_US", () => {
   assert.equal(classifyJobLocation("Bangalore, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Bengaluru, IN"), "NON_US");
   assert.equal(classifyJobLocation("Chennai, IN"), "NON_US");
   assert.equal(classifyJobLocation("Hyderabad, IN"), "NON_US");
   assert.equal(classifyJobLocation("Mumbai, IN"), "NON_US");
@@ -52,11 +72,17 @@ test("India vs Indiana: known Indian city + IN is classified as NON_US", () => {
   assert.equal(classifyJobLocation("Noida, IN"), "NON_US");
   assert.equal(classifyJobLocation("Gurugram, IN"), "NON_US");
   assert.equal(classifyJobLocation("Gurgaon, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Kochi, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Ahmedabad, IN"), "NON_US");
+  assert.equal(classifyJobLocation("Kolkata, IN"), "NON_US");
 });
 
-test("India vs Indiana: explicit country name India is classified as NON_US", () => {
+test("India vs Indiana: explicit country name India or IND is classified as NON_US", () => {
   assert.equal(classifyJobLocation("India"), "NON_US");
   assert.equal(classifyJobLocation("Bangalore, India"), "NON_US");
+  assert.equal(classifyJobLocation("Bengaluru, Karnataka, IND"), "NON_US");
+  assert.equal(classifyJobLocation("Bengaluru, Karnataka, India"), "NON_US");
+  assert.equal(classifyJobLocation("Karnataka, India"), "NON_US");
   assert.equal(classifyJobLocation("Mumbai, India"), "NON_US");
 });
 
@@ -67,13 +93,19 @@ test("India vs Indiana: slash-separated Indian city locations are classified as 
 
 test("India vs Indiana: real Indiana U.S. locations remain classified as US", () => {
   assert.equal(classifyJobLocation("Indianapolis, IN"), "US");
+  assert.equal(classifyJobLocation("Carmel, IN"), "US");
+  assert.equal(classifyJobLocation("Fishers, IN"), "US");
   assert.equal(classifyJobLocation("Fort Wayne, IN"), "US");
   assert.equal(classifyJobLocation("Bloomington, IN"), "US");
+  assert.equal(classifyJobLocation("South Bend, IN"), "US");
+  assert.equal(classifyJobLocation("Evansville, IN"), "US");
+  assert.equal(classifyJobLocation("Indianapolis, Indiana, United States"), "US");
+  assert.equal(classifyJobLocation("Indianapolis, IN, US"), "US");
   assert.equal(classifyJobLocation("Indianapolis, IN, USA"), "US");
   assert.equal(classifyJobLocation("Indianapolis, Indiana"), "US");
   assert.equal(classifyJobLocation("Remote - Indiana, United States"), "US");
-  assert.equal(classifyJobLocation("Evansville, IN"), "US");
-  assert.equal(classifyJobLocation("South Bend, IN"), "US");
+  assert.equal(classifyJobLocation("Lafayette, IN"), "US");
+  assert.equal(classifyJobLocation("Columbus, IN"), "US");
 });
 
 test("Canada vs California: Canadian province+CA remains NON_US, California remains US", () => {
