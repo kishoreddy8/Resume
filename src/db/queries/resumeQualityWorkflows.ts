@@ -318,3 +318,21 @@ export function listResumeQualityIterations(candidateId: number, workflowId: num
     .prepare("SELECT * FROM resume_quality_iterations WHERE candidate_id = ? AND workflow_id = ? ORDER BY iteration_number ASC")
     .all(candidateId, workflowId) as ResumeQualityIterationRow[];
 }
+
+/**
+ * Stage 12 — cross-candidate scan for the resume-writer worker (scripts/resume-writer-worker-
+ * continuous.ts). The one deliberate exception to this module's "candidate_id always required by the
+ * caller" discipline: a background worker's whole job is discovering pending work before it knows
+ * which candidate it belongs to, exactly like a scheduler enumerating due jobs. Every returned row
+ * carries its own candidate_id — nothing downstream may ever substitute, default, or drop it; each
+ * subsequent export/claim/invoke/import call must use THIS row's own candidate_id and dedupe_key,
+ * precisely as if a human had looked the workflow up per-candidate first. Read-only; never mutates
+ * anything. status = 'IMPROVEMENT_RUNNING' is exactly the workflow's existing, already-computed
+ * "waiting for external writer" signal (see the quality-workflow GET route's own waitingFor logic) —
+ * no new status value is introduced here.
+ */
+export function listWorkflowsAwaitingWriter(): ResumeQualityWorkflowRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM resume_quality_workflows WHERE status = 'IMPROVEMENT_RUNNING' ORDER BY updated_at ASC`)
+    .all() as ResumeQualityWorkflowRow[];
+}

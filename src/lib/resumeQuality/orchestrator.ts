@@ -401,7 +401,7 @@ export async function executeResumeQualityIteration(
       try {
         const job = getJobByDedupeKey(workflow.dedupe_key);
         const company = job ? getCompany(job.company_id) : undefined;
-        generateTailoringOutputs(
+        await generateTailoringOutputs(
           {
             company: company?.name ?? "Company",
             jobId: job?.id ?? workflow.id,
