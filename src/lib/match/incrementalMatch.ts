@@ -28,6 +28,19 @@ export interface IncrementalMatchFailure {
   reason: string;
 }
 
+/** One (candidate, job) pair that produced a current, persisted job_match_results row this run —
+ *  whether freshly created or a cache hit (see resultsCreated/resultsReused). Phase 4 Stage 4's
+ *  notification generator consumes this directly instead of re-deriving which pairs have a current
+ *  result, so it never has to duplicate this module's own candidate/job resolution or re-query
+ *  job_match_results from scratch (see src/lib/notifications/generateNotifications.ts). Deliberately
+ *  excludes "unavailable" and thrown-exception pairs — those are already in `failures` above and
+ *  never produced a usable result.
+ */
+export interface EvaluatedMatchPair {
+  candidateId: number;
+  dedupeKey: string;
+}
+
 export interface IncrementalMatchResult {
   jobsRequested: number;
   /** Jobs actually found in the DB by dedupe_key — a dedupeKey with no matching jobs row (should not
@@ -43,6 +56,7 @@ export interface IncrementalMatchResult {
   readyForTailoring: number;
   needsReview: number;
   blocked: number;
+  evaluatedPairs: EvaluatedMatchPair[];
 }
 
 export interface IncrementalMatchOptions {
@@ -67,6 +81,7 @@ function emptyResult(jobsRequested: number): IncrementalMatchResult {
     readyForTailoring: 0,
     needsReview: 0,
     blocked: 0,
+    evaluatedPairs: [],
   };
 }
 
@@ -149,6 +164,7 @@ export function incrementalMatchAffectedJobs(options: IncrementalMatchOptions): 
         insertJobMatchResult(evalResult.data);
         if (existing) result.resultsReused++;
         else result.resultsCreated++;
+        result.evaluatedPairs.push({ candidateId: candidate.id, dedupeKey: job.dedupe_key });
 
         if (evalResult.data.decision === "BLOCKED") {
           jobsBlocked++;

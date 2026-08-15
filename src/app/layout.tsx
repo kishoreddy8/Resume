@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import { CandidateSelector } from "@/components/CandidateSelector";
+import { NotificationBell } from "@/components/NotificationBell";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -53,7 +54,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
                 </Link>
               ))}
             </nav>
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-3">
+              <NotificationBell />
               <CandidateSelector />
             </div>
           </div>

@@ -32,10 +32,14 @@ let recordDiscoveryResult: typeof import("@/db/queries/companies").recordDiscove
 let getOrganizationForCompany: typeof import("@/db/queries/organizationRegistry").getOrganizationForCompany;
 let listJobSources: typeof import("@/db/queries/organizationRegistry").listJobSources;
 let reviewJobSource: typeof import("@/db/queries/organizationRegistry").reviewJobSource;
+let createCandidate: typeof import("@/db/queries/candidates").createCandidate;
+let tmpCandidatesDir: string;
 
 before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-scheduler-tick-test-"));
+  tmpCandidatesDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-scheduler-tick-candidates-"));
   process.env.CAREER_OPS_DB_PATH = path.join(tmpDir, "test.db");
+  process.env.CAREER_OPS_CANDIDATES_DIR = tmpCandidatesDir;
 
   ({ getDb } = await import("@/db"));
   ({ resetAppSettings, updateAppSettings } = await import("@/db/queries/settings"));
@@ -43,6 +47,7 @@ before(async () => {
   ({ acquireScanLock, releaseScanLock, resetScanLockForTests, getScanLockStatus } = await import("../lock"));
   ({ getSchedulerRuntimeState, resetSchedulerRuntimeStateForTests } = await import("../state"));
   ({ createCompany, recordDiscoveryResult } = await import("@/db/queries/companies"));
+  ({ createCandidate } = await import("@/db/queries/candidates"));
   ({ getOrganizationForCompany, listJobSources, reviewJobSource } = await import("@/db/queries/organizationRegistry"));
 
   getDb();
@@ -50,10 +55,40 @@ before(async () => {
 
 after(() => {
   delete process.env.CAREER_OPS_DB_PATH;
+  delete process.env.CAREER_OPS_CANDIDATES_DIR;
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpCandidatesDir, { recursive: true, force: true });
   } catch {}
 });
+
+function writeValidProfile(candidateId: number) {
+  const dir = path.join(tmpCandidatesDir, String(candidateId));
+  const masterDir = path.join(dir, "master");
+  fs.mkdirSync(masterDir, { recursive: true });
+  const resumeHash = `resume-${candidateId}`;
+  const skillsHash = `skills-${candidateId}`;
+  fs.writeFileSync(
+    path.join(dir, "candidate-profile.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      sourceHashes: { resume: resumeHash, skills: skillsHash },
+      builtAt: "2026-01-01T00:00:00Z",
+      skills: [],
+      experience: [],
+      education: [],
+      certifications: [],
+      totalYearsExperience: null,
+    })
+  );
+  fs.writeFileSync(
+    path.join(masterDir, "manifest.json"),
+    JSON.stringify({
+      resume: { filename: "resume.docx", uploadedAt: "2026-01-01T00:00:00Z", sizeBytes: 10, sha256: resumeHash },
+      skills: { filename: "skills.docx", uploadedAt: "2026-01-01T00:00:00Z", sizeBytes: 10, sha256: skillsHash },
+    })
+  );
+}
 
 beforeEach(() => {
   resetAppSettings();
@@ -154,6 +189,9 @@ test("92. a RAN scheduler tick includes a nested matching summary (Phase 4 Stage
   const [source] = listJobSources(organization.id);
   reviewJobSource(source.id, "APPROVED", "Test fixture approval");
 
+  const candidate = createCandidate({ firstName: "Scheduler", lastName: "Notified" });
+  writeValidProfile(candidate.id);
+
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () =>
     new Response(
@@ -181,6 +219,8 @@ test("92. a RAN scheduler tick includes a nested matching summary (Phase 4 Stage
     assert.equal(outcome.summary.affectedJobDedupeKeys.length, 1);
     assert.ok(outcome.matching, "the RAN outcome must include a nested matching summary");
     assert.equal(outcome.matching.jobsResolved, 1);
+    assert.ok(outcome.notifications, "24. scheduled scan orchestration includes the notification-generation summary through the same canonical flow");
+    assert.equal(outcome.notifications.evaluated, outcome.matching.evaluatedPairs.length);
   } finally {
     globalThis.fetch = originalFetch;
   }

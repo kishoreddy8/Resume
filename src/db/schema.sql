@@ -921,6 +921,30 @@ CREATE TABLE IF NOT EXISTS candidate_job_state_history (
 CREATE INDEX IF NOT EXISTS idx_candidate_job_state_history_lookup
   ON candidate_job_state_history(candidate_id, dedupe_key, changed_at DESC);
 
+-- Phase 4 Stage 4 — in-app candidate job-match notifications (see src/lib/notifications/). Keyed on
+-- (candidate_id, dedupe_key), not job_id, same reasoning as candidate_job_state_history above: a
+-- notification about a job must survive that job's later deletion (suppressed_jobs/age-sweep), and
+-- dedupe_key is the stable identity throughout this schema, never job_id.
+--
+-- IDENTITY/DEDUP INVARIANT: UNIQUE(candidate_id, dedupe_key, type) is the load-bearing constraint —
+-- even if notification-generation code accidentally runs twice for the same pair, a duplicate
+-- notification is structurally impossible at the database level, not just prevented by application
+-- logic (see createNotificationIfAbsent's INSERT ... ON CONFLICT DO NOTHING).
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY,
+  candidate_id INTEGER NOT NULL REFERENCES candidates(id),
+  dedupe_key TEXT NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  read_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedup ON notifications(candidate_id, dedupe_key, type);
+CREATE INDEX IF NOT EXISTS idx_notifications_candidate_unread ON notifications(candidate_id, read_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_candidate_created ON notifications(candidate_id, created_at DESC);
+
 -- H1B Employer Source Discovery + ATS Hardening (see src/lib/companyIdentity/). Three brand-new
 -- tables plus additive companies columns (added via migration in src/db/index.ts, since companies
 -- pre-dates this feature) — safe via plain CREATE TABLE IF NOT EXISTS on both a fresh install and

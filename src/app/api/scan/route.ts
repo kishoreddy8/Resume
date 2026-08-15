@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
       errors: 0,
       affectedJobDedupeKeys: [],
       matching: null,
+      notifications: null,
     });
   }
 
@@ -53,13 +54,14 @@ export async function POST(req: NextRequest) {
   try {
     // A local dev/start process has no serverless request timeout, so running the scan
     // synchronously here (rather than a background job + polling) is fine for a personal tool.
-    // Shares the exact same post-scan orchestration as the scheduler tick (Phase 4 Stage 2) — see
-    // src/lib/scan/runScanWithMatching.ts. Scan fields stay flattened at the top level of the JSON
-    // response (unchanged from before Stage 2) for backward compatibility with existing consumers
-    // (src/app/jobs/page.tsx casts this response `as ScanSummary` and reads e.g. `.jobsNew` at the
-    // top level) — `matching` is added as a new sibling key, not nested inside a breaking wrapper.
-    const { scan, matching } = await runScanWithIncrementalMatching(companies);
-    return NextResponse.json({ ...scan, matching });
+    // Shares the exact same post-scan orchestration as the scheduler tick (Phase 4 Stages 2 & 4) —
+    // see src/lib/scan/runScanWithMatching.ts. Scan fields stay flattened at the top level of the
+    // JSON response (unchanged from before Stage 2) for backward compatibility with existing
+    // consumers (src/app/jobs/page.tsx casts this response `as ScanSummary` and reads e.g.
+    // `.jobsNew` at the top level) — `matching`/`notifications` are added as new sibling keys, not
+    // nested inside a breaking wrapper.
+    const { scan, matching, notifications } = await runScanWithIncrementalMatching(companies);
+    return NextResponse.json({ ...scan, matching, notifications });
   } finally {
     releaseScanLock();
   }

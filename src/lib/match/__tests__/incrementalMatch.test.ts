@@ -318,6 +318,7 @@ test("85. zero affected jobs is a safe no-op — no candidates resolved, nothing
     resultsCreated: 0,
     resultsReused: 0,
     failures: [],
+    evaluatedPairs: [],
     readyForTailoring: 0,
     needsReview: 0,
     blocked: 0,

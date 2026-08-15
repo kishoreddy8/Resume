@@ -156,6 +156,8 @@ test("93. POST /api/scan invokes the same shared incremental-matching path as th
     assert.equal(body.jobsNew, 1, "existing ScanSummary fields stay flat at the top level for backward compatibility");
     assert.ok(body.matching, "the response includes the incremental matching summary");
     assert.equal(body.matching.jobsResolved, 1);
+    assert.ok(body.notifications, "23. manual scan orchestration includes the notification-generation summary too");
+    assert.equal(body.notifications.evaluated, body.matching.evaluatedPairs.length);
   } finally {
     globalThis.fetch = originalFetch;
   }
