@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { getMatchAffectingSettings } from "@/db/queries/candidateSettings";
 import { getJob, listJobs } from "@/db/queries/jobs";
-import { getJobCertifications, getJobSkills } from "@/db/queries/jobIntel";
 import { getJobMatchResult, insertJobMatchResult } from "@/db/queries/jobMatches";
 import { insertMatchRun } from "@/db/queries/matchRuns";
-import { evaluateJobMatch, type EvaluateJobMatchInput } from "@/lib/match/evaluateJobMatch";
-import type { DescriptionSections, JobWithCompany } from "@/types";
+import { buildEvaluateJobMatchInput } from "@/lib/match/buildMatchInput";
+import { evaluateJobMatch } from "@/lib/match/evaluateJobMatch";
+import type { JobWithCompany } from "@/types";
 
 /**
  * Bounded, resumable, failure-isolated batch evaluation (Phase 2's approved batch design — mirrors
@@ -22,43 +22,6 @@ import type { DescriptionSections, JobWithCompany } from "@/types";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
-
-function parseDescriptionSections(json: string | null): DescriptionSections | null {
-  if (!json) return null;
-  try {
-    const parsed = JSON.parse(json);
-    return parsed && typeof parsed === "object" ? (parsed as DescriptionSections) : null;
-  } catch {
-    return null;
-  }
-}
-
-function buildInput(job: JobWithCompany): EvaluateJobMatchInput {
-  return {
-    jobId: job.id,
-    dedupeKey: job.dedupe_key,
-    jobTitle: job.title,
-    descriptionText: job.description_text,
-    descriptionSections: parseDescriptionSections(job.description_sections),
-    skills: getJobSkills(job.id),
-    certifications: getJobCertifications(job.id),
-    education: {
-      level: job.education_level,
-      field: job.education_field,
-      requirement: job.education_requirement,
-      equivalentExperienceAllowed: job.education_equivalent_experience_allowed === 1,
-      evidence: job.education_evidence,
-    },
-    sponsorshipPolarity: job.sponsorship_polarity,
-    companyH1bConfidence: job.company_h1b_confidence,
-    clearanceRequired: job.clearance_required,
-    clearanceLevel: job.clearance_level,
-    citizenshipRequired: job.citizenship_required,
-    workAuthorizationRequired: job.work_authorization_required,
-    jobSeniority: job.seniority ?? "Unknown",
-    experienceMinYears: job.experience_min_years,
-  };
-}
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
@@ -92,7 +55,7 @@ export async function POST(req: NextRequest) {
 
   for (const job of targets) {
     try {
-      const result = evaluateJobMatch(buildInput(job), candidateSettings, candidateId);
+      const result = evaluateJobMatch(buildEvaluateJobMatchInput(job), candidateSettings, candidateId);
       if (result.status === "unavailable") {
         outcomes.push({ jobId: job.id, status: "unavailable", reason: result.reason });
         continue;

@@ -1,6 +1,7 @@
 import { listScanReadyCompanies } from "@/db/queries/organizationRegistry";
 import { getAppSettings } from "@/db/queries/settings";
-import { runScan } from "@/lib/scan";
+import type { IncrementalMatchResult } from "@/lib/match/incrementalMatch";
+import { runScanWithIncrementalMatching } from "@/lib/scan/runScanWithMatching";
 import type { ScanSummary } from "@/types";
 import { acquireScanLock, releaseScanLock } from "./lock";
 import {
@@ -17,7 +18,7 @@ export type SchedulerTickOutcome =
   | { outcome: "SKIPPED_INTERVAL_NOT_DUE" }
   | { outcome: "SKIPPED_LOCK_HELD"; heldSince?: string }
   | { outcome: "SKIPPED_NO_COMPANIES" }
-  | { outcome: "RAN"; companiesScanned: number; summary: ScanSummary }
+  | { outcome: "RAN"; companiesScanned: number; summary: ScanSummary; matching: IncrementalMatchResult }
   | { outcome: "FAILED"; error: string };
 
 /**
@@ -68,9 +69,14 @@ export async function runSchedulerTick(now: Date = new Date()): Promise<Schedule
       return { outcome: "SKIPPED_NO_COMPANIES" };
     }
 
-    const summary = await runScan(companies);
+    // Phase 4 Stage 2 — the same shared post-scan orchestration POST /api/scan uses (see
+    // src/lib/scan/runScanWithMatching.ts's doc comment for the full "one canonical flow" rationale
+    // and why a thrown scan error here is deliberately left uncaught by that helper, so it still
+    // propagates to THIS try/catch and skips matching entirely, exactly like a non-incremental scan
+    // failure already did before Stage 2).
+    const { scan, matching } = await runScanWithIncrementalMatching(companies);
     recordSchedulerTickSucceeded();
-    return { outcome: "RAN", companiesScanned: companies.length, summary };
+    return { outcome: "RAN", companiesScanned: companies.length, summary: scan, matching };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     recordSchedulerTickFailed(message);

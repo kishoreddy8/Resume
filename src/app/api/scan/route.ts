@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCompany, listActiveCompanies } from "@/db/queries/companies";
-import { runScan } from "@/lib/scan";
 import { acquireScanLock, releaseScanLock } from "@/lib/scheduler/lock";
+import { runScanWithIncrementalMatching } from "@/lib/scan/runScanWithMatching";
 
 const BODY_SCHEMA = z.object({ companyId: z.number().int().optional() });
 
@@ -29,6 +29,8 @@ export async function POST(req: NextRequest) {
       jobsUpdated: 0,
       jobsClosed: 0,
       errors: 0,
+      affectedJobDedupeKeys: [],
+      matching: null,
     });
   }
 
@@ -51,8 +53,13 @@ export async function POST(req: NextRequest) {
   try {
     // A local dev/start process has no serverless request timeout, so running the scan
     // synchronously here (rather than a background job + polling) is fine for a personal tool.
-    const summary = await runScan(companies);
-    return NextResponse.json(summary);
+    // Shares the exact same post-scan orchestration as the scheduler tick (Phase 4 Stage 2) — see
+    // src/lib/scan/runScanWithMatching.ts. Scan fields stay flattened at the top level of the JSON
+    // response (unchanged from before Stage 2) for backward compatibility with existing consumers
+    // (src/app/jobs/page.tsx casts this response `as ScanSummary` and reads e.g. `.jobsNew` at the
+    // top level) — `matching` is added as a new sibling key, not nested inside a breaking wrapper.
+    const { scan, matching } = await runScanWithIncrementalMatching(companies);
+    return NextResponse.json({ ...scan, matching });
   } finally {
     releaseScanLock();
   }

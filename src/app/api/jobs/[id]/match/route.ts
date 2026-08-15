@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { getMatchAffectingSettings } from "@/db/queries/candidateSettings";
 import { getJob } from "@/db/queries/jobs";
-import { getJobCertifications, getJobSkills } from "@/db/queries/jobIntel";
 import { deserializeJobMatchResult, getJobMatchResult, getLatestJobMatchResult, insertJobMatchResult } from "@/db/queries/jobMatches";
-import { evaluateJobMatch, type EvaluateJobMatchInput } from "@/lib/match/evaluateJobMatch";
-import type { DescriptionSections, JobWithCompany } from "@/types";
+import { buildEvaluateJobMatchInput } from "@/lib/match/buildMatchInput";
+import { evaluateJobMatch } from "@/lib/match/evaluateJobMatch";
 
 /**
  * Single-job Phase 2 matching. Deterministic only — zero AI calls, zero cost, cheap enough to run
@@ -13,43 +12,6 @@ import type { DescriptionSections, JobWithCompany } from "@/types";
  * `jobs.*` column — writes only into job_match_results, the same "AI/Phase-2-output namespaced away
  * from authoritative data" pattern ai-enrich already established for the AI layer.
  */
-
-function parseDescriptionSections(json: string | null): DescriptionSections | null {
-  if (!json) return null;
-  try {
-    const parsed = JSON.parse(json);
-    return parsed && typeof parsed === "object" ? (parsed as DescriptionSections) : null;
-  } catch {
-    return null;
-  }
-}
-
-function buildInput(job: JobWithCompany): EvaluateJobMatchInput {
-  return {
-    jobId: job.id,
-    dedupeKey: job.dedupe_key,
-    jobTitle: job.title,
-    descriptionText: job.description_text,
-    descriptionSections: parseDescriptionSections(job.description_sections),
-    skills: getJobSkills(job.id),
-    certifications: getJobCertifications(job.id),
-    education: {
-      level: job.education_level,
-      field: job.education_field,
-      requirement: job.education_requirement,
-      equivalentExperienceAllowed: job.education_equivalent_experience_allowed === 1,
-      evidence: job.education_evidence,
-    },
-    sponsorshipPolarity: job.sponsorship_polarity,
-    companyH1bConfidence: job.company_h1b_confidence,
-    clearanceRequired: job.clearance_required,
-    clearanceLevel: job.clearance_level,
-    citizenshipRequired: job.citizenship_required,
-    workAuthorizationRequired: job.work_authorization_required,
-    jobSeniority: job.seniority ?? "Unknown",
-    experienceMinYears: job.experience_min_years,
-  };
-}
 
 function parseJobId(id: string): number | null {
   const jobId = Number(id);
@@ -84,7 +46,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
   const candidateSettings = getMatchAffectingSettings(candidateId);
-  const result = evaluateJobMatch(buildInput(job), candidateSettings, candidateId);
+  const result = evaluateJobMatch(buildEvaluateJobMatchInput(job), candidateSettings, candidateId);
 
   if (result.status === "unavailable") {
     return NextResponse.json({ status: "unavailable", reason: result.reason });

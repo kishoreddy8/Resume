@@ -679,6 +679,12 @@ export interface ScanResult {
   freshnessMetrics?: ScanFreshnessMetrics;
   /** Set when a career_link scrape found most links funnel through one embedded ATS board. */
   detectedAts?: { source: string; token: string };
+  /** Phase 4 Stage 2 — canonical dedupe_key of every job newly inserted or materially changed
+   *  (see src/lib/scan/status.ts's hasContentChanged) by this company's scan. Excludes unchanged
+   *  re-seen jobs, stale-rejected jobs, foreign-filtered jobs, pseudo-jobs, and suppressed jobs —
+   *  see src/lib/scan.ts's scanCompany() for exactly where each dedupeKey is added. Unique within
+   *  this array; never raw title/company text, only the existing stable identity string. */
+  affectedJobDedupeKeys: string[];
 }
 
 export interface ScanSummary {
@@ -694,4 +700,10 @@ export interface ScanSummary {
   errors: number;
   /** Aggregated freshness and filter counts across all companies scanned. */
   freshnessMetrics?: ScanFreshnessMetrics;
+  /** Phase 4 Stage 2 — union of every ScanResult.affectedJobDedupeKeys across all companies scanned
+   *  this run, deduplicated. This is the exact input incremental matching (see
+   *  src/lib/match/incrementalMatch.ts) consumes — see scanCompany()'s doc comment for the precise
+   *  inclusion/exclusion rules. A company whose scan errored contributes nothing here (its
+   *  ScanResult never reaches the per-job loop that populates this list). */
+  affectedJobDedupeKeys: string[];
 }

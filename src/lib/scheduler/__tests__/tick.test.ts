@@ -27,6 +27,11 @@ let resetScanLockForTests: typeof import("../lock").resetScanLockForTests;
 let getScanLockStatus: typeof import("../lock").getScanLockStatus;
 let getSchedulerRuntimeState: typeof import("../state").getSchedulerRuntimeState;
 let resetSchedulerRuntimeStateForTests: typeof import("../state").resetSchedulerRuntimeStateForTests;
+let createCompany: typeof import("@/db/queries/companies").createCompany;
+let recordDiscoveryResult: typeof import("@/db/queries/companies").recordDiscoveryResult;
+let getOrganizationForCompany: typeof import("@/db/queries/organizationRegistry").getOrganizationForCompany;
+let listJobSources: typeof import("@/db/queries/organizationRegistry").listJobSources;
+let reviewJobSource: typeof import("@/db/queries/organizationRegistry").reviewJobSource;
 
 before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-scheduler-tick-test-"));
@@ -37,6 +42,8 @@ before(async () => {
   ({ runSchedulerTick } = await import("../tick"));
   ({ acquireScanLock, releaseScanLock, resetScanLockForTests, getScanLockStatus } = await import("../lock"));
   ({ getSchedulerRuntimeState, resetSchedulerRuntimeStateForTests } = await import("../state"));
+  ({ createCompany, recordDiscoveryResult } = await import("@/db/queries/companies"));
+  ({ getOrganizationForCompany, listJobSources, reviewJobSource } = await import("@/db/queries/organizationRegistry"));
 
   getDb();
 });
@@ -128,4 +135,53 @@ test("40. runSchedulerTick releases the lock even though no scan ran, so a manua
   const manualAcquire = acquireScanLock(new Date(now.getTime() + 1000));
   assert.equal(manualAcquire.acquired, true);
   releaseScanLock();
+});
+
+test("92. a RAN scheduler tick includes a nested matching summary (Phase 4 Stage 2) built from the same shared post-scan orchestration as a manual scan", async () => {
+  // Make one company scan-ready via listScanReadyCompanies()'s real gating — same fixture pattern
+  // as src/db/queries/__tests__/organizationRegistry.test.ts's own "verified structured source"
+  // case: VERIFIED resolution + APPROVED review.
+  const company = createCompany({ name: "Scheduler Matching Co", source_type: "greenhouse", ats_board_token: "sched-match-token" });
+  recordDiscoveryResult(company.id, {
+    status: "VERIFIED",
+    sourceType: "greenhouse",
+    atsBoardToken: "sched-match-token",
+    discoveredJobsUrl: "https://boards.greenhouse.io/sched-match-token",
+    reason: "Direct ATS URL match (greenhouse)",
+    suspectedAts: null,
+  });
+  const organization = getOrganizationForCompany(company.id)!;
+  const [source] = listJobSources(organization.id);
+  reviewJobSource(source.id, "APPROVED", "Test fixture approval");
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        jobs: [
+          {
+            id: 1,
+            title: "Data Engineer",
+            location: { name: "Austin, TX" },
+            departments: [{ name: "Engineering" }],
+            absolute_url: "https://boards.greenhouse.io/sched-match-token/jobs/1",
+            content: "<p>Job description.</p>",
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    )) as typeof fetch;
+
+  try {
+    updateAppSettings({ scheduler: { enabled: true, windowStartHour: 0, windowEndHour: 24 } });
+    const outcome = await runSchedulerTick(new Date());
+    assert.equal(outcome.outcome, "RAN");
+    if (outcome.outcome !== "RAN") return;
+    assert.equal(outcome.summary.affectedJobDedupeKeys.length, 1);
+    assert.ok(outcome.matching, "the RAN outcome must include a nested matching summary");
+    assert.equal(outcome.matching.jobsResolved, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

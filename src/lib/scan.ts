@@ -116,6 +116,12 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
     }
 
     const seenDedupeKeys: string[] = [];
+    // Phase 4 Stage 2 — canonical identity of every job this company's scan newly inserted or
+    // materially changed (see hasContentChanged, imported below). A Set guards the documented
+    // "same dedupe key changed multiple times within one scan appears once" requirement; in
+    // practice a dedupe_key should only ever appear once per company's job list, but a provider
+    // returning a duplicate listing must not produce a duplicate affected-job entry.
+    const affectedDedupeKeys = new Set<string>();
     let jobsNew = 0;
     let jobsUpdated = 0;
     let jobsSuppressed = 0;
@@ -199,11 +205,20 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
         sponsorshipSnippet: snippet,
         h1bCombinedConfidence,
       });
-      if (outcome === "inserted") jobsNew++;
-      else if (outcome === "updated") {
+      if (outcome === "inserted") {
+        jobsNew++;
+        affectedDedupeKeys.add(dedupeKey);
+      } else if (outcome === "updated") {
         jobsUpdated++;
         if (before && !hasContentChanged(before, job)) jobsUnchanged++;
-        else jobsTrulyUpdated++;
+        else {
+          jobsTrulyUpdated++;
+          // Phase 4 Stage 2 — "materially changed" means exactly what hasContentChanged already
+          // means for the jobsTrulyUpdated/jobsUnchanged split above: reused, not a second
+          // comparator. before is always defined here (outcome==="updated" only happens when
+          // upsertJob found the same dedupe_key this synchronous call's own pre-fetch already found).
+          affectedDedupeKeys.add(dedupeKey);
+        }
       } else jobsSuppressed++;
 
       // Structured Job Intelligence: additive, best-effort, and deliberately non-fatal to the scan
@@ -300,6 +315,7 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
       jobsSuppressed,
       freshnessMetrics,
       detectedAts,
+      affectedJobDedupeKeys: Array.from(affectedDedupeKeys),
     };
   } catch (err) {
     // Never treat a failed scan as evidence that jobs closed: closeStaleJobs/upsertJob are only
@@ -345,6 +361,7 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
       jobsArchived: 0,
       jobsSuppressed: 0,
       freshnessMetrics,
+      affectedJobDedupeKeys: [],
     };
   }
 }
@@ -408,6 +425,12 @@ export async function runScan(companies: Company[], options: RunScanOptions = {}
     }
   );
 
+  // Phase 4 Stage 2 — union across every company scanned this run, deduplicated. A dedupe_key is
+  // company-scoped by construction (embeds companyId — see src/lib/dedupe.ts), so cross-company
+  // collisions are structurally impossible; the Set only guards the same within-company edge case
+  // scanCompany() itself already guards against.
+  const affectedJobDedupeKeys = Array.from(new Set(results.flatMap((r) => r.affectedJobDedupeKeys)));
+
   return {
     results,
     jobsNew: results.reduce((sum, r) => sum + r.jobsNew, 0),
@@ -418,5 +441,6 @@ export async function runScan(companies: Company[], options: RunScanOptions = {}
     jobsDeletedByAge: ageSweep.deleted.length,
     errors: results.filter((r) => r.status === "error").length,
     freshnessMetrics: aggregatedFreshness,
+    affectedJobDedupeKeys,
   };
 }

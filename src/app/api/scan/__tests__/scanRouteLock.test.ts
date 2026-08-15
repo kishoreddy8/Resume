@@ -14,7 +14,9 @@ import { after, before, test } from "node:test";
  */
 
 let tmpDir: string;
+let tmpCandidatesDir: string;
 let createCompany: typeof import("@/db/queries/companies").createCompany;
+let createCandidate: typeof import("@/db/queries/candidates").createCandidate;
 let acquireScanLock: typeof import("@/lib/scheduler/lock").acquireScanLock;
 let releaseScanLock: typeof import("@/lib/scheduler/lock").releaseScanLock;
 let resetScanLockForTests: typeof import("@/lib/scheduler/lock").resetScanLockForTests;
@@ -22,10 +24,13 @@ let POST: typeof import("../route").POST;
 
 before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-scan-route-lock-test-"));
+  tmpCandidatesDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-scan-route-lock-candidates-"));
   process.env.CAREER_OPS_DB_PATH = path.join(tmpDir, "test.db");
+  process.env.CAREER_OPS_CANDIDATES_DIR = tmpCandidatesDir;
 
   const { getDb } = await import("@/db");
   ({ createCompany } = await import("@/db/queries/companies"));
+  ({ createCandidate } = await import("@/db/queries/candidates"));
   ({ acquireScanLock, releaseScanLock, resetScanLockForTests } = await import("@/lib/scheduler/lock"));
   ({ POST } = await import("../route"));
   getDb();
@@ -33,10 +38,40 @@ before(async () => {
 
 after(() => {
   delete process.env.CAREER_OPS_DB_PATH;
+  delete process.env.CAREER_OPS_CANDIDATES_DIR;
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpCandidatesDir, { recursive: true, force: true });
   } catch {}
 });
+
+function writeValidProfile(candidateId: number) {
+  const dir = path.join(tmpCandidatesDir, String(candidateId));
+  const masterDir = path.join(dir, "master");
+  fs.mkdirSync(masterDir, { recursive: true });
+  const resumeHash = `resume-${candidateId}`;
+  const skillsHash = `skills-${candidateId}`;
+  fs.writeFileSync(
+    path.join(dir, "candidate-profile.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      sourceHashes: { resume: resumeHash, skills: skillsHash },
+      builtAt: "2026-01-01T00:00:00Z",
+      skills: [],
+      experience: [],
+      education: [],
+      certifications: [],
+      totalYearsExperience: null,
+    })
+  );
+  fs.writeFileSync(
+    path.join(masterDir, "manifest.json"),
+    JSON.stringify({
+      resume: { filename: "resume.docx", uploadedAt: "2026-01-01T00:00:00Z", sizeBytes: 10, sha256: resumeHash },
+      skills: { filename: "skills.docx", uploadedAt: "2026-01-01T00:00:00Z", sizeBytes: 10, sha256: skillsHash },
+    })
+  );
+}
 
 function postScan(body: Record<string, unknown> = {}) {
   const req = new Request("http://localhost/api/scan", {
@@ -87,4 +122,41 @@ test("56. POST /api/scan releases the lock after completing (successfully or not
   const reacquire = acquireScanLock(new Date());
   assert.equal(reacquire.acquired, true, "the lock must be free again after the first POST /api/scan completed");
   releaseScanLock();
+});
+
+test("93. POST /api/scan invokes the same shared incremental-matching path as the scheduler tick — response includes a populated matching key", async () => {
+  const company = createCompany({ name: "Matching Manual Co", source_type: "greenhouse", ats_board_token: "manual-match-token" });
+  const candidate = createCandidate({ firstName: "Manual", lastName: "Scan" });
+  writeValidProfile(candidate.id);
+  resetScanLockForTests();
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        jobs: [
+          {
+            id: 1,
+            title: "Data Engineer",
+            location: { name: "Austin, TX" },
+            departments: [{ name: "Engineering" }],
+            absolute_url: "https://boards.greenhouse.io/manual-match-token/jobs/1",
+            content: "<p>Job description.</p>",
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    )) as typeof fetch;
+
+  try {
+    const res = await postScan({ companyId: company.id });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.jobsNew, 1, "existing ScanSummary fields stay flat at the top level for backward compatibility");
+    assert.ok(body.matching, "the response includes the incremental matching summary");
+    assert.equal(body.matching.jobsResolved, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
