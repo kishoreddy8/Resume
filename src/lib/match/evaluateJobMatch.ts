@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import type {
   DescriptionSections,
   H1bCompanyConfidence,
@@ -14,6 +13,7 @@ import { computeCandidateSettingsHash } from "./candidateSettingsHash";
 import { decide } from "./decision";
 import { evaluateEligibility } from "./eligibility";
 import { computeTotalYearsExperience } from "./experienceDuration";
+import { hashJdContent } from "./matchIdentity";
 import { computeMatchKnowledgeHash } from "./matchKnowledgeHash";
 import { normalizeCandidateSkills, unrecognizedCandidateSkillNames } from "./normalizeCandidateSkills";
 import {
@@ -60,10 +60,6 @@ export interface EvaluateJobMatchInput {
   workAuthorizationRequired: RequirementTriState | null;
   jobSeniority: Seniority;
   experienceMinYears: number | null;
-}
-
-function hashJdContent(title: string, descriptionText: string | null): string {
-  return crypto.createHash("sha256").update(`${title}\n${descriptionText ?? ""}`).digest("hex");
 }
 
 function clampExperienceScore(candidateYears: number, minYears: number): number {

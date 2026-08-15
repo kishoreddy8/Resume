@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { getDb } from "@/db";
 import { isProtectedForAnyCandidate } from "@/db/queries/candidateJobState";
 import { getAppSettings } from "@/db/queries/settings";
-import { getJobAgeBand, getJobAgeDays } from "@/lib/jobLifecycle";
+import { getJobAgeBand, getJobAgeDays, PROTECTED_PIPELINE_STATUSES } from "@/lib/jobLifecycle";
 import { isSuppressionActive } from "@/lib/settings";
 import type {
   AgeSweepResult,
@@ -176,6 +176,78 @@ export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
     ${overlay.join}
     ${where}
     ORDER BY j.posted_at DESC, j.first_seen_at DESC
+  `;
+  return getDb().prepare(sql).all(params) as JobWithCompany[];
+}
+
+export interface CandidateRematchJobPageOptions {
+  candidateId: number;
+  /** Keyset cursor: only jobs with a STRICTLY greater id are returned. 0/omitted starts at the
+   *  beginning. Deliberately NOT an OFFSET — a rematch page runs while normal ingestion/lifecycle
+   *  activity continues, and OFFSET pagination silently skips or repeats rows when the underlying
+   *  set shifts underneath it, whereas a jobs.id cursor is stable regardless. */
+  afterJobId?: number;
+  limit: number;
+  /** Actionability window in days, applied to the SAME age source src/lib/jobLifecycle.ts's
+   *  getJobAgeSource uses (reliable posted_at, else first_seen_at). Passed in by the caller rather
+   *  than hardcoded here — see src/lib/match/rematchCandidate.ts, which supplies the existing For
+   *  You feed window. */
+  maxAgeDays: number;
+  now?: Date;
+}
+
+/**
+ * Phase 4 Stage 5 — ONE bounded, indexed page of the jobs a candidate rematch should reconsider.
+ *
+ * The eligibility rule is not new: it is exactly what the For You feed already treats as this
+ * candidate's actionable set (src/app/api/candidates/[candidateId]/for-you/route.ts) —
+ *   - is_active = 1 and is_archived = 0 (listJobs' own activeOnly + default non-archived clauses)
+ *   - not marked not-interested by THIS candidate (the feed's eligibleItems gate)
+ *   - within the freshness window, UNLESS lifecycle-protected for this candidate, which is
+ *     isLifecycleProtected()'s exact definition — PROTECTED_PIPELINE_STATUSES or pinned — reusing
+ *     the constant itself rather than restating the status list.
+ *
+ * The filtering happens in SQL, not in JS: the whole point of Stage 5's paging is that a rematch
+ * never materializes the ~19.6k-row active job set to slice it down to 100. LIMIT applies to the
+ * already-filtered, id-ordered set, so `limit` rows out means `limit` rows read.
+ */
+export function listCandidateRematchJobPage(options: CandidateRematchJobPageOptions): JobWithCompany[] {
+  const overlay = candidateOverlay(options.candidateId);
+  const protectedStatusPlaceholders = PROTECTED_PIPELINE_STATUSES.map((_, i) => `@protectedStatus${i}`).join(", ");
+  const params: Record<string, unknown> = {
+    ...overlay.params,
+    afterJobId: options.afterJobId ?? 0,
+    limit: options.limit,
+    // floor(ageDays) <= maxAgeDays is the JS form (getJobAgeDays floors); the exclusive raw-day
+    // bound below is its exact equivalent, so SQL and the feed agree on every boundary day.
+    maxAgeDaysExclusive: options.maxAgeDays + 1,
+    now: (options.now ?? new Date()).toISOString(),
+  };
+  PROTECTED_PIPELINE_STATUSES.forEach((status, i) => {
+    params[`protectedStatus${i}`] = status;
+  });
+
+  // NULLIF(j.posted_at, '') mirrors getJobAgeSource's falsy check on posted_at; the julianday
+  // comparison mirrors its "not in the future" test; an unparseable posted_at makes julianday NULL,
+  // so the CASE falls through to first_seen_at exactly as the JS NaN branch does.
+  const ageSource = `COALESCE(CASE WHEN julianday(NULLIF(j.posted_at, '')) <= julianday(@now) THEN j.posted_at END, j.first_seen_at)`;
+
+  const sql = `
+    SELECT ${JOB_WITH_COMPANY_SELECT}${overlay.selectOverride}
+    FROM jobs j
+    JOIN companies c ON c.id = j.company_id
+    ${overlay.join}
+    WHERE j.id > @afterJobId
+      AND j.is_active = 1
+      AND j.is_archived = 0
+      AND COALESCE(cjs.not_interested, 0) = 0
+      AND (
+        julianday(@now) - julianday(${ageSource}) < @maxAgeDaysExclusive
+        OR COALESCE(cjs.pinned, 0) = 1
+        OR COALESCE(cjs.pipeline_status, 'New') IN (${protectedStatusPlaceholders})
+      )
+    ORDER BY j.id ASC
+    LIMIT @limit
   `;
   return getDb().prepare(sql).all(params) as JobWithCompany[];
 }

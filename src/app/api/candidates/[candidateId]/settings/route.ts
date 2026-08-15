@@ -6,6 +6,8 @@ import {
   getRankingPreferences,
   updateCandidateSettings,
 } from "@/db/queries/candidateSettings";
+import { computeCandidateSettingsHash } from "@/lib/match/candidateSettingsHash";
+import { rematchCandidateJobsPage, type RematchCandidatePageResult } from "@/lib/match/rematchCandidate";
 
 /**
  * Per-candidate settings — the UI for candidateSettings.ts (built/tested in the Phase 2.5 checkpoint
@@ -68,10 +70,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ca
     return NextResponse.json({ error: "Invalid settings", details: parsed.error.issues }, { status: 400 });
   }
 
+  // Phase 4 Stage 5: a match-affecting change moves candidateSettingsHash, which is half of the
+  // Phase 2 cache identity — every one of this candidate's cached results is stale from here on.
+  // The hash is compared before/after rather than trusting "the request contained matchAffecting":
+  // re-saving identical values must not trigger any rematch work at all.
+  const hashBefore = computeCandidateSettingsHash(getMatchAffectingSettings(candidateId));
   updateCandidateSettings(candidateId, parsed.data);
+  const hashAfter = computeCandidateSettingsHash(getMatchAffectingSettings(candidateId));
+
+  // Exactly ONE bounded page (~2 s at the measured ~20 ms/job) — never a full walk, which would be
+  // ~403 s and would hang this request. The response carries the cursor so the caller can continue
+  // page-by-page via POST /api/candidates/[candidateId]/rematch, or finish it offline with
+  // `npm run rematch-candidate`. A rematch failure must never turn a saved settings change into an
+  // error response: the settings write above is already committed and is reported regardless.
+  let rematch: RematchCandidatePageResult | null = null;
+  if (hashBefore !== hashAfter) {
+    try {
+      rematch = rematchCandidateJobsPage({ candidateId });
+    } catch {
+      rematch = null;
+    }
+  }
 
   return NextResponse.json({
     matchAffecting: getMatchAffectingSettings(candidateId),
     preferences: getRankingPreferences(candidateId),
+    rematch,
   });
 }

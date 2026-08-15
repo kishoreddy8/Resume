@@ -8,6 +8,21 @@ import { requireActiveCandidate } from "@/db/queries/candidates";
  * Phase 2.5: candidate-scoped. Every path below is parameterized by an explicit candidateId (query
  * param on GET, form field on POST) — never a global "current candidate" fallback. See
  * CAREER_OPS_HANDOFF.md's Phase 2.5 design record §8/9.
+ *
+ * PHASE 4 STAGE 5 — WHY THIS ROUTE DELIBERATELY DOES NOT TRIGGER A REMATCH.
+ * Uploading a new Master Resume / Skills Inventory rewrites manifest.json's sha256 values, which
+ * makes the candidate's derived candidate-profile.json STALE by definition (its sourceHashes no
+ * longer match — see src/lib/match/candidateProfile.ts's loadCandidateProfile). Phase 2 correctly
+ * refuses to evaluate against a stale profile, so a rematch fired from here would walk the
+ * candidate's whole job set only to record "stale_candidate_profile" for every pair.
+ *
+ * The profile becomes usable again only when the OFFLINE /build-candidate-profile skill rewrites
+ * candidate-profile.json against the new uploads. That is a file write with no server request, so
+ * there is no honest server-side callback to hook — and inventing filesystem watching/polling to
+ * guess at it would be exactly the fragile automatic detection Stage 5 rules out. The supported
+ * sequence is therefore explicit:
+ *     upload here -> run /build-candidate-profile <candidateId> -> then either
+ *     POST /api/candidates/<candidateId>/rematch (page by page) or `npm run rematch-candidate`.
  */
 
 function candidatesRoot(): string {

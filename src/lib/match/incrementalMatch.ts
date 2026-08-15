@@ -1,10 +1,9 @@
 import { listCandidates, requireActiveCandidate } from "@/db/queries/candidates";
 import { getMatchAffectingSettings } from "@/db/queries/candidateSettings";
 import { getJob, getJobIdByDedupeKey } from "@/db/queries/jobs";
-import { getJobMatchResult, insertJobMatchResult } from "@/db/queries/jobMatches";
 import { insertMatchRun } from "@/db/queries/matchRuns";
-import { buildEvaluateJobMatchInput } from "./buildMatchInput";
-import { evaluateJobMatch } from "./evaluateJobMatch";
+import { resolveCandidateMatchIdentity } from "./matchIdentity";
+import { resolveJobMatchResult } from "./resolveJobMatch";
 
 /**
  * Phase 4 Stage 2 — orchestration around the existing, FROZEN Phase 2 engine. This module contains
@@ -136,40 +135,48 @@ export function incrementalMatchAffectedJobs(options: IncrementalMatchOptions): 
     let jobsErrored = 0;
     const errorMessages: string[] = [];
 
+    // Phase 4 Stage 5: resolved once per candidate instead of per job, so the cache pre-check below
+    // costs a hash comparison rather than a profile load + taxonomy hash per pair. An unusable
+    // profile is reported per pair exactly as before (same two reason strings evaluateJobMatch
+    // returns), keeping this function's failure contract unchanged.
+    const identity = resolveCandidateMatchIdentity(candidate.id, candidateSettings);
+
     for (const job of resolvedJobs) {
       result.pairsAttempted++;
       try {
-        const input = buildEvaluateJobMatchInput(job);
-        const evalResult = evaluateJobMatch(input, candidateSettings, candidate.id);
-
-        if (evalResult.status === "unavailable") {
+        if (identity.status === "unavailable") {
           jobsErrored++;
-          const message = evalResult.reason;
+          errorMessages.push(`candidate ${candidate.id} / job ${job.dedupe_key}: ${identity.reason}`);
+          result.failures.push({ candidateId: candidate.id, dedupeKey: job.dedupe_key, reason: identity.reason });
+          continue;
+        }
+
+        // Stage 5 reordering: an already-current pair is served straight from job_match_results and
+        // never reaches the engine (see resolveJobMatch.ts) — previously every pair, cache hit or
+        // not, paid the full ~20 ms evaluation. Created/reused accounting is unchanged.
+        const resolution = resolveJobMatchResult({
+          job,
+          candidateId: candidate.id,
+          candidateSettings,
+          identity: identity.identity,
+        });
+
+        if (resolution.status === "unavailable") {
+          jobsErrored++;
+          const message = resolution.reason;
           errorMessages.push(`candidate ${candidate.id} / job ${job.dedupe_key}: ${message}`);
           result.failures.push({ candidateId: candidate.id, dedupeKey: job.dedupe_key, reason: message });
           continue;
         }
 
-        // Check hit/miss BEFORE inserting — same reasoning as the single-job/batch routes: insertJobMatchResult
-        // itself is hit-or-insert, so a pre-check is the only reliable way to report created vs. reused.
-        const existing = getJobMatchResult({
-          candidateId: evalResult.data.candidateId,
-          dedupeKey: evalResult.data.dedupeKey,
-          matchEngineVersion: evalResult.data.matchEngineVersion,
-          matchKnowledgeHash: evalResult.data.matchKnowledgeHash,
-          candidateProfileHash: evalResult.data.candidateProfileHash,
-          candidateSettingsHash: evalResult.data.candidateSettingsHash,
-          jdContentHash: evalResult.data.jdContentHash,
-        });
-        insertJobMatchResult(evalResult.data);
-        if (existing) result.resultsReused++;
+        if (resolution.status === "reused") result.resultsReused++;
         else result.resultsCreated++;
         result.evaluatedPairs.push({ candidateId: candidate.id, dedupeKey: job.dedupe_key });
 
-        if (evalResult.data.decision === "BLOCKED") {
+        if (resolution.decision === "BLOCKED") {
           jobsBlocked++;
           result.blocked++;
-        } else if (evalResult.data.decision === "NEEDS_REVIEW") {
+        } else if (resolution.decision === "NEEDS_REVIEW") {
           jobsNeedsReview++;
           result.needsReview++;
         } else {

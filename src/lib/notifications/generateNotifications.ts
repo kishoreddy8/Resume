@@ -55,7 +55,14 @@ function notificationBody(decision: Decision, overallScore: number): string {
  * Batches DB reads to stay O(unique jobs + unique candidates), never O(pairs) queries and never a
  * full jobs/job_match_results table scan, regardless of how many candidates share the same job.
  */
-export function generateNotificationsForIncrementalMatches(matching: IncrementalMatchResult): NotificationGenerationResult {
+export function generateNotificationsForIncrementalMatches(
+  // Phase 4 Stage 5 widened this to also accept just the one field actually read, so the paged
+  // candidate rematch (src/lib/match/rematchCandidate.ts) can pass its own evaluated pairs without
+  // fabricating the rest of an IncrementalMatchResult. The union (rather than Pick alone) keeps
+  // existing callers/tests that construct a full literal IncrementalMatchResult excess-property-
+  // check-clean. Existing callers are otherwise unaffected; NO eligibility, dedup or policy change.
+  matching: IncrementalMatchResult | Pick<IncrementalMatchResult, "evaluatedPairs">
+): NotificationGenerationResult {
   const result = emptyResult();
   const pairs: EvaluatedMatchPair[] = matching.evaluatedPairs;
   if (pairs.length === 0) return result;
