@@ -28,6 +28,7 @@ const NAV_LINKS = [
   { href: "/jobs/archived", label: "Archived" },
   { href: "/master-files", label: "Master Files" },
   { href: "/scanner", label: "Scanner" },
+  { href: "/operations", label: "Operations" },
   { href: "/settings", label: "Settings" },
 ];
 
