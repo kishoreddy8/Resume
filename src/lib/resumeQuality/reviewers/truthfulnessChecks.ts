@@ -112,8 +112,10 @@ function checkEducationAndCertifications(resume: ResumeContent, master: Candidat
 
 /** Repeated exact percentages/round numbers across DIFFERENT employers — cannot know if false, only
  *  that it looks templated (per the source instructions' own "Metric Realism and Repetition Check"
- *  guardrail). Always framed as review-required, never definitively wrong. */
-function checkMetricRealism(experience: ExperienceEntry[]): string[] {
+ *  guardrail). Always framed as review-required, never definitively wrong. Exported (in addition to
+ *  being folded into truthfulnessIssues below) so instructionCompliance.ts's metricInferencePolicy
+ *  check can consume the SAME finding without a second implementation — see deterministicReviewer.ts. */
+export function checkMetricRealism(experience: ExperienceEntry[]): string[] {
   const issues: string[] = [];
   const numberToEmployers = new Map<string, Set<string>>();
   const NUMBER_RE = /\b\d{1,3}%|\b\d{2,}(?:,\d{3})+\b/g;

@@ -5,6 +5,8 @@ import path from "node:path";
 import { after, before, test } from "node:test";
 import { NextRequest } from "next/server";
 import type { RequirementUnit } from "@/lib/match/types";
+import { generateCoverLetterDocx } from "../../../../../tools/tailoring-engine/cover-letter-template";
+import { generateResumeDocx } from "../../../../../tools/tailoring-engine/resume-template";
 import type { CoverLetterContent, ResumeContent } from "../../../../../tools/tailoring-engine/types";
 import type { ExternalWriterOutput } from "@/lib/resumeQuality/types";
 
@@ -149,8 +151,11 @@ before(async () => {
 
   sampleResumeDocxPath = path.join(tmpGeneratedDir, "SampleResume.docx");
   sampleCoverDocxPath = path.join(tmpGeneratedDir, "SampleCoverLetter.docx");
-  fs.writeFileSync(sampleResumeDocxPath, "Fake docx content for resume");
-  fs.writeFileSync(sampleCoverDocxPath, "Fake docx content for cover letter");
+  // Real, validator-parseable DOCX files — a plain placeholder string is no longer sufficient now
+  // that the orchestrator runs deterministic DOCX validation (validate-docx.ts) against every
+  // rendered file and feeds genuine parse failures into the canonical atsFormatting compliance check.
+  await generateResumeDocx(PERFECT_RESUME, sampleResumeDocxPath);
+  await generateCoverLetterDocx(COVER_LETTER, sampleCoverDocxPath);
 
   if (global.__careerOpsDb) {
     try {
@@ -231,15 +236,25 @@ before(async () => {
       skills: [
         { rawSkillName: "Azure Data Factory", source: "employer", attributedTo: [{ employer: "Acme Corp" }] },
         { rawSkillName: "Databricks", source: "employer", attributedTo: [{ employer: "Acme Corp" }] },
+        { rawSkillName: "Apache Spark", source: "employer", attributedTo: [{ employer: "Acme Corp" }] },
+        { rawSkillName: "PySpark", source: "employer", attributedTo: [{ employer: "Acme Corp" }] },
         { rawSkillName: "Python", source: "employer", attributedTo: [{ employer: "Acme Corp" }] },
+        { rawSkillName: "SQL", source: "employer", attributedTo: [{ employer: "Acme Corp" }] },
       ],
       experience: [
         {
           employer: "Acme Corp",
           title: "Senior Data Engineer",
-          startDate: "2020-01-01",
+          // Started early enough that the real chronology (computeTotalYearsExperience, which Phase
+          // 2 derives from startDate/endDate, never from the stored totalYearsExperience field below)
+          // comfortably supports PERFECT_RESUME's "8+ years" summary claim — Resume Quality
+          // Hardening's yearsExperienceEducationHonesty check flags a claim that exceeds derivable
+          // chronology.
+          startDate: "2015-01-01",
           endDate: null,
-          technologies: ["Azure Data Factory", "Databricks", "Python"],
+          // Matches every technology PERFECT_RESUME claims below (Resume Quality Hardening's
+          // masterSkillsInventoryCompliance check requires every claimed technology to be grounded).
+          technologies: ["Azure Data Factory", "Databricks", "Apache Spark", "PySpark", "Python", "SQL"],
         },
       ],
       education: [{ level: "B.S.", field: "Computer Science", institution: "University of California" }],

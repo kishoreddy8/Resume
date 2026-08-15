@@ -1,11 +1,22 @@
+import { evaluateInstructionCompliance, hardGateFailureCorrections } from "../instructionCompliance";
 import type { RequiredCorrection, ResumeReviewerAgent, ResumeReviewerInput, ResumeReviewerOutput, StructuredResumeReview } from "../types";
 import { evaluateAtsAlignment } from "./atsChecks";
 import { evaluateArchitectureConsistency } from "./architectureChecks";
 import { evaluateBulletChecks } from "./bulletChecks";
+import { evaluateCrossDocumentConsistency } from "./crossDocumentChecks";
+import { evaluateDeepRewrite } from "./deepRewriteCheck";
+import { evaluateEmploymentTypeHandling } from "./employmentTypeChecks";
+import { evaluateBulletCaps, evaluateVerbTense } from "./lengthAndTenseChecks";
+import { evaluateMetricProvenance } from "./metricProvenanceChecks";
+import { evaluateMsiCompliance } from "./msiComplianceChecks";
+import { evaluateOnePrimaryTechnologyPerResponsibility } from "./onePrimaryTechnologyCheck";
 import { evaluateSkillsOrdering } from "./skillsOrderingChecks";
 import { evaluateStructuralChecks } from "./structuralChecks";
 import { evaluateSummaryAlignment } from "./summaryChecks";
-import { evaluateTruthfulness } from "./truthfulnessChecks";
+import { findTechnologyContradictions } from "./technologyGroups";
+import { evaluateTechnologyGrouping } from "./technologyGroupingCheck";
+import { checkMetricRealism, evaluateTruthfulness } from "./truthfulnessChecks";
+import { evaluateYearsExperienceAndEducationHonesty } from "./yearsExperienceChecks";
 
 /**
  * Phase 3 Stage 8 — deterministic, provider-independent ResumeReviewerAgent. Zero network access,
@@ -48,12 +59,23 @@ function clamp(n: number): number {
   return Math.min(100, Math.max(0, Math.round(n)));
 }
 
-/** The pure core: takes exactly what checks need (resume + optional job requirements + optional
- *  Master Resume profile) and returns a StructuredResumeReview. Exported separately from the
- *  ResumeReviewerAgent wrapper so it's directly callable without constructing filesystem paths —
- *  useful for tests and for any future caller that already has structured data in hand. */
-export function reviewResumeDeterministically(input: Pick<ResumeReviewerInput, "resume" | "jobRequirements" | "masterResumeProfile">): StructuredResumeReview {
-  const { resume, jobRequirements, masterResumeProfile } = input;
+/** The pure core: takes exactly what checks need (resume + optional job requirements/Master Resume
+ *  profile/cover letter/prior iteration/DOCX validation) and returns a StructuredResumeReview.
+ *  Exported separately from the ResumeReviewerAgent wrapper so it's directly callable without
+ *  constructing filesystem paths — useful for tests and for any future caller that already has
+ *  structured data in hand.
+ *
+ *  Resume Quality Hardening: this function's ORIGINAL Stage 8 scores/issue-array computation below
+ *  (atsScore, truthfulnessScore, architectureConsistencyScore, blockingIssues, etc.) is byte-for-byte
+ *  unchanged — every new check added by this hardening pass feeds ONLY the additive
+ *  instructionCompliance/metricProvenance fields, never the original scoring formula or
+ *  blockingIssues array. See qualityGate.ts for how instructionCompliance becomes a SEPARATE,
+ *  additional READY requirement rather than folding into (and potentially distorting) the original
+ *  four-condition gate. */
+export function reviewResumeDeterministically(
+  input: Pick<ResumeReviewerInput, "resume" | "jobRequirements" | "masterResumeProfile" | "coverLetter" | "priorResume" | "docxValidation">
+): StructuredResumeReview {
+  const { resume, jobRequirements, masterResumeProfile, coverLetter, priorResume, docxValidation } = input;
 
   const ats = evaluateAtsAlignment(resume, jobRequirements);
   const structural = evaluateStructuralChecks(resume);
@@ -90,6 +112,74 @@ export function reviewResumeDeterministically(input: Pick<ResumeReviewerInput, "
     overallScore = Math.min(overallScore, BLOCKING_ISSUE_OVERALL_CAP);
   }
 
+  // --- Resume Quality Hardening: canonical instruction compliance (additive) --------------------
+
+  const msi = evaluateMsiCompliance(resume, masterResumeProfile);
+  const deepRewrite = evaluateDeepRewrite({ resume, priorResume, jobRequirements });
+  const technologyGroupingFindings = evaluateTechnologyGrouping(resume.skillGroups);
+  const laundryListFindings = evaluateOnePrimaryTechnologyPerResponsibility(resume.experience);
+  const metricProvenance = evaluateMetricProvenance(resume.experience, priorResume?.experience);
+  const suspiciousRepeatedMetrics = checkMetricRealism(resume.experience);
+  const crossDocument = evaluateCrossDocumentConsistency(resume, coverLetter);
+  const employmentType = evaluateEmploymentTypeHandling(resume.experience, coverLetter);
+  const years = evaluateYearsExperienceAndEducationHonesty(resume, masterResumeProfile);
+  const bulletCaps = evaluateBulletCaps(resume.experience);
+  const verbTense = evaluateVerbTense(resume.experience);
+
+  // Cover-letter-side technology contradictions — same detection logic as architectureChecks.ts
+  // (findTechnologyContradictions), applied to cover letter paragraphs instead of resume bullets, per
+  // the canonical instructions' explicit "scan resume AND cover letter" scope for this ONE guardrail
+  // (noContradictingTechnologies) specifically. Not folded into architectureIntegrity, which stays
+  // resume-experience-scoped exactly as Stage 8 originally defined it.
+  const coverLetterContradictions = (coverLetter?.paragraphs ?? []).flatMap((paragraph) =>
+    findTechnologyContradictions(paragraph).map(
+      (c) => `Cover letter: "${c.foundMembers.join(" + ")}" (${c.group.label}) with no migration/integration framing.`
+    )
+  );
+
+  const instructionCompliance = evaluateInstructionCompliance({
+    hasMasterProfile: masterResumeProfile !== undefined,
+    hasJobRequirements: (jobRequirements?.length ?? 0) > 0,
+    hasCoverLetter: coverLetter !== undefined,
+    employmentOrEducationBlockingIssues: truthfulness.blockingIssues,
+    employmentOrEducationSoftIssues: truthfulness.truthfulnessIssues,
+    ungroundedTechnologies: msi.ungroundedTechnologies,
+    deepRewriteStatus: deepRewrite.status,
+    architectureContradictions: architecture.incorrectTechnologyUsage,
+    coverLetterContradictions,
+    technologyGroupingFindings,
+    laundryListFindings,
+    metricProvenance,
+    suspiciousRepeatedMetrics,
+    atsScore: ats.atsScore,
+    keywordAlignmentScore: ats.keywordAlignmentScore,
+    insufficientRequirementData: ats.insufficientRequirementData,
+    genericBulletsCount: bullets.genericBullets.length,
+    bannedLanguageInBulletsCount: bullets.bannedLanguageCount,
+    overlyLongOrShortCount: bullets.lengthViolationCount,
+    bannedLanguageInSummaryCount: summary.bannedLanguageFound.length,
+    crossDocumentStatus: crossDocument.status,
+    crossDocumentContradictions: crossDocument.contradictions,
+    duplicateBulletCount: bullets.duplicateBulletCount,
+    yearsInflationIssues: years.inflationIssues,
+    educationHidden: years.educationHidden,
+    employmentTypeStatus: employmentType.status,
+    employmentTypeFlags: employmentType.flaggedPhrases,
+    bulletCapViolations: bulletCaps.corrections.length,
+    verbTenseViolations: verbTense.corrections.length,
+    structuralBlockingIssues: structural.blockingIssues,
+    formattingScore: structural.formattingScore,
+    docxValidation,
+    anyBlockingIssues: blockingIssues.length > 0,
+  });
+
+  requiredCorrections.push(...bulletCaps.corrections, ...verbTense.corrections);
+  // Every hard-gate compliance FAIL becomes an actionable CRITICAL correction — without this, a
+  // writer/human could see requiredCorrections come back empty while the gate still silently blocks
+  // READY over e.g. an ungrounded MSI technology or a cross-document contradiction that never
+  // touched blockingIssues above.
+  requiredCorrections.push(...hardGateFailureCorrections(instructionCompliance));
+
   return {
     overallScore,
     atsScore: clamp(ats.atsScore),
@@ -108,6 +198,8 @@ export function reviewResumeDeterministically(input: Pick<ResumeReviewerInput, "
     truthfulnessIssues: truthfulness.truthfulnessIssues,
     blockingIssues,
     requiredCorrections,
+    instructionCompliance,
+    metricProvenance,
   };
 }
 

@@ -4,6 +4,7 @@ import { getCandidate } from "@/db/queries/candidates";
 import { getResumeQualityWorkflow } from "@/db/queries/resumeQualityWorkflows";
 import { getCandidateJobState } from "@/db/queries/candidateJobState";
 import { getTailoringRun } from "@/db/queries/tailoringRuns";
+import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
 import { buildWorkspacePackage } from "../workspacePackage";
 import { getIterationDirectory, getHandoffDirectory, type QualityWorkflowLocation } from "../workspace";
 import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orchestrator";
@@ -71,23 +72,36 @@ Target Role Track: **${selectedTrack ?? "General Engineering Track"}**
 
 ---
 
+## THE CANONICAL STANDARD IS MANDATORY
+
+\`resume_tailoring_instructions.md\` in this package (instruction version **${INSTRUCTION_VERSION}**, hash \`${INSTRUCTION_HASH}\`) is the full, authoritative Resume Tailoring System Instructions — not a summary. You must follow it in its entirety, not just the highlights below. CareerOps will independently re-review your output against this exact same text; nothing you self-report can substitute for actually satisfying it.
+
 ## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
-1. **Truthfulness & Factual Grounding (Absolute Rule)**:
-   - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution.
+1. **Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
+   - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
    - You must NEVER fabricate an employer, title, degree, certification, or client.
-   - The Master Skills Inventory (\`master_skills_inventory.md\`) proves genuine technical capability. Skills not tied to a specific employer in the Master Resume may appear in **Technical Skills** or summary positioning, but must NEVER be falsely attributed to an employer role where they were not used.
+   - The Master Skills Inventory (\`master_skills_inventory.md\`) constrains what you may claim: only technologies genuinely present there (or in the Master Resume's own experience entries) may appear anywhere in the resume or cover letter — never introduce a technology solely because the JD mentions it.
 
-2. **Fix Required Quality Corrections & Blocking Issues**:
+2. **Deep rewrite is required — light keyword replacement is a failure mode**:
+   - A pass that only swaps a few keywords into the existing bullets will be REJECTED by CareerOps's review. Rewrite the summary, skills ordering, and experience bullets so the resume reads as though it were written specifically for this JD and this company.
+   - Materially different Job Descriptions must produce materially different resumes — if your output would look nearly identical regardless of which JD it was tailored for, it has not done the job.
+
+3. **Architecture integrity takes priority over raw keyword coverage**:
+   - Maintain a coherent, believable technology architecture within each employer/project. Do not combine competing tools (e.g. Azure Data Factory + AWS Glue, or Databricks + EMR) in the same bullet or the same project unless explicitly and legitimately framed as a migration.
+   - Prefer one primary technology per responsibility rather than listing every adjacent tool as a laundry list.
+
+4. **Fix Required Quality Corrections & Blocking Issues**:
    - Resolve every CRITICAL and HIGH severity issue first.
-   - Eliminate all technology contradictions (e.g. do not combine competing tools like Azure Data Factory + AWS Glue or Databricks + EMR in a single bullet unless framed explicitly as a migration).
-   - Ensure all dominant required job keywords from \`extracted_job_requirements.json\` appear prominently in Technical Skills and are evidenced in relevant experience bullets.
+   - Ensure all dominant required job keywords from \`extracted_job_requirements.json\` appear prominently in Technical Skills and are evidenced in relevant experience bullets — but never at the cost of guardrail 1-3 above.
 
-3. **Writing Style & Formatting**:
-   - Begin bullets with strong, varied action verbs (e.g. "Architected", "Engineered", "Optimized", "Spearheaded").
+5. **Writing Style & Formatting — every bullet must be interview-defensible**:
+   - Begin bullets with strong, varied action verbs (e.g. "Architected", "Engineered", "Optimized", "Spearheaded"), past tense for past roles.
    - NEVER use generic openers like "Responsible for" or "Worked on".
    - Avoid AI clichés (e.g., "testament to", "delve", "leverage synergy", "spearheaded revolution").
-   - Every major achievement bullet should include quantifiable business or technical impact.
+   - Every major achievement bullet should include quantifiable, realistic impact you could defend and elaborate on if asked about it in an interview — never an invented or exaggerated metric.
+
+6. **Self-check before returning**: before writing \`writer_output.json\`, re-read \`resume_tailoring_instructions.md\` end to end and verify your draft against every guardrail in it (hard facts, MSI, architecture integrity, technology grouping, no contradicting technologies, metric inference policy, banned language, duplicate bullets, years/education honesty, bullet caps, verb tense, ATS formatting). Report your own findings in the optional \`writerValidation\` field below — but note that this is diagnostic only and does not substitute for CareerOps's own independent review.
 
 ---
 
@@ -167,9 +181,23 @@ When your improvements are complete, create the file **\`writer_output.json\`** 
     "provider": "claude-code | codex | antigravity | local | other",
     "model": "your-model-identifier",
     "completedAt": "${new Date().toISOString()}"
+  },
+  "writerValidation": {
+    "instructionVersion": "${INSTRUCTION_VERSION}",
+    "instructionHash": "${INSTRUCTION_HASH}",
+    "checks": {
+      "hardCareerFacts": "PASS | FAIL | REVIEW",
+      "masterSkillsInventoryCompliance": "PASS | FAIL | REVIEW",
+      "deepRewrite": "PASS | FAIL | REVIEW",
+      "architectureIntegrity": "PASS | FAIL | REVIEW",
+      "noContradictingTechnologies": "PASS | FAIL | REVIEW"
+    },
+    "notes": ["Optional free-text notes on anything you were unsure about."]
   }
 }
 \`\`\`
+
+\`writerValidation\` is entirely optional and purely diagnostic — CareerOps computes its own independent \`instructionCompliance\` result over every guardrail regardless of what you report here, and a self-reported PASS never overrides a CareerOps-detected FAIL.
 `;
 }
 
@@ -339,6 +367,8 @@ export function exportExternalWriterPackage(
         targetIterationNumber,
         selectedTrack: wsPkg.selectedTrack,
         dedupeKey: workflow.dedupe_key,
+        instructionVersion: INSTRUCTION_VERSION,
+        instructionHash: INSTRUCTION_HASH,
         requiredCorrections: writerInput.requiredCorrections ?? [],
         blockingIssues: writerInput.blockingIssues ?? [],
         currentResume: writerInput.currentResume,
@@ -384,10 +414,17 @@ export function exportExternalWriterPackage(
     }
   }
 
-  // 5. resume_tailoring_instructions.md
-  if (!copyPackageFile(wsPkg.tailoringInstructionsPath, "resume_tailoring_instructions.md")) {
-    writePackageFile("resume_tailoring_instructions.md", "# Resume Tailoring Instructions\nFollow standard tailoring guardrails.");
-  }
+  // 5. resume_tailoring_instructions.md — ALWAYS the full canonical standard (CANONICAL_TAILORING_INSTRUCTIONS),
+  // never the copyPackageFile fallback: wsPkg.tailoringInstructionsPath is populated only by a legacy
+  // workspace-package path that the resume-quality POST route never writes to in practice, so relying
+  // on it silently degraded every real handoff package down to a 1-line placeholder instead of the
+  // real guardrails. The canonical module is the single source of truth (see canonicalInstructions.ts)
+  // and is what CareerOps's own reviewer independently checks against, so the writer must see the
+  // exact same text.
+  writePackageFile(
+    "resume_tailoring_instructions.md",
+    `# Resume Tailoring Instructions\n\nInstruction version: ${INSTRUCTION_VERSION}\nInstruction hash (SHA-256): ${INSTRUCTION_HASH}\n\n---\n\n${CANONICAL_TAILORING_INSTRUCTIONS}`
+  );
 
   // 6. master_resume_reference.json / master_resume.txt
   if (writerInput.masterProfile) {

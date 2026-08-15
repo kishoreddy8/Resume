@@ -15,10 +15,20 @@ export interface CompetingGroup {
 }
 
 export const COMPETING_TECHNOLOGY_GROUPS: readonly CompetingGroup[] = [
-  { members: ["Azure Data Factory", "AWS Glue"], label: "Azure Data Factory + AWS Glue" },
+  // Extended per the 2026-08-10 canonical instructions' explicit ARCHITECTURE INTEGRITY examples —
+  // Informatica IICS and Microsoft Fabric Pipelines added alongside the original ADF+Glue pair
+  // ("Azure Data Factory + AWS Glue + Informatica IICS + Fabric Pipelines + Airflow" is named as one
+  // banned five-way combination). "Fabric Pipelines"/"Microsoft Fabric" and "Informatica IICS" have
+  // no canonical SKILL_TAXONOMY entry as of this writing — findTechnologyContradictions() falls back
+  // to matching the literal member string when resolveSkillForReview() returns null, so they still
+  // work correctly as plain-text matches even without taxonomy backing.
+  { members: ["Azure Data Factory", "AWS Glue", "Informatica IICS", "Microsoft Fabric", "Airflow"], label: "competing ETL/orchestration platforms" },
   { members: ["Azure Synapse Analytics", "Redshift", "BigQuery", "Snowflake"], label: "competing data warehouses positioned as primary" },
   { members: ["Azure DevOps", "Jenkins", "GitHub Actions", "GitLab CI"], label: "competing CI/CD platforms" },
-  { members: ["Databricks", "EMR"], label: "Databricks + EMR" },
+  // "Synapse Spark" (Synapse's Spark pools, distinct from the warehouse's SQL pools already covered
+  // above) added per the canonical "Databricks + EMR + Synapse Spark for the same transformation
+  // responsibility" example.
+  { members: ["Databricks", "EMR", "Synapse Spark"], label: "competing Spark-compute platforms" },
 ];
 
 const MIGRATION_SIGNAL_RE = /\b(migrat\w*|moved to|transition\w*|integrat\w*)\b/i;

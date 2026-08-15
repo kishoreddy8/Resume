@@ -20,12 +20,15 @@ import {
 import { loadCandidateProfile } from "@/lib/match/candidateProfile";
 import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
 import { getTailoringArtifactDirectory } from "@/lib/tailoringArtifacts";
+import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "./canonicalInstructions";
+import { generateColdFollowUpEmail } from "./coldFollowUpEmail";
 import { evaluateQualityGate, type QualityGateOutcome } from "./qualityGate";
 import { renderReviewFeedbackMarkdown } from "./reviewFeedback";
 import { DeterministicResumeReviewer } from "./reviewers/deterministicReviewer";
 import { assertValidWorkflowTransition } from "./stateMachine";
 import { generateTailoringOutputs } from "../../../tools/tailoring-engine/generate";
 import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring-engine/types";
+import { validateDocx } from "../../../tools/tailoring-engine/validate-docx";
 import {
   structuredResumeReviewSchema,
   type RequiredCorrection,
@@ -37,6 +40,8 @@ import {
   type ResumeWriterOutput,
   type StructuredResumeReview,
   type WorkflowStatus,
+  type WorkflowStatusFile,
+  type WriterValidation,
 } from "./types";
 import {
   finalCoverLetterFilename,
@@ -99,6 +104,9 @@ export interface ExecuteResumeQualityIterationInput {
   masterResumeProfile?: CandidateProfile;
   /** Optional custom reviewer agent for testing/extensibility; defaults to new DeterministicResumeReviewer(). */
   reviewer?: ResumeReviewerAgent;
+  /** External writer's self-reported guardrail self-check, when supplied — provenance only, persisted
+   *  as writer_validation.json on READY, never consulted by the quality gate. */
+  writerValidation?: WriterValidation;
 }
 
 export interface ResumeQualityFinalArtifacts {
@@ -185,6 +193,20 @@ export class ResumeQualityOrchestrationError extends Error {
   ) {
     super(message);
     this.name = "ResumeQualityOrchestrationError";
+  }
+}
+
+/**
+ * validateDocx() assumes a well-formed OOXML zip; a handful of tests (and, in principle, any
+ * caller that hands in a placeholder/corrupt file) don't produce one. A parse failure is itself
+ * useful evidence for the atsFormatting compliance check, not a reason to crash the whole review —
+ * so it's downgraded to a violation entry rather than left to throw and abort the iteration.
+ */
+async function safeValidateDocx(filePath: string, kind: "resume" | "coverLetter") {
+  try {
+    return await validateDocx(filePath, kind);
+  } catch (err) {
+    return { valid: false, violations: [`Unable to parse DOCX file: ${err instanceof Error ? err.message : String(err)}`] };
   }
 }
 
@@ -327,52 +349,12 @@ export async function executeResumeQualityIteration(
   }
 
   try {
-    // 1. Invoke Reviewer
-    const reviewer = input.reviewer ?? new DeterministicResumeReviewer();
-    const resumeDocxPath = input.resumeDocxPath ?? path.join(iterDir, "Resume.docx");
-    const jobDescriptionPath = path.join(workspaceDir, "job_description.md");
-
-    const reviewerInput: ResumeReviewerInput = {
-      applicationId: workflow.application_id,
-      candidateId,
-      workflowId: workflow.id,
-      iterationNumber,
-      resumePath: resumeDocxPath,
-      jobDescriptionPath,
-      resume,
-      jobRequirements,
-      masterResumeProfile,
-    };
-
-    const { review: rawReview } = await reviewer.review(reviewerInput);
-    const review = structuredResumeReviewSchema.parse(rawReview);
-
-    // 2. Transition REVIEW_RUNNING -> REVIEW_COMPLETED
-    transitionWorkflowStatus(candidateId, workflowId, "REVIEW_COMPLETED", {
-      latestOverallScore: review.overallScore,
-    });
-
-    // 3. Write iteration artifacts to disk
+    // 0. Render/copy DOCX outputs FIRST — the reviewer needs the real rendered files (when they
+    // exist) to run docx-level ATS-formatting validation, and the deep-rewrite check needs the
+    // prior iteration's resume, so both must be resolved before the reviewer is invoked below.
     fs.mkdirSync(iterDir, { recursive: true });
 
-    // Persist authoritative structured content JSON
-    const resumeJsonPath = path.join(iterDir, "resume_content.json");
-    fs.writeFileSync(resumeJsonPath, JSON.stringify(resume, null, 2), "utf-8");
-
-    const reviewJsonPath = path.join(iterDir, "review.json");
-    fs.writeFileSync(reviewJsonPath, JSON.stringify(review, null, 2), "utf-8");
-
-    const feedbackMarkdown = renderReviewFeedbackMarkdown(review);
-    const reviewFeedbackPath = path.join(iterDir, "review_feedback.md");
-    fs.writeFileSync(reviewFeedbackPath, feedbackMarkdown, "utf-8");
-
-    const outputFiles: string[] = ["resume_content.json", "review.json", "review_feedback.md"];
-
-    if (input.coverLetter) {
-      const coverJsonPath = path.join(iterDir, "cover_letter_content.json");
-      fs.writeFileSync(coverJsonPath, JSON.stringify(input.coverLetter, null, 2), "utf-8");
-      outputFiles.push("cover_letter_content.json");
-    }
+    const outputFiles: string[] = [];
 
     // Copy or generate Resume.docx in iteration dir
     const iterResumeDocx = path.join(iterDir, "Resume.docx");
@@ -447,6 +429,83 @@ export async function executeResumeQualityIteration(
       }
     }
 
+    // Validate the rendered DOCX files against the deterministic OOXML rules — this feeds the
+    // canonical atsFormatting compliance check with real evidence instead of leaving it to fall
+    // back to structural-only signals. Absence of a rendered file is not itself a violation (see
+    // instructionCompliance.ts's atsFormatting reasoning); only genuine validator findings count.
+    let docxValidation: ResumeReviewerInput["docxValidation"];
+    if (fs.existsSync(iterResumeDocx) || fs.existsSync(iterCoverDocx)) {
+      docxValidation = {};
+      if (fs.existsSync(iterResumeDocx)) {
+        docxValidation.resume = await safeValidateDocx(iterResumeDocx, "resume");
+      }
+      if (fs.existsSync(iterCoverDocx)) {
+        docxValidation.coverLetter = await safeValidateDocx(iterCoverDocx, "coverLetter");
+      }
+    }
+
+    // Load the immediately prior iteration's resume (when one exists) so the deep-rewrite check
+    // can compare against genuine before/after content rather than only JD-orientation heuristics.
+    let priorResume: ResumeContent | undefined;
+    if (iterationNumber > 1) {
+      const priorResumePath = path.join(getIterationDirectory(location, iterationNumber - 1), "resume_content.json");
+      if (fs.existsSync(priorResumePath)) {
+        try {
+          priorResume = JSON.parse(fs.readFileSync(priorResumePath, "utf-8")) as ResumeContent;
+        } catch {
+          // Fall back to undefined if unparseable
+        }
+      }
+    }
+
+    // 1. Invoke Reviewer
+    const reviewer = input.reviewer ?? new DeterministicResumeReviewer();
+    const resumeDocxPath = input.resumeDocxPath ?? iterResumeDocx;
+    const jobDescriptionPath = path.join(workspaceDir, "job_description.md");
+
+    const reviewerInput: ResumeReviewerInput = {
+      applicationId: workflow.application_id,
+      candidateId,
+      workflowId: workflow.id,
+      iterationNumber,
+      resumePath: resumeDocxPath,
+      jobDescriptionPath,
+      resume,
+      jobRequirements,
+      masterResumeProfile,
+      coverLetter: input.coverLetter,
+      priorResume,
+      docxValidation,
+    };
+
+    const { review: rawReview } = await reviewer.review(reviewerInput);
+    const review = structuredResumeReviewSchema.parse(rawReview);
+
+    // 2. Transition REVIEW_RUNNING -> REVIEW_COMPLETED
+    transitionWorkflowStatus(candidateId, workflowId, "REVIEW_COMPLETED", {
+      latestOverallScore: review.overallScore,
+    });
+
+    // 3. Write remaining iteration artifacts to disk
+    // Persist authoritative structured content JSON
+    const resumeJsonPath = path.join(iterDir, "resume_content.json");
+    fs.writeFileSync(resumeJsonPath, JSON.stringify(resume, null, 2), "utf-8");
+
+    const reviewJsonPath = path.join(iterDir, "review.json");
+    fs.writeFileSync(reviewJsonPath, JSON.stringify(review, null, 2), "utf-8");
+
+    const feedbackMarkdown = renderReviewFeedbackMarkdown(review);
+    const reviewFeedbackPath = path.join(iterDir, "review_feedback.md");
+    fs.writeFileSync(reviewFeedbackPath, feedbackMarkdown, "utf-8");
+
+    outputFiles.push("resume_content.json", "review.json", "review_feedback.md");
+
+    if (input.coverLetter) {
+      const coverJsonPath = path.join(iterDir, "cover_letter_content.json");
+      fs.writeFileSync(coverJsonPath, JSON.stringify(input.coverLetter, null, 2), "utf-8");
+      outputFiles.push("cover_letter_content.json");
+    }
+
     // 4. Persist immutable iteration record in DB
     const iterationRow = createResumeQualityIteration(candidateId, workflowId, iterationNumber, {
       outputFiles,
@@ -500,6 +559,64 @@ export async function executeResumeQualityIteration(
         const finalCoverJson = path.join(finalDir, "cover_letter_content.json");
         fs.writeFileSync(finalCoverJson, JSON.stringify(input.coverLetter, null, 2), "utf-8");
       }
+
+      // Machine-readable copy of the final approved review — same content as the iteration's own
+      // review.json, snapshotted into final/ so a human or downstream tool never needs to reach
+      // back into an iteration directory to see what was actually approved.
+      fs.writeFileSync(path.join(finalDir, "careerops_review.json"), JSON.stringify(review, null, 2), "utf-8");
+
+      // The external writer's own self-reported guardrail self-check, when one was supplied —
+      // provenance/audit trail only; never consulted by evaluateQualityGate.
+      if (input.writerValidation) {
+        fs.writeFileSync(path.join(finalDir, "writer_validation.json"), JSON.stringify(input.writerValidation, null, 2), "utf-8");
+      }
+
+      // Snapshot of the exact canonical instruction text/version/hash this approval was reviewed
+      // against, so a later change to the canonical standard can never retroactively blur what a
+      // past READY approval actually satisfied.
+      const instructionSnapshot = [
+        `# Canonical Instruction Snapshot`,
+        ``,
+        `Instruction version: ${INSTRUCTION_VERSION}`,
+        `Instruction hash (SHA-256): ${INSTRUCTION_HASH}`,
+        `Snapshotted at approval of workflow ${workflowId}, iteration ${iterationNumber}.`,
+        ``,
+        `---`,
+        ``,
+        CANONICAL_TAILORING_INSTRUCTIONS,
+      ].join("\n");
+      fs.writeFileSync(path.join(finalDir, "instruction_snapshot.md"), instructionSnapshot, "utf-8");
+
+      // Deterministic, template-based cold follow-up email — never AI-generated, never inserted
+      // into the resume/cover letter, never wired to any recruiter-automation/sending feature.
+      const coldEmailJob = getJobByDedupeKey(workflow.dedupe_key);
+      const coldEmailCompany = coldEmailJob ? getCompany(coldEmailJob.company_id) : undefined;
+      const coldFollowUpEmail = generateColdFollowUpEmail({
+        resume,
+        companyName: coldEmailCompany?.name ?? "the company",
+        jobTitle: coldEmailJob?.title,
+      });
+      fs.writeFileSync(path.join(finalDir, "cold_follow_up_email.md"), coldFollowUpEmail, "utf-8");
+
+      // Informational workflow-status snapshot (see WorkflowStatusFile) — READY/COMPLETED, nothing
+      // further to wait on.
+      const workflowStatusFile: WorkflowStatusFile = {
+        candidateId,
+        applicationId: workflow.application_id,
+        jobId: coldEmailJob?.id ?? null,
+        tailoringRunId: workflow.tailoring_run_id,
+        workflowId: workflow.id,
+        currentIteration: iterationNumber,
+        targetIteration: iterationNumber,
+        maxIterations: workflow.max_iterations,
+        workflowStatus: "READY",
+        latestOverallScore: review.overallScore,
+        qualityGateResult: gateOutcome,
+        waitingFor: "COMPLETED",
+        createdAt: workflow.created_at,
+        updatedAt: new Date().toISOString(),
+      };
+      fs.writeFileSync(path.join(finalDir, "workflow_status.json"), JSON.stringify(workflowStatusFile, null, 2), "utf-8");
 
       return {
         workflow: updatedWorkflow,
@@ -838,6 +955,7 @@ export async function executeResumeImprovementIteration(
     jobRequirements: input.jobRequirements ?? writerInput.jobRequirements,
     masterResumeProfile: input.masterResumeProfile ?? writerInput.masterProfile,
     reviewer: input.reviewer,
+    writerValidation: writerOutput.writerValidation,
   });
 }
 

@@ -1,4 +1,5 @@
 import type { RequirementUnit } from "@/lib/match/types";
+import { findBannedLanguage } from "./bannedLanguage";
 import { extractCanonicalSkillsFromText } from "./skillAliases";
 
 const CLOUD_PROVIDERS = ["AWS", "Azure", "GCP"] as const;
@@ -16,6 +17,12 @@ function impliedCloudProviders(canonicalSkills: ReadonlySet<string>): CloudProvi
 export interface SummaryCheckResult {
   summaryIssues: string[];
   insufficientRequirementData: boolean;
+  /** Banned AI-sounding phrases found in the Professional Summary — previously only bulletChecks.ts
+   *  scanned Experience bullets for these; the summary is prose text under the exact same guardrail
+   *  and was silently exempt. Kept as its own field (not folded into summaryIssues) so callers that
+   *  care about banned-language specifically (instructionCompliance.ts's bannedLanguage check) don't
+   *  need to string-match summaryIssues text. */
+  bannedLanguageFound: string[];
 }
 
 function dominantStackFrom(jobRequirements: RequirementUnit[]): Set<string> {
@@ -30,17 +37,21 @@ function dominantStackFrom(jobRequirements: RequirementUnit[]): Set<string> {
 export function evaluateSummaryAlignment(summary: string[], jobRequirements: RequirementUnit[] | undefined): SummaryCheckResult {
   const summaryText = summary.join(" ");
   const summaryIssues: string[] = [];
+  const bannedLanguageFound = findBannedLanguage(summaryText);
+  if (bannedLanguageFound.length > 0) {
+    summaryIssues.push(`Banned AI-sounding language in Professional Summary: ${bannedLanguageFound.join(", ")}`);
+  }
 
   if (summaryText.trim().length === 0) {
     summaryIssues.push("Professional Summary is empty.");
-    return { summaryIssues, insufficientRequirementData: !jobRequirements || jobRequirements.length === 0 };
+    return { summaryIssues, insufficientRequirementData: !jobRequirements || jobRequirements.length === 0, bannedLanguageFound };
   }
   if (summaryText.trim().split(/\s+/).length < 12) {
     summaryIssues.push("Professional Summary is very short/generic — likely missing role-specific detail.");
   }
 
   if (!jobRequirements || jobRequirements.length === 0) {
-    return { summaryIssues, insufficientRequirementData: true };
+    return { summaryIssues, insufficientRequirementData: true, bannedLanguageFound };
   }
 
   const dominantStack = dominantStackFrom(jobRequirements);
@@ -61,5 +72,5 @@ export function evaluateSummaryAlignment(summary: string[], jobRequirements: Req
     summaryIssues.push(`Summary emphasizes ${summaryProviders.join("/")} while the JD's dominant cloud platform is ${jdProviders[0]}.`);
   }
 
-  return { summaryIssues, insufficientRequirementData: false };
+  return { summaryIssues, insufficientRequirementData: false, bannedLanguageFound };
 }

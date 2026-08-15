@@ -72,7 +72,12 @@ function masterProfile(overrides: Partial<CandidateProfile> = {}): CandidateProf
         title: "Senior Data Engineer",
         startDate: "2020-01",
         endDate: null,
-        technologies: ["Azure", "Azure Data Factory", "Databricks", "Python", "SQL"],
+        // AWS Glue included alongside the target Azure stack: FLAWED_RESUME_COMPETING_TECH and its
+        // LocalImprovementWriter-fixed successor both legitimately describe a migration FROM AWS
+        // Glue TO Azure Data Factory — for that migration framing to be genuinely groundable (Resume
+        // Quality Hardening's masterSkillsInventoryCompliance check), the candidate's own profile
+        // must record having actually used the technology being migrated away from.
+        technologies: ["Azure", "Azure Data Factory", "AWS Glue", "Databricks", "Python", "SQL"],
       },
     ],
     education: [{ level: "Bachelor's", field: "Computer Science", institution: "State University" }],

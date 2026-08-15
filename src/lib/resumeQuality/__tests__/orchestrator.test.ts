@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
+import { generateCoverLetterDocx } from "../../../../tools/tailoring-engine/cover-letter-template";
+import { generateResumeDocx } from "../../../../tools/tailoring-engine/resume-template";
 import type { CoverLetterContent, ResumeContent } from "../../../../tools/tailoring-engine/types";
 import type { ResumeReviewerAgent, ResumeReviewerInput, ResumeReviewerOutput } from "../types";
 import { getFinalDirectory, getIterationDirectory, type QualityWorkflowLocation } from "../workspace";
@@ -776,11 +778,12 @@ test("17. READY creates final artifacts in final/ directory", async () => {
     dedupeKey: jobOne.dedupe_key,
   });
 
-  // Create temporary docx files to pass in
+  // Real, validator-parseable DOCX files to pass in — validate-docx.ts now runs against every
+  // rendered iteration file, so a placeholder byte string would fail the atsFormatting check.
   const fakeResumeDocx = path.join(tmpDbDir, "temp_resume.docx");
-  fs.writeFileSync(fakeResumeDocx, "fake docx resume bytes");
+  await generateResumeDocx(PERFECT_RESUME, fakeResumeDocx);
   const fakeCoverDocx = path.join(tmpDbDir, "temp_cover.docx");
-  fs.writeFileSync(fakeCoverDocx, "fake docx cover bytes");
+  await generateCoverLetterDocx(COVER_LETTER, fakeCoverDocx);
 
   const res = await executeResumeQualityIteration({
     candidateId: candidateAliceId,
@@ -818,7 +821,7 @@ test("19. Candidate name is not hardcoded (derived from candidate's first_name)"
   });
 
   const fakeResumeDocx = path.join(tmpDbDir, "bob_temp_resume.docx");
-  fs.writeFileSync(fakeResumeDocx, "bob fake docx");
+  await generateResumeDocx({ ...PERFECT_RESUME, name: "Bob Jones" }, fakeResumeDocx);
 
   const res = await executeResumeQualityIteration({
     candidateId: candidateBobId,

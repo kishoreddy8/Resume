@@ -42,12 +42,22 @@ export interface BulletCheckResult {
   /** Deduction contribution to recruiterReadabilityScore — the caller combines this with other
    *  readability-affecting checks. */
   readabilityDeductions: number;
+  /** Structured counts additive alongside genericBullets/corrections above — instructionCompliance.ts
+   *  needs these as discrete signals (bulletWriting, bannedLanguage, noDuplicateBulletPhrasing,
+   *  everySentenceAtsChecklist are four DIFFERENT canonical checks, not one), rather than re-parsing
+   *  corrections' free-text descriptions. */
+  bannedLanguageCount: number;
+  duplicateBulletCount: number;
+  lengthViolationCount: number;
 }
 
 export function evaluateBulletChecks(experience: ExperienceEntry[]): BulletCheckResult {
   const genericBullets: string[] = [];
   const corrections: RequiredCorrection[] = [];
   let readabilityDeductions = 0;
+  let bannedLanguageCount = 0;
+  let duplicateBulletCount = 0;
+  let lengthViolationCount = 0;
 
   const allBulletsNormalized = new Map<string, string[]>(); // normalized -> original bullets (for cross-role duplicate detection)
 
@@ -76,6 +86,7 @@ export function evaluateBulletChecks(experience: ExperienceEntry[]): BulletCheck
         corrections.push({ priority: "LOW", description: `Overly long/run-on bullet in ${role.company} (${words} words): "${trimmed}"` });
         readabilityDeductions += 3;
       }
+      if (words < MIN_WORDS || words > MAX_WORDS) lengthViolationCount += 1;
 
       // Banned language.
       const banned = findBannedLanguage(trimmed);
@@ -85,6 +96,7 @@ export function evaluateBulletChecks(experience: ExperienceEntry[]): BulletCheck
           description: `Banned AI-sounding language (${banned.join(", ")}) in ${role.company}: "${trimmed}"`,
         });
         readabilityDeductions += 5 * banned.length;
+        bannedLanguageCount += 1;
       }
 
       // Repeated opening verb, consecutive within the same role.
@@ -112,10 +124,11 @@ export function evaluateBulletChecks(experience: ExperienceEntry[]): BulletCheck
           description: `Duplicate or near-identical bullet text: "${trimmed}" (also appears in ${existing.length} other role(s)).`,
         });
         readabilityDeductions += 10;
+        duplicateBulletCount += 1;
       }
       allBulletsNormalized.set(normalized, [...existing, role.company]);
     });
   }
 
-  return { genericBullets, corrections, readabilityDeductions };
+  return { genericBullets, corrections, readabilityDeductions, bannedLanguageCount, duplicateBulletCount, lengthViolationCount };
 }

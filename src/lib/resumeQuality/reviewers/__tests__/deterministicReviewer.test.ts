@@ -26,8 +26,16 @@ function masterProfile(overrides: Partial<CandidateProfile> = {}): CandidateProf
     schemaVersion: 1,
     sourceHashes: { resume: "r", skills: "s" },
     builtAt: "2026-01-01T00:00:00Z",
-    skills: [],
-    experience: [{ employer: "Acme Corp", title: "Senior Data Engineer", startDate: "2020-01", endDate: null, technologies: [] }],
+    // Matches STRONG_RESUME's claimed technologies below — a real Master Skills Inventory grounding
+    // every technology the "strong, fully-aligned" fixture resume claims, so
+    // masterSkillsInventoryCompliance genuinely PASSes rather than flagging ungrounded tech (Resume
+    // Quality Hardening's new MSI-grounding check).
+    skills: [
+      { rawSkillName: "Azure", source: "employer" },
+      { rawSkillName: "Azure Data Factory", source: "employer" },
+      { rawSkillName: "Databricks", source: "employer" },
+    ],
+    experience: [{ employer: "Acme Corp", title: "Senior Data Engineer", startDate: "2020-01", endDate: null, technologies: ["Azure", "Azure Data Factory", "Databricks"] }],
     education: [{ level: "Bachelor's", field: "Computer Science", institution: "State University" }],
     certifications: [],
     totalYearsExperience: 5,

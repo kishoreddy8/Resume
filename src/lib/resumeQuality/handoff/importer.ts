@@ -250,6 +250,10 @@ export function importExternalWriterResult(
   const writerOutput: ResumeWriterOutput = {
     resume: validatedResume,
     ...(validatedCoverLetter ? { coverLetter: validatedCoverLetter } : {}),
+    // Passed through structurally only — never validated for truthfulness here. CareerOps's own
+    // instructionCompliance checks (computed independently below in the review step) are the sole
+    // authority; this is provenance/diagnostic data stored for audit trail only.
+    ...(payload.writerValidation ? { writerValidation: payload.writerValidation } : {}),
   };
 
   return {

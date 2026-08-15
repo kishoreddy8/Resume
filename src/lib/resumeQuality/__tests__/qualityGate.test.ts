@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { evaluateQualityGate } from "../qualityGate";
 import type { StructuredResumeReview } from "../types";
+import { fullyCompliantInstructionCompliance } from "./complianceTestHelpers";
 
 function perfectReview(overrides: Partial<StructuredResumeReview> = {}): StructuredResumeReview {
   return {
@@ -21,6 +22,11 @@ function perfectReview(overrides: Partial<StructuredResumeReview> = {}): Structu
     truthfulnessIssues: [],
     blockingIssues: [],
     requiredCorrections: [],
+    // Resume Quality Hardening: evaluateQualityGate() now ALSO requires instructionCompliance to be
+    // present, current, and fully PASS (see qualityGate.ts) — every "perfect" fixture in this file
+    // needs one so these tests keep exercising the ORIGINAL four-condition rules they're named for,
+    // not incidentally failing on the new, separately-tested compliance gate.
+    instructionCompliance: fullyCompliantInstructionCompliance(),
     ...overrides,
   };
 }

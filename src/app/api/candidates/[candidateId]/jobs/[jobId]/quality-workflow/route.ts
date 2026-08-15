@@ -13,6 +13,7 @@ import {
 } from "@/db/queries/resumeQualityWorkflows";
 import { listTailoringRuns } from "@/db/queries/tailoringRuns";
 import { loadCandidateProfile } from "@/lib/match/candidateProfile";
+import { matchesCurrentInstructions } from "@/lib/resumeQuality/canonicalInstructions";
 import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
 import { startTailoringRun, type TailoringRunAuthorizationError } from "@/lib/tailoringExecution";
 import { executeResumeQualityIteration } from "@/lib/resumeQuality/orchestrator";
@@ -88,7 +89,14 @@ export async function GET(
       truthfulnessPass: boolean;
       architecturePass: boolean;
       blockingIssuesPass: boolean;
+      instructionCompliancePass: boolean;
     };
+    instructionCompliance: {
+      instructionVersion: string;
+      instructionHash: string;
+      isCurrent: boolean;
+      failingChecks: string[];
+    } | null;
   } | null = null;
 
   const availableArtifacts = {
@@ -108,6 +116,13 @@ export async function GET(
       try {
         latestReview = JSON.parse(latestIter.review_json) as StructuredResumeReview;
         const outcome = evaluateQualityGate(latestReview, latestIter.iteration_number, workflow.max_iterations);
+        const compliance = latestReview.instructionCompliance;
+        const isCurrent = compliance !== undefined && matchesCurrentInstructions(compliance);
+        const failingChecks = compliance
+          ? Object.entries(compliance.checks)
+              .filter(([, status]) => status !== "PASS")
+              .map(([name]) => name)
+          : [];
         qualityGate = {
           passed: outcome === "READY",
           outcome,
@@ -116,7 +131,16 @@ export async function GET(
             truthfulnessPass: latestReview.truthfulnessScore === 100,
             architecturePass: latestReview.architectureConsistencyScore === 100,
             blockingIssuesPass: latestReview.blockingIssues.length === 0,
+            instructionCompliancePass: compliance !== undefined && isCurrent && failingChecks.length === 0,
           },
+          instructionCompliance: compliance
+            ? {
+                instructionVersion: compliance.instructionVersion,
+                instructionHash: compliance.instructionHash,
+                isCurrent,
+                failingChecks,
+              }
+            : null,
         };
       } catch {
         // Fallback

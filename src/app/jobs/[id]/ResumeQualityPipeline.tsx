@@ -50,6 +50,12 @@ interface QualityWorkflowResponse {
     outcome: string;
     reasons: string[];
     blockingIssues: string[];
+    instructionCompliance?: {
+      instructionVersion: string;
+      instructionHash: string;
+      isCurrent: boolean;
+      failingChecks: string[];
+    } | null;
   } | null;
   availableArtifacts: {
     hasFinalResume: boolean;
@@ -100,6 +106,27 @@ function PriorityBadge({ priority }: { priority: string }) {
       {priority}
     </span>
   );
+}
+
+/**
+ * Mirrors evaluateQualityGate()'s strengthened condition (original 4 Stage 7 scores/blocking-issues
+ * PLUS every canonical instruction-compliance check PASS) for whichever review is currently
+ * displayed — not just the latest iteration, since the user can browse iteration history. Kept as a
+ * plain, dependency-free function rather than importing qualityGate.ts directly: that module pulls
+ * in canonicalInstructions.ts's node:crypto usage, which client components can't bundle. The one
+ * piece intentionally NOT replicated here is "compliance was computed against the CURRENT canonical
+ * instruction hash" (that check needs the crypto-derived constant) — the authoritative READY/FAILED
+ * status shown elsewhere on this page always comes from the server-computed workflow.status.
+ */
+function reviewPassesStrengthenedGate(review: StructuredResumeReview): boolean {
+  const originalGate =
+    review.overallScore >= 95 &&
+    review.truthfulnessScore === 100 &&
+    review.architectureConsistencyScore === 100 &&
+    review.blockingIssues.length === 0;
+  const compliance = review.instructionCompliance;
+  const compliancePass = compliance !== undefined && Object.values(compliance.checks).every((status) => status === "PASS");
+  return originalGate && compliancePass;
 }
 
 function ScoreBar({ label, score, target = 95 }: { label: string; score: number | null; target?: number }) {
@@ -552,10 +579,7 @@ export function ResumeQualityPipeline({
 
             <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-700 text-xs">
               <div className="font-medium text-zinc-700 dark:text-zinc-300 mb-1">Quality Gate Status</div>
-              {displayedReview.overallScore >= 95 &&
-              displayedReview.truthfulnessScore === 100 &&
-              displayedReview.architectureConsistencyScore === 100 &&
-              displayedReview.blockingIssues.length === 0 ? (
+              {reviewPassesStrengthenedGate(displayedReview) ? (
                 <span className="font-semibold text-emerald-600 dark:text-emerald-400">✓ Ready for Application</span>
               ) : (
                 <span className="font-semibold text-amber-600 dark:text-amber-400">⚠ Needs Improvement</span>
@@ -574,6 +598,60 @@ export function ResumeQualityPipeline({
             <ScoreBar label="Recruiter Readability" score={displayedReview.recruiterReadabilityScore} target={85} />
             <ScoreBar label="Document Formatting" score={displayedReview.formattingScore} target={95} />
           </div>
+        </div>
+      )}
+
+      {/* 5b. Canonical Instruction Compliance */}
+      {displayedReview && (
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-800/40">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
+              Canonical Instruction Compliance
+            </div>
+            {displayedReview.instructionCompliance && (
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                Standard v{displayedReview.instructionCompliance.instructionVersion}
+                {data?.qualityGate?.instructionCompliance && !data.qualityGate.instructionCompliance.isCurrent && (
+                  <span className="ml-1 font-semibold text-amber-600 dark:text-amber-400">(stale — re-review required)</span>
+                )}
+              </span>
+            )}
+          </div>
+          {!displayedReview.instructionCompliance ? (
+            <p className="text-xs text-zinc-500 italic">
+              No canonical compliance data (legacy review, produced before this standard existed).
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+                {Object.entries(displayedReview.instructionCompliance.checks).map(([name, status]) => (
+                  <div key={name} className="flex items-center gap-1.5">
+                    <span
+                      className={
+                        status === "PASS"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : status === "FAIL"
+                          ? "text-red-600 dark:text-red-400"
+                          : "text-amber-600 dark:text-amber-400"
+                      }
+                    >
+                      {status === "PASS" ? "✓" : status === "FAIL" ? "✗" : "⚠"}
+                    </span>
+                    <span className="text-zinc-600 dark:text-zinc-400">
+                      {name.replace(/([a-z0-9])([A-Z])/g, "$1 $2")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {displayedReview.instructionCompliance.notes.length > 0 && (
+                <ul className="mt-2 pt-2 border-t border-zinc-200 dark:border-zinc-700 list-disc list-inside space-y-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                  {displayedReview.instructionCompliance.notes.map((note, i) => (
+                    <li key={i}>{note}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
         </div>
       )}
 
