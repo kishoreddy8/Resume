@@ -245,6 +245,12 @@ export interface LatestDecisionSummary {
    *  decision/overallScore. */
   employerEvidencedShare: number;
   requirementCoverage: number;
+  status?: "active" | "superseded";
+  matchEngineVersion?: number;
+  matchKnowledgeHash?: string;
+  candidateProfileHash?: string;
+  candidateSettingsHash?: string;
+  jdContentHash?: string;
 }
 
 /** Batch lookup of one candidate's latest decision per dedupe_key — used by the job-list badge/filter
@@ -259,7 +265,9 @@ export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys
   const placeholders = dedupeKeys.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT t.dedupe_key, t.decision, t.overall_score, t.employer_evidenced_share, t.requirement_coverage
+      `SELECT t.dedupe_key, t.decision, t.overall_score, t.employer_evidenced_share, t.requirement_coverage,
+              t.status, t.match_engine_version, t.match_knowledge_hash, t.candidate_profile_hash,
+              t.candidate_settings_hash, t.jd_content_hash
        FROM job_match_results t
        INNER JOIN (
          SELECT dedupe_key, MAX(id) AS max_id FROM job_match_results
@@ -272,6 +280,12 @@ export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys
     overall_score: number;
     employer_evidenced_share: number;
     requirement_coverage: number;
+    status: "active" | "superseded";
+    match_engine_version: number;
+    match_knowledge_hash: string;
+    candidate_profile_hash: string;
+    candidate_settings_hash: string;
+    jd_content_hash: string;
   }[];
 
   const result: Record<string, LatestDecisionSummary> = {};
@@ -281,6 +295,12 @@ export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys
       overallScore: row.overall_score,
       employerEvidencedShare: row.employer_evidenced_share,
       requirementCoverage: row.requirement_coverage,
+      status: row.status,
+      matchEngineVersion: row.match_engine_version,
+      matchKnowledgeHash: row.match_knowledge_hash,
+      candidateProfileHash: row.candidate_profile_hash,
+      candidateSettingsHash: row.candidate_settings_hash,
+      jdContentHash: row.jd_content_hash,
     };
   }
   return result;

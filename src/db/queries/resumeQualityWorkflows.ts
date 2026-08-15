@@ -99,6 +99,38 @@ export function getLatestResumeQualityWorkflowForJob(candidateId: number, dedupe
     .get(candidateId, dedupeKey) as ResumeQualityWorkflowRow | undefined;
 }
 
+/**
+ * Batch lookup of one candidate's latest resume quality workflow per dedupe_key — used by the
+ * For You feed ranking API to identify READY_TO_APPLY candidate jobs with a single SQL query
+ * instead of N+1 individual queries.
+ */
+export function listLatestResumeQualityWorkflowsForDedupeKeys(
+  candidateId: number,
+  dedupeKeys: string[]
+): Record<string, ResumeQualityWorkflowRow> {
+  if (dedupeKeys.length === 0) return {};
+  const db = getDb();
+  const placeholders = dedupeKeys.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT t.*
+       FROM resume_quality_workflows t
+       INNER JOIN (
+         SELECT dedupe_key, MAX(id) AS max_id
+         FROM resume_quality_workflows
+         WHERE candidate_id = ? AND dedupe_key IN (${placeholders})
+         GROUP BY dedupe_key
+       ) latest ON latest.max_id = t.id`
+    )
+    .all(candidateId, ...dedupeKeys) as ResumeQualityWorkflowRow[];
+
+  const result: Record<string, ResumeQualityWorkflowRow> = {};
+  for (const row of rows) {
+    result[row.dedupe_key] = row;
+  }
+  return result;
+}
+
 export interface TransitionWorkflowStatusOptions {
   failureReason?: string;
   latestOverallScore?: number;
