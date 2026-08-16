@@ -4,6 +4,16 @@ import { useEffect, useState, useRef } from "react";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { StructuredResumeReview, RequiredCorrection } from "@/lib/resumeQuality/types";
 
+/** Local, dependency-free label formatter — deliberately NOT imported from
+ *  src/lib/resumeQuality/reviewFeedback.ts, which transitively pulls in canonicalInstructions.ts's
+ *  node:crypto usage and cannot be bundled into a client component. Purely cosmetic string
+ *  formatting, not a second definition of any business logic (unlike best-attempt ranking, which
+ *  this file only ever displays via the server-computed `bestAttempt` field, never recomputes). */
+function humanizeCheckName(name: string): string {
+  const spaced = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 interface QualityWorkflowResponse {
   candidateId: number;
   jobId: number;
@@ -57,6 +67,18 @@ interface QualityWorkflowResponse {
       failingChecks: string[];
     } | null;
   } | null;
+  bestAttempt: {
+    iterationNumber: number;
+    selectionReason: string;
+    overallScore: number;
+    atsScore: number;
+    truthfulnessScore: number;
+    architectureConsistencyScore: number;
+    instructionCompliancePassCount: number;
+    instructionComplianceTotal: number;
+    failingChecks: string[];
+    blockingIssues: string[];
+  } | null;
   availableArtifacts: {
     hasFinalResume: boolean;
     hasFinalCoverLetter: boolean;
@@ -65,6 +87,8 @@ interface QualityWorkflowResponse {
     hasIterationCoverLetter: boolean;
     hasIterationFeedback: boolean;
     hasHandoffPackage: boolean;
+    hasHumanReviewResume: boolean;
+    hasHumanReviewCoverLetter: boolean;
   };
   waitingFor: "EXTERNAL_WRITER" | "HUMAN_REVIEW" | "COMPLETED" | "NOT_WAITING";
 }
@@ -313,7 +337,7 @@ export function ResumeQualityPipeline({
     return null;
   }
 
-  const { workflow, authorization, applicationId, tailoringRun, iterations, availableArtifacts } = data;
+  const { workflow, authorization, applicationId, tailoringRun, iterations, bestAttempt, availableArtifacts } = data;
 
   // Selected iteration data for historical view
   const activeIterNum = selectedIterationNumber ?? workflow?.current_iteration ?? 1;
@@ -507,11 +531,90 @@ export function ResumeQualityPipeline({
 
       {/* 3. Human Review / FAILED Banner */}
       {workflow?.status === "FAILED" && (
-        <div className="rounded-lg border border-red-200 bg-red-50/80 p-4 dark:border-red-900/60 dark:bg-red-950/30">
-          <h3 className="text-sm font-semibold text-red-900 dark:text-red-200">Human Review Required</h3>
-          <p className="mt-1 text-xs text-red-700 dark:text-red-300">
-            {workflow.failure_reason ?? "Max improvement iterations reached without meeting quality threshold."}
-          </p>
+        <div className="rounded-lg border border-red-200 bg-red-50/80 p-4 dark:border-red-900/60 dark:bg-red-950/30 space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-red-900 dark:text-red-200">Human Review Required</h3>
+            <p className="mt-1 text-xs text-red-700 dark:text-red-300">
+              {workflow.max_iterations} automatic quality attempt{workflow.max_iterations === 1 ? "" : "s"} completed.{" "}
+              {workflow.failure_reason ?? "Max improvement iterations reached without meeting quality threshold."}
+            </p>
+          </div>
+
+          {bestAttempt && (
+            <div className="rounded border border-red-200/70 bg-white/60 p-3 dark:border-red-900/40 dark:bg-red-950/10">
+              <p className="text-xs font-semibold text-red-900 dark:text-red-200">
+                Best Attempt: Iteration {bestAttempt.iterationNumber}
+              </p>
+              <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-red-800 dark:text-red-300 sm:grid-cols-4">
+                <div>
+                  <dt className="text-red-600 dark:text-red-400">Overall</dt>
+                  <dd className="font-medium">{bestAttempt.overallScore}</dd>
+                </div>
+                <div>
+                  <dt className="text-red-600 dark:text-red-400">ATS Match</dt>
+                  <dd className="font-medium">{bestAttempt.atsScore}</dd>
+                </div>
+                <div>
+                  <dt className="text-red-600 dark:text-red-400">Truthfulness</dt>
+                  <dd className="font-medium">{bestAttempt.truthfulnessScore}</dd>
+                </div>
+                <div>
+                  <dt className="text-red-600 dark:text-red-400">Architecture</dt>
+                  <dd className="font-medium">{bestAttempt.architectureConsistencyScore}</dd>
+                </div>
+              </dl>
+              <p className="mt-2 text-xs text-red-700 dark:text-red-300">
+                Instruction Compliance: {bestAttempt.instructionCompliancePassCount}/{bestAttempt.instructionComplianceTotal} PASS
+              </p>
+              {bestAttempt.failingChecks.length > 0 && (
+                <div className="mt-1.5">
+                  <p className="text-xs font-medium text-red-800 dark:text-red-300">Failed checks:</p>
+                  <ul className="mt-0.5 list-disc pl-4 text-xs text-red-700 dark:text-red-300">
+                    {bestAttempt.failingChecks.map((name) => (
+                      <li key={name}>{humanizeCheckName(name)}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p className="mt-2 text-xs text-red-700 dark:text-red-300">
+                This resume did not pass CareerOps approval. It is provided as the strongest attempt for manual review.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {availableArtifacts.hasHumanReviewResume && (
+                  <a
+                    href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/resume`}
+                    download
+                    className="inline-flex items-center rounded border border-red-600 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900/40"
+                  >
+                    Download Best Resume
+                  </a>
+                )}
+                {availableArtifacts.hasHumanReviewCoverLetter && (
+                  <a
+                    href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/coverLetter`}
+                    download
+                    className="inline-flex items-center rounded border border-red-600 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900/40"
+                  >
+                    Download Best Cover Letter
+                  </a>
+                )}
+                <a
+                  href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/review`}
+                  download
+                  className="inline-flex items-center rounded border border-red-600 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900/40"
+                >
+                  View CareerOps Review
+                </a>
+                <a
+                  href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/feedback`}
+                  download
+                  className="inline-flex items-center rounded border border-red-600 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900/40"
+                >
+                  View Failed Checks
+                </a>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -747,6 +850,7 @@ export function ResumeQualityPipeline({
             {iterations.map((iter) => {
               const isSelected = iter.iteration_number === activeIterNum;
               const isReady = iter.overall_score && iter.overall_score >= 95 && iter.blocking_issue_count === 0;
+              const isBestAttempt = bestAttempt?.iterationNumber === iter.iteration_number;
               return (
                 <button
                   key={iter.id}
@@ -759,6 +863,11 @@ export function ResumeQualityPipeline({
                 >
                   Iteration {iter.iteration_number} — {iter.overall_score ?? "—"}/100
                   {isReady && " ✓"}
+                  {isBestAttempt && (
+                    <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">
+                      Best Attempt
+                    </span>
+                  )}
                 </button>
               );
             })}

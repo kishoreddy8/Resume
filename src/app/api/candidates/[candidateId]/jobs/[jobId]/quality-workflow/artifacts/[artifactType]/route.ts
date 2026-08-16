@@ -9,6 +9,7 @@ import {
   finalCoverLetterFilename,
   finalResumeFilename,
   getFinalDirectory,
+  getHumanReviewDirectory,
   getIterationDirectory,
   type QualityWorkflowLocation,
 } from "@/lib/resumeQuality/workspace";
@@ -94,6 +95,25 @@ export async function GET(
       downloadFilename = "review.json";
       const iterDir = getIterationDirectory(location, workflow.final_approved_iteration ?? workflow.current_iteration);
       filePath = path.join(iterDir, downloadFilename);
+    }
+  } else if (workflow.status === "FAILED" && !requestedIteration) {
+    // Stage 13 — the preserved best-attempt package for a terminal HUMAN_REVIEW_REQUIRED workflow.
+    // NEVER served for READY (that stays the "if" branch above) — this is deliberately unreachable
+    // unless the authoritative workflow.status is already FAILED, matching the requirement that a
+    // human-review artifact can never be mistaken for an approved/final one.
+    const humanReviewDir = getHumanReviewDirectory(location);
+    if (artifactType === "resume") {
+      downloadFilename = `${firstName}_Resume_HumanReview.docx`;
+      filePath = path.join(humanReviewDir, downloadFilename);
+    } else if (artifactType === "coverLetter") {
+      downloadFilename = `${firstName}_CoverLetter_HumanReview.docx`;
+      filePath = path.join(humanReviewDir, downloadFilename);
+    } else if (artifactType === "feedback") {
+      downloadFilename = "review_feedback.md";
+      filePath = path.join(humanReviewDir, downloadFilename);
+    } else if (artifactType === "review") {
+      downloadFilename = "careerops_review.json";
+      filePath = path.join(humanReviewDir, downloadFilename);
     }
   } else {
     // Iteration artifacts

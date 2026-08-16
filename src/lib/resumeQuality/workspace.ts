@@ -75,6 +75,13 @@ export function getFinalDirectory(location: QualityWorkflowLocation): string {
   return path.join(getQualityWorkflowDirectory(location), "final");
 }
 
+/** Stage 13 — the best-attempt preservation package for a workflow that reached terminal FAILED
+ *  (HUMAN_REVIEW_REQUIRED) after exhausting its quality iterations. Never populated for a workflow
+ *  that reaches READY — final/ remains the sole authoritative approved-artifact directory. */
+export function getHumanReviewDirectory(location: QualityWorkflowLocation): string {
+  return path.join(getQualityWorkflowDirectory(location), "human-review");
+}
+
 /** Strips everything but letters/digits so a candidate's first name is always a safe, single path
  *  segment/filename component — no spaces, punctuation, or path separators can survive. Falls back to
  *  "Candidate" rather than producing an empty/unsafe filename if the name sanitizes to nothing. */

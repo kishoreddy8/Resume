@@ -18,11 +18,13 @@ import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
 import { startTailoringRun, type TailoringRunAuthorizationError } from "@/lib/tailoringExecution";
 import { executeResumeQualityIteration } from "@/lib/resumeQuality/orchestrator";
 import { DeterministicResumeReviewer } from "@/lib/resumeQuality/reviewers/deterministicReviewer";
+import { selectBestResumeQualityAttempt, type ResumeQualityAttemptSummary } from "@/lib/resumeQuality/bestAttemptSelection";
 import {
   finalCoverLetterFilename,
   finalResumeFilename,
   getFinalDirectory,
   getHandoffDirectory,
+  getHumanReviewDirectory,
   getIterationDirectory,
   getWorkspaceDirectory,
   type QualityWorkflowLocation,
@@ -99,6 +101,19 @@ export async function GET(
     } | null;
   } | null = null;
 
+  let bestAttempt: {
+    iterationNumber: number;
+    selectionReason: string;
+    overallScore: number;
+    atsScore: number;
+    truthfulnessScore: number;
+    architectureConsistencyScore: number;
+    instructionCompliancePassCount: number;
+    instructionComplianceTotal: number;
+    failingChecks: string[];
+    blockingIssues: string[];
+  } | null = null;
+
   const availableArtifacts = {
     hasFinalResume: false,
     hasFinalCoverLetter: false,
@@ -107,6 +122,8 @@ export async function GET(
     hasIterationCoverLetter: false,
     hasIterationFeedback: false,
     hasHandoffPackage: false,
+    hasHumanReviewResume: false,
+    hasHumanReviewCoverLetter: false,
   };
 
   if (workflow) {
@@ -162,6 +179,48 @@ export async function GET(
       availableArtifacts.hasFinalResume = fs.existsSync(resFile);
       availableArtifacts.hasFinalCoverLetter = fs.existsSync(covFile);
       availableArtifacts.hasFinalFeedback = fs.existsSync(fbFile);
+    }
+
+    // Terminal FAILED (HUMAN_REVIEW_REQUIRED): compute the best-attempt summary via the SAME single
+    // ranking authority (selectBestResumeQualityAttempt) the orchestrator's human-review package
+    // generator already used — never a second, independently-derived notion of "which iteration is
+    // best". Never computed for READY (final/ stays the sole approved-artifact source) or for any
+    // non-terminal status.
+    if (workflow.status === "FAILED") {
+      const attempts: ResumeQualityAttemptSummary[] = [];
+      for (const it of iterations) {
+        if (!it.review_json) continue;
+        try {
+          attempts.push({ iterationNumber: it.iteration_number, review: JSON.parse(it.review_json) as StructuredResumeReview });
+        } catch {
+          // Skip an unparseable legacy row.
+        }
+      }
+      const selection = selectBestResumeQualityAttempt(attempts);
+      if (selection) {
+        const winner = attempts.find((a) => a.iterationNumber === selection.iterationNumber)!.review;
+        const compliance = winner.instructionCompliance;
+        bestAttempt = {
+          iterationNumber: selection.iterationNumber,
+          selectionReason: selection.selectionReason,
+          overallScore: winner.overallScore,
+          atsScore: winner.atsScore,
+          truthfulnessScore: winner.truthfulnessScore,
+          architectureConsistencyScore: winner.architectureConsistencyScore,
+          instructionCompliancePassCount: compliance ? Object.values(compliance.checks).filter((s) => s === "PASS").length : 0,
+          instructionComplianceTotal: compliance ? Object.keys(compliance.checks).length : 22,
+          failingChecks: compliance ? Object.entries(compliance.checks).filter(([, s]) => s !== "PASS").map(([name]) => name) : [],
+          blockingIssues: winner.blockingIssues,
+        };
+      }
+
+      const humanReviewDir = getHumanReviewDirectory(location);
+      if (candidate) {
+        availableArtifacts.hasHumanReviewResume = fs.existsSync(path.join(humanReviewDir, `${candidate.first_name}_Resume_HumanReview.docx`));
+        availableArtifacts.hasHumanReviewCoverLetter = fs.existsSync(
+          path.join(humanReviewDir, `${candidate.first_name}_CoverLetter_HumanReview.docx`)
+        );
+      }
     }
 
     if (workflow.current_iteration > 0) {
@@ -226,6 +285,7 @@ export async function GET(
     iterations,
     latestReview,
     qualityGate,
+    bestAttempt,
     availableArtifacts,
     waitingFor,
   });

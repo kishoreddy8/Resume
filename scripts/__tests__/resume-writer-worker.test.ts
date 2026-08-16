@@ -40,6 +40,8 @@ let listWorkflowsAwaitingWriter: typeof import("@/db/queries/resumeQualityWorkfl
 let executeResumeQualityIteration: typeof import("@/lib/resumeQuality/orchestrator").executeResumeQualityIteration;
 let executeResumeImprovementIteration: typeof import("@/lib/resumeQuality/orchestrator").executeResumeImprovementIteration;
 let getHandoffDirectory: typeof import("@/lib/resumeQuality/workspace").getHandoffDirectory;
+let getHumanReviewDirectory: typeof import("@/lib/resumeQuality/workspace").getHumanReviewDirectory;
+let getFinalDirectory: typeof import("@/lib/resumeQuality/workspace").getFinalDirectory;
 let getWorkspaceDirectory: typeof import("@/lib/resumeQuality/workspace").getWorkspaceDirectory;
 let importExternalWriterResult: typeof import("@/lib/resumeQuality/handoff/importer").importExternalWriterResult;
 let listNotificationsForCandidate: typeof import("@/db/queries/notifications").listNotificationsForCandidate;
@@ -191,7 +193,7 @@ before(async () => {
     "@/db/queries/resumeQualityWorkflows"
   ));
   ({ executeResumeQualityIteration, executeResumeImprovementIteration } = await import("@/lib/resumeQuality/orchestrator"));
-  ({ getHandoffDirectory, getWorkspaceDirectory } = await import("@/lib/resumeQuality/workspace"));
+  ({ getHandoffDirectory, getWorkspaceDirectory, getHumanReviewDirectory, getFinalDirectory } = await import("@/lib/resumeQuality/workspace"));
   ({ importExternalWriterResult } = await import("@/lib/resumeQuality/handoff/importer"));
   ({ listNotificationsForCandidate } = await import("@/db/queries/notifications"));
   ({
@@ -510,7 +512,11 @@ test("6. final allowed quality-iteration failure reaches FAILED/HUMAN_REVIEW_REQ
   const p2 = await processOneWorkflow(wf, { cliOptions: { command: successScript, retryBackoffMs: 5 } });
   assert.equal(p2.outcome, "IMPROVEMENT_RUNNING");
 
-  const p3 = await processOneWorkflow(wf, { cliOptions: { command: successScript, retryBackoffMs: 5 } });
+  // Refresh from the DB before the next pass — production's runWorkerPass always re-queries fresh per
+  // pass; reusing the original stale `wf` here would be a test-only artifact (see the identical fix
+  // applied to test 4/5 above).
+  const wfAfterP2 = getResumeQualityWorkflow(candId, wf.id)!;
+  const p3 = await processOneWorkflow(wfAfterP2, { cliOptions: { command: successScript, retryBackoffMs: 5 } });
   assert.equal(p3.outcome, "FAILED", "the final allowed iteration failing quality review must reach the terminal FAILED status");
 
   const finalWf = getResumeQualityWorkflow(candId, wf.id)!;
@@ -518,8 +524,21 @@ test("6. final allowed quality-iteration failure reaches FAILED/HUMAN_REVIEW_REQ
 
   const notifications = listNotificationsForCandidate(candId);
   assert(notifications.some((n) => n.dedupe_key === jobOne.dedupe_key && n.type === HUMAN_REVIEW_REQUIRED_NOTIFICATION_TYPE));
+  const humanReviewNotification = notifications.find((n) => n.dedupe_key === jobOne.dedupe_key && n.type === HUMAN_REVIEW_REQUIRED_NOTIFICATION_TYPE)!;
+  assert(humanReviewNotification.body.includes("strongest attempt"), "notification must mention the best attempt when a human-review package was generated");
 
-  // No infinite loop: a FAILED (terminal) workflow must never be picked up again.
+  // Stage 13 — the human-review package must exist, exposing a real best attempt with a downloadable
+  // resume, all pointing at the same selected iteration.
+  const humanReviewDir = getHumanReviewDirectory({ candidateId: candId, dedupeKey: jobOne.dedupe_key, runId: wf.tailoring_run_id, workflowId: wf.id });
+  assert(fs.existsSync(path.join(humanReviewDir, "best_attempt.json")), "human-review package must be auto-generated on terminal FAILED");
+  const bestAttempt = JSON.parse(fs.readFileSync(path.join(humanReviewDir, "best_attempt.json"), "utf-8"));
+  assert.equal(bestAttempt.approved, false);
+  assert.equal(bestAttempt.qualityGateDecision, "NEEDS_HUMAN_REVIEW");
+  assert(bestAttempt.iterationNumber >= 1 && bestAttempt.iterationNumber <= 3);
+  assert(fs.existsSync(path.join(humanReviewDir, `Carol_Resume_HumanReview.docx`)), "best-attempt resume must be downloadable");
+  assert.equal(fs.existsSync(getFinalDirectory({ candidateId: candId, dedupeKey: jobOne.dedupe_key, runId: wf.tailoring_run_id, workflowId: wf.id })), false, "FAILED must never populate the READY final/ directory");
+
+  // No infinite loop: a FAILED (terminal) workflow must never be picked up again, and no 4th Claude call.
   assert(!listWorkflowsAwaitingWriter().some((w) => w.id === wf.id));
 });
 

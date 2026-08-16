@@ -133,7 +133,11 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
     }
 
     if (improvementResult.status === "FAILED") {
-      notifyHumanReviewRequired({ ...notifyCtx, remainingBlockers: improvementResult.review.blockingIssues.length });
+      notifyHumanReviewRequired({
+        ...notifyCtx,
+        remainingBlockers: improvementResult.review.blockingIssues.length,
+        bestAttemptIteration: improvementResult.humanReviewPackage?.iterationNumber,
+      });
       return { workflowId, candidateId, outcome: "FAILED", iterationNumber: improvementResult.iterationNumber };
     }
 

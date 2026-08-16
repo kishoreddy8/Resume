@@ -22,6 +22,7 @@ import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
 import { getTailoringArtifactDirectory } from "@/lib/tailoringArtifacts";
 import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "./canonicalInstructions";
 import { generateColdFollowUpEmail } from "./coldFollowUpEmail";
+import { generateHumanReviewPackage } from "./humanReviewPackage";
 import { evaluateQualityGate, type QualityGateOutcome } from "./qualityGate";
 import { renderReviewFeedbackMarkdown } from "./reviewFeedback";
 import { DeterministicResumeReviewer } from "./reviewers/deterministicReviewer";
@@ -128,6 +129,9 @@ export interface ResumeQualityOrchestrationResult {
   finalArtifacts?: ResumeQualityFinalArtifacts;
   requiredCorrections: RequiredCorrection[];
   failureReason?: string | null;
+  /** Populated only on the terminal NEEDS_HUMAN_REVIEW/FAILED path — see humanReviewPackage.ts. Never
+   *  set on READY (final/ remains the sole approved-artifact directory) or on any non-terminal status. */
+  humanReviewPackage?: { iterationNumber: number; directory: string };
 }
 
 export interface StartAndExecuteResumeQualityWorkflowInput {
@@ -664,6 +668,20 @@ export async function executeResumeQualityIteration(
       failureReason,
     });
 
+    // Best-effort: preserve the safest of the exhausted attempts for human review. The workflow's own
+    // FAILED transition above is already authoritative and complete regardless of what happens here —
+    // a failure generating this convenience package must never be treated as a failure of the
+    // workflow itself (see humanReviewPackage.ts's own atomic-write guarantee for why a crash here
+    // can't leave a half-written package either).
+    let humanReviewPackage: ResumeQualityOrchestrationResult["humanReviewPackage"];
+    try {
+      const pkg = generateHumanReviewPackage(candidateId, workflowId);
+      if (pkg) humanReviewPackage = { iterationNumber: pkg.iterationNumber, directory: pkg.directory };
+    } catch {
+      // Swallowed deliberately — the FAILED transition above already succeeded and remains the
+      // authoritative outcome; the human-review package is a convenience, not a requirement.
+    }
+
     return {
       workflow: updatedWorkflow,
       iteration: iterationRow,
@@ -675,6 +693,7 @@ export async function executeResumeQualityIteration(
       iterationDirectory: iterDir,
       requiredCorrections: review.requiredCorrections,
       failureReason,
+      humanReviewPackage,
     };
   } catch (err) {
     try {

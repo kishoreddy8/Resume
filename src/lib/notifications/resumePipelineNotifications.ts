@@ -77,14 +77,26 @@ export function notifyQualityFailure(ctx: QualityFailureContext): boolean {
 
 export interface HumanReviewRequiredContext extends ResumePipelineNotificationContext {
   remainingBlockers: number;
+  /** Stage 13 — when a best-attempt human-review package was generated, mentions it so the user knows
+   *  automatic attempts are exhausted but a strongest-attempt resume/cover letter is available. Both
+   *  optional and additive: omitting them leaves the body text exactly as before (backward compatible
+   *  with any caller that doesn't yet have this data). */
+  bestAttemptIteration?: number;
+  bestAttemptScore?: number;
 }
 
 export function notifyHumanReviewRequired(ctx: HumanReviewRequiredContext): boolean {
+  const bestAttemptNote =
+    ctx.bestAttemptIteration !== undefined
+      ? ` Automatic attempts are exhausted. The strongest attempt (iteration ${ctx.bestAttemptIteration}${
+          ctx.bestAttemptScore !== undefined ? `, score ${ctx.bestAttemptScore}` : ""
+        }) is available for your review.`
+      : "";
   return safeCreate({
     candidateId: ctx.candidateId,
     dedupeKey: ctx.dedupeKey,
     type: HUMAN_REVIEW_REQUIRED_NOTIFICATION_TYPE,
     title: `Human review required — ${ctx.companyName} ${ctx.jobTitle}`,
-    body: `Resume did not satisfy CareerOps quality gates after the allowed iterations. Remaining blockers: ${ctx.remainingBlockers}.`,
+    body: `Resume did not satisfy CareerOps quality gates after the allowed iterations. Remaining blockers: ${ctx.remainingBlockers}.${bestAttemptNote}`,
   });
 }
