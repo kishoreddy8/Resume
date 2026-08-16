@@ -33,16 +33,27 @@ test("Phase 3: a different tenant's token does not inherit another tenant's trus
   assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS[unrelatedToken], undefined);
 });
 
-test("Phase 3: Tellus Products is NOT trusted despite the strong evidence found investigating it", () => {
-  // Deliberate: Phase 3 found genuine, strong evidence that Tellus Products is a real ASR Group
-  // subsidiary (ASR Group's own site lists it as one of ten owned companies) — but that was scoped
-  // as investigation-only, not verification-for-trust, in this task. This test is a regression guard
-  // against a future edit accidentally (or over-eagerly) adding it without going through the same
-  // explicit review the other entries received.
-  const tellusToken = normalizeSuccessFactorsToken("career4.successfactors.com|634633P");
-  assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS[tellusToken], undefined);
+test("Phase 4: Tellus Products' exact token resolves to its verified (parent-organization) custom host", () => {
+  const token = normalizeSuccessFactorsToken("career4.successfactors.com|634633P");
+  assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS[token], "careers.fcc-asrgroup.com");
 });
 
-test("Phase 3: the trust map has exactly the expected number of entries (9 from Phase 2 + 3 from Phase 3)", () => {
-  assert.equal(Object.keys(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS).length, 12);
+test("Phase 4: a different tenant on the same shared SAP host does not inherit Tellus's trusted host", () => {
+  // Tellus is on career4.successfactors.com — the same host as Popular/Perdue/several Phase 2
+  // entries. An unrelated company identifier on that same shared host must not resolve to Tellus's
+  // (or anyone else's) trusted value — the map is keyed per-tenant, never per-host.
+  const unrelatedToken = normalizeSuccessFactorsToken("career4.successfactors.com|NotTellusAtAll");
+  assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS[unrelatedToken], undefined);
+});
+
+test("Phase 2/3 entries remain unchanged after the Phase 4 addition", () => {
+  assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS["career8.successfactors.com|S003808746P"], "jobs.nscorp.com");
+  assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS["career4.successfactors.com|southwireP"], "careers.southwire.com");
+  assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS["career4.successfactors.com|Popularinc"], "jobs.popular.com");
+  assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS["career5.successfactors.eu|GetingeProd"], "careers.getinge.com");
+  assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS["career4.successfactors.com|PerdueFarms"], "jobs.perduecareers.com");
+});
+
+test("Phase 4: the trust map has exactly the expected number of entries (12 from Phase 2/3 + 1 from Phase 4)", () => {
+  assert.equal(Object.keys(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS).length, 13);
 });

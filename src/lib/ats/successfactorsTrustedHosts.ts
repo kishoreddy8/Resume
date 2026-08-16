@@ -45,6 +45,18 @@
  *   agribusiness" (not merely the generic Perdue Farms brand), confirming the shared family portal
  *   is genuinely authorized for and scoped to this exact company.
  *
+ * One more entry (CAREEROPS — SUCCESSFACTORS PHASE 4, 2026-08-16) — Tellus Products, investigated
+ * but deliberately withheld in Phase 3 pending a dedicated pass:
+ * - Tellus Products LLC: careers.fcc-asrgroup.com — Phase 2 flagged this as an apparently unrelated
+ *   sugar-refining company. Phase 3 found the opposite: Tellus Products is genuinely, publicly owned
+ *   by ASR Group (it upcycles sugarcane-fiber byproduct from sugar milling into compostable
+ *   tableware). Phase 4 reconfirmed both directions of that relationship independently: ASR Group's
+ *   own official site explicitly lists "Tellus Products" as one of its ten companies (navigation,
+ *   dedicated logo, subsidiary footer), AND careers.fcc-asrgroup.com's own live content
+ *   self-identifies as operated by ASR Group / Florida Crystals Corporation (copyright notice,
+ *   "ASR Group Job Applicants" / "FCC Job Applicants" legal references) — the same
+ *   VERIFIED_PARENT_ORGANIZATION standard used for Talis Clinical and Perdue AgriBusiness.
+ *
  * Explicitly NOT added, for lack of (or contradicting) corroborating evidence — do not add without
  * independent re-verification:
  * - Genfare (redirects to careers.spx.com) — SPX Technologies' own careers page lists its known
@@ -52,16 +64,6 @@
  *   does not mention Genfare anywhere.
  * - Precision Planting (redirects to careers.agcocorp.com) — AGCO's own careers page (brands: Fendt,
  *   Massey Ferguson, PTx, Valtra) does not mention Precision Planting anywhere.
- *
- * NOT added despite strong evidence — investigation only, out of this file's scope for now:
- * - Tellus Products (redirects to careers.fcc-asrgroup.com) — Phase 2 flagged this as an apparently
- *   unrelated sugar-refining company. Phase 3 investigation found the opposite: Tellus Products is
- *   genuinely, publicly owned by ASR Group (it upcycles sugarcane-fiber byproduct into compostable
- *   tableware), and ASR Group's own official site explicitly lists "Tellus Products" as one of its
- *   ten companies (main navigation, dedicated logo, subsidiary footer). This is a real corporate
- *   relationship, not a misconfiguration — but it was investigated, not verified-for-trust, in this
- *   pass; see CAREEROPS — SUCCESSFACTORS PHASE 3's final report for the full evidence trail before
- *   adding it here.
  */
 export const SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS: Readonly<Record<string, string>> = {
   "career8.successfactors.com|S003808746P": "jobs.nscorp.com",
@@ -76,4 +78,5 @@ export const SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS: Readonly<Record<string, string
   "career4.successfactors.com|Popularinc": "jobs.popular.com",
   "career5.successfactors.eu|GetingeProd": "careers.getinge.com",
   "career4.successfactors.com|PerdueFarms": "jobs.perduecareers.com",
+  "career4.successfactors.com|634633P": "careers.fcc-asrgroup.com",
 };
