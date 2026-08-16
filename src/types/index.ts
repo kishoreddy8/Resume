@@ -568,12 +568,17 @@ export type JobAgeBand = "fresh" | "active" | "aging" | "stale";
  *  clean up its generated-files directory — the DB layer never touches the filesystem itself. */
 export interface DeletedJobRef {
   jobId: number;
+  companyId: number;
   companyName: string;
   dedupeKey: string;
 }
 
 export interface AgeSweepResult {
   archived: number;
+  /** Distinct companies whose jobs were archived this sweep — additive alongside `archived` (a
+   *  plain count, kept for existing callers) so runLifecycleMaintenance can report affected-company
+   *  counts without a second query or duplicating this function's selection logic. */
+  archivedCompanyIds: number[];
   deleted: DeletedJobRef[];
 }
 

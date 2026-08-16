@@ -27,6 +27,7 @@ let resetScanLockForTests: typeof import("../lock").resetScanLockForTests;
 let getScanLockStatus: typeof import("../lock").getScanLockStatus;
 let getSchedulerRuntimeState: typeof import("../state").getSchedulerRuntimeState;
 let resetSchedulerRuntimeStateForTests: typeof import("../state").resetSchedulerRuntimeStateForTests;
+let resetMaintenanceRuntimeStateForTests: typeof import("../maintenanceState").resetMaintenanceRuntimeStateForTests;
 let createCompany: typeof import("@/db/queries/companies").createCompany;
 let recordDiscoveryResult: typeof import("@/db/queries/companies").recordDiscoveryResult;
 let getOrganizationForCompany: typeof import("@/db/queries/organizationRegistry").getOrganizationForCompany;
@@ -46,6 +47,7 @@ before(async () => {
   ({ runSchedulerTick } = await import("../tick"));
   ({ acquireScanLock, releaseScanLock, resetScanLockForTests, getScanLockStatus } = await import("../lock"));
   ({ getSchedulerRuntimeState, resetSchedulerRuntimeStateForTests } = await import("../state"));
+  ({ resetMaintenanceRuntimeStateForTests } = await import("../maintenanceState"));
   ({ createCompany, recordDiscoveryResult } = await import("@/db/queries/companies"));
   ({ createCandidate } = await import("@/db/queries/candidates"));
   ({ getOrganizationForCompany, listJobSources, reviewJobSource } = await import("@/db/queries/organizationRegistry"));
@@ -94,6 +96,7 @@ beforeEach(() => {
   resetAppSettings();
   resetScanLockForTests();
   resetSchedulerRuntimeStateForTests();
+  resetMaintenanceRuntimeStateForTests();
 });
 
 test("34. runSchedulerTick returns SKIPPED_DISABLED when scheduler.enabled=false (the default), and never touches the lock", () => {
@@ -221,6 +224,63 @@ test("92. a RAN scheduler tick includes a nested matching summary (Phase 4 Stage
     assert.equal(outcome.matching.jobsResolved, 1);
     assert.ok(outcome.notifications, "24. scheduled scan orchestration includes the notification-generation summary through the same canonical flow");
     assert.equal(outcome.notifications.evaluated, outcome.matching.evaluatedPairs.length);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function makeScanReadyCompany(name: string, token: string) {
+  const company = createCompany({ name, source_type: "greenhouse", ats_board_token: token });
+  recordDiscoveryResult(company.id, {
+    status: "VERIFIED",
+    sourceType: "greenhouse",
+    atsBoardToken: token,
+    discoveredJobsUrl: `https://boards.greenhouse.io/${token}`,
+    reason: "Direct ATS URL match (greenhouse)",
+    suspectedAts: null,
+  });
+  const organization = getOrganizationForCompany(company.id)!;
+  const [source] = listJobSources(organization.id);
+  reviewJobSource(source.id, "APPROVED", "Test fixture approval");
+  return company;
+}
+
+function mockEmptyJobsFetch() {
+  return (async () => new Response(JSON.stringify({ jobs: [] }), { status: 200, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+}
+
+test("Scheduler maintenance phase: a never-run maintenance state runs on the first RAN tick (isIntervalDue treats null lastStartedAt as due)", async () => {
+  makeScanReadyCompany("Maintenance Cadence Co A", "maint-cadence-a");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mockEmptyJobsFetch();
+  try {
+    updateAppSettings({ scheduler: { enabled: true, windowStartHour: 0, windowEndHour: 24 } });
+    const outcome = await runSchedulerTick(new Date("2026-01-15T12:00:00Z"));
+    assert.equal(outcome.outcome, "RAN");
+    if (outcome.outcome !== "RAN") return;
+    assert.ok(outcome.maintenance, "maintenance must run on the first tick, since it has never run before");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("17. Scheduler maintenance cadence is independent from the scan interval: a second tick 61 minutes later re-scans but does not re-run maintenance within the same 24h window", async () => {
+  makeScanReadyCompany("Maintenance Cadence Co B", "maint-cadence-b");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mockEmptyJobsFetch();
+  try {
+    updateAppSettings({ scheduler: { enabled: true, windowStartHour: 0, windowEndHour: 24, intervalMinutes: 60 } });
+    const first = await runSchedulerTick(new Date("2026-01-15T12:00:00Z"));
+    assert.equal(first.outcome, "RAN");
+    if (first.outcome !== "RAN") return;
+    assert.ok(first.maintenance, "first tick: maintenance is due");
+
+    // 61 minutes later: past the scan interval (60m), so this tick RUNS a scan again — but nowhere
+    // near the 24h maintenance cadence, so maintenance must be skipped (null) this time.
+    const second = await runSchedulerTick(new Date("2026-01-15T13:01:00Z"));
+    assert.equal(second.outcome, "RAN");
+    if (second.outcome !== "RAN") return;
+    assert.equal(second.maintenance, null, "16/17. the scan phase running again must not implicitly re-run lifecycle maintenance");
   } finally {
     globalThis.fetch = originalFetch;
   }

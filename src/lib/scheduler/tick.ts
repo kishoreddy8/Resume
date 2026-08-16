@@ -2,9 +2,11 @@ import { listScanReadyCompanies } from "@/db/queries/organizationRegistry";
 import { getAppSettings } from "@/db/queries/settings";
 import type { IncrementalMatchResult } from "@/lib/match/incrementalMatch";
 import type { NotificationGenerationResult } from "@/lib/notifications/generateNotifications";
+import { runLifecycleMaintenance, type LifecycleMaintenanceResult } from "@/lib/scan/lifecycleMaintenance";
 import { runScanWithIncrementalMatching } from "@/lib/scan/runScanWithMatching";
 import type { ScanSummary } from "@/types";
 import { acquireScanLock, releaseScanLock } from "./lock";
+import { getLastMaintenanceStartedAt, recordMaintenanceCompleted, recordMaintenanceStarted } from "./maintenanceState";
 import {
   getSchedulerRuntimeState,
   recordSchedulerTickFailed,
@@ -12,6 +14,14 @@ import {
   recordSchedulerTickSucceeded,
 } from "./state";
 import { isEnabled, isIntervalDue, isWithinWindow } from "./window";
+
+// Independent of scheduler.intervalMinutes (which governs how often SCANS run — as often as every
+// few minutes). Lifecycle maintenance is a calendar-age sweep, not a freshness check, so it doesn't
+// need to run on every tick — a conservative, fixed daily cadence matches the same "every 24 hours"
+// convention this codebase already uses for other global background maintenance (see
+// connector_health_check_runs). Not user-configurable: adding a persisted setting for a single fixed
+// constant would be unnecessary surface area for something with no real reason to change per-user.
+const MAINTENANCE_INTERVAL_MINUTES = 24 * 60;
 
 export type SchedulerTickOutcome =
   | { outcome: "SKIPPED_DISABLED" }
@@ -25,6 +35,12 @@ export type SchedulerTickOutcome =
       summary: ScanSummary;
       matching: IncrementalMatchResult;
       notifications: NotificationGenerationResult;
+      /** null when maintenance wasn't due this tick (see MAINTENANCE_INTERVAL_MINUTES) — a tick
+       *  scanning/matching successfully is not evidence maintenance ran, or vice versa. */
+      maintenance: LifecycleMaintenanceResult | null;
+      /** Set only if maintenance was due and threw — isolated so a maintenance failure never turns
+       *  an already-successful scan+matching+notifications result into a FAILED tick. */
+      maintenanceError?: string;
     }
   | { outcome: "FAILED"; error: string };
 
@@ -41,6 +57,12 @@ export type SchedulerTickOutcome =
  * lock.ts), zero eligible companies, or the scan itself throwing — is represented in the returned
  * SchedulerTickOutcome, so a caller (the instrumentation.ts timer, or a test) never needs its own
  * try/catch around this function.
+ *
+ * Four phases in order: scan -> matching -> notifications (all three inside
+ * runScanWithIncrementalMatching) -> maintenance (this function's own, gated by its own independent
+ * MAINTENANCE_INTERVAL_MINUTES cadence, not run every tick). Scanning itself never runs lifecycle
+ * maintenance as a side effect — see RunScanOptions.runAgeSweep's doc comment in src/lib/scan.ts for
+ * why that coupling was removed.
  */
 export async function runSchedulerTick(now: Date = new Date()): Promise<SchedulerTickOutcome> {
   const settings = getAppSettings();
@@ -83,7 +105,33 @@ export async function runSchedulerTick(now: Date = new Date()): Promise<Schedule
     // non-incremental scan failure already did before Stage 2).
     const { scan, matching, notifications } = await runScanWithIncrementalMatching(companies);
     recordSchedulerTickSucceeded();
-    return { outcome: "RAN", companiesScanned: companies.length, summary: scan, matching, notifications };
+
+    // Maintenance phase — explicit and separate from the scan/matching phases above, on its own
+    // independent cadence (see MAINTENANCE_INTERVAL_MINUTES). This is the ONLY place the automatic
+    // scheduler ever calls runLifecycleMaintenance(); scanning itself never triggers it (see
+    // RunScanOptions.runAgeSweep's doc comment in src/lib/scan.ts).
+    let maintenance: LifecycleMaintenanceResult | null = null;
+    let maintenanceError: string | undefined;
+    if (isIntervalDue(getLastMaintenanceStartedAt(), MAINTENANCE_INTERVAL_MINUTES, now)) {
+      recordMaintenanceStarted(now);
+      try {
+        maintenance = runLifecycleMaintenance();
+      } catch (err) {
+        maintenanceError = err instanceof Error ? err.message : String(err);
+      } finally {
+        recordMaintenanceCompleted();
+      }
+    }
+
+    return {
+      outcome: "RAN",
+      companiesScanned: companies.length,
+      summary: scan,
+      matching,
+      notifications,
+      maintenance,
+      ...(maintenanceError ? { maintenanceError } : {}),
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     recordSchedulerTickFailed(message);

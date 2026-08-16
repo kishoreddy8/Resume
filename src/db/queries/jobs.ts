@@ -760,7 +760,7 @@ export function markNotInterested(jobId: number): DeletedJobRef | undefined {
     suppressAndDeleteJob(db, job, "Not Interested");
   })();
 
-  return { jobId: job.id, companyName: job.company_name, dedupeKey: job.dedupe_key };
+  return { jobId: job.id, companyId: job.company_id, companyName: job.company_name, dedupeKey: job.dedupe_key };
 }
 
 /**
@@ -775,9 +775,12 @@ export function markNotInterested(jobId: number): DeletedJobRef | undefined {
  *   >10 days old, unapplied/unpinned (regardless of current archived state) -> permanently
  *     deleted, with a suppression fingerprint written so it can't silently reappear.
  *
- * Called once per runScan() in src/lib/scan.ts — not tied to which companies were scanned this run.
+ * NOT called by runScan() — a genuinely separate, explicitly-invoked maintenance operation (see
+ * src/lib/scan/lifecycleMaintenance.ts's runLifecycleMaintenance, the only normal caller). Never
+ * tied to which companies were scanned by anything else.
  */
-export function runAgeBasedSweep(now: Date = new Date()): AgeSweepResult {
+export function runAgeBasedSweep(now: Date = new Date(), options: { dryRun?: boolean } = {}): AgeSweepResult {
+  const dryRun = options.dryRun ?? false;
   const db = getDb();
   const { lifecycle } = getAppSettings();
   const thresholds = {
@@ -811,9 +814,15 @@ export function runAgeBasedSweep(now: Date = new Date()): AgeSweepResult {
   );
 
   let archived = 0;
+  const archivedCompanyIds = new Set<number>();
   const deleted: DeletedJobRef[] = [];
 
-  db.transaction(() => {
+  // Dry-run must use the EXACT same selection logic as a real sweep (same rows, same protection
+  // check, same age bands) so a dry-run count can never drift from what a real run would do — the
+  // only difference is whether the mutation statements at the bottom of each branch actually run.
+  // A dry run also skips db.transaction() entirely: there is nothing to roll back, and a read-only
+  // pass shouldn't hold a write transaction open over the whole jobs table.
+  const evaluate = () => {
     for (const job of rows) {
       // Phase 2.5: cross-candidate protection check — see isProtectedForAnyCandidate's doc comment.
       if (isProtectedForAnyCandidate(job.dedupe_key)) continue;
@@ -822,18 +831,27 @@ export function runAgeBasedSweep(now: Date = new Date()): AgeSweepResult {
       const band = getJobAgeBand(ageDays, thresholds);
 
       if (band === "stale") {
-        suppressAndDeleteJob(db, job, `Aged out: ${ageDays} days unapplied`);
-        deleted.push({ jobId: job.id, companyName: job.company_name, dedupeKey: job.dedupe_key });
+        if (!dryRun) suppressAndDeleteJob(db, job, `Aged out: ${ageDays} days unapplied`);
+        deleted.push({ jobId: job.id, companyId: job.company_id, companyName: job.company_name, dedupeKey: job.dedupe_key });
       } else if (band === "aging" && job.is_archived === 0) {
         const reason = `Aged out: ${ageDays} days unapplied`;
-        archiveStmt.run({ id: job.id, reason });
-        recordHistory(db, job.id, "lifecycle", job.is_active === 1 ? "Active" : "Closed", "Archived", reason);
+        if (!dryRun) {
+          archiveStmt.run({ id: job.id, reason });
+          recordHistory(db, job.id, "lifecycle", job.is_active === 1 ? "Active" : "Closed", "Archived", reason);
+        }
         archived++;
+        archivedCompanyIds.add(job.company_id);
       }
     }
-  })();
+  };
 
-  return { archived, deleted };
+  if (dryRun) {
+    evaluate();
+  } else {
+    db.transaction(evaluate)();
+  }
+
+  return { archived, archivedCompanyIds: Array.from(archivedCompanyIds), deleted };
 }
 
 /**

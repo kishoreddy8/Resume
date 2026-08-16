@@ -27,13 +27,18 @@ const CAREER_LINK_CONCURRENCY = 2;
 const ATS_DETECTED_NOTE_PREFIX = "Detected embedded ATS:";
 
 export interface RunScanOptions {
-  /** Verification-only bound. Sample scans never run closure, archive, or age-sweep actions. */
+  /** Verification-only bound. Sample scans never run closure or archive actions. */
   maxJobsPerCompany?: number;
   /** Restrict persisted ATS jobs to explicit U.S. locations. Bare Remote/ambiguous locations are
    * excluded. Defaults to true for Career-Ops; pass false only for a deliberate global audit. */
   usOnly?: boolean;
-  /** Dedicated additive-only workflows can suppress the database-wide calendar age sweep. Source
-   * scanning/lifecycle rules remain unchanged. Defaults to true for normal full scans. */
+  /** Opt-IN, not opt-out: the database-wide calendar age sweep (runAgeBasedSweep — see
+   * src/lib/scan/lifecycleMaintenance.ts) never runs from runScan() unless this is explicitly
+   * `true`. A scan scoped to one or a few companies (`runScan([company])`, the "Scan now" button,
+   * a sample/verification run) must never mutate unrelated companies' lifecycle state as a side
+   * effect — that coupling caused a real incident (Discovery V2 Stage 5: a single-company scan
+   * archived/deleted thousands of jobs across 357+ unrelated companies). Global lifecycle
+   * maintenance is a separate, explicitly-invoked operation now — see runLifecycleMaintenance(). */
   runAgeSweep?: boolean;
 }
 
@@ -401,15 +406,16 @@ export async function runScan(companies: Company[], options: RunScanOptions = {}
     )
   );
 
-  // Age-based sweep runs once per runScan call, over every job in the database (not just the
-  // companies scanned this run, and not gated on any company's fetch having succeeded) — it's a
-  // calendar-time check ("how old is this job"), independent of scan results. Deliberately outside
-  // the per-company try/catch above: a fetch failure for one company must never block the sweep
-  // from running for everyone else's jobs.
+  // Opt-IN only (options.runAgeSweep === true, strictly): the age-based sweep is a database-wide
+  // calendar-time check over every job in the database — not just the companies scanned this run —
+  // so it must never run as a silent default side effect of a scan that only asked for one or a few
+  // companies. See RunScanOptions.runAgeSweep's own doc comment for why. Deliberately outside the
+  // per-company try/catch above when it does run: a fetch failure for one company must never block
+  // the sweep from running for everyone else's jobs.
   const ageSweep =
-    options.maxJobsPerCompany === undefined && options.runAgeSweep !== false
+    options.runAgeSweep === true
       ? runAgeBasedSweep()
-      : { archived: 0, deleted: [] };
+      : { archived: 0, archivedCompanyIds: [], deleted: [] };
   // The query layer (runAgeBasedSweep) only touches the DB — deleting a job's generated-output
   // directory is a filesystem side effect and stays here, same separation as markNotInterested's
   // API route caller. Best-effort: a missing/already-cleaned directory is not an error.
