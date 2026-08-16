@@ -173,6 +173,41 @@ export function getCompanyForOrganization(organizationId: number): Company | und
   ).get(organizationId) as Company | undefined;
 }
 
+/**
+ * Stage 7 — reverse identity lookups for external-hiring-signal company matching (see
+ * src/lib/externalSignals/companyMatch.ts). Both reuse the exact same normalizers the forward-write
+ * path (syncLegacyCompanyToOrganizationRegistry) already uses, so a domain/name that was written one
+ * way is always found the same way — no second normalization scheme.
+ */
+export function findCompanyIdByVerifiedDomain(domain: string): number | undefined {
+  const normalized = normalizeOrganizationDomain(domain);
+  if (!normalized) return undefined;
+  const row = getDb()
+    .prepare(
+      `SELECT c.id FROM companies c
+       JOIN organization_company_links l ON l.company_id = c.id
+       JOIN organization_domains d ON d.organization_id = l.organization_id
+       WHERE d.domain = ? AND d.identity_status = 'VERIFIED'
+       LIMIT 2`
+    )
+    .all(normalized) as { id: number }[];
+  return row.length === 1 ? row[0].id : undefined;
+}
+
+export function findCompanyIdsByAliasName(name: string): number[] {
+  const normalized = normalizeOrganizationAlias(name);
+  if (!normalized) return [];
+  const rows = getDb()
+    .prepare(
+      `SELECT DISTINCT c.id FROM companies c
+       JOIN organization_company_links l ON l.company_id = c.id
+       JOIN organization_aliases a ON a.organization_id = l.organization_id
+       WHERE a.alias_normalized = ?`
+    )
+    .all(normalized) as { id: number }[];
+  return rows.map((r) => r.id);
+}
+
 export function listOrganizations(input: { limit?: number; offset?: number } = {}): Organization[] {
   const limit = Math.max(1, Math.min(input.limit ?? 100, 1000));
   const offset = Math.max(0, input.offset ?? 0);

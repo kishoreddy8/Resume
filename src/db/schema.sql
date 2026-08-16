@@ -1257,3 +1257,75 @@ CREATE INDEX IF NOT EXISTS idx_ats_source_proposals_company
   ON ats_source_proposals(company_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ats_source_proposals_status
   ON ats_source_proposals(status, created_at DESC);
+
+-- Stage 7 — external hiring-signal observations (Google Jobs, Indeed, future sources). This table is
+-- a STAGING/EVIDENCE layer only: a row here is never itself an authoritative CareerOps job. It exists
+-- to answer "does external evidence suggest company X is hiring, and does CareerOps already reflect
+-- that?" — see src/lib/externalSignals/ for the full pipeline that reads/writes this table.
+--
+-- Deliberately NOT reusing organization_source_discovery_attempts (that table logs CareerOps' OWN
+-- discovery passes — pass_type/result_status against a company already being investigated) or
+-- ats_source_proposals (that table is a proposed SOURCE REPLACEMENT with its own approval lifecycle).
+-- An external listing is neither: it's raw third-party evidence about a job, most of which will never
+-- become a proposal or a CareerOps job at all. A dedicated table keeps that evidence's own lifecycle
+-- (dedup, TTL/expiry, agency/quality classification) from leaking into either existing table's schema
+-- or invariants.
+--
+-- resulting_job_id is set only for the rare, explicitly-bounded case where this observation was
+-- actually staged into `jobs` as a secondary-sourced row (source_type='google_jobs'/'indeed' — see
+-- src/lib/externalSignals/secondaryIngestion.ts). Most rows never reach that point; they stop at
+-- DISCOVERY_BEACON_ONLY (feeding the Discovery V2 bridge) or an earlier rejection decision.
+CREATE TABLE IF NOT EXISTS external_hiring_observations (
+  id INTEGER PRIMARY KEY,
+  source TEXT NOT NULL, -- 'google_jobs' | 'indeed' (future: 'linkedin' | 'dice' | ...)
+  provider_job_id TEXT, -- stable external listing ID, when the provider supplies one
+  -- Deterministic dedup key: provider_job_id when available, else a hash of
+  -- employer+title+location+listing_url. Computed once at normalization time, never recomputed —
+  -- see src/lib/externalSignals/normalize.ts's fingerprintFor().
+  fingerprint TEXT NOT NULL,
+  observed_employer_name TEXT NOT NULL,
+  observed_title TEXT NOT NULL,
+  observed_location TEXT,
+  observed_url TEXT NOT NULL,
+  direct_employer_url TEXT,
+  direct_apply_url TEXT,
+  employer_domain TEXT,
+  posted_at TEXT,
+  matched_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+  -- Strongest evidence tier that produced (or failed to produce) matched_company_id — see
+  -- src/lib/externalSignals/companyMatch.ts. 'DOMAIN' | 'ALIAS' | 'NAME' | 'AMBIGUOUS' | 'UNMATCHED'.
+  match_confidence TEXT NOT NULL DEFAULT 'UNMATCHED',
+  -- 'DIRECT_EMPLOYER' | 'STAFFING_AGENCY' | 'UNKNOWN_EMPLOYER_RELATIONSHIP' — see
+  -- src/lib/externalSignals/classify.ts. Conservative: uncertain cases stay UNKNOWN, never guessed.
+  employer_relationship TEXT NOT NULL DEFAULT 'UNKNOWN_EMPLOYER_RELATIONSHIP',
+  -- 'DIRECT_ATS' | 'GENERIC_EMPLOYER' | 'AGGREGATOR_ONLY' | 'UNKNOWN' — reuses
+  -- detectAtsFromUrlString (src/lib/ats/detect.ts), never a second detector.
+  url_classification TEXT NOT NULL DEFAULT 'UNKNOWN',
+  detected_ats_provider TEXT,
+  detected_ats_board_token TEXT,
+  -- NO_SIGNAL | EXTERNAL_HIRING_SIGNAL | DIRECT_ATS_SIGNAL | COVERAGE_MISMATCH | ALREADY_COVERED |
+  -- AGENCY_FILTERED | AMBIGUOUS | EXPIRED
+  signal_classification TEXT NOT NULL DEFAULT 'NO_SIGNAL',
+  -- OFFICIAL_EQUIVALENT_FOUND | SECONDARY_JOB_CANDIDATE | DUPLICATE_EXTERNAL | STAFFING_AGENCY |
+  -- AMBIGUOUS_EMPLOYER | NON_US | LOW_QUALITY | STALE | INVALID | DISCOVERY_BEACON_ONLY
+  decision TEXT NOT NULL DEFAULT 'DISCOVERY_BEACON_ONLY',
+  resulting_job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+  evidence_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ACTIVE', -- ACTIVE | EXPIRED | SUPERSEDED
+  first_observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Repeated sightings of the same listing refresh last_observed_at/expires_at in place rather than
+-- creating unlimited duplicate rows — see upsertExternalHiringObservation.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_external_hiring_observations_fingerprint
+  ON external_hiring_observations(source, fingerprint);
+CREATE INDEX IF NOT EXISTS idx_external_hiring_observations_company
+  ON external_hiring_observations(matched_company_id, decision);
+CREATE INDEX IF NOT EXISTS idx_external_hiring_observations_signal
+  ON external_hiring_observations(signal_classification, status);
+CREATE INDEX IF NOT EXISTS idx_external_hiring_observations_expiry
+  ON external_hiring_observations(status, expires_at);

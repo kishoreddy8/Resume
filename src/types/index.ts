@@ -1,4 +1,10 @@
-export type SourceType = "greenhouse" | "ashby" | "lever" | "workday" | "smartrecruiters" | "adp_wfn" | "adp_rm" | "eightfold" | "cornerstone" | "avature" | "paylocity" | "icims" | "ukg_pro" | "bamboohr" | "oracle_recruiting_cloud" | "workable" | "rippling" | "paycom" | "jazzhr" | "jobvite" | "breezy" | "teamtailor" | "applicantpro" | "pinpoint" | "clearcompany" | "personio" | "applicantstack" | "comeet" | "cats" | "gohire" | "newton" | "silkroad" | "jobdiva" | "taleo" | "phenom" | "successfactors" | "career_link";
+// "google_jobs" and "indeed" are Stage 7 EXTERNAL SECONDARY sources only — never a valid
+// companies.source_type (no official connector, never scan-eligible, never returned by
+// listScanReadyCompanies' hardcoded provider allowlist). They exist solely so a secondary-sourced
+// jobs row can carry its own honest, permanent dedupe_key identity via the existing
+// dedupeKeyForAts(sourceType, companyId, externalId) — see src/lib/externalSignals/ for the whole
+// external-hiring-signal subsystem that is the only writer of jobs rows with these two source types.
+export type SourceType = "greenhouse" | "ashby" | "lever" | "workday" | "smartrecruiters" | "adp_wfn" | "adp_rm" | "eightfold" | "cornerstone" | "avature" | "paylocity" | "icims" | "ukg_pro" | "bamboohr" | "oracle_recruiting_cloud" | "workable" | "rippling" | "paycom" | "jazzhr" | "jobvite" | "breezy" | "teamtailor" | "applicantpro" | "pinpoint" | "clearcompany" | "personio" | "applicantstack" | "comeet" | "cats" | "gohire" | "newton" | "silkroad" | "jobdiva" | "taleo" | "phenom" | "successfactors" | "career_link" | "google_jobs" | "indeed";
 
 /**
  * Company-level H1B sponsorship confidence, derived purely from historical DOL H1B/LCA filing data

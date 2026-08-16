@@ -41,4 +41,6 @@ export const PROVIDER_LABELS: Record<SourceType, string> = {
   cornerstone: "Cornerstone",
   avature: "Avature",
   career_link: "generic career page",
+  google_jobs: "Google Jobs (secondary source)",
+  indeed: "Indeed (secondary source)",
 };
