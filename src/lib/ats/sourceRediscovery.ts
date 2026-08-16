@@ -99,8 +99,11 @@ const CANONICAL_URL_BUILDERS: Partial<Record<SourceType, (token: string) => stri
 };
 
 /** Never throws — an unbuildable/malformed token (exactly the kind of thing invalid_config evidence
- *  already implies) just means no reconstructable URL, not a crash. */
-function reconstructCanonicalUrl(sourceType: SourceType, token: string): string | null {
+ *  already implies) just means no reconstructable URL, not a crash. Exported for reuse by
+ *  scripts/repair-known-stale-sources.ts, which needs the same "source_type+token -> canonical URL"
+ *  reconstruction to build a DiscoveryResult for recordDiscoveryResult — reusing this rather than
+ *  duplicating the 33-provider dispatch table a second time. */
+export function reconstructCanonicalUrl(sourceType: SourceType, token: string): string | null {
   const builder = CANONICAL_URL_BUILDERS[sourceType];
   if (!builder) return null;
   try {

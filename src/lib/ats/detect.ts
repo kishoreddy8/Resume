@@ -61,8 +61,28 @@ function detectGreenhouse(value: string): AtsDetection | null {
   };
 }
 
+// Workday site identifiers are plain slugs (alphanumeric, hyphens, underscores) in every real
+// tenant this codebase has seen — never containing a quote, angle bracket, or whitespace. Matches
+// the same character-class rigor every other provider's own token validation already applies (e.g.
+// greenhouse's /^[a-z0-9_-]+$/i), just expressed as an exclusion in the capture group itself so the
+// match terminates at the real URL/JSON/HTML boundary instead of continuing into whatever text
+// happens to follow it in the source markup.
+const WORKDAY_URL_RE = /([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com\/([^?#"'<>\s]*)/i;
+
+/**
+ * Unlike every other detectX function in this file, this one previously matched raw regex against
+ * the input directly instead of parsing via new URL(decodeSavedUrl(value)) — meaning it neither
+ * decoded HTML entities nor terminated its "site" capture at a real URL/attribute boundary. A page
+ * whose Workday link had been HTML-escaped into inline JSON (e.g. a href="...gileadcareers&quot;,
+ * &quot;intendedAudience...") would have every one of those escaped characters swallowed straight
+ * into ats_board_token, since [^?#]* only stopped at a literal ? or #, never at &quot; or its
+ * decoded form. Decoding first (so an entity-encoded delimiter becomes its real character) and
+ * excluding quote/angle-bracket/whitespace from the site capture fixes both at once — a normal,
+ * uncontaminated Workday URL is unaffected either way (see detect.test.ts).
+ */
 function detectWorkday(url: string): AtsDetection | null {
-  const match = url.match(/([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com\/([^?#]*)/i);
+  const decoded = decodeSavedUrl(url);
+  const match = decoded.match(WORKDAY_URL_RE);
   if (!match) return null;
   const [, tenant, host, rest] = match;
   const segments = rest.split("/").filter(Boolean);
@@ -105,7 +125,18 @@ function decodeSavedUrl(value: string): string {
     .replace(/&amp;/gi, "&")
     .replace(/&#0*38;/gi, "&")
     .replace(/&#x0*26;/gi, "&")
-    .replace(/&#0*34;/gi, '"');
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*34;/gi, '"')
+    .replace(/&#x0*22;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&#0*39;/gi, "'")
+    .replace(/&#x0*27;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&#0*60;/gi, "<")
+    .replace(/&#x0*3c;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#0*62;/gi, ">")
+    .replace(/&#x0*3e;/gi, ">");
 }
 
 function detectAdpWorkforceNow(value: string): AtsDetection | null {

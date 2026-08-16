@@ -151,6 +151,31 @@ export function recordScanSuccess(id: number): void {
     .run({ id });
 }
 
+/**
+ * Discovery Parser Hardening + Known Stale Source Repair — clears a company's stale
+ * consecutive_failures/last_error_category bookkeeping after an EXPLICIT, verified source/token
+ * correction (see scripts/repair-known-stale-sources.ts). Deliberately sets connector_health to
+ * 'unknown', not 'healthy' — a corrected config is not the same claim as "a real scan just
+ * succeeded" (recordScanSuccess's own claim); 'unknown' honestly represents "no longer presumed
+ * broken, not yet re-verified" and lets the next real scheduled scan earn 'healthy' on its own
+ * merits. last_error_message is replaced with an explicit repair note (not preserved as history
+ * like recordScanPartial/recordScanSuccess do) because this is a deliberate corrective action, not
+ * a routine scan outcome — the OLD error text no longer describes anything true about this source.
+ */
+export function resetConnectorFailureState(id: number, repairNote: string): void {
+  getDb()
+    .prepare(
+      `UPDATE companies SET
+        consecutive_failures = 0,
+        connector_health = 'unknown',
+        last_error_category = NULL,
+        last_error_message = @repairNote,
+        updated_at = datetime('now')
+       WHERE id = @id`
+    )
+    .run({ id, repairNote });
+}
+
 /** A partial scan (job list fetched completely; some job description fetches permanently failed)
  *  is neither a clean success nor a failure — consecutive_failures is deliberately left untouched
  *  (see src/lib/scan/status.ts's determineScanStatus doc comment), while connector_health still
