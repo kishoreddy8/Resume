@@ -27,16 +27,41 @@
  * - Baker Construction Enterprises: redirect target (bcecareers.com) content confirmed live as
  *   "Baker Construction Enterprises Inc." branded, matching its own copyright notice.
  *
- * Explicitly NOT added, despite also producing a TENANT_IDENTITY_FAILURE in the same fleet
- * validation, for lack of corroborating evidence — do not add without independent re-verification:
+ * More entries (read-only audit, CAREEROPS — SUCCESSFACTORS PHASE 3, 2026-08-16) — three companies
+ * that had separately advanced past their original PAGINATION_COUNT_MISMATCH blocker (once
+ * allowStableStaleCount was wired in Phase 2) but then exposed a previously-hidden tenant-identity
+ * redirect underneath, each confirmed via the company's OWN official site explicitly designating
+ * the redirect target as its real application destination — the strongest evidence tier used in
+ * this file, not just a domain-registrable-root match:
+ * - Popular, Inc.: jobs.popular.com — registrable domain matches the stored career_page_url
+ *   (popular.com) exactly, AND the redirect target's own live content confirms "© 2026 Popular, Inc."
+ * - Talis Clinical, LLC: careers.getinge.com — Talis Clinical is a Getinge-supported entity
+ *   (confirmed via its own site's Getinge-domain support contact), and Talis Clinical's own official
+ *   website explicitly links its "Opportunities"/careers section directly to careers.getinge.com as
+ *   its designated job application system. The SuccessFactors tenant's own company identifier
+ *   ("GetingeProd") is consistent with this being Getinge's shared, consolidated HR platform.
+ * - Perdue AgriBusiness LLC: jobs.perduecareers.com — Perdue AgriBusiness's own official careers
+ *   page explicitly links to perduecareers.com with a search URL specifically scoped to "perdue
+ *   agribusiness" (not merely the generic Perdue Farms brand), confirming the shared family portal
+ *   is genuinely authorized for and scoped to this exact company.
+ *
+ * Explicitly NOT added, for lack of (or contradicting) corroborating evidence — do not add without
+ * independent re-verification:
  * - Genfare (redirects to careers.spx.com) — SPX Technologies' own careers page lists its known
  *   subsidiaries (Patterson Kelley, Weil-McLain, Cues Inc., Marley MEP, Williamson-Thermoflo) and
  *   does not mention Genfare anywhere.
  * - Precision Planting (redirects to careers.agcocorp.com) — AGCO's own careers page (brands: Fendt,
  *   Massey Ferguson, PTx, Valtra) does not mention Precision Planting anywhere.
- * - Tellus Products (redirects to careers.fcc-asrgroup.com) — that domain belongs to ASR Group /
- *   Florida Crystals Corporation, an unrelated sugar-refining company; no mention of Tellus Products
- *   at all. Worth flagging as a potential misconfiguration, not just an unverified case.
+ *
+ * NOT added despite strong evidence — investigation only, out of this file's scope for now:
+ * - Tellus Products (redirects to careers.fcc-asrgroup.com) — Phase 2 flagged this as an apparently
+ *   unrelated sugar-refining company. Phase 3 investigation found the opposite: Tellus Products is
+ *   genuinely, publicly owned by ASR Group (it upcycles sugarcane-fiber byproduct into compostable
+ *   tableware), and ASR Group's own official site explicitly lists "Tellus Products" as one of its
+ *   ten companies (main navigation, dedicated logo, subsidiary footer). This is a real corporate
+ *   relationship, not a misconfiguration — but it was investigated, not verified-for-trust, in this
+ *   pass; see CAREEROPS — SUCCESSFACTORS PHASE 3's final report for the full evidence trail before
+ *   adding it here.
  */
 export const SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS: Readonly<Record<string, string>> = {
   "career8.successfactors.com|S003808746P": "jobs.nscorp.com",
@@ -48,4 +73,7 @@ export const SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS: Readonly<Record<string, string
   "career4.successfactors.com|carestream": "careers.carestream.com",
   "career8.successfactors.com|holtecinte": "holtec.jobs.hr.cloud.sap",
   "career8.successfactors.com|bcci": "bcecareers.com",
+  "career4.successfactors.com|Popularinc": "jobs.popular.com",
+  "career5.successfactors.eu|GetingeProd": "careers.getinge.com",
+  "career4.successfactors.com|PerdueFarms": "jobs.perduecareers.com",
 };
