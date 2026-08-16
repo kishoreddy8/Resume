@@ -163,6 +163,20 @@ test("18. isolated per-job warnings never reach connector_health — a company w
   assert.equal(assessment.state, "HEALTHY");
 });
 
+test("18b. Connector Reliability Final Hardening — a company degraded by an all-jobs-description-failure PARTIAL scan (connector_health='degraded', last_error_category=null, consecutive_failures=0) reads RECOVERING, never DOWN", () => {
+  // This is exactly recordScanPartial's signature (companies.ts) — no fetch ever threw, so there is
+  // no category-driven failure and no recovery/rediscovery budget consumed. Discovered via this
+  // stage's own production reliability scorecard: dozens of real companies with this exact
+  // combination were being misread as "recovery attempts exhausted" DOWN by the generic
+  // last_error_category-defaults-to-'unknown' fallback, even though nothing was ever attempted.
+  const created = makeCompany();
+  getDb().prepare(`UPDATE companies SET connector_health = 'degraded', consecutive_failures = 0, last_error_category = NULL WHERE id = ?`).run(created.id);
+  const company = getCompany(created.id)!;
+  const assessment = deriveReliabilityState({ company, hasPendingProposal: false });
+  assert.equal(assessment.state, "RECOVERING");
+  assert.notEqual(assessment.state, "DOWN");
+});
+
 // ---------------------------------------------------------------------------------------------
 // Phase 4 — bounded retry (reusing, not re-testing, retry.ts's own exhaustive suite)
 // ---------------------------------------------------------------------------------------------

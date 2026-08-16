@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { degradeMissingDescription } from "@/lib/ats/jobContentFailure";
 import { extractSalaryText } from "@/lib/extractSalary";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry } from "@/lib/scan/retry";
@@ -167,19 +168,25 @@ function parsePostedAt(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function parseDetail(payload: unknown, listing: JobDivaListing): NormalizedJob {
-  if (!payload || typeof payload !== "object") throw new Error(`JobDiva job ${listing.externalId} has no detail object`);
+// Returns null (never throws) for a per-job CONTENT gap — a malformed/empty detail payload or a
+// missing description — so the caller can degrade gracefully (see jobContentFailure.ts) instead of
+// aborting the whole company scan. An IDENTITY mismatch (wrong job ID/title returned for the
+// requested detail) stays a real throw: that's a more serious signal than one job's content being
+// incomplete, and worth surfacing as a genuine connector problem.
+function parseDetail(payload: unknown, listing: JobDivaListing): NormalizedJob | null {
+  if (!payload || typeof payload !== "object") return null;
   const job = (payload as Record<string, unknown>).job;
-  if (!job || typeof job !== "object") throw new Error(`JobDiva job ${listing.externalId} has no exact job payload`);
+  if (!job || typeof job !== "object") return null;
   const raw = job as Record<string, unknown>;
   const id = typeof raw.id === "number" ? raw.id : Number(raw.id);
   const title = textValue(raw.title) ?? "";
-  const descriptionHtml = textValue(raw.jobDescription) ?? "";
-  if (String(id) !== listing.externalId || title !== listing.title || !descriptionHtml) {
-    throw new Error(`JobDiva job ${listing.externalId} has mismatched identity/title or no full description`);
+  if (String(id) !== listing.externalId || title !== listing.title) {
+    throw new Error(`JobDiva job ${listing.externalId} has mismatched identity/title`);
   }
+  const descriptionHtml = textValue(raw.jobDescription) ?? "";
+  if (!descriptionHtml) return null;
   const descriptionText = stripHtml(decodeHtmlEntities(descriptionHtml));
-  if (!descriptionText) throw new Error(`JobDiva job ${listing.externalId} has an empty description`);
+  if (!descriptionText) return null;
   const employmentType = textValue(raw.positionType);
   const payRate = textValue(raw.payRate);
   const workingRemote = typeof raw.workingRemote === "number" ? raw.workingRemote : Number(raw.workingRemote ?? 0);
@@ -259,10 +266,13 @@ export async function fetchJobDivaJobs(tokenValue: string, options: FetchJobDiva
       }, retryOptions);
     } catch (error) {
       if (error && typeof error === "object" && "statusCode" in error && error.statusCode === 404) {
-        throw new Error(`JobDiva listing/detail snapshot drift for job ${listing.externalId}; refusing authoritative ingestion`);
+        // The job disappeared between the listing and detail fetch — a per-job timing/content gap
+        // (common on high-churn boards), not a board-level failure; degrade gracefully instead of
+        // aborting the whole company scan (see jobContentFailure.ts).
+        return degradeMissingDescription(job);
       }
       throw error;
     }
-    return parseDetail(await response.json(), listing);
+    return parseDetail(await response.json(), listing) ?? degradeMissingDescription(job);
   })));
 }

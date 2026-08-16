@@ -82,6 +82,25 @@ export function deriveReliabilityState(
     };
   }
 
+  // A 'degraded' connector_health with NO error category and NO consecutive_failures is exactly
+  // recordScanPartial's signature (companies.ts) — a scan that fetched successfully but every
+  // discovered job's description came back missing/unusable (scan.ts's
+  // hasCompleteDescriptionFailure — see Connector Reliability Final Hardening's own per-job
+  // resilience fix, which makes this the only way a description problem still reaches
+  // connector_health at all). No fetch ever threw, so there's no category-driven failure and no
+  // recovery/rediscovery budget was ever consumed — this is a content-quality signal, not a broken
+  // connector, and belongs in RECOVERING, never DOWN. Checked before the generic category fallback
+  // below so a genuinely null category is never silently treated as the non-rediscovery-eligible
+  // "unknown" category (which — correctly, for an ACTUAL thrown-but-uncategorized failure — reads
+  // DOWN immediately, a very different situation from this one).
+  if (company.connector_health === "degraded" && company.last_error_category === null && company.consecutive_failures === 0) {
+    return {
+      state: "RECOVERING",
+      reason: "Latest scan completed but every discovered job's description was missing or unusable — a content-quality issue expected to clear on a future scan, not a connector failure.",
+      isHealthyEmpty: false,
+    };
+  }
+
   // connector_health is 'degraded' or 'down' from here on — a genuine, persisted scan problem (see
   // computeConnectorHealth / recordScanPartial / recordScanFailure; isolated per-job warnings never
   // reach connector_health at all, so every branch below is reasoning about a REAL connector issue).

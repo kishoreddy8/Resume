@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 import { extractSalaryText } from "@/lib/extractSalary";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { degradeMissingDescription } from "@/lib/ats/jobContentFailure";
 import { classifyJobLocation } from "@/lib/jobLocationScope";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
@@ -179,7 +180,7 @@ export async function fetchPaycomJobs(
       if (!detail || String(detail.jobId) !== listing.externalId) throw new Error(`Paycom job ${listing.externalId} detail identity did not match`);
       const descriptionHtml = [detail.description, detail.qualifications].map((value) => value?.trim())
         .filter((value): value is string => Boolean(value)).join("\n");
-      if (!descriptionHtml) throw new Error(`Paycom job ${listing.externalId} has no full description`);
+      if (!descriptionHtml) return degradeMissingDescription(listing);
       const descriptionText = stripHtml(descriptionHtml);
       const locations = [detail.location, ...(detail.secondaryLocations ?? [])].filter((value): value is string => Boolean(value?.trim()));
       return {

@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 import { extractSalaryText } from "@/lib/extractSalary";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { degradeMissingDescription } from "@/lib/ats/jobContentFailure";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
 import { stripHtml } from "@/lib/stripHtml";
@@ -98,7 +99,7 @@ export async function fetchBambooHrJobs(
       const response = await fetchWithRetry(detailUrl, { headers: { Accept: "application/json" } }, retryOptions);
       const body = await parseJsonOrThrow<BambooResponse<{ jobOpening?: BambooDetail }>>(response, detailUrl);
       const detail = body.result?.jobOpening;
-      if (!detail?.description?.trim()) throw new Error(`BambooHR job ${listing.externalId} has no full description`);
+      if (!detail?.description?.trim()) return degradeMissingDescription(listing);
       const descriptionHtml = detail.description;
       const descriptionText = stripHtml(descriptionHtml);
       return {

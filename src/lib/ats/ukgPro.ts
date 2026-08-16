@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 import { extractSalaryText } from "@/lib/extractSalary";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { degradeMissingDescription } from "@/lib/ats/jobContentFailure";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
 import { stripHtml } from "@/lib/stripHtml";
@@ -245,7 +246,7 @@ export async function fetchUkgProJobs(
       const detail = extractUkgAssignedObject<UkgOpportunityDetail>(
         await response.text(), "var opportunity = new US.Opportunity.CandidateOpportunityDetail("
       );
-      if (!detail.Description?.trim()) throw new Error(`UKG opportunity ${listing.externalId} has no full description`);
+      if (!detail.Description?.trim()) return degradeMissingDescription(listing);
       const descriptionHtml = detail.Description;
       const descriptionText = stripHtml(descriptionHtml);
       return {

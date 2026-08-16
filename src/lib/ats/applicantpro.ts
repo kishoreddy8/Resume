@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { degradeMissingDescription } from "@/lib/ats/jobContentFailure";
 import { extractSalaryText } from "@/lib/extractSalary";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry } from "@/lib/scan/retry";
@@ -147,7 +148,7 @@ export async function fetchApplicantProJobs(tenantValue: string, options: FetchA
         throw new Error(`ApplicantPro job ${listing.externalId} has a mismatched public detail identity`);
       }
       const descriptionHtml = detail.description?.trim() || detail.advertisingDescriptionHtml?.trim();
-      if (!descriptionHtml) throw new Error(`ApplicantPro job ${listing.externalId} has no full description`);
+      if (!descriptionHtml) return degradeMissingDescription(listing);
       const descriptionText = stripHtml(descriptionHtml);
       return {
         ...listing,

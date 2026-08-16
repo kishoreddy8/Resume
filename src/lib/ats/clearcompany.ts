@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { degradeMissingDescription } from "@/lib/ats/jobContentFailure";
 import { extractSalaryText } from "@/lib/extractSalary";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry } from "@/lib/scan/retry";
@@ -128,7 +129,7 @@ export async function fetchClearCompanyJobs(tenantValue: string, options: FetchC
         throw new Error(`ClearCompany job ${listing.externalId} has a mismatched detail identity`);
       }
       const descriptionHtml = extractNestedDiv(html, "jobDesc");
-      if (!descriptionHtml) throw new Error(`ClearCompany job ${listing.externalId} has no full description`);
+      if (!descriptionHtml) return degradeMissingDescription(listing);
       const descriptionText = stripHtml(descriptionHtml);
       return { ...listing, descriptionHtml, descriptionText, salaryText: extractSalaryText(descriptionText), raw: { listing: listing.raw } };
     }));

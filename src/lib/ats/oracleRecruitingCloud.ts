@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 import { extractSalaryText } from "@/lib/extractSalary";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { degradeMissingDescription } from "@/lib/ats/jobContentFailure";
 import { classifyJobLocation } from "@/lib/jobLocationScope";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
@@ -238,7 +239,9 @@ export async function fetchOracleRecruitingCloudJobs(
       const body = await parseJsonOrThrow<OracleCollection<OracleDetail>>(response, detailUrl);
       const detail = body.items?.[0];
       const descriptionHtml = detail ? fullDescription(detail) : "";
-      if (!detail || !descriptionHtml) throw new Error(`Oracle Recruiting Cloud job ${listing.externalId} has no full description`);
+      // A single job with no full description is a per-job content gap, not a connector failure —
+      // degrade gracefully (see jobContentFailure.ts) instead of aborting the whole company scan.
+      if (!detail || !descriptionHtml) return degradeMissingDescription(listing);
       const descriptionText = stripHtml(descriptionHtml);
       return {
         ...listing,

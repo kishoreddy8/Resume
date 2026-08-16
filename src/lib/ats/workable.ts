@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 import { extractSalaryText } from "@/lib/extractSalary";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { degradeMissingDescription } from "@/lib/ats/jobContentFailure";
 import { classifyJobLocation } from "@/lib/jobLocationScope";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
@@ -182,7 +183,7 @@ export async function fetchWorkableJobs(
       const response = await fetchWithRetry(detailUrl, { headers: { Accept: "application/json" } }, retryOptions);
       const detail = await parseJsonOrThrow<WorkableDetail>(response, detailUrl);
       const descriptionHtml = fullDescription(detail);
-      if (!descriptionHtml) throw new Error(`Workable job ${listing.externalId} has no full description`);
+      if (!descriptionHtml) return degradeMissingDescription(listing);
       const descriptionText = stripHtml(descriptionHtml);
       return {
         ...listing,

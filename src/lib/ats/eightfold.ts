@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { degradeMissingDescription } from "@/lib/ats/jobContentFailure";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry, parseJsonOrThrow } from "@/lib/scan/retry";
 import { decodeHtmlEntities, stripHtml } from "@/lib/stripHtml";
@@ -68,7 +69,7 @@ function detailJob(payload: EightfoldPosition, listing: NormalizedJob, identity:
   if (externalId !== listing.externalId || title !== listing.title || canonical.hostname.toLowerCase() !== identity.host
     || !canonical.pathname.endsWith(`/careers/job/${externalId}`)) throw new Error(`Eightfold job ${listing.externalId} has mismatched detail identity`);
   const descriptionHtml = payload.job_description?.trim() || ""; const descriptionText = stripHtml(descriptionHtml);
-  if (!descriptionText) throw new Error(`Eightfold job ${externalId} has no full description`);
+  if (!descriptionText) return degradeMissingDescription(listing);
   return { ...listing, location: location(payload) || listing.location, department: payload.department?.trim() || listing.department,
     url: `${origin}/careers/job/${externalId}`, descriptionHtml, descriptionText,
     workplaceType: payload.work_location_option?.trim() || listing.workplaceType,

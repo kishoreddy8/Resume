@@ -54,6 +54,11 @@ test("Phase 2/3 entries remain unchanged after the Phase 4 addition", () => {
   assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS["career4.successfactors.com|PerdueFarms"], "jobs.perduecareers.com");
 });
 
-test("Phase 4: the trust map has exactly the expected number of entries (12 from Phase 2/3 + 1 from Phase 4)", () => {
-  assert.equal(Object.keys(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS).length, 13);
+test("Connector Reliability Final Hardening: LEAR CORPORATION's exact token resolves to its verified (TLS-certificate-confirmed) custom host", () => {
+  const token = normalizeSuccessFactorsToken("career5.successfactors.eu|learcorporP2");
+  assert.equal(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS[token], "jobs.lear.com");
+});
+
+test("the trust map has exactly the expected number of entries (13 from Phase 2/3/4 + 1 for LEAR CORPORATION)", () => {
+  assert.equal(Object.keys(SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS).length, 14);
 });

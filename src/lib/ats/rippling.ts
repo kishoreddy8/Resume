@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 import { extractSalaryText } from "@/lib/extractSalary";
 import { filterJobsToUs, type LocationFilterOptions } from "@/lib/ats/locationFilter";
+import { degradeMissingDescription } from "@/lib/ats/jobContentFailure";
 import { classifyJobLocation } from "@/lib/jobLocationScope";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import { fetchWithRetry } from "@/lib/scan/retry";
@@ -197,7 +198,7 @@ export async function fetchRipplingJobs(
       if (!detail || detail.uuid !== listing.externalId) throw new Error(`Rippling job ${listing.externalId} detail identity did not match`);
       const descriptionHtml = Object.values(detail.description ?? {}).map((value) => value?.trim())
         .filter((value): value is string => Boolean(value)).join("\n");
-      if (!descriptionHtml) throw new Error(`Rippling job ${listing.externalId} has no full description`);
+      if (!descriptionHtml) return degradeMissingDescription(listing);
       const descriptionText = stripHtml(descriptionHtml);
       return {
         ...listing,

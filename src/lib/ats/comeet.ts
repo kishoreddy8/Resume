@@ -54,16 +54,20 @@ function parseBoard(html: string, origin: string, slug: string, companyUid: stri
     seen.add(id);
     const descriptionHtml = details.map((detail) => `<h3>${detail.name ?? "Details"}</h3>${detail.value ?? ""}`).join("\n");
     const descriptionText = stripHtml(descriptionHtml);
-    if (!descriptionText) throw new Error(`Comeet position ${id} has no full description`);
     const location = position.location;
     const countryCode = location?.country?.trim();
     const country = countryCode && /^[A-Z]{2}$/.test(countryCode)
       ? new Intl.DisplayNames(["en"], { type: "region" }).of(countryCode) ?? countryCode
       : countryCode;
     const locationText = [location?.city, location?.state, country, location?.postal_code].filter(Boolean).join(", ") || (location?.is_remote ? "Remote" : null);
+    // A single position with no full description is a per-job content gap, not a board failure —
+    // keep it (with a blank description scan.ts's own descriptionFailures counting expects) rather
+    // than aborting the whole board (see jobContentFailure.ts).
     return { externalId: id, title: position.name.trim(), location: locationText, department: position.department?.trim() || null,
-      url: url.href, descriptionHtml, descriptionText, employmentType: position.employment_type ?? null,
-      workplaceType: position.workplace_type ?? (location?.is_remote ? "Remote" : null), salaryText: extractSalaryText(descriptionText),
+      url: url.href, descriptionHtml: descriptionText ? descriptionHtml : null, descriptionText,
+      employmentType: position.employment_type ?? null,
+      workplaceType: position.workplace_type ?? (location?.is_remote ? "Remote" : null),
+      salaryText: descriptionText ? extractSalaryText(descriptionText) : null,
       postedAt: position.time_updated ?? null, raw: position };
   });
 }

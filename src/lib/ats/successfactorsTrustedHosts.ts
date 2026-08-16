@@ -57,6 +57,20 @@
  *   "ASR Group Job Applicants" / "FCC Job Applicants" legal references) — the same
  *   VERIFIED_PARENT_ORGANIZATION standard used for Talis Clinical and Perdue AgriBusiness.
  *
+ * One more entry (Connector Reliability Final Hardening, read-only trust review) — LEAR
+ * CORPORATION, the strongest evidence tier of any entry in this file:
+ * - LEAR CORPORATION: jobs.lear.com — three independent signals, not just a registrable-domain
+ *   match. (1) The redirect target's OWN TLS certificate Subject is issued directly to
+ *   "O=Lear Corporation, L=Southfield, ST=Michigan" — Southfield, MI is LEAR Corporation's real,
+ *   independently-verifiable headquarters. (2) The exact hostname (not just registrable domain)
+ *   byte-for-byte matches this company's own independently-stored career_page_url
+ *   ("https://jobs.lear.com/go"), populated by discovery before any SuccessFactors-specific code
+ *   existed. (3) jobs.lear.com's own page content embeds the literal string "learcorporP" — the
+ *   same SuccessFactors tenant identifier as this exact ats_board_token
+ *   ("career5.successfactors.eu|learcorporP2") — confirming it's genuinely LEAR's own branded
+ *   front end for the SAME backend tenant, not a coincidental or unrelated target. No further
+ *   redirect beyond jobs.lear.com was observed (confirmed via a full redirect-chain fetch).
+ *
  * Explicitly NOT added, for lack of (or contradicting) corroborating evidence — do not add without
  * independent re-verification:
  * - Genfare (redirects to careers.spx.com) — SPX Technologies' own careers page lists its known
@@ -79,4 +93,5 @@ export const SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS: Readonly<Record<string, string
   "career5.successfactors.eu|GetingeProd": "careers.getinge.com",
   "career4.successfactors.com|PerdueFarms": "jobs.perduecareers.com",
   "career4.successfactors.com|634633P": "careers.fcc-asrgroup.com",
+  "career5.successfactors.eu|learcorporP2": "jobs.lear.com",
 };

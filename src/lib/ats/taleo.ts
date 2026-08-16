@@ -121,9 +121,12 @@ function parseJavascriptStringArray(source: string): string[] {
   return values;
 }
 
-function decodeTaleoHtml(value: string): string {
+// Returns null (rather than throwing) on an undecodable section — a single malformed description
+// section is a per-job content gap, not a board failure; see this file's own parseDetail, which
+// treats "every section failed to decode" the same way it treats "genuinely empty description."
+function decodeTaleoHtml(value: string): string | null {
   const encoded = value.replace(/^!\*!/, "");
-  try { return decodeURIComponent(encoded); } catch { throw new Error("Taleo detail description encoding is invalid"); }
+  try { return decodeURIComponent(encoded); } catch { return null; }
 }
 
 function parseDetail(html: string, listing: TaleoListing): NormalizedJob {
@@ -138,13 +141,20 @@ function parseDetail(html: string, listing: TaleoListing): NormalizedJob {
   if (jobId !== listing.externalId || title !== listing.title || contestNo !== listing.contestNo) {
     throw new Error(`Taleo job ${listing.externalId} has mismatched job/title/contest identity`);
   }
-  const sections = [values[11], values[13]].filter((value): value is string => Boolean(value)).map(decodeTaleoHtml);
+  const sections = [values[11], values[13]]
+    .filter((value): value is string => Boolean(value))
+    .map(decodeTaleoHtml)
+    .filter((value): value is string => value !== null);
   const descriptionHtml = sections.join("\n");
-  const descriptionText = stripHtml(decodeHtmlEntities(descriptionHtml));
-  if (!descriptionText) throw new Error(`Taleo job ${listing.externalId} has an empty full description`);
+  const descriptionText = descriptionHtml ? stripHtml(decodeHtmlEntities(descriptionHtml)) : "";
+  // A missing/undecodable description is a per-job content gap, not a board failure — return the
+  // job with a blank description (scan.ts's own descriptionFailures counting expects this) instead
+  // of aborting the whole company scan over one posting's content.
   return { externalId: listing.externalId, title, location: listing.location, department: null, url: listing.url,
-    descriptionHtml, descriptionText, employmentType: null, workplaceType: /\bremote\b/i.test(listing.location) ? "Remote" : null,
-    salaryText: extractSalaryText(descriptionText), postedAt: null, raw: { listing: listing.raw, contestNo: listing.contestNo } };
+    descriptionHtml: descriptionText ? descriptionHtml : null, descriptionText, employmentType: null,
+    workplaceType: /\bremote\b/i.test(listing.location) ? "Remote" : null,
+    salaryText: descriptionText ? extractSalaryText(descriptionText) : null,
+    postedAt: null, raw: { listing: listing.raw, contestNo: listing.contestNo } };
 }
 
 async function fetchPage(bootstrap: TaleoBootstrap, origin: string, page: number, retryOptions: FetchWithRetryOptions): Promise<TaleoPage> {
