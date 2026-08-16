@@ -27,6 +27,44 @@ export function listScanReadyCompanies(): Company[] {
     .all() as Company[];
 }
 
+/**
+ * Discovery V2, Stage shadow — candidates worth spending a browser render on: UNRESOLVED and/or
+ * GENERIC_SUPPORTED companies with zero currently-active jobs (a company already yielding real jobs
+ * via generic scraping has less to gain here). Priority order matches the task's stated design:
+ * (1) has a career_page_url to seed from at all, (2) fewer active jobs first, (3) UNRESOLVED before
+ * GENERIC_SUPPORTED (a total miss is worth more than a partial one), (4) older/never-attempted
+ * discovery first. Bounded and deterministic — no full-table scan of the ~2,700 candidate population,
+ * just an indexed join + LIMIT.
+ */
+export function listDiscoveryV2Candidates(
+  scope: "unresolved" | "generic" | "both",
+  limit = 5
+): Company[] {
+  const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), 25));
+  const statuses = scope === "unresolved" ? ["UNRESOLVED"] : scope === "generic" ? ["GENERIC_SUPPORTED"] : ["UNRESOLVED", "GENERIC_SUPPORTED"];
+  const placeholders = statuses.map(() => "?").join(", ");
+  return getDb()
+    .prepare(
+      `SELECT c.* FROM companies c
+       LEFT JOIN (
+         SELECT company_id, COUNT(*) AS job_count FROM jobs
+         WHERE is_active = 1 AND is_archived = 0
+         GROUP BY company_id
+       ) jc ON jc.company_id = c.id
+       WHERE c.is_active = 1
+         AND c.resolution_status IN (${placeholders})
+         AND COALESCE(jc.job_count, 0) = 0
+       ORDER BY
+         (CASE WHEN c.career_page_url IS NOT NULL THEN 0 ELSE 1 END),
+         COALESCE(jc.job_count, 0),
+         (CASE WHEN c.resolution_status = 'UNRESOLVED' THEN 0 ELSE 1 END),
+         COALESCE(c.discovery_attempted_at, ''),
+         c.id
+       LIMIT ?`
+    )
+    .all(...statuses, boundedLimit) as Company[];
+}
+
 export interface RediscoveryEligibleCompany {
   company: Company;
   jobSourceId: number;

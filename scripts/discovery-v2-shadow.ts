@@ -1,0 +1,88 @@
+import pLimit from "p-limit";
+import { listDiscoveryV2Candidates } from "../src/db/queries/organizationRegistry";
+import { discoverCompanySourceV2 } from "../src/lib/ats/discoveryV2";
+
+/**
+ * Discovery V2 — manual, bounded, SHADOW-ONLY runner.
+ *
+ * Renders a real headless browser page for each candidate company (UNRESOLVED/GENERIC_SUPPORTED,
+ * zero active jobs — see listDiscoveryV2Candidates's own doc comment for the exact priority order),
+ * collects every ATS signal from static HTML, network requests, iframes, and the redirect chain,
+ * deduplicates into candidates, validates each with a real bounded sample fetch, and prints a
+ * structured report.
+ *
+ * SHADOW MODE: this script NEVER writes to companies, job_sources, jobs, or any other production
+ * table. It is a pure read (network I/O to render pages and validate candidates aside). Nothing it
+ * finds is applied automatically.
+ *
+ * NOT wired into the scheduler — deliberately manual, human-triggered, small batches.
+ *
+ * Usage: npm run discovery-v2-shadow -- --scope unresolved --limit 5
+ *        npm run discovery-v2-shadow -- --scope both --limit 10
+ */
+async function main() {
+  const scopeIndex = process.argv.indexOf("--scope");
+  const scopeArg = scopeIndex >= 0 ? process.argv[scopeIndex + 1] : "unresolved";
+  if (scopeArg !== "unresolved" && scopeArg !== "generic" && scopeArg !== "both") {
+    throw new Error("--scope must be one of: unresolved, generic, both");
+  }
+
+  const limitIndex = process.argv.indexOf("--limit");
+  const requestedLimit = limitIndex >= 0 ? Number.parseInt(process.argv[limitIndex + 1] ?? "", 10) : 5;
+  if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 25) {
+    throw new Error("--limit must be an integer from 1 to 25 (default 5) — this is a manual, bounded shadow tool, not a bulk scan");
+  }
+
+  const candidates = listDiscoveryV2Candidates(scopeArg, requestedLimit);
+  if (candidates.length === 0) {
+    console.log(`No ${scopeArg} zero-job companies currently match Discovery V2's eligibility criteria.`);
+    return;
+  }
+
+  console.log(`Discovery V2 shadow run — ${candidates.length} compan${candidates.length === 1 ? "y" : "ies"} (scope=${scopeArg}, read-only, no mutation):\n`);
+
+  const limit = pLimit(3); // bounded browser concurrency, per Phase 10's explicit 2-3 max
+  const results = await Promise.all(
+    candidates.map((company) =>
+      limit(async () => {
+        const seedUrl = company.career_page_url ?? company.discovered_jobs_url;
+        if (!seedUrl) {
+          return { company, result: null as Awaited<ReturnType<typeof discoverCompanySourceV2>> | null };
+        }
+        const result = await discoverCompanySourceV2(company, seedUrl);
+        return { company, result };
+      })
+    )
+  );
+
+  for (const { company, result } of results) {
+    console.log(`── ${company.name} (id ${company.id}) ──`);
+    console.log(`  current status: ${company.resolution_status}`);
+    console.log(`  career page: ${company.career_page_url ?? "(none on file)"}`);
+    if (!result) {
+      console.log(`  SKIPPED: no career_page_url or discovered_jobs_url to seed from\n`);
+      continue;
+    }
+    console.log(`  final URL: ${result.finalUrl ?? "(navigation did not complete)"}`);
+    console.log(`  outcome: ${result.outcome} — ${result.reason}`);
+    console.log(`  observed requests: ${result.observedRequestCount}, duration: ${result.durationMs}ms`);
+    if (result.candidates.length === 0) {
+      console.log(`  candidates: none`);
+    }
+    for (const candidate of result.candidates) {
+      console.log(`  candidate: ${candidate.provider} / ${candidate.boardToken}`);
+      console.log(`    evidence: ${candidate.evidenceTypes.join(", ")}`);
+      console.log(`    validation: ${candidate.validationStatus} (jobsSeen=${candidate.jobsSeen})`);
+      console.log(`    confidence: ${candidate.confidence}`);
+      console.log(`    recommendation: ${candidate.recommendation}`);
+    }
+    console.log("");
+  }
+
+  console.log("Shadow run complete. No source, job_sources, job, or lifecycle data was modified.");
+}
+
+main().catch((error) => {
+  console.error("Discovery V2 shadow run failed:", error);
+  process.exit(1);
+});

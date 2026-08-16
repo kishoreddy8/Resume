@@ -48,6 +48,16 @@ function detectGreenhouse(value: string): AtsDetection | null {
   } catch {
     return null;
   }
+  // The real public JSON API host (see greenhouse.ts's own fetchGreenhouseJobs: origin defaults to
+  // https://boards-api.greenhouse.io, path /v1/boards/{token}/jobs) — a React/XHR-driven career page
+  // calls THIS host directly, never the human-facing boards.greenhouse.io host, so network-request
+  // sniffing needs this recognized as its own shape, not a variant of the board-root path below.
+  if (/^boards-api\.greenhouse\.io$/i.test(url.hostname)) {
+    const apiMatch = url.pathname.match(/^\/v1\/boards\/([a-z0-9_-]+)\//i);
+    if (!apiMatch) return null;
+    const token = apiMatch[1];
+    return { sourceType: "greenhouse", atsBoardToken: token, canonicalSourceUrl: `https://job-boards.greenhouse.io/${token}` };
+  }
   if (!/^(?:boards|job-boards)\.greenhouse\.io$/i.test(url.hostname)) return null;
   const firstSegment = url.pathname.split("/").filter(Boolean)[0];
   const token = firstSegment === "embed" ? url.searchParams.get("for") : firstSegment;
@@ -87,6 +97,22 @@ function detectWorkday(url: string): AtsDetection | null {
   const [, tenant, host, rest] = match;
   const segments = rest.split("/").filter(Boolean);
   if (segments.length === 0) return null;
+
+  // CXS API shape: /wday/cxs/{tenant}/{site}(/...) — the real unauthenticated JSON API endpoint
+  // (see workday.ts's own cxsBaseUrl), distinct from the human-facing board root (/{site}) below. A
+  // React-driven career page's fetch()/XHR calls THIS shape directly; network-request sniffing
+  // (Discovery V2) needs it recognized as its own case, not misparsed as the board-root form (which
+  // would otherwise take "wday" itself as the site).
+  if (segments[0] === "wday" && segments[1] === "cxs" && segments.length >= 4) {
+    const cxsSite = segments[3];
+    if (!cxsSite) return null;
+    return {
+      sourceType: "workday",
+      atsBoardToken: encodeWorkdayToken({ tenant: tenant.toLowerCase(), host: host.toLowerCase(), site: cxsSite }),
+      canonicalSourceUrl: `https://${tenant.toLowerCase()}.${host.toLowerCase()}.myworkdayjobs.com/${cxsSite}`,
+    };
+  }
+
   const site = LOCALE_SEGMENT.test(segments[0]) ? segments[1] : segments[0];
   if (!site) return null;
   return {
@@ -102,6 +128,21 @@ function detectSmartRecruiters(value: string): AtsDetection | null {
     url = new URL(decodeSavedUrl(value));
   } catch {
     return null;
+  }
+  // The real public JSON API host (see smartrecruiters.ts's own fetchSmartRecruitersJobs: origin
+  // defaults to https://api.smartrecruiters.com, path /v1/companies/{token}/postings) — distinct
+  // from the human-facing jobs.smartrecruiters.com/careers.smartrecruiters.com host below, and the
+  // one a React-driven career page's fetch()/XHR call actually hits.
+  if (/^api\.smartrecruiters\.com$/i.test(url.hostname)) {
+    const apiMatch = url.pathname.match(/^\/v1\/companies\/([^/]+)\/postings/i);
+    if (!apiMatch) return null;
+    let apiToken: string;
+    try {
+      apiToken = normalizeSmartRecruitersToken(decodeURIComponent(apiMatch[1]));
+    } catch {
+      return null;
+    }
+    return { sourceType: "smartrecruiters", atsBoardToken: apiToken, canonicalSourceUrl: canonicalSmartRecruitersUrl(apiToken) };
   }
   if (!/^(?:jobs|careers)\.smartrecruiters\.com$/i.test(url.hostname)) return null;
   const segments = url.pathname.split("/").filter(Boolean);

@@ -96,3 +96,34 @@ test("a tenant that merely starts with the substring 'osv' but isn't the osv- pr
   assert.ok(result);
   assert.equal(result!.atsBoardToken, "osvaldo-corp|wd1|External");
 });
+
+// --- Discovery V2: real API-endpoint URL shapes (network-request sniffing) -----------------------
+// Network requests observed via Playwright hit each provider's actual JSON API host, which differs
+// from the human-facing board-root host every detectX function previously recognized exclusively.
+
+test("Workday CXS API URL (the real fetch()/XHR endpoint) is recognized distinctly from the board-root form", () => {
+  const result = detectAtsFromUrlString("https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/jobs");
+  assert.ok(result);
+  assert.equal(result!.sourceType, "workday");
+  assert.equal(result!.atsBoardToken, "acme|wd5|External", "must extract the real site (External) from the CXS path, not misparse 'wday' as the site");
+});
+
+test("Workday board-root URL (non-CXS) still resolves exactly as before the CXS-shape fix", () => {
+  const result = detectAtsFromUrlString("https://acme.wd5.myworkdayjobs.com/External");
+  assert.ok(result);
+  assert.equal(result!.atsBoardToken, "acme|wd5|External");
+});
+
+test("Greenhouse boards-api.greenhouse.io URL (the real JSON API host) is recognized", () => {
+  const result = detectAtsFromUrlString("https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true");
+  assert.ok(result);
+  assert.equal(result!.sourceType, "greenhouse");
+  assert.equal(result!.atsBoardToken, "acme");
+});
+
+test("SmartRecruiters api.smartrecruiters.com URL (the real JSON API host) is recognized", () => {
+  const result = detectAtsFromUrlString("https://api.smartrecruiters.com/v1/companies/acme/postings?offset=0");
+  assert.ok(result);
+  assert.equal(result!.sourceType, "smartrecruiters");
+  assert.equal(result!.atsBoardToken, "acme");
+});

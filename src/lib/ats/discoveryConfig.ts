@@ -46,3 +46,18 @@ export const BROWSER_PAGE_TIMEOUT_MS = 15_000;
  *  navigation + all inspection — enforced independently of the per-page timeout above, so a
  *  string of individually-fast-but-numerous operations still can't exceed this. */
 export const BROWSER_DISCOVERY_TIMEOUT_MS = 30_000;
+
+// --- Discovery V2: shadow-mode, multi-signal browser discovery (src/lib/ats/discoveryV2.ts) -----
+// Same bounded-by-design philosophy as Tier 3 above, applied to a richer per-page inspection (network
+// requests, iframes, redirect chain) rather than more pages/depth — V2 still only ever visits the
+// single seed page, never follows a link, and stays well within Tier 3's own per-page timeout.
+
+/** Cap on how many distinct request URLs one Discovery V2 attempt will retain from network-request
+ *  sniffing — bounds memory on a page that fires hundreds of analytics/asset requests; URLs beyond
+ *  this cap are still safety-checked (never bypass isUrlSafeForNavigation) but not stored/inspected
+ *  for ATS signatures once the cap is reached. */
+export const MAX_V2_OBSERVED_REQUESTS = 200;
+
+/** Cap on distinct top-frame navigation URLs recorded while following a client-side redirect chain
+ *  during one page load — protects against a pathological page that navigates itself in a loop. */
+export const MAX_V2_REDIRECT_CHAIN = 10;
