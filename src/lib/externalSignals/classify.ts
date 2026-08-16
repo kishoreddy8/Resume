@@ -1,6 +1,7 @@
 import { getCompany } from "@/db/queries/companies";
 import { normalizeOrganizationDomain } from "@/db/organizationRegistryCore";
 import { detectAtsFromUrlString } from "@/lib/ats/detect";
+import { CANONICAL_INGESTION_MAX_AGE_DAYS, parseAtsDate } from "@/lib/ats/jobFreshness";
 import { classifyJobLocation } from "@/lib/jobLocationScope";
 import type {
   CompanyMatchResult,
@@ -97,8 +98,6 @@ export interface CoverageState {
   resolutionStatus: string;
 }
 
-const STALE_DAYS = 30;
-
 /** Phase 8 — signal classification. COVERAGE_MISMATCH (inadequate CareerOps coverage + confident
  *  direct-employer evidence) is the priority-queue signal that feeds the Discovery V2 bridge. */
 export function classifySignal(
@@ -141,6 +140,13 @@ export function evaluateQualityGate(
 
   const staleness = evaluateStaleness(job.postedAt);
   if (staleness === "STALE") return "STALE";
+  // Phase 6: an age that cannot be established must never be silently treated as fresh — that
+  // would broaden eligibility beyond what the evidence supports. Unlike isJobFreshForIngestion's
+  // ATS-specific "missing/unparseable date -> fall back to discovery timestamp, eligible" rule
+  // (which is correct there because a fresh ATS scan finding the posting live IS itself fresh
+  // evidence), an external listing's unparseable date has no equivalent "we just saw it on the
+  // official board" guarantee — it stays evidence-only, never a secondary-job candidate.
+  if (staleness === "UNKNOWN") return "DISCOVERY_BEACON_ONLY";
 
   // Only a confident direct-employer relationship with resolvable ATS/generic-employer URL
   // evidence ever qualifies automatically — Phase 7's explicit rule. Everything else that got this
@@ -161,10 +167,17 @@ function isParseableUrl(url: string): boolean {
   }
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Reuses parseAtsDate (the same date parser the ATS ingestion pipeline uses — src/lib/ats/
+ *  jobFreshness.ts) and compares against the one canonical CANONICAL_INGESTION_MAX_AGE_DAYS
+ *  threshold, so external and ATS freshness policy can never diverge again. postedAt=null or
+ *  unparseable (e.g. Google Jobs' relative "2 days ago" text) is UNKNOWN, never FRESH — see
+ *  evaluateQualityGate's own comment for why that differs from the ATS-side fallback rule. */
 function evaluateStaleness(postedAt: string | null): "FRESH" | "STALE" | "UNKNOWN" {
   if (!postedAt) return "UNKNOWN";
-  const parsed = new Date(postedAt);
-  if (Number.isNaN(parsed.getTime())) return "UNKNOWN"; // e.g. Google Jobs' "2 days ago" relative text
-  const ageDays = (Date.now() - parsed.getTime()) / (24 * 60 * 60 * 1000);
-  return ageDays > STALE_DAYS ? "STALE" : "FRESH";
+  const parsed = parseAtsDate(postedAt);
+  if (!parsed) return "UNKNOWN";
+  const ageDays = Math.floor((Date.now() - parsed.getTime()) / DAY_MS);
+  return ageDays > CANONICAL_INGESTION_MAX_AGE_DAYS ? "STALE" : "FRESH";
 }

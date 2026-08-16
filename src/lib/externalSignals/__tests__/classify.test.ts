@@ -153,14 +153,14 @@ test("11b. a listing with no meaningful description fails the quality gate as LO
   assert.equal(evaluateQualityGate(job, match, "DIRECT_EMPLOYER", "DIRECT_ATS"), "LOW_QUALITY");
 });
 
-test("a fully-qualifying DIRECT_EMPLOYER + DIRECT_ATS listing passes the quality gate (returns null)", () => {
+test("a fully-qualifying DIRECT_EMPLOYER + DIRECT_ATS listing with a known-fresh posted date passes the quality gate (returns null)", () => {
   const match: CompanyMatchResult = { companyId: 1, confidence: "DOMAIN", reason: "test" };
-  const job = makeJob();
+  const job = makeJob({ postedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString() });
   assert.equal(evaluateQualityGate(job, match, "DIRECT_EMPLOYER", "DIRECT_ATS"), null);
 });
 
-test("an UNKNOWN employer relationship never passes the quality gate, even with otherwise-perfect evidence", () => {
+test("an UNKNOWN employer relationship never passes the quality gate, even with otherwise-perfect evidence (including a known-fresh date)", () => {
   const match: CompanyMatchResult = { companyId: 1, confidence: "ALIAS", reason: "test" };
-  const job = makeJob();
+  const job = makeJob({ postedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString() });
   assert.equal(evaluateQualityGate(job, match, "UNKNOWN_EMPLOYER_RELATIONSHIP", "DIRECT_ATS"), "DISCOVERY_BEACON_ONLY");
 });

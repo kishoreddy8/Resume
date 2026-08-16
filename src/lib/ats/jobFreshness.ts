@@ -8,6 +8,12 @@ import type {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** The single canonical ingestion freshness threshold — every pipeline that ingests jobs (ATS
+ *  adapters via isJobFreshForIngestion below, and the external-signals pipeline via
+ *  src/lib/externalSignals/classify.ts) must compare against this exact constant, never a locally
+ *  redefined number. Changing this changes freshness policy everywhere at once, which is the point. */
+export const CANONICAL_INGESTION_MAX_AGE_DAYS = 20;
+
 export interface FreshnessEvaluation {
   eligible: boolean;
   ageDays: number | null;
@@ -111,7 +117,7 @@ export function isJobFreshForIngestion(
   job: NormalizedJob,
   existingJob: { id: number } | undefined,
   sourceType?: SourceType,
-  maxAgeDays: number = 20,
+  maxAgeDays: number = CANONICAL_INGESTION_MAX_AGE_DAYS,
   now: Date = new Date()
 ): FreshnessEvaluation {
   const rawDate = job.postedAt !== null && job.postedAt !== undefined ? String(job.postedAt).trim() : null;
