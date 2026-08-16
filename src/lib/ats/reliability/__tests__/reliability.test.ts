@@ -27,6 +27,7 @@ let listRediscoveryEligibleCompanies: typeof import("@/db/queries/reliability").
 let runConnectorRecovery: typeof import("@/lib/ats/reliability/recoveryController").runConnectorRecovery;
 let computeDelayMs: typeof import("@/lib/scan/retry").computeDelayMs;
 let isRetryableCategory: typeof import("@/lib/scan/errors").isRetryableCategory;
+let categorizeThrownError: typeof import("@/lib/scan/errors").categorizeThrownError;
 let upsertJob: typeof import("@/db/queries/jobs").upsertJob;
 
 before(async () => {
@@ -40,7 +41,7 @@ before(async () => {
   ({ listRediscoveryEligibleCompanies } = await import("@/db/queries/reliability"));
   ({ runConnectorRecovery } = await import("@/lib/ats/reliability/recoveryController"));
   ({ computeDelayMs } = await import("@/lib/scan/retry"));
-  ({ isRetryableCategory } = await import("@/lib/scan/errors"));
+  ({ isRetryableCategory, categorizeThrownError } = await import("@/lib/scan/errors"));
   ({ upsertJob } = await import("@/db/queries/jobs"));
   getDb();
 });
@@ -454,4 +455,49 @@ test("25. the reliability module never references any paid-provider credential o
   );
   const combined = source.join("\n");
   assert.equal(/APIFY_API_TOKEN|apify|OPENAI_API_KEY|CLAUDE_API|paid/i.test(combined), false);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Connector Reliability Control Plane V1.1 — verifying the new real-production-evidence message
+// patterns (see errors.test.ts for the classification tests themselves) route correctly through
+// the UNCHANGED Reliability V1 state machine. No new state-machine logic is being tested here —
+// only that classification.ts/state.ts treat these newly-recognized categories exactly the way
+// they already treat every other network/parse_error/blocked failure.
+// ---------------------------------------------------------------------------------------------
+
+test("V1.1-15. the JobDiva pagination-consistency pattern (now 'network') does not trigger Discovery V2 rediscovery eligibility", () => {
+  const category = categorizeThrownError(new Error("JobDiva pagination shifted or returned an incomplete page"));
+  assert.equal(category, "network");
+  const company = withFailures(makeCompany(), category, 1);
+  const eligible = listRediscoveryEligibleCompanies(25, 6);
+  assert.equal(eligible.some((e) => e.company.id === company.id), false);
+});
+
+test("V1.1-16. the 'redirected to an untrusted host' pattern (now 'blocked') is rediscovery-eligible, matching the existing policy for blocked", () => {
+  const category = categorizeThrownError(new Error("SuccessFactors detail response redirected to an untrusted host (expected a, got b)"));
+  assert.equal(category, "blocked");
+  const company = withFailures(makeCompany({ source_type: "successfactors", ats_board_token: "t" }), category, 1);
+  const eligible = listRediscoveryEligibleCompanies(25, 6);
+  assert.equal(eligible.some((e) => e.company.id === company.id), true);
+});
+
+test("V1.1-17. the generic 'has no full description' pattern (now 'parse_error') is never rediscovery-eligible", () => {
+  const category = categorizeThrownError(new Error("Oracle Recruiting Cloud job 999 has no full description"));
+  assert.equal(category, "parse_error");
+  const company = withFailures(makeCompany({ source_type: "oracle_recruiting_cloud", ats_board_token: "t" }), category, 1);
+  const eligible = listRediscoveryEligibleCompanies(25, 6);
+  assert.equal(eligible.some((e) => e.company.id === company.id), false);
+});
+
+test("V1.1-19. a JobDiva-pattern company with a failure count at the exhaustion threshold reads DOWN, not RECOVERING, and 'unknown' is never assigned by the new patterns", () => {
+  const category = categorizeThrownError(new Error("JobDiva pagination shifted or returned an incomplete page"));
+  const company = withFailures(makeCompany(), category, 10);
+  const assessment = deriveReliabilityState({ company, hasPendingProposal: false });
+  assert.equal(assessment.state, "DOWN");
+  assert.notEqual(category, "unknown");
+});
+
+test("V1.1-genuine-unknown. a truly unrecognized failure message still correctly falls through to 'unknown' — the objective is honest classification, not zero unknowns", () => {
+  const category = categorizeThrownError(new Error("Something this test suite has never seen before and cannot explain"));
+  assert.equal(category, "unknown");
 });

@@ -64,6 +64,44 @@ export function categorizeHttpError(
   return "unknown";
 }
 
+// Connector Reliability Control Plane V1.1 — evidence-based generic message patterns for the
+// synchronous-throw fallback below. Every pattern here was found by reading real production
+// last_error_message values that had fallen through to "unknown" and tracing each one to its
+// actual throw site across the ATS adapters (see the V1.1 investigation report). Matched on
+// message CONTENT, never on provider name — these are shared conventions adapter authors reused
+// across many files, not one-off provider quirks, so a generic regex correctly classifies future
+// adapters that follow the same convention too.
+//
+//  - "has no full/exact description": the exact phrase 10 different adapters (BambooHR, Oracle
+//    Recruiting Cloud, ApplicantPro, Rippling, Paycom, ClearCompany, Workable, UKG, Eightfold,
+//    Comeet) throw when ONE job's detail response is missing its description content. Confirmed
+//    via a live, read-only reprobe (Oracle Recruiting Cloud, job 22367) that this is a genuine,
+//    persistent, reproducible per-job content gap — not a network blip — so parse_error (not
+//    retried aggressively, not rediscovery-eligible, escalates to DOWN if it never clears) is the
+//    correct category, not "unknown."
+//  - "description encoding is invalid" (Taleo): same class of content-validation failure,
+//    confirmed via the same kind of live reprobe (Unifirst Corporation) to be persistent/
+//    reproducible, not transient.
+//  - "pagination shifted"/"snapshot(s) disagreed/drift"/"traversal did not match"/"duplicate ...
+//    across pages": JobDiva's own defensive double-fetch consistency checks (see jobdiva.ts's
+//    fetchCompleteListings/fetchJobDivaJobs) failing because the provider's session-scoped,
+//    stateful pagination didn't hold still across two full traversals. Confirmed transient via a
+//    live reprobe (Kyyba, Inc.) succeeding immediately on retry — network (self-healing,
+//    retried/rescanned normally), never invalid_config (rediscovery would find the exact same
+//    board and hit the exact same transient inconsistency again).
+//  - "redirected to an untrusted host": a deliberate security refusal (see
+//    successfactorsTrustedHosts.ts's own doc comment) — the adapter reached the provider fine but
+//    correctly declined to trust an unreviewed redirect target. This is an access-restriction
+//    outcome, not a moved/broken board — blocked, matching the existing 401/403 grouping in
+//    categorizeHttpError above, never invalid_config (adding the target to the reviewed allowlist
+//    is a separate, explicit trust decision, not something rediscovery should attempt to bypass).
+//  - "Unsupported source_type": a company's own source_type doesn't match any known adapter — by
+//    definition a genuine configuration problem, not a network/content issue.
+const UNSUPPORTED_SOURCE_TYPE_PATTERN = /unsupported source_type/i;
+const CONTENT_VALIDATION_PATTERN = /has no (full|exact) description|description encoding is invalid/i;
+const TRANSIENT_CONSISTENCY_PATTERN = /pagination (shifted|is incomplete)|snapshots? (disagreed|drift)|traversal did not match|duplicate .* across pages/i;
+const UNTRUSTED_REDIRECT_PATTERN = /redirected to an? untrusted( external)? host/i;
+
 /**
  * Fallback for synchronous validation throws that never reach fetch at all — e.g.
  * "Missing Greenhouse board token" (src/lib/normalize.ts) or "Invalid Workday token ..."
@@ -72,6 +110,11 @@ export function categorizeHttpError(
  */
 export function categorizeThrownError(err: unknown): ErrorCategory {
   if (err instanceof ScanConnectorError) return err.category;
-  if (err instanceof Error && /^(missing|invalid)\b/i.test(err.message)) return "invalid_config";
+  if (!(err instanceof Error)) return "unknown";
+  if (/^(missing|invalid)\b/i.test(err.message)) return "invalid_config";
+  if (UNSUPPORTED_SOURCE_TYPE_PATTERN.test(err.message)) return "invalid_config";
+  if (UNTRUSTED_REDIRECT_PATTERN.test(err.message)) return "blocked";
+  if (TRANSIENT_CONSISTENCY_PATTERN.test(err.message)) return "network";
+  if (CONTENT_VALIDATION_PATTERN.test(err.message)) return "parse_error";
   return "unknown";
 }
