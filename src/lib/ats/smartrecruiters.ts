@@ -151,30 +151,54 @@ export async function fetchSmartRecruitersJobs(
   const limit = pLimit(Math.max(1, Math.min(Math.trunc(detailConcurrency), 10)));
   const normalized = await Promise.all(selected.map((posting) => limit(async (): Promise<NormalizedJob> => {
     const detailUrl = `${origin}/v1/companies/${company}/postings/${encodeURIComponent(posting.id)}`;
-    const response = await fetchWithRetry(detailUrl, { headers: { Accept: "application/json" } }, retryOptions);
-    const detail = await parseJsonOrThrow<SmartRecruitersDetail>(response, detailUrl);
-    const html = descriptionHtml(detail);
-    const text = stripHtml(html);
-    const location = locationText(detail) ?? locationText(posting);
-    const workplaceType = detail.location?.remote
-      ? "Remote"
-      : detail.location?.hybrid
-        ? "Hybrid"
-        : null;
-    return {
-      externalId: String(detail.id ?? posting.id),
-      title: detail.name ?? posting.name,
-      location,
-      department: detail.department?.label ?? posting.department?.label ?? null,
-      url: `https://jobs.smartrecruiters.com/${encodeURIComponent(normalizedCompany)}/${encodeURIComponent(posting.id)}`,
-      descriptionHtml: html,
-      descriptionText: text,
-      employmentType: detail.typeOfEmployment?.label ?? posting.typeOfEmployment?.label ?? null,
-      workplaceType,
-      salaryText: extractSalaryText(text),
-      postedAt: detail.releasedDate ?? posting.releasedDate ?? null,
-      raw: detail,
-    };
+    const jobUrl = `https://jobs.smartrecruiters.com/${encodeURIComponent(normalizedCompany)}/${encodeURIComponent(posting.id)}`;
+    // The listing phase (above) is authoritative and must throw on failure — an incomplete
+    // job list is unsafe to act on. A single posting's detail fetch failing after retries is
+    // different: only that one job's description is missing, so it degrades to a description-less
+    // sighting (descriptionText: null, counted by scan.ts as a description failure -> partial scan)
+    // rather than discarding every other successfully-fetched job in this Promise.all — same
+    // graceful-degradation shape as src/lib/ats/workday.ts's fetchDetail catch.
+    try {
+      const response = await fetchWithRetry(detailUrl, { headers: { Accept: "application/json" } }, retryOptions);
+      const detail = await parseJsonOrThrow<SmartRecruitersDetail>(response, detailUrl);
+      const html = descriptionHtml(detail);
+      const text = stripHtml(html);
+      const location = locationText(detail) ?? locationText(posting);
+      const workplaceType = detail.location?.remote
+        ? "Remote"
+        : detail.location?.hybrid
+          ? "Hybrid"
+          : null;
+      return {
+        externalId: String(detail.id ?? posting.id),
+        title: detail.name ?? posting.name,
+        location,
+        department: detail.department?.label ?? posting.department?.label ?? null,
+        url: jobUrl,
+        descriptionHtml: html,
+        descriptionText: text,
+        employmentType: detail.typeOfEmployment?.label ?? posting.typeOfEmployment?.label ?? null,
+        workplaceType,
+        salaryText: extractSalaryText(text),
+        postedAt: detail.releasedDate ?? posting.releasedDate ?? null,
+        raw: detail,
+      };
+    } catch {
+      return {
+        externalId: posting.id,
+        title: posting.name,
+        location: locationText(posting),
+        department: posting.department?.label ?? null,
+        url: jobUrl,
+        descriptionHtml: null,
+        descriptionText: null,
+        employmentType: posting.typeOfEmployment?.label ?? null,
+        workplaceType: posting.location?.remote ? "Remote" : posting.location?.hybrid ? "Hybrid" : null,
+        salaryText: null,
+        postedAt: posting.releasedDate ?? null,
+        raw: posting,
+      };
+    }
   })));
 
   return filterJobsToUs(normalized, { usOnly, existingExternalIds, onLocationFiltered }, maxJobs);

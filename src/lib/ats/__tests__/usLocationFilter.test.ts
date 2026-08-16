@@ -116,6 +116,33 @@ test("Canada vs California: Canadian province+CA remains NON_US, California rema
   assert.equal(classifyJobLocation("San Diego, CA"), "US");
 });
 
+test("Georgia (state) is recognized as US — was previously missing from both the code and name lists", () => {
+  assert.equal(classifyJobLocation("Atlanta, GA"), "US");
+  assert.equal(classifyJobLocation("Atlanta, Georgia"), "US");
+  assert.equal(classifyJobLocation("Savannah, GA, USA"), "US");
+  assert.equal(classifyJobLocation("Johns Creek, GA, US"), "US");
+});
+
+test("leading 'ST - City - Street' locations (a real Workday tenant convention) are recognized as US", () => {
+  assert.equal(classifyJobLocation("WI - Madison - 4750 South Biltmore Lane"), "US");
+  assert.equal(classifyJobLocation("MI - Zeeland"), "US");
+  assert.equal(classifyJobLocation("PA - Philadelphia - W. Allegheny Ave."), "US");
+  assert.equal(classifyJobLocation("NJ - Clementon - Freedom Rd"), "US");
+  // Existing "City, ST" shape must remain unaffected by the new leading-anchor alternative.
+  assert.equal(classifyJobLocation("Madison, WI"), "US");
+});
+
+test("genuinely ambiguous locations remain UNKNOWN — the classifier stays conservative", () => {
+  // Bare well-known city names with no state/country qualifier: real ambiguity (some share names
+  // with places outside the US), not something this classifier should guess at.
+  assert.equal(classifyJobLocation("San Francisco"), "UNKNOWN");
+  assert.equal(classifyJobLocation("Austin"), "UNKNOWN");
+  assert.equal(classifyJobLocation("Pittsburgh"), "UNKNOWN");
+  // Bare region/timezone phrasing stays UNKNOWN — could span US and non-US.
+  assert.equal(classifyJobLocation("North America"), "UNKNOWN");
+  assert.equal(classifyJobLocation("Remote (WFH)"), "UNKNOWN");
+});
+
 test("multi-location string with explicit U.S. evidence classifies as US", () => {
   assert.equal(
     classifyJobLocation("Johns Creek, GA, US; San Jose, CA, US; San Jose, UNAVAILABLE, US; Bangalore, UNAVAILABLE, IN; UNAVAILABLE, UNAVAILABLE, Seoul"),

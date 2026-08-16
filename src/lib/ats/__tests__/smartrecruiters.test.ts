@@ -192,6 +192,61 @@ test("fetchSmartRecruitersJobs: multi-page pagination, detail enrichment, and U.
   }
 });
 
+test("fetchSmartRecruitersJobs: one posting's detail fetch exhausting retries degrades that job only, not the whole scan", async () => {
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    res.setHeader("Content-Type", "application/json");
+    const detail = url.pathname.match(/\/postings\/([a-zA-Z0-9_-]+)$/);
+    if (detail) {
+      const id = detail[1];
+      if (id === "JOB-BROKEN") {
+        res.writeHead(500).end("boom");
+        return;
+      }
+      res.end(JSON.stringify({
+        id,
+        name: "Healthy Job",
+        releasedDate: "2026-08-01T00:00:00Z",
+        location: { city: "Denver", region: "CO", country: "us", fullLocation: "Denver, CO, United States" },
+        jobAd: { jobDescription: "<p>Real description.</p>" },
+      }));
+      return;
+    }
+    res.end(JSON.stringify({
+      offset: 0,
+      limit: 10,
+      totalFound: 2,
+      content: [
+        { id: "JOB-BROKEN", name: "Broken Detail Job", location: { fullLocation: "Denver, CO, United States" } },
+        { id: "JOB-OK", name: "Healthy Job" },
+      ],
+    }));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    const jobs = await fetchSmartRecruitersJobs("Axiado", {
+      hostOverride: `http://127.0.0.1:${port}`,
+      usOnly: true,
+      maxAttempts: 1,
+    });
+
+    // Both jobs survive — the broken one degrades instead of aborting the whole scan.
+    assert.equal(jobs.length, 2);
+    const broken = jobs.find((j) => j.externalId === "JOB-BROKEN")!;
+    const ok = jobs.find((j) => j.externalId === "JOB-OK")!;
+    assert.ok(broken, "the job whose detail fetch failed must still appear (list-level fallback), not vanish");
+    assert.equal(broken.descriptionText, null, "a failed detail fetch must degrade to no description, not fabricate one");
+    assert.equal(broken.title, "Broken Detail Job", "falls back to the listing's own title");
+    assert.equal(broken.location, "Denver, CO, United States", "falls back to the listing's own location");
+    assert.equal(ok.descriptionText, "Real description.", "an unrelated posting's successful detail fetch is unaffected");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("fetchSmartRecruitersJobs: fail-closed on duplicate posting IDs within or across pages", async () => {
   const server = http.createServer((_req, res) => {
     res.setHeader("Content-Type", "application/json");
