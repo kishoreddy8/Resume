@@ -18,6 +18,15 @@ export interface RecordScanRunInput {
   /** Always 0 today — see the jobs_deleted column comment in schema.sql. */
   jobsDeleted?: number;
   descriptionFailures: number;
+  /** ATS Health Semantics V2: jobs whose location couldn't be confidently classified as US and were
+   *  excluded from ingestion — a data-quality/content signal (the connector fetched them fine),
+   *  never an operational-health signal. See src/db/queries/atsCoverage.ts's warning derivation. */
+  unknownLocationCount?: number;
+  /** ATS Health Semantics V2: true when this run was a bounded verification/sample probe
+   *  (options.maxJobsPerCompany was set), not a full scan. Recorded per-run so the UI can show
+   *  "verification passed, full scan pending" as distinct from a genuine full-scan result — this
+   *  never affects connector_health itself (see src/lib/scan.ts's isSampleScan handling). */
+  isSampleScan?: boolean;
   retryCount: number;
   errorCategory?: ErrorCategory | null;
   errorMessage?: string | null;
@@ -34,18 +43,20 @@ export function recordScanRun(input: RecordScanRunInput): number {
       `INSERT INTO scan_runs (
         company_id, provider, started_at, finished_at, duration_ms, status,
         jobs_discovered, jobs_added, jobs_updated, jobs_unchanged, duplicates_skipped,
-        jobs_closed, jobs_archived, jobs_deleted, description_failures, retry_count,
-        error_category, error_message
+        jobs_closed, jobs_archived, jobs_deleted, description_failures, unknown_location_count,
+        is_sample_scan, retry_count, error_category, error_message
       ) VALUES (
         @companyId, @provider, @startedAt, @finishedAt, @durationMs, @status,
         @jobsDiscovered, @jobsAdded, @jobsUpdated, @jobsUnchanged, @duplicatesSkipped,
-        @jobsClosed, @jobsArchived, @jobsDeleted, @descriptionFailures, @retryCount,
-        @errorCategory, @errorMessage
+        @jobsClosed, @jobsArchived, @jobsDeleted, @descriptionFailures, @unknownLocationCount,
+        @isSampleScan, @retryCount, @errorCategory, @errorMessage
       )`
     )
     .run({
       ...input,
       jobsDeleted: input.jobsDeleted ?? 0,
+      unknownLocationCount: input.unknownLocationCount ?? 0,
+      isSampleScan: input.isSampleScan ? 1 : 0,
       errorCategory: input.errorCategory ?? null,
       errorMessage: input.errorMessage ?? null,
     });

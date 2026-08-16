@@ -314,6 +314,9 @@ export interface ScanRun {
   /** Always 0 today — see the jobs_deleted column comment in schema.sql. */
   jobs_deleted: number;
   description_failures: number;
+  /** ATS Health Semantics V2 — see src/db/queries/scanRuns.ts's RecordScanRunInput doc comments. */
+  unknown_location_count: number;
+  is_sample_scan: number;
   retry_count: number;
   error_category: ErrorCategory | null;
   error_message: string | null;

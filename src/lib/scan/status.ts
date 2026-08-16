@@ -3,11 +3,15 @@ import type { Job, NormalizedJob, ScanRunStatus, SourceType } from "@/types";
 /**
  * A company's job-list fetch either fully succeeds or the whole scanCompany() call throws (handled
  * separately, in scan.ts's catch block, as "failed"). This function only decides between the two
- * outcomes reachable when nothing threw: "success" (every discovered job's description/location
- * resolved cleanly) or "partial" (the list itself was complete, but ≥1 job's description permanently
- * failed after retries, or ≥1 job's location remained UNKNOWN — reachable on any provider, not just
- * Workday). The input is descriptionFailures + unknownLocationCount only; scan.ts deliberately does
- * not fold sample/verification-scan mode into this count (see its own comment on isSampleScan).
+ * outcomes reachable when nothing threw: "success" or "partial" — purely a function of whatever
+ * count the caller passes in, no threshold logic here.
+ *
+ * ATS Health Semantics V2 (see scan.ts's own comment at its call site): the count passed in is
+ * deliberately narrow — only descriptionFailures, and only when it equals every job discovered in
+ * this scan (a materially broken detail-fetch mechanism), never a partial/isolated failure count and
+ * never unknownLocationCount at any magnitude (a content/classification outcome about the source,
+ * not a connector operational fault). scan.ts also deliberately does not fold sample/verification-
+ * scan mode into this count (see its own comment on isSampleScan).
  */
 export function determineScanStatus(descriptionFailures: number): Exclude<ScanRunStatus, "failed"> {
   return descriptionFailures > 0 ? "partial" : "success";

@@ -16,8 +16,17 @@ const REASON_LABELS: Record<string, string> = {
   NEVER_SCANNED: "never scanned",
   REPEATED_FAILURES: "repeated failures",
   TRANSIENT_FAILURE: "transient failure",
-  PARTIAL_DATA_QUALITY: "partial data quality",
+  DESCRIPTION_FETCH_FAILURE: "description fetch failure",
   UNCLASSIFIED: "unclassified",
+};
+
+// Deliberately neutral, not alarming — these are data-quality/verification notes, not operational
+// problems. A company can be fully healthy and still carry one of these (see AtsCoverageWarning's
+// own doc comment in atsCoverage.ts for exactly what does and doesn't produce one).
+const WARNING_LABELS: Record<string, string> = {
+  LOCATION_UNKNOWN: "location warning",
+  DESCRIPTION_PARTIAL: "description warning",
+  SAMPLE_VERIFICATION: "verification sample only",
 };
 
 function CompanyDrilldown({ companies, emptyLabel }: { companies: AtsCoverageCompany[]; emptyLabel: string }) {
@@ -45,6 +54,11 @@ function CompanyDrilldown({ companies, emptyLabel }: { companies: AtsCoverageCom
               {c.healthReasonCode !== "HEALTHY" && (
                 <div className="mt-0.5 max-w-md text-zinc-500" title={c.healthReasonLabel}>
                   {c.healthReasonLabel.length > 120 ? `${c.healthReasonLabel.slice(0, 120)}…` : c.healthReasonLabel}
+                </div>
+              )}
+              {c.warnings.length > 0 && (
+                <div className="mt-0.5 max-w-md text-blue-600 dark:text-blue-400">
+                  {c.warnings.map((w) => w.label).join(" · ")}
                 </div>
               )}
               {c.discovery_reason && (
@@ -132,6 +146,13 @@ export default function AtsCoveragePage() {
                     {Object.entries(g.reasonBreakdown)
                       .filter(([code]) => code !== "HEALTHY")
                       .map(([code, count]) => `${count} ${REASON_LABELS[code] ?? code}`)
+                      .join(" · ")}
+                  </div>
+                )}
+                {Object.keys(g.warningBreakdown).length > 0 && (
+                  <div className="mt-0.5 text-xs text-blue-600 dark:text-blue-400">
+                    {Object.entries(g.warningBreakdown)
+                      .map(([code, count]) => `${count} ${WARNING_LABELS[code] ?? code}`)
                       .join(" · ")}
                   </div>
                 )}

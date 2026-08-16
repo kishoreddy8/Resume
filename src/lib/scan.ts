@@ -249,39 +249,51 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
       }
     }
 
-    // SAFETY RULE: a partial scan (list complete, but ≥1 job's description/location permanently
-    // failed — see determineScanStatus) never closes/archives jobs, same as the pre-existing
-    // career_link exclusion below (best-effort scrapes are never authoritative). Only a fully
-    // successful ATS scan may act on "this job disappeared" — see canRunLifecycleActions's doc
-    // comment. Sample/verification scans (isSampleScan) are suppressed independently, right here via
-    // `!isSampleScan &&` — a sample scan's *status* is judged purely on whether it found a genuine
-    // per-job problem, never on the fact that it was a sample; do not fold isSampleScan back into
-    // scanStatus/determineScanStatus, or the health dashboard degrades every routine verification
-    // sample regardless of whether anything actually failed.
+    // ATS Health Semantics V2 — operational status (success/partial, feeding connector_health) now
+    // reflects only a MATERIAL connector-level problem: every discovered job's description fetch
+    // failed (descriptionFailures === jobs.length, on a non-empty result). A few isolated
+    // description gaps out of many successfully-fetched jobs proves the fetch mechanism basically
+    // works (source-side content gaps, not a CareerOps ingestion capability problem) — see this
+    // file's own real-data audit (CAREEROPS — ATS HEALTH SEMANTICS V2) showing 10 of 11 real
+    // description-failure companies had a partial, non-total failure rate and were never actually
+    // "operationally broken." unknownLocationCount NEVER contributes here, at any magnitude: those
+    // jobs were correctly excluded by the conservative US-only location policy — the connector
+    // fetched its inventory fine, the exclusion is a content/classification outcome about the
+    // source, not a fetch/connectivity fault. Both descriptionFailures and unknownLocationCount are
+    // still recorded on every scan_run below regardless of operational outcome, so
+    // src/db/queries/atsCoverage.ts can surface them as separate data-quality warnings.
+    const hasCompleteDescriptionFailure = jobs.length > 0 && descriptionFailures === jobs.length;
+    const scanStatus = determineScanStatus(hasCompleteDescriptionFailure ? descriptionFailures : 0);
+
+    // SAFETY RULE: a partial scan never closes/archives jobs, same as the pre-existing career_link
+    // exclusion below (best-effort scrapes are never authoritative). Only a fully successful ATS
+    // scan may act on "this job disappeared" — see canRunLifecycleActions's doc comment.
+    // Sample/verification scans (isSampleScan) are suppressed independently, right here via
+    // `!isSampleScan &&` — this is unconditional and does not depend on scanStatus at all, so
+    // narrowing what feeds scanStatus above can never weaken this safety rule.
     const isSampleScan = options.maxJobsPerCompany !== undefined;
-    const scanStatus = determineScanStatus(descriptionFailures + unknownLocationCount);
     const { jobsClosed, jobsArchived } = !isSampleScan && canRunLifecycleActions(scanStatus, company.source_type)
       ? closeStaleJobs(company.id, seenDedupeKeys)
       : { jobsClosed: 0, jobsArchived: 0 };
 
     const finishedAt = new Date().toISOString();
     const durationMs = Date.now() - t0;
-    const partialErrorMessage =
-      scanStatus === "partial"
-        ? [
-            isSampleScan
-              ? `Verification sample limited to ${options.maxJobsPerCompany} job(s); lifecycle actions disabled`
-              : null,
-            descriptionFailures > 0
-              ? `${descriptionFailures} job description(s) failed to fetch after retries`
-              : null,
-            unknownLocationCount > 0
-              ? `${unknownLocationCount} job location(s) remained UNKNOWN and were not loaded`
-              : null,
-          ]
-            .filter(Boolean)
-            .join("; ")
-        : null;
+    // Recorded on every scan_run regardless of operational outcome — a full observability note, not
+    // gated behind scanStatus === "partial" the way it used to be, so a "success" run with warnings
+    // (unknown locations, a few description gaps, or a sample probe) still leaves a readable trail.
+    const runNote = [
+      isSampleScan
+        ? `Verification sample limited to ${options.maxJobsPerCompany} job(s); lifecycle actions disabled`
+        : null,
+      descriptionFailures > 0
+        ? `${descriptionFailures} job description(s) failed to fetch after retries`
+        : null,
+      unknownLocationCount > 0
+        ? `${unknownLocationCount} job location(s) remained UNKNOWN and were not loaded`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("; ") || null;
 
     recordScanRun({
       companyId: company.id,
@@ -298,14 +310,16 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
       jobsClosed,
       jobsArchived,
       descriptionFailures,
+      unknownLocationCount,
+      isSampleScan,
       retryCount,
       errorCategory: null,
-      errorMessage: partialErrorMessage,
+      errorMessage: runNote,
     });
     if (scanStatus === "success") {
       recordScanSuccess(company.id);
     } else {
-      recordScanPartial(company.id, { errorCategory: null, errorMessage: partialErrorMessage });
+      recordScanPartial(company.id, { errorCategory: null, errorMessage: runNote });
     }
 
     updateCompanyScanStatus(company.id, "ok");

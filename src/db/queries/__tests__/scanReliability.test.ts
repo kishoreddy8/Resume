@@ -562,20 +562,89 @@ test("a clean sample/verification scan (isSampleScan, zero genuine issues) repor
   assert.equal(getCompany(company.id)!.connector_health, "healthy");
 });
 
-test("a sample/verification scan still reports partial when it finds a genuine per-job issue", () => {
-  const descriptionFailures = 0;
-  const unknownLocationCount = 1;
-  const status = determineScanStatus(descriptionFailures + unknownLocationCount);
-  assert.equal(status, "partial", "a genuine per-job issue found even within a small sample must still degrade");
+test("ATS Health Semantics V2: a sample scan with only an unknown-location finding still reports success — location is never an operational signal", () => {
+  // Mirrors scan.ts's V2 computation exactly: hasCompleteDescriptionFailure only looks at
+  // descriptionFailures/jobs.length; unknownLocationCount never reaches determineScanStatus at all,
+  // regardless of sample mode. This directly supersedes this file's own pre-V2 version of this test,
+  // which asserted the opposite (that a lone UNKNOWN location degraded the connector) — that was
+  // exactly the bug ATS Health Semantics V2 fixes.
+  const jobsLength: number = 3;
+  const descriptionFailures: number = 0;
+  const hasCompleteDescriptionFailure = jobsLength > 0 && descriptionFailures === jobsLength;
+  const status = determineScanStatus(hasCompleteDescriptionFailure ? descriptionFailures : 0);
+  assert.equal(status, "success", "an unknown-location-only finding must never make the scan status partial");
+
+  const company = makeCompany();
+  recordScanSuccess(company.id);
+  assert.equal(getCompany(company.id)!.connector_health, "healthy");
+});
+
+test("ATS Health Semantics V2: a sample scan where every discovered job's description failed still reports partial (a genuine, material problem)", () => {
+  const jobsLength = 3;
+  const descriptionFailures = 3;
+  const hasCompleteDescriptionFailure = jobsLength > 0 && descriptionFailures === jobsLength;
+  const status = determineScanStatus(hasCompleteDescriptionFailure ? descriptionFailures : 0);
+  assert.equal(status, "partial", "a complete description-fetch failure is a material problem, even within a small sample");
 
   const company = makeCompany();
   recordScanPartial(company.id, {
     errorCategory: null,
-    errorMessage: "Verification sample limited to 3 job(s); lifecycle actions disabled; 1 job location(s) remained UNKNOWN and were not loaded",
+    errorMessage: "Verification sample limited to 3 job(s); lifecycle actions disabled; 3 job description(s) failed to fetch after retries",
   });
   const updated = getCompany(company.id)!;
   assert.equal(updated.connector_health, "degraded");
-  assert.match(updated.last_error_message!, /UNKNOWN/, "the genuine issue detail must survive, not be discarded by the sample-mode note");
+  assert.match(updated.last_error_message!, /description\(s\) failed to fetch/);
+});
+
+test("ATS Health Semantics V2: a PARTIAL (non-complete) description failure among many successfully-fetched jobs reports success, not degraded", () => {
+  // Real-data-evidenced threshold (see this file's own audit in CAREEROPS — ATS HEALTH SEMANTICS
+  // V2): 2 failures out of 20 discovered jobs proves the fetch mechanism basically works.
+  const jobsLength: number = 20;
+  const descriptionFailures: number = 2;
+  const hasCompleteDescriptionFailure = jobsLength > 0 && descriptionFailures === jobsLength;
+  const status = determineScanStatus(hasCompleteDescriptionFailure ? descriptionFailures : 0);
+  assert.equal(status, "success", "a minority of description failures must not make the connector operationally degraded");
+
+  const company = makeCompany();
+  recordScanSuccess(company.id);
+  assert.equal(getCompany(company.id)!.connector_health, "healthy");
+});
+
+test("ATS Health Semantics V2: an empty board (zero jobs discovered) is success, not a description failure", () => {
+  const jobsLength = 0;
+  const descriptionFailures = 0;
+  const hasCompleteDescriptionFailure = jobsLength > 0 && descriptionFailures === jobsLength;
+  assert.equal(hasCompleteDescriptionFailure, false, "zero jobs discovered must never look like a 100% failure rate");
+  assert.equal(determineScanStatus(hasCompleteDescriptionFailure ? descriptionFailures : 0), "success");
+});
+
+test("ATS Health Semantics V2: recordScanRun persists unknownLocationCount and isSampleScan as clean numeric/boolean columns", () => {
+  const company = makeCompany();
+  const id = recordScanRun({
+    companyId: company.id,
+    provider: "greenhouse",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    finishedAt: "2026-01-01T00:00:05.000Z",
+    durationMs: 5000,
+    status: "success",
+    jobsDiscovered: 10,
+    jobsAdded: 10,
+    jobsUpdated: 0,
+    jobsUnchanged: 0,
+    duplicatesSkipped: 0,
+    jobsClosed: 0,
+    jobsArchived: 0,
+    descriptionFailures: 0,
+    unknownLocationCount: 4,
+    isSampleScan: true,
+    retryCount: 0,
+    errorCategory: null,
+    errorMessage: "4 job location(s) remained UNKNOWN and were not loaded",
+  });
+  const run = getScanRun(id)!;
+  assert.equal(run.status, "success", "a success status coexists with a non-zero unknown_location_count — they are independent facts");
+  assert.equal(run.unknown_location_count, 4);
+  assert.equal(run.is_sample_scan, 1);
 });
 
 test("a sample scan never runs lifecycle actions, even when its status is success (isSampleScan is an independent gate)", () => {

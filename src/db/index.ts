@@ -522,6 +522,37 @@ function runScanHealthMigrations(db: Database.Database) {
   }
 }
 
+// ATS Health Semantics V2 — two new scan_runs columns, purely additive, mirroring
+// description_failures' own existing pattern exactly (same INTEGER NOT NULL DEFAULT 0 shape). Both
+// are per-run observability data src/lib/scan.ts already computes locally but previously only
+// folded into free-text error_message; recorded here as clean, queryable numbers so
+// src/db/queries/atsCoverage.ts can derive data-quality warnings from the latest run per company
+// without parsing text or touching companies.connector_health's own, unchanged, operational meaning.
+// Old rows default to 0 (not retroactively decomposed from their historical text) — this only
+// changes what NEW scan runs record going forward, matching the same non-backfill philosophy every
+// other additive column in this file already follows.
+const SCAN_RUNS_WARNING_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
+  {
+    name: "unknown_location_count",
+    ddl: "ALTER TABLE scan_runs ADD COLUMN unknown_location_count INTEGER NOT NULL DEFAULT 0",
+  },
+  {
+    name: "is_sample_scan",
+    ddl: "ALTER TABLE scan_runs ADD COLUMN is_sample_scan INTEGER NOT NULL DEFAULT 0",
+  },
+];
+
+function runScanRunsWarningMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(scan_runs)").all() as { name: string }[]).map((c) => c.name)
+  );
+  for (const column of SCAN_RUNS_WARNING_ADDITIVE_COLUMNS) {
+    if (!existingColumns.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+}
+
 // --- AI Infrastructure: entity_key identity-safety fix ---------------------------------------
 
 /**
@@ -748,6 +779,7 @@ function createConnection(): Database.Database {
   runStructuredIntelMigrations(db);
   ensureStructuredIntelIndexes(db);
   runScanHealthMigrations(db);
+  runScanRunsWarningMigrations(db);
   migrateAiEnrichmentsEntityKey(db, schema);
   runCompaniesDiscoveryMigrations(db);
   ensureCandidateOne(db);

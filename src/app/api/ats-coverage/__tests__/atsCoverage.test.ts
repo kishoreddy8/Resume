@@ -17,6 +17,7 @@ let recordScanPartial: typeof import("@/db/queries/companies").recordScanPartial
 let recordScanFailure: typeof import("@/db/queries/companies").recordScanFailure;
 let updateCompany: typeof import("@/db/queries/companies").updateCompany;
 let upsertJob: typeof import("@/db/queries/jobs").upsertJob;
+let recordScanRun: typeof import("@/db/queries/scanRuns").recordScanRun;
 let getAtsCoverageSummary: typeof import("@/db/queries/atsCoverage").getAtsCoverageSummary;
 
 before(async () => {
@@ -27,11 +28,39 @@ before(async () => {
   ({ createCompany, recordDiscoveryResult, recordScanSuccess, recordScanPartial, recordScanFailure, updateCompany } =
     await import("@/db/queries/companies"));
   ({ upsertJob } = await import("@/db/queries/jobs"));
+  ({ recordScanRun } = await import("@/db/queries/scanRuns"));
   ({ getAtsCoverageSummary } = await import("@/db/queries/atsCoverage"));
   getDb();
 });
 
-function makeVerifiedCompany(name: string, sourceType: "greenhouse" | "workday" | "lever" = "greenhouse") {
+let scanRunSeq = 0;
+function seedScanRun(companyId: number, overrides: Partial<Parameters<typeof recordScanRun>[0]> = {}) {
+  scanRunSeq++;
+  return recordScanRun({
+    companyId,
+    provider: "greenhouse",
+    startedAt: `2026-01-01T00:00:${String(scanRunSeq).padStart(2, "0")}.000Z`,
+    finishedAt: `2026-01-01T00:00:${String(scanRunSeq).padStart(2, "0")}.500Z`,
+    durationMs: 500,
+    status: "success",
+    jobsDiscovered: 10,
+    jobsAdded: 10,
+    jobsUpdated: 0,
+    jobsUnchanged: 0,
+    duplicatesSkipped: 0,
+    jobsClosed: 0,
+    jobsArchived: 0,
+    descriptionFailures: 0,
+    unknownLocationCount: 0,
+    isSampleScan: false,
+    retryCount: 0,
+    errorCategory: null,
+    errorMessage: null,
+    ...overrides,
+  });
+}
+
+function makeVerifiedCompany(name: string, sourceType: "greenhouse" | "workday" | "lever" | "ashby" = "greenhouse") {
   const company = createCompany({ name, source_type: sourceType, ats_board_token: `token-${name}` });
   recordDiscoveryResult(company.id, {
     status: "VERIFIED", sourceType, atsBoardToken: `token-${name}`,
@@ -151,19 +180,21 @@ test("a sustained failure streak (down) gets REPEATED_FAILURES", () => {
   assert.equal(row.healthReasonCode, "REPEATED_FAILURES");
 });
 
-test("a genuine per-job data-quality issue (degraded, zero consecutive failures) gets PARTIAL_DATA_QUALITY with the real message — never a fabricated healthy label", () => {
+test("ATS Health Semantics V2: a genuine complete description-fetch failure (degraded, zero consecutive failures) gets DESCRIPTION_FETCH_FAILURE with the real message — never a fabricated healthy label", () => {
   const company = makeVerifiedCompany("Partial Data Co");
   recordScanSuccess(company.id); // starts clean, like a company that has scanned fine before
+  // Under V2, scan.ts only calls recordScanPartial when every discovered job's description fetch
+  // failed — a materially broken detail-fetch mechanism, not an isolated per-job gap.
   recordScanPartial(company.id, {
     errorCategory: null,
-    errorMessage: "2 job location(s) remained UNKNOWN and were not loaded",
+    errorMessage: "3 job description(s) failed to fetch after retries",
   });
 
   const g = getAtsCoverageSummary().supported.find((s) => s.sourceType === "greenhouse")!;
   const row = g.companies.find((c) => c.id === company.id)!;
   assert.equal(row.connector_health, "degraded", "a degraded source with active jobs must not be reported healthy");
-  assert.equal(row.healthReasonCode, "PARTIAL_DATA_QUALITY");
-  assert.equal(row.healthReasonLabel, "2 job location(s) remained UNKNOWN and were not loaded");
+  assert.equal(row.healthReasonCode, "DESCRIPTION_FETCH_FAILURE");
+  assert.equal(row.healthReasonLabel, "3 job description(s) failed to fetch after retries");
 });
 
 test("reasonBreakdown on the provider group tallies each company's derived reason", () => {
@@ -205,4 +236,102 @@ test("every supported group's sourceType has a real (non-empty) entry in PROVIDE
     const label = PROVIDER_LABELS[group.sourceType];
     assert.ok(label && label.length > 0, `sourceType "${group.sourceType}" is missing a display label`);
   }
+});
+
+// --- ATS Health Semantics V2: operational health and data-quality warnings are genuinely separate
+// concerns, derived independently — a company can be HEALTHY and still carry warnings. Uses "ashby"
+// (untouched by every other test in this file) to avoid cross-test pollution in the shared temp DB,
+// matching this file's own established convention. -----------------------------------------------
+
+test("V2: a HEALTHY company whose latest scan had unknown-location exclusions still shows the warning, without being marked degraded", () => {
+  const company = makeVerifiedCompany("Ashby Location Warning Co", "ashby");
+  recordScanSuccess(company.id);
+  seedScanRun(company.id, { unknownLocationCount: 4, errorMessage: "4 job location(s) remained UNKNOWN and were not loaded" });
+
+  const g = getAtsCoverageSummary().supported.find((s) => s.sourceType === "ashby")!;
+  const row = g.companies.find((c) => c.id === company.id)!;
+  assert.equal(row.connector_health, "healthy", "location exclusions must never make an otherwise-healthy connector look degraded");
+  assert.equal(row.healthReasonCode, "HEALTHY");
+  assert.equal(row.warnings.length, 1);
+  assert.equal(row.warnings[0].code, "LOCATION_UNKNOWN");
+  assert.match(row.warnings[0].label, /4 job location/);
+});
+
+test("V2: a HEALTHY company whose latest scan had a partial (non-total) description failure shows a warning, not a degraded status", () => {
+  const company = makeVerifiedCompany("Ashby Description Warning Co", "ashby");
+  recordScanSuccess(company.id);
+  seedScanRun(company.id, { jobsDiscovered: 10, descriptionFailures: 2, errorMessage: "2 job description(s) failed to fetch after retries" });
+
+  const g = getAtsCoverageSummary().supported.find((s) => s.sourceType === "ashby")!;
+  const row = g.companies.find((c) => c.id === company.id)!;
+  assert.equal(row.connector_health, "healthy");
+  assert.equal(row.warnings.length, 1);
+  assert.equal(row.warnings[0].code, "DESCRIPTION_PARTIAL");
+  assert.match(row.warnings[0].label, /2 of 10/);
+});
+
+test("V2: a HEALTHY company whose latest scan was a verification sample shows a sample-verification warning", () => {
+  const company = makeVerifiedCompany("Ashby Sample Warning Co", "ashby");
+  recordScanSuccess(company.id);
+  seedScanRun(company.id, { isSampleScan: true, errorMessage: "Verification sample limited to 3 job(s); lifecycle actions disabled" });
+
+  const g = getAtsCoverageSummary().supported.find((s) => s.sourceType === "ashby")!;
+  const row = g.companies.find((c) => c.id === company.id)!;
+  assert.equal(row.connector_health, "healthy");
+  assert.equal(row.warnings.length, 1);
+  assert.equal(row.warnings[0].code, "SAMPLE_VERIFICATION");
+});
+
+test("V2: a fully clean scan produces zero warnings", () => {
+  const company = makeVerifiedCompany("Ashby Clean Co", "ashby");
+  recordScanSuccess(company.id);
+  seedScanRun(company.id); // defaults: no description failures, no unknown locations, not a sample
+
+  const g = getAtsCoverageSummary().supported.find((s) => s.sourceType === "ashby")!;
+  const row = g.companies.find((c) => c.id === company.id)!;
+  assert.equal(row.connector_health, "healthy");
+  assert.deepEqual(row.warnings, []);
+});
+
+test("V2: a company with NO scan_runs at all (never scanned) has zero warnings, not a crash", () => {
+  const company = makeVerifiedCompany("Ashby Never Scanned Co", "ashby");
+  const g = getAtsCoverageSummary().supported.find((s) => s.sourceType === "ashby")!;
+  const row = g.companies.find((c) => c.id === company.id)!;
+  assert.equal(row.healthReasonCode, "NEVER_SCANNED");
+  assert.deepEqual(row.warnings, []);
+});
+
+test("V2: a genuinely degraded (complete description failure) company also correctly shows no contradictory warning duplication", () => {
+  const company = makeVerifiedCompany("Ashby Degraded Co", "ashby");
+  recordScanSuccess(company.id);
+  recordScanPartial(company.id, { errorCategory: null, errorMessage: "5 job description(s) failed to fetch after retries" });
+  seedScanRun(company.id, { status: "partial", jobsDiscovered: 5, descriptionFailures: 5, errorMessage: "5 job description(s) failed to fetch after retries" });
+
+  const g = getAtsCoverageSummary().supported.find((s) => s.sourceType === "ashby")!;
+  const row = g.companies.find((c) => c.id === company.id)!;
+  assert.equal(row.connector_health, "degraded");
+  assert.equal(row.healthReasonCode, "DESCRIPTION_FETCH_FAILURE");
+  // A complete (5-of-5) description failure is the operational-health signal itself — it must not
+  // ALSO double-count as a DESCRIPTION_PARTIAL warning (deriveWarnings' own isCompleteDescriptionFailure
+  // guard excludes exactly this case).
+  assert.deepEqual(row.warnings, []);
+});
+
+test("V2: warningBreakdown on the provider group tallies warnings independently of healthyCount/degradedCount", () => {
+  // Asserts on the DELTA, not an absolute count — this file's own "ashby" group accumulates
+  // companies across every V2 test above (same established convention as the pre-existing
+  // reasonBreakdown test's own isolation choice), so only a before/after comparison is order-safe.
+  const before = getAtsCoverageSummary().supported.find((s) => s.sourceType === "ashby")?.warningBreakdown.LOCATION_UNKNOWN ?? 0;
+
+  const healthyWithWarning = makeVerifiedCompany("Ashby Breakdown Warning Co", "ashby");
+  recordScanSuccess(healthyWithWarning.id);
+  seedScanRun(healthyWithWarning.id, { unknownLocationCount: 1, errorMessage: "1 job location(s) remained UNKNOWN and were not loaded" });
+
+  const cleanHealthy = makeVerifiedCompany("Ashby Breakdown Clean Co", "ashby");
+  recordScanSuccess(cleanHealthy.id);
+  seedScanRun(cleanHealthy.id);
+
+  const g = getAtsCoverageSummary().supported.find((s) => s.sourceType === "ashby")!;
+  assert.equal(g.warningBreakdown.LOCATION_UNKNOWN, before + 1, "exactly the one new company with a location warning increments the tally");
+  assert.ok(g.healthyCount >= 2, "both companies remain counted as healthy regardless of the warning");
 });
