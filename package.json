@@ -20,6 +20,7 @@
     "validate-pending-connectors": "tsx scripts/validate-pending-connectors.ts",
     "validate-generic-sources": "tsx scripts/validate-generic-sources.ts",
     "validate-generic-sources-continuous": "tsx scripts/validate-generic-sources-continuous.ts",
+    "rediscover-sources-shadow": "tsx scripts/rediscover-sources-shadow.ts",
     "match-h1b": "tsx scripts/match-h1b.ts",
     "rematch-candidate": "tsx scripts/rematch-candidate.ts",
     "extract-job-intel": "tsx scripts/extract-job-intel.ts",

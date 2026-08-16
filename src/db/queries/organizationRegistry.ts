@@ -27,6 +27,62 @@ export function listScanReadyCompanies(): Company[] {
     .all() as Company[];
 }
 
+export interface RediscoveryEligibleCompany {
+  company: Company;
+  jobSourceId: number;
+  provider: string;
+}
+
+/**
+ * ATS Source Self-Healing, Stage 1 — deterministic rediscovery eligibility. A company is eligible
+ * only when its CURRENT active, approved, authoritative source has failed with strong, specific
+ * evidence of stale/broken configuration: at least 2 consecutive failures whose most recent category
+ * is exactly 'invalid_config' (see src/lib/scan/errors.ts's categorizeHttpError — a 4xx status or a
+ * synchronous "Missing/Invalid ..." validation throw, never a transient category). This deliberately
+ * excludes every other failure category (429/rate_limited, provider_5xx, timeout, network — all
+ * recoverable by the connector itself now that the 429 retry-budget fix restores its intended
+ * behavior) and every ATS Health V2 data-quality warning (UNKNOWN location, partial description
+ * failure, sample-verification) — none of those are evidence the SOURCE ITSELF is wrong, only that a
+ * request or a few postings had a transient/data-quality issue. A single invalid_config failure is
+ * also excluded (consecutive_failures >= 2, not >= 1) — a lone 4xx could be a one-off provider
+ * hiccup; only a *sustained* run of them is treated as real evidence of staleness.
+ *
+ * Deliberately strict, not broad — see this function's own test file for the exact scenarios this
+ * excludes.
+ *
+ * Cooldown: Stage 1+2 has NO persisted cooldown. Every existing timestamp field that could plausibly
+ * serve as one (discovery_attempted_at, last_validated_at) already carries a distinct, real meaning
+ * elsewhere (original company discovery; connector approval validation) that this read-only,
+ * non-mutating service must not overload or corrupt — and Stage 1+2 never writes to companies or
+ * job_sources at all, so there is nothing new to read a cooldown from. This is safe only because the
+ * manual shadow runner (Stage 2) is human-triggered with a small, explicit --limit, never scheduled —
+ * there is no automatic repeat-retry loop for a cooldown to guard against yet. A persisted cooldown
+ * (and likely new schema) becomes necessary before any future Stage 3 wires this into automation;
+ * that is out of scope here and reported as a known limitation, not silently worked around.
+ */
+export function listRediscoveryEligibleCompanies(limit = 25): RediscoveryEligibleCompany[] {
+  const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), 100));
+  const rows = getDb()
+    .prepare(
+      `SELECT c.*, js.id AS job_source_id, js.provider AS job_source_provider
+       FROM companies c
+       JOIN job_sources js ON js.legacy_company_id = c.id
+       WHERE c.is_active = 1 AND js.is_active = 1
+         AND js.resolution_status = 'VERIFIED'
+         AND js.review_status = 'APPROVED'
+         AND js.is_authoritative = 1
+         AND c.consecutive_failures >= 2
+         AND c.last_error_category = 'invalid_config'
+       ORDER BY c.consecutive_failures DESC, c.id ASC
+       LIMIT ?`
+    )
+    .all(boundedLimit) as (Company & { job_source_id: number; job_source_provider: string })[];
+  return rows.map((row) => {
+    const { job_source_id, job_source_provider, ...companyFields } = row;
+    return { company: companyFields as Company, jobSourceId: job_source_id, provider: job_source_provider };
+  });
+}
+
 /** Generic sources whose latest evidence permits only additive U.S.-job loading. The scanner's
  * existing career_link lifecycle rule guarantees these can never close missing jobs. */
 export function listGenericAdditiveReadyCompanies(): Company[] {

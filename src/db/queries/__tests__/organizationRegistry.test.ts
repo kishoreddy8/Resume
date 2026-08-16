@@ -17,6 +17,8 @@ let listJobSources: typeof import("../organizationRegistry").listJobSources;
 let addJobSource: typeof import("../organizationRegistry").addJobSource;
 let listScanReadyCompanies: typeof import("../organizationRegistry").listScanReadyCompanies;
 let reviewJobSource: typeof import("../organizationRegistry").reviewJobSource;
+let listRediscoveryEligibleCompanies: typeof import("../organizationRegistry").listRediscoveryEligibleCompanies;
+let recordScanFailure: typeof import("../companies").recordScanFailure;
 let runOrganizationRegistryBackfill: typeof import("../../organizationRegistryCore").runOrganizationRegistryBackfill;
 let syncLegacyCompanyToOrganizationRegistry: typeof import("../../organizationRegistryCore").syncLegacyCompanyToOrganizationRegistry;
 
@@ -24,7 +26,7 @@ before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-org-registry-test-"));
   process.env.CAREER_OPS_DB_PATH = path.join(tmpDir, "test.db");
   ({ getDb } = await import("../../index"));
-  ({ createCompany, recordDiscoveryResult, updateCompanyDomainIdentity } = await import("../companies"));
+  ({ createCompany, recordDiscoveryResult, updateCompanyDomainIdentity, recordScanFailure } = await import("../companies"));
   ({
     getOrganizationForCompany,
     listOrganizationAliases,
@@ -34,6 +36,7 @@ before(async () => {
     addJobSource,
     listScanReadyCompanies,
     reviewJobSource,
+    listRediscoveryEligibleCompanies,
   } = await import("../organizationRegistry"));
   ({ runOrganizationRegistryBackfill, syncLegacyCompanyToOrganizationRegistry } = await import("../../organizationRegistryCore"));
 });
@@ -262,4 +265,108 @@ test("existing-database backfill is idempotent and preserves all legacy company 
     0,
     "the compatibility registry must leave every foreign key valid"
   );
+});
+
+// --- ATS Source Self-Healing, Stage 1: rediscovery eligibility -------------------------------
+
+/** Creates an approved, authoritative, VERIFIED structured-ATS company — the "ACTIVE APPROVED
+ *  SOURCE" precondition every eligibility test starts from. */
+function makeApprovedCompany(name: string): { companyId: number; jobSourceId: number } {
+  const company = createCompany({ name, source_type: "greenhouse", ats_board_token: `${name}-token` });
+  recordDiscoveryResult(company.id, {
+    status: "VERIFIED",
+    sourceType: "greenhouse",
+    atsBoardToken: `${name}-token`,
+    discoveredJobsUrl: `https://job-boards.greenhouse.io/${name}-token`,
+    reason: "test setup",
+    suspectedAts: null,
+  });
+  const organization = getOrganizationForCompany(company.id)!;
+  const sourceId = listJobSources(organization.id)[0].id;
+  reviewJobSource(sourceId, "APPROVED", "test approval");
+  return { companyId: company.id, jobSourceId: sourceId };
+}
+
+test("rediscovery eligibility: 2+ consecutive invalid_config failures makes a company eligible", () => {
+  const { companyId } = makeApprovedCompany("Eligible Two Failures Co");
+  recordScanFailure(companyId, { errorCategory: "invalid_config", errorMessage: "404" });
+  recordScanFailure(companyId, { errorCategory: "invalid_config", errorMessage: "404" });
+  const eligible = listRediscoveryEligibleCompanies(50);
+  assert.ok(eligible.some((e) => e.company.id === companyId), "2 consecutive invalid_config failures must be eligible");
+});
+
+test("rediscovery eligibility: a single invalid_config failure is NOT eligible", () => {
+  const { companyId } = makeApprovedCompany("One Failure Co");
+  recordScanFailure(companyId, { errorCategory: "invalid_config", errorMessage: "404" });
+  const eligible = listRediscoveryEligibleCompanies(50);
+  assert.ok(!eligible.some((e) => e.company.id === companyId), "a single failure is not sustained evidence of staleness");
+});
+
+test("rediscovery eligibility: repeated rate_limited (429) failures are NOT eligible", () => {
+  const { companyId } = makeApprovedCompany("Rate Limited Co");
+  recordScanFailure(companyId, { errorCategory: "rate_limited", errorMessage: "429" });
+  recordScanFailure(companyId, { errorCategory: "rate_limited", errorMessage: "429" });
+  recordScanFailure(companyId, { errorCategory: "rate_limited", errorMessage: "429" });
+  const eligible = listRediscoveryEligibleCompanies(50);
+  assert.ok(!eligible.some((e) => e.company.id === companyId), "rate limiting is connector-recoverable, not evidence of a stale source");
+});
+
+test("rediscovery eligibility: repeated provider_5xx failures are NOT eligible", () => {
+  const { companyId } = makeApprovedCompany("Provider 5xx Co");
+  recordScanFailure(companyId, { errorCategory: "provider_5xx", errorMessage: "503" });
+  recordScanFailure(companyId, { errorCategory: "provider_5xx", errorMessage: "503" });
+  const eligible = listRediscoveryEligibleCompanies(50);
+  assert.ok(!eligible.some((e) => e.company.id === companyId), "a transient provider outage is not evidence the source is wrong");
+});
+
+test("rediscovery eligibility: repeated timeout failures are NOT eligible", () => {
+  const { companyId } = makeApprovedCompany("Timeout Co");
+  recordScanFailure(companyId, { errorCategory: "timeout", errorMessage: "timed out" });
+  recordScanFailure(companyId, { errorCategory: "timeout", errorMessage: "timed out" });
+  const eligible = listRediscoveryEligibleCompanies(50);
+  assert.ok(!eligible.some((e) => e.company.id === companyId));
+});
+
+test("rediscovery eligibility: repeated network failures are NOT eligible", () => {
+  const { companyId } = makeApprovedCompany("Network Co");
+  recordScanFailure(companyId, { errorCategory: "network", errorMessage: "connection refused" });
+  recordScanFailure(companyId, { errorCategory: "network", errorMessage: "connection refused" });
+  const eligible = listRediscoveryEligibleCompanies(50);
+  assert.ok(!eligible.some((e) => e.company.id === companyId));
+});
+
+test("rediscovery eligibility: a healthy company with no failures is NOT eligible", () => {
+  const { companyId } = makeApprovedCompany("Healthy Co");
+  const eligible = listRediscoveryEligibleCompanies(50);
+  assert.ok(!eligible.some((e) => e.company.id === companyId));
+});
+
+test("rediscovery eligibility: a non-approved (PENDING review) source is NOT eligible even with invalid_config failures", () => {
+  const company = createCompany({ name: "Pending Review Co", source_type: "greenhouse", ats_board_token: "pending-token" });
+  recordScanFailure(company.id, { errorCategory: "invalid_config", errorMessage: "404" });
+  recordScanFailure(company.id, { errorCategory: "invalid_config", errorMessage: "404" });
+  const eligible = listRediscoveryEligibleCompanies(50);
+  assert.ok(!eligible.some((e) => e.company.id === company.id), "only an ACTIVE APPROVED source is in scope — a still-pending one is a different lifecycle stage");
+});
+
+test("rediscovery eligibility: ATS Health V2 warnings (UNKNOWN location / partial description) never touch consecutive_failures or last_error_category, so they can never make a company eligible", () => {
+  // recordScanSuccess is what a scan carrying only these warnings calls (see src/lib/scan.ts's
+  // ATS Health Semantics V2 comment) — it never touches last_error_category and resets
+  // consecutive_failures to 0, so a warning-only company can never independently satisfy this
+  // eligibility bar no matter how many warning-carrying scans it accumulates.
+  const { companyId } = makeApprovedCompany("Warnings Only Co");
+  const eligible = listRediscoveryEligibleCompanies(50);
+  assert.ok(!eligible.some((e) => e.company.id === companyId), "a company with only data-quality warnings (never a real failure) must never be eligible");
+});
+
+test("rediscovery eligibility query is bounded and deterministically ordered", () => {
+  for (let i = 0; i < 5; i++) {
+    const { companyId } = makeApprovedCompany(`Bounded Co ${i}`);
+    recordScanFailure(companyId, { errorCategory: "invalid_config", errorMessage: "404" });
+    recordScanFailure(companyId, { errorCategory: "invalid_config", errorMessage: "404" });
+  }
+  const limited = listRediscoveryEligibleCompanies(2);
+  assert.equal(limited.length, 2, "must respect the requested limit");
+  const again = listRediscoveryEligibleCompanies(2);
+  assert.deepEqual(limited.map((e) => e.company.id), again.map((e) => e.company.id), "ordering must be deterministic across repeated calls");
 });
