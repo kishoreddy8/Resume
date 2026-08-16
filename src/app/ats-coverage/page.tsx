@@ -103,13 +103,25 @@ const CONFIDENCE_STYLES: Record<string, string> = {
   LOW: "border-zinc-200 dark:border-zinc-800 opacity-60",
 };
 
+// Stage 4: production approval is restricted to HIGH confidence + VALIDATED_JOBS only. Mirrors
+// isProposalApprovable() in src/db/queries/atsSourceProposals.ts — the server enforces this
+// independently, this is only for honest button state, not the actual gate.
 function isApprovable(p: SourceProposal): boolean {
-  if (p.confidence === "LOW") return false;
-  return p.validation_status === "VALIDATED_JOBS" || p.validation_status === "VALIDATED_ZERO_JOBS";
+  return p.confidence === "HIGH" && p.validation_status === "VALIDATED_JOBS";
+}
+
+function notApprovableReason(p: SourceProposal): string {
+  if (p.validation_status === "SECURITY_REJECTED") return "Security-rejected candidates are never approvable.";
+  if (p.confidence === "LOW") return "LOW confidence is never approvable.";
+  if (p.confidence === "MEDIUM" && p.validation_status === "VALIDATED_ZERO_JOBS") {
+    return "MEDIUM confidence (board valid, zero jobs currently seen) is review-only in Stage 4 — not approvable yet.";
+  }
+  return "Not approvable at this confidence/validation level.";
 }
 
 function ProposalCard({ proposal, onDecided }: { proposal: SourceProposal; onDecided: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const approvable = isApprovable(proposal);
   const securityRejected = proposal.validation_status === "SECURITY_REJECTED";
   let evidence: { evidenceTypes?: string[]; evidenceUrls?: string[] } = {};
@@ -130,6 +142,7 @@ function ProposalCard({ proposal, onDecided }: { proposal: SourceProposal; onDec
       if (res.ok) onDecided();
     } finally {
       setBusy(false);
+      setConfirming(false);
     }
   }
 
@@ -163,34 +176,70 @@ function ProposalCard({ proposal, onDecided }: { proposal: SourceProposal; onDec
       {proposal.confidence === "MEDIUM" && (
         <div className="mt-1 text-xs text-amber-700 dark:text-amber-400">
           Board is reachable and structurally valid but currently shows zero jobs — needs human review before approval, not automatically healthy.
+          Not approvable in Stage 4.
         </div>
       )}
       {evidence.evidenceTypes && evidence.evidenceTypes.length > 0 && (
         <div className="mt-1 text-xs text-zinc-400">evidence: {evidence.evidenceTypes.join(", ")}</div>
       )}
-      <div className="mt-2 flex gap-2">
-        <button
-          type="button"
-          disabled={!approvable || busy}
-          onClick={() => decide("approve")}
-          className={`rounded px-2 py-1 text-xs font-medium ${
-            approvable
-              ? "bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-              : "cursor-not-allowed bg-zinc-200 text-zinc-400 dark:bg-zinc-800"
-          }`}
-          title={approvable ? "Approve this source configuration" : "Not approvable at this confidence/validation level"}
-        >
-          Approve
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => decide("reject")}
-          className="rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 disabled:opacity-50 dark:bg-zinc-800 dark:text-zinc-300"
-        >
-          Reject
-        </button>
-      </div>
+
+      {confirming ? (
+        <div className="mt-2 rounded border border-emerald-300 bg-emerald-50 p-2 text-xs dark:border-emerald-800 dark:bg-emerald-950/20">
+          <p className="font-medium text-emerald-900 dark:text-emerald-200">Confirm: approve source configuration?</p>
+          <dl className="mt-1 space-y-0.5 text-emerald-800 dark:text-emerald-300">
+            <div>Current Source: {proposal.current_source_type ?? "(none)"} / {proposal.current_board_token ?? "(none)"}</div>
+            <div>Proposed Source: {proposal.proposed_source_type} / {proposal.proposed_board_token}</div>
+            <div>Validation: {proposal.validation_status}</div>
+            <div>Confidence: {proposal.confidence}</div>
+          </dl>
+          <p className="mt-1 text-emerald-700 dark:text-emerald-400">
+            This only accepts the source configuration. It does not mean jobs are loaded, the connector is healthy, or the company has open
+            jobs — the next normal scan verifies that separately.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => decide("approve")}
+              className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              Confirm approve
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirming(false)}
+              className="rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 disabled:opacity-50 dark:bg-zinc-800 dark:text-zinc-300"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-2 flex gap-2">
+          <button
+            type="button"
+            disabled={!approvable || busy}
+            onClick={() => setConfirming(true)}
+            className={`rounded px-2 py-1 text-xs font-medium ${
+              approvable
+                ? "bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                : "cursor-not-allowed bg-zinc-200 text-zinc-400 dark:bg-zinc-800"
+            }`}
+            title={approvable ? "Approve source configuration" : notApprovableReason(proposal)}
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => decide("reject")}
+            className="rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 disabled:opacity-50 dark:bg-zinc-800 dark:text-zinc-300"
+          >
+            Reject
+          </button>
+        </div>
+      )}
     </div>
   );
 }

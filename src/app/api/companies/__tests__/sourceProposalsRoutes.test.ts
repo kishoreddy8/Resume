@@ -133,3 +133,31 @@ test("approve succeeds (200) with the owning company id and reflects the new sou
   assert.equal(json.proposal.status, "APPROVED");
   assert.equal(json.proposal.proposed_board_token, "route-test-d");
 });
+
+test("Stage 4: a MEDIUM/VALIDATED_ZERO_JOBS proposal cannot be approved through the API (409 NOT_APPROVABLE)", async () => {
+  const owner = createCompany({ name: "Route Test Co E", source_type: "career_link", career_page_url: "https://routetestco-e.example/careers" });
+  const proposal = createProposalFromDiscoveryV2({
+    companyId: owner.id,
+    currentSourceType: owner.source_type,
+    currentBoardToken: owner.ats_board_token,
+    candidate: {
+      provider: "icims",
+      boardToken: "route-test-e",
+      canonicalUrl: "https://careers-route-test-e.icims.com",
+      confidence: "MEDIUM",
+      validationStatus: "VALIDATED_ZERO_JOBS",
+      recommendation: "NEEDS_SOURCE_REVIEW",
+      evidenceTypes: ["static_html"],
+      evidenceUrls: ["https://careers-route-test-e.icims.com"],
+    },
+  })!;
+
+  const res = await APPROVE(postRequest(), { params: Promise.resolve({ id: String(owner.id), proposalId: String(proposal.id) }) });
+  assert.equal(res.status, 409);
+  const json = await res.json();
+  assert.equal(json.code, "NOT_APPROVABLE");
+
+  // Rejecting the same MEDIUM proposal must still work — Stage 4 only restricts approval, not review.
+  const rejectRes = await REJECT(postRequest(), { params: Promise.resolve({ id: String(owner.id), proposalId: String(proposal.id) }) });
+  assert.equal(rejectRes.status, 200);
+});

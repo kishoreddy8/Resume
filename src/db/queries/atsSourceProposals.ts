@@ -50,13 +50,15 @@ export function listProposalsForCompany(companyId: number): AtsSourceProposal[] 
 
 /** Whether a candidate's own confidence/validation is eligible for approval at all — the same gate
  *  approveProposal enforces server-side; exported so the API/UI can render "not approvable" honestly
- *  without duplicating the rule. Mirrors Phase 3/5's exact rule: only VALIDATED_JOBS (HIGH) or
- *  VALIDATED_ZERO_JOBS (MEDIUM) are ever approvable — LOW confidence, failed validation, security
- *  rejection, and unsupported providers are never approvable, though they may still be recorded and
- *  reviewed (rejected) as evidence. */
+ *  without duplicating the rule.
+ *
+ *  Stage 4 rule: only HIGH confidence + VALIDATED_JOBS is approvable. MEDIUM + VALIDATED_ZERO_JOBS
+ *  (a structurally valid board that currently shows zero jobs) is deliberately review-only in this
+ *  stage — a human can see it and reject it, but production approval is withheld until there's
+ *  stronger evidence than "the board loaded." LOW confidence, failed validation, security rejection,
+ *  and unsupported providers remain permanently unapprovable, not just for this stage. */
 export function isProposalApprovable(proposal: Pick<AtsSourceProposal, "confidence" | "validation_status">): boolean {
-  if (proposal.confidence === "LOW") return false;
-  return proposal.validation_status === "VALIDATED_JOBS" || proposal.validation_status === "VALIDATED_ZERO_JOBS";
+  return proposal.confidence === "HIGH" && proposal.validation_status === "VALIDATED_JOBS";
 }
 
 /**
@@ -158,12 +160,12 @@ export class ProposalApprovalError extends Error {
  * transaction): every precondition is checked before any write happens, and if any fails the whole
  * call throws with nothing written.
  *
- * Preconditions (Phase 5, in order): proposal exists; belongs to companyId (isolation); status is
- * PENDING_REVIEW; company's CURRENT source_type/ats_board_token still match what this proposal was
- * created against (staleness — a mismatch marks the proposal SUPERSEDED instead of applying it);
- * validation was genuinely successful; confidence is not LOW; provider is supported (implied by a
- * successful validation, which only ever happens for a supported provider); not a security
- * rejection (implied by validation status).
+ * Preconditions (Phase 5/Stage 4, in order): proposal exists; belongs to companyId (isolation);
+ * status is PENDING_REVIEW; company's CURRENT source_type/ats_board_token still match what this
+ * proposal was created against (staleness — a mismatch marks the proposal SUPERSEDED instead of
+ * applying it); confidence is HIGH and validation is VALIDATED_JOBS (Stage 4 restricts production
+ * approval to this one combination — MEDIUM/VALIDATED_ZERO_JOBS is review-only here, and LOW/security
+ * rejection are never approvable at all; see isProposalApprovable's own doc comment).
  *
  * On success: recordDiscoveryResult (the same function every other discovery result flows through)
  * updates companies.source_type/ats_board_token/resolution_status and syncs job_sources' identity —

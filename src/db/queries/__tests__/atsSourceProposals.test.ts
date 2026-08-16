@@ -91,7 +91,7 @@ test("HIGH confidence + VALIDATED_JOBS creates a PENDING_REVIEW proposal", () =>
   assert.equal(proposal!.proposed_source_type, "greenhouse");
 });
 
-test("MEDIUM confidence + VALIDATED_ZERO_JOBS creates a PENDING_REVIEW proposal", () => {
+test("MEDIUM confidence + VALIDATED_ZERO_JOBS creates a PENDING_REVIEW proposal, but is not approvable (Stage 4: review-only)", () => {
   const company = seedCompany();
   const proposal = createProposalFromDiscoveryV2({
     companyId: company.id,
@@ -102,6 +102,9 @@ test("MEDIUM confidence + VALIDATED_ZERO_JOBS creates a PENDING_REVIEW proposal"
   assert.ok(proposal);
   assert.equal(proposal!.status, "PENDING_REVIEW");
   assert.equal(proposal!.confidence, "MEDIUM");
+  assert.equal(isProposalApprovable(proposal!), false);
+  assert.throws(() => approveProposal(company.id, proposal!.id), (err: unknown) => err instanceof ProposalApprovalError && err.code === "NOT_APPROVABLE");
+  assert.equal(getProposal(proposal!.id)!.status, "PENDING_REVIEW", "a failed approval attempt must not change the proposal's status");
 });
 
 test("LOW confidence candidate is recorded as evidence but is never approvable", () => {
