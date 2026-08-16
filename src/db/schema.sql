@@ -1208,3 +1208,52 @@ CREATE TABLE IF NOT EXISTS resume_quality_iterations (
 
 CREATE INDEX IF NOT EXISTS idx_resume_quality_iterations_workflow
   ON resume_quality_iterations(candidate_id, workflow_id, iteration_number);
+
+-- Discovery V2 Stage 3: durable source-replacement proposals, review/approval workflow. Deliberately
+-- its own table rather than reusing job_source_validation_runs — that table's "latest row per
+-- job_source" read pattern (see listGenericAdditiveReadyCompanies in organizationRegistry.ts) treats
+-- ANY new row as the current authoritative validation state for a career_link source, so writing a
+-- shadow/proposal row there could silently break a real, currently-additive-loading company. A
+-- proposal here is evidence about a CANDIDATE replacement source, never itself production
+-- validation state, and never applied automatically (see the approval service in companies.ts /
+-- atsSourceProposals.ts) — approval is a separate, explicit, human-triggered action that then reuses
+-- the existing recordDiscoveryResult/reviewJobSource machinery, the same functions any other
+-- discovery result goes through.
+CREATE TABLE IF NOT EXISTS ats_source_proposals (
+  id INTEGER PRIMARY KEY,
+  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  job_source_id INTEGER REFERENCES job_sources(id) ON DELETE CASCADE,
+  -- Snapshot of the company's source identity AT THE MOMENT this proposal was created — the
+  -- staleness/supersession check (see the approval service) compares this against the company's
+  -- LIVE source_type/ats_board_token at approval time; a mismatch means the source changed after
+  -- this proposal was created and the proposal must not be approved as-is.
+  current_source_type TEXT,
+  current_board_token TEXT,
+  proposed_source_type TEXT NOT NULL,
+  proposed_board_token TEXT NOT NULL,
+  proposed_canonical_url TEXT,
+  -- Mirrors DiscoveryV2Candidate's own confidence/validationStatus/recommendation exactly — no new
+  -- vocabulary invented here.
+  confidence TEXT NOT NULL,
+  validation_status TEXT NOT NULL,
+  recommendation TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,
+  discovery_source TEXT NOT NULL DEFAULT 'discovery_v2',
+  status TEXT NOT NULL DEFAULT 'PENDING_REVIEW', -- PENDING_REVIEW | APPROVED | REJECTED | SUPERSEDED
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  reviewed_at TEXT,
+  review_note TEXT
+);
+
+-- Only one PENDING_REVIEW row may exist for the same (company, exact candidate identity) at once —
+-- a repeated identical Discovery V2 result must not spam duplicate pending rows. Historical
+-- APPROVED/REJECTED/SUPERSEDED rows for the same identity are unrestricted (audit trail).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ats_source_proposals_pending_identity
+  ON ats_source_proposals(company_id, proposed_source_type, proposed_board_token)
+  WHERE status = 'PENDING_REVIEW';
+
+CREATE INDEX IF NOT EXISTS idx_ats_source_proposals_company
+  ON ats_source_proposals(company_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ats_source_proposals_status
+  ON ats_source_proposals(status, created_at DESC);

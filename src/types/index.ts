@@ -185,6 +185,33 @@ export interface JobSource {
 
 export type CompanyResolutionStatus = "VERIFIED" | "GENERIC_SUPPORTED" | "UNRESOLVED" | "NEEDS_ADAPTER" | "FAILED_TEMPORARY";
 
+/** Discovery V2 Stage 3 — a durable, reviewable proposal to replace a company's current ATS source
+ *  with a candidate Discovery V2 found. Never applied automatically; see
+ *  src/db/queries/atsSourceProposals.ts's approveProposal for the only path that ever mutates a
+ *  company/job_source from one of these. */
+export type AtsSourceProposalStatus = "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "SUPERSEDED";
+
+export interface AtsSourceProposal {
+  id: number;
+  company_id: number;
+  job_source_id: number | null;
+  current_source_type: SourceType | null;
+  current_board_token: string | null;
+  proposed_source_type: Exclude<SourceType, "career_link">;
+  proposed_board_token: string;
+  proposed_canonical_url: string | null;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  validation_status: string;
+  recommendation: string;
+  evidence_json: string;
+  discovery_source: string;
+  status: AtsSourceProposalStatus;
+  created_at: string;
+  updated_at: string;
+  reviewed_at: string | null;
+  review_note: string | null;
+}
+
 /** "Did we identify the real public company/domain for this employer?" — fully independent of
  *  CompanyResolutionStatus above (see companies.domain_identity_status's comment). AMBIGUOUS is
  *  distinct from UNRESOLVED: it means multiple plausible entities were found and none was
