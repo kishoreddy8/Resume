@@ -1,33 +1,37 @@
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import {
-  BROWSER_DISCOVERY_TIMEOUT_MS,
   BROWSER_PAGE_TIMEOUT_MS,
   MAX_V2_OBSERVED_REQUESTS,
+  MAX_V2_PAGES,
   MAX_V2_REDIRECT_CHAIN,
+  MAX_V2_TOTAL_BUDGET_MS,
+  V2_CONTENT_READ_TIMEOUT_MS,
+  V2_RENDER_GRACE_MS,
+  V2_SAFETY_CHECK_TIMEOUT_MS,
 } from "@/lib/ats/discoveryConfig";
 import { detectAtsFromUrlString } from "@/lib/ats/detect";
-import { detectUnsupportedAts, findEmbeddedAtsUrl, findEmbeddedUnsupportedAtsUrl, scoreCareersLink } from "@/lib/ats/discovery";
+import { detectUnsupportedAts, findBestCareersLink, findEmbeddedAtsUrl, findEmbeddedUnsupportedAtsUrl, scoreCareersLink } from "@/lib/ats/discovery";
 import type { SupportedProvider } from "@/lib/ats/pendingConnectorValidation";
 import { validateJobSample } from "@/lib/ats/pendingConnectorValidation";
+import { hostnameOf, sameRegistrableDomain } from "@/lib/ats/sourceRediscovery";
 import { fetchJobsForCompany } from "@/lib/normalize";
 import { isUrlSafeForNavigation } from "@/lib/net/safeFetch";
 import { categorizeThrownError } from "@/lib/scan/errors";
 import type { Company, SourceType } from "@/types";
 
 /**
- * Discovery V2 — shadow-mode, multi-signal browser discovery. NOT a competing discovery engine:
- * every ATS/unsupported-ATS detection call is the exact same detectAtsFromUrlString/
- * detectUnsupportedAts/findEmbeddedAtsUrl/findEmbeddedUnsupportedAtsUrl functions Tier 1/2/3
- * (discovery.ts/discoveryBrowser.ts) already use — this module adds no new provider-signature
- * registry. What it adds on top of Tier 3: it does not stop at the first signal found. It collects
- * EVERY signal from ONE rendered page load — static HTML, rendered anchors/iframes/script/form
- * URLs (via findEmbeddedAtsUrl over the rendered document, which already scans every attribute),
- * same-origin and cross-origin iframe documents (page.frames()), every network request the page
- * issued (React/XHR-loaded ATS endpoints invisible to any HTML-based scan), and the full client-side
- * redirect chain — then deduplicates by (provider, board identity) into candidates, validates each
- * with a real bounded sample fetch, and assigns deterministic confidence. Still only ever visits ONE
- * page — never follows a link, exactly like Tier 3's "read-only-first, at most one bounded click"
- * design, just deeper per page instead of wider across pages.
+ * Discovery V2, Stage 2 — adds exactly ONE bounded careers-link follow on top of Stage 1's
+ * multi-signal single-page inspection. NOT a competing discovery engine: careers-link selection
+ * reuses findBestCareersLink/scoreCareersLink from discovery.ts (the exact same scorer Tier 1/2/3
+ * already use), never a second scoring implementation. The flow:
+ *
+ *   seed page -> full signal collection -> candidate found? stop here.
+ *                                        -> none found? pick the single best first-party
+ *                                           careers/jobs link (if any) -> follow it (max once,
+ *                                           never recursive) -> full signal collection again.
+ *
+ * Every bound (observed requests, redirect chain, candidate validations, overall wall-clock budget)
+ * applies across the WHOLE company attempt, both pages combined — never reset or doubled per page.
  *
  * SHADOW MODE: this module never writes to companies/job_sources/jobs or any other production
  * table. Its output is a report, not an action.
@@ -59,7 +63,10 @@ export type DiscoveryV2Outcome =
   | "GENERIC_ONLY"
   | "NO_SOURCE_FOUND"
   | "SECURITY_REJECTED"
-  | "NAVIGATION_FAILED";
+  | "NAVIGATION_FAILED"
+  | "INVALID_SEED_RESOURCE";
+
+export type DiscoveryV2Page = "seed" | "followed";
 
 export interface DiscoveryV2Candidate {
   provider: Exclude<SourceType, "career_link">;
@@ -67,6 +74,9 @@ export interface DiscoveryV2Candidate {
   canonicalUrl: string | null;
   evidenceTypes: EvidenceType[];
   evidenceUrls: string[];
+  /** Which page first produced a signal for this candidate — "seed" if found without ever needing
+   *  to follow the careers link, "followed" if only the second page revealed it. */
+  foundOnPage: DiscoveryV2Page;
   validationStatus: ValidationStatus;
   jobsSeen: number;
   confidence: ConfidenceLevel;
@@ -76,6 +86,17 @@ export interface DiscoveryV2Candidate {
 export interface DiscoveryV2Result {
   companyId: number | null;
   seedUrl: string;
+  seedFinalUrl: string | null;
+  /** The single careers/jobs link Discovery V2 chose to follow, if any — null when a candidate was
+   *  already found on the seed page (no follow needed) or no qualifying link existed. */
+  followedCareersUrl: string | null;
+  followedFinalUrl: string | null;
+  /** The score findBestCareersLink's own scoreCareersLink assigned the followed link, when one was
+   *  followed — exposes the exact same deterministic scoring Tier 1/2/3 use, not a new metric. */
+  careersLinkScore: number | null;
+  pagesVisited: number;
+  /** @deprecated kept for Stage 1 caller compatibility — equals seedFinalUrl unless a page was
+   *  followed, in which case it equals followedFinalUrl (the "final" page of the whole attempt). */
   finalUrl: string | null;
   candidates: DiscoveryV2Candidate[];
   bestGenericJobsUrl: string | null;
@@ -98,6 +119,47 @@ const SUPPORTED_PROVIDERS = new Set<SupportedProvider>([
   "silkroad", "jobdiva", "taleo", "phenom", "successfactors",
 ]);
 
+// Recognized non-HTML resource extensions — a career_page_url pointing at one of these (e.g. a PDF
+// EEO notice, seen for real in Stage 1 production testing) can never contain a rendered careers DOM;
+// launching Playwright against it wastes the whole page-timeout budget for a guaranteed failure.
+const NON_HTML_EXTENSION_RE = /\.(pdf|docx?|jpe?g|png|gif|svg|zip|rar|7z|mp4|mp3|csv|xlsx?)(?:[?#]|$)/i;
+
+function isLikelyNonHtmlResource(url: string): boolean {
+  try {
+    return NON_HTML_EXTENSION_RE.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * isUrlSafeForNavigation, bounded (see V2_SAFETY_CHECK_TIMEOUT_MS's own doc comment for the real
+ * production hang this fixes: a DNS lookup with no timeout of its own, run on every request a busy
+ * page fires). A timeout is treated as "unsafe" — this can only make the check MORE conservative,
+ * never less, since the caller's fallback for `false` is always "abort/refuse," matching exactly
+ * what a genuine safety failure would do.
+ */
+async function isUrlSafeForNavigationBounded(url: string, allowPrivateNetworksForTests: boolean): Promise<boolean> {
+  return Promise.race([
+    isUrlSafeForNavigation(url, allowPrivateNetworksForTests),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), V2_SAFETY_CHECK_TIMEOUT_MS)),
+  ]);
+}
+
+/**
+ * page.content()/frame.content(), bounded (see V2_CONTENT_READ_TIMEOUT_MS's own doc comment for the
+ * real production hang this fixes — a cross-origin iframe whose execution context never settles).
+ * Returns null on timeout rather than throwing, matching how the existing try/catch around frame
+ * inspection already treats a genuinely-thrown content() failure: the frame's own URL (captured
+ * separately) is still retained as evidence even when its document content can't be read.
+ */
+export async function readContentBounded(target: { content: () => Promise<string> }): Promise<string | null> {
+  return Promise.race([
+    target.content(),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), V2_CONTENT_READ_TIMEOUT_MS)),
+  ]);
+}
+
 function candidateKey(sourceType: Exclude<SourceType, "career_link">, boardToken: string): string {
   return `${sourceType}:${boardToken}`;
 }
@@ -108,11 +170,12 @@ interface RawSignal {
   canonicalUrl: string | null;
   evidenceType: EvidenceType;
   evidenceUrl: string;
+  page: DiscoveryV2Page;
 }
 
 /** Deduplicates raw signals into candidates keyed by (provider, board identity), never by raw URL —
  *  see this module's doc comment's Greenhouse iframe/XHR/script-src example. Preserves every distinct
- *  evidence type/URL a candidate was seen through. */
+ *  evidence type/URL a candidate was seen through, and the FIRST page it was seen on. */
 function dedupeSignals(signals: RawSignal[]): Map<string, DiscoveryV2Candidate> {
   const byKey = new Map<string, DiscoveryV2Candidate>();
   for (const signal of signals) {
@@ -129,6 +192,7 @@ function dedupeSignals(signals: RawSignal[]): Map<string, DiscoveryV2Candidate> 
         canonicalUrl: signal.canonicalUrl,
         evidenceTypes: [signal.evidenceType],
         evidenceUrls: [signal.evidenceUrl],
+        foundOnPage: signal.page,
         validationStatus: "NOT_ATTEMPTED",
         jobsSeen: 0,
         confidence: "LOW",
@@ -190,6 +254,11 @@ export interface DiscoverCompanySourceV2Options {
 const V2_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36 CareerOpsDiscoveryV2Bot";
 
+interface PageInspection {
+  finalUrl: string;
+  html: string;
+}
+
 export async function discoverCompanySourceV2(
   company: Company,
   seedUrl: string,
@@ -198,27 +267,49 @@ export async function discoverCompanySourceV2(
   const allowPrivateNetworksForTests = options.allowPrivateNetworksForTests ?? false;
   const validator = options.validator ?? validateCandidate;
   const startedAt = Date.now();
-  // Unlike Tier 3, V2 does real per-CANDIDATE validation fetches (up to 15s each) on top of the page
-  // render — with several candidates found on one page, that can add up well past a single page's
-  // own timeout, so the same overall wall-clock budget Tier 3 enforces across multiple page loads is
-  // enforced here across the validation loop instead.
-  const budgetExceeded = () => Date.now() - startedAt > BROWSER_DISCOVERY_TIMEOUT_MS;
+  const budgetExceeded = () => Date.now() - startedAt > MAX_V2_TOTAL_BUDGET_MS;
 
-  if (!(await isUrlSafeForNavigation(seedUrl, allowPrivateNetworksForTests))) {
-    return {
-      companyId: company.id, seedUrl, finalUrl: null, candidates: [], bestGenericJobsUrl: null,
-      suspectedUnsupportedAts: null,
-      durationMs: Date.now() - startedAt, observedRequestCount: 0, redirectChain: [],
-      outcome: "SECURITY_REJECTED", reason: `Refused to launch Discovery V2 against an unsafe seed URL: ${seedUrl}`,
-    };
+  const empty = (outcome: DiscoveryV2Outcome, reason: string, pagesVisited = 0): DiscoveryV2Result => ({
+    companyId: company.id, seedUrl, seedFinalUrl: null, followedCareersUrl: null, followedFinalUrl: null,
+    careersLinkScore: null, pagesVisited, finalUrl: null, candidates: [], bestGenericJobsUrl: null,
+    suspectedUnsupportedAts: null, durationMs: Date.now() - startedAt, observedRequestCount: 0,
+    redirectChain: [], outcome, reason,
+  });
+
+  // Phase 4: non-HTML seed handling — never launch a browser expecting a careers DOM from a PDF/
+  // image/archive URL. No fallback URL is invented; CareerOps already has no other verified URL to
+  // try here (the caller is responsible for passing a better seed, e.g. a homepage, if one exists).
+  if (isLikelyNonHtmlResource(seedUrl)) {
+    return empty("INVALID_SEED_RESOURCE", `Seed URL looks like a non-HTML resource, not a careers page: ${seedUrl}`);
   }
 
-  const browser = await chromium.launch({ headless: true });
+  if (!(await isUrlSafeForNavigationBounded(seedUrl, allowPrivateNetworksForTests))) {
+    return empty("SECURITY_REJECTED", `Refused to launch Discovery V2 against an unsafe seed URL: ${seedUrl}`);
+  }
+
+  // Explicit launch timeout — defense in depth alongside the safety-check bound above, so a
+  // resource-starved environment can't silently hang the whole attempt before a single page is
+  // even opened (Playwright defaults to 30s if unset; making it explicit here keeps every bound in
+  // this module visibly accounted for in one place, discoveryConfig.ts).
+  const browser = await chromium.launch({ headless: true, timeout: MAX_V2_TOTAL_BUDGET_MS });
+  // Shared across BOTH pages of this one company attempt — every bound applies to the whole
+  // attempt, never reset per page (Phase 6).
   const signals: RawSignal[] = [];
   const observedRequestUrls = new Set<string>();
   const redirectChain: string[] = [];
+  let pagesVisited = 0;
+  // Set the MOMENT navigation to a page starts (not after it resolves) — an inline <script> tag runs
+  // synchronously during HTML parsing and can fire a fetch() before page.goto()'s own promise
+  // settles, so gating this label on a post-navigation counter mislabels early in-page requests as
+  // belonging to the PREVIOUS page. Route/redirect listeners read this directly instead.
+  let currentPageLabel: DiscoveryV2Page = "seed";
 
-  function pushDetection(detection: ReturnType<typeof detectAtsFromUrlString>, evidenceType: EvidenceType, evidenceUrl: string) {
+  function pushDetection(
+    detection: ReturnType<typeof detectAtsFromUrlString>,
+    evidenceType: EvidenceType,
+    evidenceUrl: string,
+    page: DiscoveryV2Page
+  ) {
     if (!detection) return;
     signals.push({
       sourceType: detection.sourceType,
@@ -226,93 +317,154 @@ export async function discoverCompanySourceV2(
       canonicalUrl: detection.canonicalSourceUrl ?? null,
       evidenceType,
       evidenceUrl,
+      page,
     });
+  }
+
+  /** Navigates one page and collects every V2 signal from it — the single per-page inspection
+   *  routine both the seed page and (at most one) followed careers page call identically. Returns
+   *  null on navigation failure. Route/redirect listeners write into the SHARED collections above,
+   *  so bounds naturally apply across both invocations. */
+  async function inspectPage(page: Page, url: string, label: DiscoveryV2Page): Promise<PageInspection | null> {
+    currentPageLabel = label;
+    try {
+      // Timeout hardening (Phase 7, evidence-based — see V2_RENDER_GRACE_MS's own doc comment):
+      // domcontentloaded is the hard requirement (fast and reliable even for continuously-polling
+      // corporate SPAs), then a separately-bounded, non-fatal best-effort attempt at networkidle
+      // captures whatever additional client-side rendering happens to settle within the grace
+      // window — never blocking the whole attempt if the page never truly goes idle.
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: BROWSER_PAGE_TIMEOUT_MS });
+      await page.waitForLoadState("networkidle", { timeout: V2_RENDER_GRACE_MS }).catch(() => {});
+    } catch {
+      return null;
+    }
+    pagesVisited++;
+
+    const finalUrl = page.url();
+    pushDetection(detectAtsFromUrlString(finalUrl), "REDIRECT_TARGET", finalUrl, label);
+
+    const html = (await readContentBounded(page)) ?? "";
+    const embedded = findEmbeddedAtsUrl(html);
+    if (embedded) {
+      pushDetection(
+        { sourceType: embedded.sourceType, atsBoardToken: embedded.atsBoardToken, canonicalSourceUrl: embedded.url },
+        "STATIC_HTML",
+        embedded.url,
+        label
+      );
+    }
+
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue;
+      const frameUrl = frame.url();
+      pushDetection(detectAtsFromUrlString(frameUrl), "IFRAME", frameUrl, label);
+      try {
+        const frameHtml = await readContentBounded(frame);
+        const frameEmbedded = frameHtml ? findEmbeddedAtsUrl(frameHtml) : null;
+        if (frameEmbedded) {
+          pushDetection(
+            { sourceType: frameEmbedded.sourceType, atsBoardToken: frameEmbedded.atsBoardToken, canonicalSourceUrl: frameEmbedded.url },
+            "IFRAME",
+            frameEmbedded.url,
+            label
+          );
+        }
+      } catch {
+        // Cross-origin/detached frame content occasionally throws — evidence from the frame's own
+        // URL (already captured above) is still retained; this is not a fatal error for the attempt.
+      }
+    }
+
+    return { finalUrl, html };
   }
 
   try {
     const page = await browser.newPage({ userAgent: V2_USER_AGENT });
 
-    // Network-request sniffer (Phase 3) + the same per-navigation SSRF gate Tier 3 uses — a single
-    // route handler does both: every request is safety-checked before it's ever allowed through, and
-    // (bounded) its URL is inspected for an ATS signature regardless of whether it ever touches the
-    // DOM. Response bodies are never read here — URL inspection only.
+    // Network-request sniffer (Stage 1, unchanged) + the same per-navigation SSRF gate Tier 3 uses —
+    // one route handler does both, shared across both page loads of this attempt.
     await page.route("**/*", async (route) => {
       const url = route.request().url();
-      const safe = await isUrlSafeForNavigation(url, allowPrivateNetworksForTests);
+      const safe = await isUrlSafeForNavigationBounded(url, allowPrivateNetworksForTests);
       if (!safe) {
         await route.abort();
         return;
       }
       if (observedRequestUrls.size < MAX_V2_OBSERVED_REQUESTS && !observedRequestUrls.has(url)) {
         observedRequestUrls.add(url);
-        pushDetection(detectAtsFromUrlString(url), "NETWORK_REQUEST", url);
+        // Labeled by whichever page has been visited most recently when this request fires — good
+        // enough for evidence purposes; a request straddling the exact moment of navigation is rare
+        // and, either way, gets attributed to a real page in this attempt, never a phantom one.
+        pushDetection(detectAtsFromUrlString(url), "NETWORK_REQUEST", url, currentPageLabel);
       }
       await route.continue();
     });
 
-    // Client-side redirect chain (Phase 6) — every top-frame navigation during this one page load,
-    // bounded so a pathological self-redirecting page can't grow this unboundedly.
     page.on("framenavigated", (frame) => {
       if (frame !== page.mainFrame()) return;
       if (redirectChain.length >= MAX_V2_REDIRECT_CHAIN) return;
       const url = frame.url();
       if (redirectChain[redirectChain.length - 1] === url) return;
       redirectChain.push(url);
-      pushDetection(detectAtsFromUrlString(url), "REDIRECT_TARGET", url);
+      pushDetection(detectAtsFromUrlString(url), "REDIRECT_TARGET", url, currentPageLabel);
     });
 
-    try {
-      await page.goto(seedUrl, { waitUntil: "networkidle", timeout: BROWSER_PAGE_TIMEOUT_MS });
-    } catch {
-      return {
-        companyId: company.id, seedUrl, finalUrl: null, candidates: [], bestGenericJobsUrl: null,
-        suspectedUnsupportedAts: null,
-        durationMs: Date.now() - startedAt, observedRequestCount: observedRequestUrls.size, redirectChain,
-        outcome: "NAVIGATION_FAILED", reason: `Browser navigation failed for ${seedUrl}`,
-      };
+    const seedInspection = await inspectPage(page, seedUrl, "seed");
+    if (!seedInspection) {
+      return { ...empty("NAVIGATION_FAILED", `Browser navigation failed for ${seedUrl}`, pagesVisited), observedRequestCount: observedRequestUrls.size, redirectChain };
     }
+    const seedFinalUrl = seedInspection.finalUrl;
 
-    const finalUrl = page.url();
-    pushDetection(detectAtsFromUrlString(finalUrl), "REDIRECT_TARGET", finalUrl);
-
-    // Rendered DOM (Phase 4) — findEmbeddedAtsUrl scans the WHOLE rendered document text for any
-    // http(s) token, which already covers <a href>, <script src>, <form action>, and same-document
-    // iframe src attributes — reused as-is, not reimplemented.
-    const html = await page.content();
-    const embedded = findEmbeddedAtsUrl(html);
-    if (embedded) pushDetection({ sourceType: embedded.sourceType, atsBoardToken: embedded.atsBoardToken, canonicalSourceUrl: embedded.url }, "STATIC_HTML", embedded.url);
     let unsupportedName: string | null = null;
     let unsupportedUrl: string | null = null;
-    const embeddedUnsupported = findEmbeddedUnsupportedAtsUrl(html);
-    if (embeddedUnsupported) {
-      unsupportedName = embeddedUnsupported.name;
-      unsupportedUrl = embeddedUnsupported.url;
+    const seedEmbeddedUnsupported = findEmbeddedUnsupportedAtsUrl(seedInspection.html);
+    if (seedEmbeddedUnsupported) {
+      unsupportedName = seedEmbeddedUnsupported.name;
+      unsupportedUrl = seedEmbeddedUnsupported.url;
     }
-    const finalUnsupported = detectUnsupportedAts(finalUrl);
-    if (finalUnsupported && !unsupportedName) {
-      unsupportedName = finalUnsupported;
-      unsupportedUrl = finalUrl;
+    const seedFinalUnsupported = detectUnsupportedAts(seedFinalUrl);
+    if (seedFinalUnsupported && !unsupportedName) {
+      unsupportedName = seedFinalUnsupported;
+      unsupportedUrl = seedFinalUrl;
     }
 
-    // Frames/iframes (Phase 5) — same-origin and cross-origin frame documents the main-document scan
-    // above cannot see into. A detected ATS here is still just a candidate, never auto-trusted.
-    for (const frame of page.frames()) {
-      if (frame === page.mainFrame()) continue;
-      const frameUrl = frame.url();
-      pushDetection(detectAtsFromUrlString(frameUrl), "IFRAME", frameUrl);
-      try {
-        const frameHtml = await frame.content();
-        const frameEmbedded = findEmbeddedAtsUrl(frameHtml);
-        if (frameEmbedded) {
-          pushDetection(
-            { sourceType: frameEmbedded.sourceType, atsBoardToken: frameEmbedded.atsBoardToken, canonicalSourceUrl: frameEmbedded.url },
-            "IFRAME",
-            frameEmbedded.url
-          );
+    let followedCareersUrl: string | null = null;
+    let followedFinalUrl: string | null = null;
+    let careersLinkScore: number | null = null;
+
+    // Phase 2: only follow a link when the seed page alone produced NO structured candidate — never
+    // "just in case." Phase 6: never exceed MAX_V2_PAGES or the overall budget.
+    const seedHasCandidate = dedupeSignals(signals).size > 0;
+    if (!seedHasCandidate && !unsupportedName && pagesVisited < MAX_V2_PAGES && !budgetExceeded()) {
+      const bestLink = findBestCareersLink(seedInspection.html, seedFinalUrl, seedFinalUrl);
+      if (bestLink) {
+        const score = scoreCareersLink({ url: bestLink, text: "" });
+        // Phase 3: first-party safety. A link that's ITSELF already a recognized ATS URL is treated
+        // as evidence directly by the seed-page scan above (findEmbeddedAtsUrl already covers every
+        // href) and never needs a follow at all — this branch only ever fires for a same-company
+        // careers/jobs page, not a third-party destination.
+        const sameDomain = sameRegistrableDomain(hostnameOf(bestLink), hostnameOf(seedFinalUrl));
+        if (sameDomain && (await isUrlSafeForNavigationBounded(bestLink, allowPrivateNetworksForTests))) {
+          const followedInspection = await inspectPage(page, bestLink, "followed");
+          followedCareersUrl = bestLink;
+          careersLinkScore = score;
+          if (followedInspection) {
+            followedFinalUrl = followedInspection.finalUrl;
+            const followedEmbeddedUnsupported = findEmbeddedUnsupportedAtsUrl(followedInspection.html);
+            if (followedEmbeddedUnsupported && !unsupportedName) {
+              unsupportedName = followedEmbeddedUnsupported.name;
+              unsupportedUrl = followedEmbeddedUnsupported.url;
+            }
+            const followedFinalUnsupported = detectUnsupportedAts(followedInspection.finalUrl);
+            if (followedFinalUnsupported && !unsupportedName) {
+              unsupportedName = followedFinalUnsupported;
+              unsupportedUrl = followedInspection.finalUrl;
+            }
+          }
         }
-      } catch {
-        // Cross-origin/detached frame content occasionally throws — evidence from the frame's own
-        // URL (already captured above) is still retained; this is not a fatal error for the attempt.
+        // A cross-domain "best" link (e.g. a parent-company portal or aggregator) is deliberately
+        // NOT followed — it remains unfollowed, review-only evidence per Phase 3; no signal is lost
+        // since scoreCareersLink's own output isn't itself an ATS detection.
       }
     }
 
@@ -328,18 +480,17 @@ export async function discoverCompanySourceV2(
       candidate.recommendation = deriveRecommendation(candidate.confidence);
     }
 
+    const lastVisitedUrl = followedFinalUrl ?? seedFinalUrl;
     // Same "does this URL itself look jobs-shaped" gate Tier 1/2/3 use before treating a reachable
-    // page as a generic-scrape candidate — a page that merely LOADED (e.g. an unrelated homepage
-    // with no careers signal at all) must resolve NO_SOURCE_FOUND, not be silently promoted to
-    // GENERIC_ONLY just because it rendered successfully.
-    const looksLikeJobsUrl = scoreCareersLink({ url: finalUrl, text: "" }) > 0;
-    const bestGenericJobsUrl = candidates.length === 0 && unsupportedName === null && looksLikeJobsUrl ? finalUrl : null;
+    // page as a generic-scrape candidate.
+    const looksLikeJobsUrl = scoreCareersLink({ url: lastVisitedUrl, text: "" }) > 0;
+    const bestGenericJobsUrl = candidates.length === 0 && unsupportedName === null && looksLikeJobsUrl ? lastVisitedUrl : null;
 
     let outcome: DiscoveryV2Outcome;
     let reason: string;
     if (candidates.length > 0) {
       outcome = "STRUCTURED_CANDIDATE_FOUND";
-      reason = `Found ${candidates.length} deduplicated ATS candidate(s) from ${signals.length} raw signal(s) across static HTML, network requests, frames, and redirects.`;
+      reason = `Found ${candidates.length} deduplicated ATS candidate(s) from ${signals.length} raw signal(s) across ${pagesVisited} page(s) (static HTML, network requests, frames, redirects).`;
     } else if (unsupportedName) {
       outcome = "GENERIC_ONLY";
       reason = `Recognized-but-unsupported ATS platform detected: ${unsupportedName} at ${unsupportedUrl}`;
@@ -348,12 +499,12 @@ export async function discoverCompanySourceV2(
       reason = `No known ATS signature found across any signal; rendered page reached at ${bestGenericJobsUrl}`;
     } else {
       outcome = "NO_SOURCE_FOUND";
-      reason = `Rendered ${seedUrl} but found no ATS signature in static HTML, network requests, frames, or the redirect chain.`;
+      reason = `Rendered ${pagesVisited} page(s) from ${seedUrl} but found no ATS signature in static HTML, network requests, frames, or the redirect chain.`;
     }
 
     return {
-      companyId: company.id, seedUrl, finalUrl, candidates, bestGenericJobsUrl,
-      suspectedUnsupportedAts: unsupportedName,
+      companyId: company.id, seedUrl, seedFinalUrl, followedCareersUrl, followedFinalUrl, careersLinkScore,
+      pagesVisited, finalUrl: lastVisitedUrl, candidates, bestGenericJobsUrl, suspectedUnsupportedAts: unsupportedName,
       durationMs: Date.now() - startedAt, observedRequestCount: observedRequestUrls.size, redirectChain,
       outcome, reason,
     };

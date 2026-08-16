@@ -213,7 +213,7 @@ function deriveRecommendation(
   return confidence === "HIGH" ? "AUTO_REPLACE_CANDIDATE" : "NEEDS_SOURCE_REVIEW";
 }
 
-function hostnameOf(url: string | null): string | null {
+export function hostnameOf(url: string | null): string | null {
   if (!url) return null;
   try {
     return new URL(url).hostname.toLowerCase();
@@ -225,8 +225,9 @@ function hostnameOf(url: string | null): string | null {
 /** Registrable-domain-ish comparison: strips a leading "www." and compares the last two labels, so
  *  "careers.example.com" is recognized as the same company domain as "example.com" without needing a
  *  full public-suffix list — deliberately conservative (a false "different" is safe here; it only
- *  costs a confidence downgrade, never a false-positive identity match). */
-function sameRegistrableDomain(a: string | null, b: string | null): boolean {
+ *  costs a confidence downgrade, never a false-positive identity match). Exported for reuse by
+ *  discoveryV2.ts's same first-party-domain safety gate before auto-following a careers link. */
+export function sameRegistrableDomain(a: string | null, b: string | null): boolean {
   if (!a || !b) return false;
   const norm = (h: string) => h.replace(/^www\./, "").split(".").slice(-2).join(".");
   return norm(a) === norm(b);

@@ -63,14 +63,21 @@ async function main() {
       console.log(`  SKIPPED: no career_page_url or discovered_jobs_url to seed from\n`);
       continue;
     }
-    console.log(`  final URL: ${result.finalUrl ?? "(navigation did not complete)"}`);
+    console.log(`  pages visited: ${result.pagesVisited}`);
+    console.log(`  seed final URL: ${result.seedFinalUrl ?? "(navigation did not complete)"}`);
+    if (result.followedCareersUrl) {
+      console.log(`  followed careers link: ${result.followedCareersUrl} (score=${result.careersLinkScore})`);
+      console.log(`  followed final URL: ${result.followedFinalUrl ?? "(navigation did not complete)"}`);
+    } else {
+      console.log(`  followed careers link: (none — candidate found on seed, or no qualifying first-party link)`);
+    }
     console.log(`  outcome: ${result.outcome} — ${result.reason}`);
     console.log(`  observed requests: ${result.observedRequestCount}, duration: ${result.durationMs}ms`);
     if (result.candidates.length === 0) {
       console.log(`  candidates: none`);
     }
     for (const candidate of result.candidates) {
-      console.log(`  candidate: ${candidate.provider} / ${candidate.boardToken}`);
+      console.log(`  candidate: ${candidate.provider} / ${candidate.boardToken} (found on ${candidate.foundOnPage} page)`);
       console.log(`    evidence: ${candidate.evidenceTypes.join(", ")}`);
       console.log(`    validation: ${candidate.validationStatus} (jobsSeen=${candidate.jobsSeen})`);
       console.log(`    confidence: ${candidate.confidence}`);

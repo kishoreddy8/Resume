@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import { after, test } from "node:test";
-import { discoverCompanySourceV2, validateCandidate } from "../discoveryV2";
+import { discoverCompanySourceV2, readContentBounded, validateCandidate } from "../discoveryV2";
 import type { DiscoveryV2Candidate } from "../discoveryV2";
+import { sameRegistrableDomain } from "../sourceRediscovery";
 import type { Company } from "../../../types";
 
 /**
@@ -261,7 +262,7 @@ test("15. UNSUPPORTED classification (direct unit test — every real detectAtsF
   const candidate: DiscoveryV2Candidate = {
     provider: "career_link" as never, // deliberately outside SUPPORTED_PROVIDERS for this defensive-path test
     boardToken: "whatever", canonicalUrl: null, evidenceTypes: ["STATIC_HTML"], evidenceUrls: ["https://example.com"],
-    validationStatus: "NOT_ATTEMPTED", jobsSeen: 0, confidence: "LOW", recommendation: "NO_REPLACEMENT_FOUND",
+    foundOnPage: "seed", validationStatus: "NOT_ATTEMPTED", jobsSeen: 0, confidence: "LOW", recommendation: "NO_REPLACEMENT_FOUND",
   };
   const result = await validateCandidate(company, candidate);
   assert.equal(result.status, "UNSUPPORTED");
@@ -404,4 +405,504 @@ test("historical fixture — Adobe: Workday board reachable only via a rendered 
   assert.equal(workdayCandidates.length, 1, "the anchor and the CXS network call for the SAME site must collapse into one candidate");
   assert.ok(workdayCandidates[0].evidenceTypes.includes("STATIC_HTML"));
   assert.ok(workdayCandidates[0].evidenceTypes.includes("NETWORK_REQUEST"));
+});
+
+// --- Stage 2: two-hop historical fixtures (Phase 10) ----------------------------------------------
+// Same six companies, now modeling the realistic homepage -> careers link -> hidden ATS shape the
+// Stage-1 single-page fixtures above deliberately did NOT cover (the ATS was always already on the
+// seed page there). Never a live-site dependency.
+
+test("historical fixture (two-hop) — Docusign: homepage links to /careers, Greenhouse only found via network fetch on the second page", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><div id="careers-root">Loading…</div><script>
+        fetch("https://boards-api.greenhouse.io/v1/boards/docusign/jobs?content=true").catch(function(){});
+      </script></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "greenhouse");
+  assert.ok(candidate, "must follow the single careers link and find the ATS only reachable from there");
+  assert.equal(candidate!.boardToken, "docusign");
+  assert.equal(candidate!.foundOnPage, "followed");
+  assert.equal(result.pagesVisited, 2);
+});
+
+test("historical fixture (two-hop) — Chewy: homepage links to /jobs, Greenhouse embed script only on the second page", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/jobs">Open Positions</a></body></html>`);
+    } else if (req.url === "/jobs") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><script src="https://boards.greenhouse.io/embed/job_board/js?for=chewy"></script></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "greenhouse");
+  assert.ok(candidate);
+  assert.equal(candidate!.boardToken, "chewy");
+  assert.equal(result.pagesVisited, 2);
+});
+
+test("historical fixture (two-hop) — Roblox: homepage -> careers page -> Lever anchor", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Join Our Team</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://jobs.lever.co/roblox">Search Jobs</a></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "lever");
+  assert.ok(candidate);
+  assert.equal(candidate!.boardToken, "roblox");
+  assert.equal(result.followedCareersUrl, `${url}/careers`);
+});
+
+test("historical fixture (two-hop) — Salesforce: homepage -> careers page -> Ashby iframe", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><iframe src="/embed"></iframe></body></html>`);
+    } else if (req.url === "/embed") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://jobs.ashbyhq.com/salesforce">Open Roles</a></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "ashby");
+  assert.ok(candidate);
+  assert.equal(candidate!.boardToken, "salesforce");
+  assert.ok(candidate!.evidenceTypes.includes("IFRAME"));
+});
+
+test("historical fixture (two-hop) — PayPal: homepage -> careers page -> network-only Workday CXS call", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><div id="app"></div><script>
+        fetch("https://paypal.wd1.myworkdayjobs.com/wday/cxs/paypal/jobs/jobs").catch(function(){});
+      </script></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "workday");
+  assert.ok(candidate);
+  assert.equal(candidate!.boardToken, "paypal|wd1|jobs");
+});
+
+test("historical fixture (two-hop) — Adobe: homepage -> careers page, anchor + duplicate CXS network call collapse across pages", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body>
+        <a href="https://adobe.wd5.myworkdayjobs.com/external_career_site">Careers</a>
+        <script>fetch("https://adobe.wd5.myworkdayjobs.com/wday/cxs/adobe/external_career_site/jobs").catch(function(){});</script>
+      </body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const workdayCandidates = result.candidates.filter((c) => c.provider === "workday" && c.boardToken === "adobe|wd5|external_career_site");
+  assert.equal(workdayCandidates.length, 1);
+  assert.ok(workdayCandidates[0].evidenceTypes.includes("STATIC_HTML"));
+  assert.ok(workdayCandidates[0].evidenceTypes.includes("NETWORK_REQUEST"));
+});
+
+// --- Stage 2: bounded careers-link navigation (Phase 9) --------------------------------------------
+
+test("1. homepage -> /careers -> Workday", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://onehop.wd1.myworkdayjobs.com/External">Search Jobs</a></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "workday");
+  assert.ok(candidate);
+  assert.equal(candidate!.boardToken, "onehop|wd1|External");
+});
+
+test("2. homepage -> /jobs -> Greenhouse", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/jobs">Jobs</a></body></html>`);
+    } else if (req.url === "/jobs") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://boards.greenhouse.io/twohop">All Jobs</a></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "greenhouse");
+  assert.ok(candidate);
+  assert.equal(candidate!.boardToken, "twohop");
+});
+
+test("3. homepage -> careers page -> Lever", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Open Positions</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://jobs.lever.co/threehop">View Jobs</a></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "lever");
+  assert.ok(candidate);
+  assert.equal(candidate!.boardToken, "threehop");
+});
+
+test("4. homepage -> careers page -> Ashby iframe", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><iframe src="/embed-ashby"></iframe></body></html>`);
+    } else if (req.url === "/embed-ashby") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://jobs.ashbyhq.com/fourhop">Open Roles</a></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "ashby");
+  assert.ok(candidate);
+  assert.equal(candidate!.boardToken, "fourhop");
+});
+
+test("5. homepage -> careers page -> network-only Workday", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><script>fetch("https://fivehop.wd1.myworkdayjobs.com/wday/cxs/fivehop/External/jobs").catch(function(){});</script></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "workday");
+  assert.ok(candidate);
+  assert.equal(candidate!.boardToken, "fivehop|wd1|External");
+});
+
+test("6. seed already contains a structured candidate -> no second page is ever visited", async () => {
+  const { url, requestLog } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://boards.greenhouse.io/directhit">Careers</a><a href="/careers">Also careers</a></body></html>`);
+    } else {
+      // Must never be hit — a candidate was already found on the seed page.
+      res.writeHead(500); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  assert.equal(result.pagesVisited, 1);
+  assert.equal(result.followedCareersUrl, null);
+  assert.deepEqual(requestLog, ["/"]);
+});
+
+test("7. maximum one careers link is ever followed, even if the second page ALSO has an unrelated careers-shaped link", async () => {
+  const { url, requestLog } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      // No ATS here, but ANOTHER careers-shaped link — must not be followed (would be a 2nd hop).
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers/more">View More Openings</a></body></html>`);
+    } else {
+      res.writeHead(500); res.end(); // a 3rd page must never be requested
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  assert.equal(result.pagesVisited, 2);
+  assert.deepEqual(requestLog.filter((r) => r !== "/favicon.ico"), ["/", "/careers"]);
+});
+
+test("8. no recursive crawl: a careers link found only on the FOLLOWED page is never itself followed", async () => {
+  // Same scenario as test 7, phrased around the explicit "no recursive crawl" requirement.
+  const { url, requestLog } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers/deeper">Search More Jobs</a></body></html>`);
+    } else {
+      res.writeHead(500); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  assert.equal(result.outcome === "STRUCTURED_CANDIDATE_FOUND", false);
+  assert.ok(!requestLog.includes("/careers/deeper"), "the second page's own careers link must never be followed — that would be a second hop");
+});
+
+test("9. an unrelated external careers link is never automatically followed", async () => {
+  const { url, requestLog } = await startServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(`<html><body><a href="https://jobs.unrelated-external-domain.invalid/careers">Search Jobs</a></body></html>`);
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  assert.equal(result.followedCareersUrl, null, "a cross-domain link must never be auto-followed");
+  assert.equal(result.pagesVisited, 1);
+  assert.deepEqual(requestLog, ["/"]);
+});
+
+test("10. a same-registrable-domain careers link IS allowed to be followed", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://jobs.lever.co/samedomainco">Search Jobs</a></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  assert.equal(result.followedCareersUrl, `${url}/careers`);
+  assert.equal(result.pagesVisited, 2);
+});
+
+test("11. a careers subdomain is recognized as the same first-party company (unit-level: sameRegistrableDomain)", () => {
+  assert.equal(sameRegistrableDomain("careers.example.com", "example.com"), true);
+  assert.equal(sameRegistrableDomain("jobs.example.com", "www.example.com"), true);
+  assert.equal(sameRegistrableDomain("careers.example.com", "unrelated-other-company.com"), false);
+});
+
+test("12. an unsafe careers link (disallowed scheme) is rejected, never navigated", async () => {
+  // Uses a disallowed SCHEME rather than a private-IP literal: isUrlSafeForNavigation's scheme check
+  // runs BEFORE the allowPrivateNetworksForTests bypass (see safeFetch.ts's assertSafeUrl), so this
+  // is the one rejection that's still genuinely exercised while allowPrivateNetworksForTests:true is
+  // needed for the local test server's own 127.0.0.1 seed URL to be reachable at all — matching the
+  // exact same pattern Stage 1's own SSRF test (discoveryV2.test.ts test 11) already established.
+  const { url, requestLog } = await startServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(`<html><body><a href="ftp://evil.example/careers">Careers Portal</a></body></html>`);
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  assert.equal(result.followedCareersUrl, null);
+  assert.deepEqual(requestLog, ["/"]);
+});
+
+test("13. a PDF seed URL is handled without ever launching a browser crawl against it", async () => {
+  const company = makeCompany();
+  const started = Date.now();
+  const result = await discoverCompanySourceV2(company, "https://example.invalid/careers/EEOC_KnowYourRights.pdf", { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const elapsed = Date.now() - started;
+  assert.equal(result.outcome, "INVALID_SEED_RESOURCE");
+  assert.ok(elapsed < 500, `must return near-instantly with no browser/network launch at all for an obviously non-HTML seed, took ${elapsed}ms`);
+});
+
+test("14. duplicate candidates found across page 1 AND page 2 collapse into one candidate", async () => {
+  // A candidate can only actually be found on page 2 alone in practice (page 1 finding one stops
+  // navigation before page 2 is ever visited) — this proves the SHARED dedup map correctly handles
+  // the same board being referenced multiple times WITHIN the followed page itself, using the exact
+  // same collapsing logic that would apply across pages if evidence ever did span both.
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body>
+        <a href="https://boards.greenhouse.io/duponpage2">Careers</a>
+        <script>fetch("https://boards-api.greenhouse.io/v1/boards/duponpage2/jobs").catch(function(){});</script>
+      </body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const matches = result.candidates.filter((c) => c.provider === "greenhouse" && c.boardToken === "duponpage2");
+  assert.equal(matches.length, 1);
+});
+
+test("15. candidate evidence preserves WHICH page (seed vs followed) produced the signal", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://boards.greenhouse.io/pagelabel">Careers</a></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const candidate = result.candidates.find((c) => c.provider === "greenhouse");
+  assert.ok(candidate);
+  assert.equal(candidate!.foundOnPage, "followed");
+});
+
+test("16. the observed-request bound applies across BOTH pages combined, not reset per page", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body>no ats here</body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  assert.ok(result.observedRequestCount <= 200, "must never exceed the shared MAX_V2_OBSERVED_REQUESTS cap across the whole attempt");
+});
+
+test("17. the redirect-chain bound applies across BOTH pages combined", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body>no ats here</body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  assert.ok(result.redirectChain.length <= 10, "must never exceed the shared MAX_V2_REDIRECT_CHAIN cap across the whole attempt");
+});
+
+test("18. the overall wall-clock budget applies across BOTH pages combined, not per page", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body>no ats here</body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  assert.ok(result.durationMs < 40_000, "the whole two-page attempt must stay within the shared overall budget");
+});
+
+test("19. a page with continuous background requests (never goes network-idle) does not hang the whole attempt", async () => {
+  // Simulates Under Armour/Microsoft's real Stage-1 timeout pattern: a page that keeps firing
+  // requests indefinitely (analytics/telemetry-style polling) never reaches Playwright's
+  // "networkidle" state — proving the domcontentloaded + bounded-grace fix resolves in well under
+  // the old guaranteed-15s-timeout behavior.
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a><script>
+        setInterval(function() { fetch("/ping?" + Date.now()).catch(function(){}); }, 200);
+      </script></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://boards.greenhouse.io/pollingco">Careers</a><script>
+        setInterval(function() { fetch("/ping?" + Date.now()).catch(function(){}); }, 200);
+      </script></body></html>`);
+    } else if (req.url?.startsWith("/ping")) {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("pong");
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const started = Date.now();
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 20_000, `must resolve well under the old guaranteed-15s-per-page timeout even with continuous background polling, took ${elapsed}ms`);
+  const candidate = result.candidates.find((c) => c.provider === "greenhouse");
+  assert.ok(candidate, "must still find the real candidate despite the page never going fully idle");
+});
+
+test("19b. a hanging content() read (real production hang: Under Armour, a cross-origin iframe whose execution context never settled) resolves within the bounded timeout instead of hanging forever", async () => {
+  const neverResolves = { content: () => new Promise<string>(() => {}) };
+  const started = Date.now();
+  const result = await readContentBounded(neverResolves);
+  const elapsed = Date.now() - started;
+  assert.equal(result, null, "a timed-out content() read must resolve to null, not throw or hang");
+  assert.ok(elapsed < 6_000, `must resolve well within the bounded V2_CONTENT_READ_TIMEOUT_MS window, took ${elapsed}ms`);
+});
+
+test("20. browser closes cleanly even when the second (followed) page navigation fails", async () => {
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      // Hang forever — never res.end() — simulates the followed page itself failing to load.
+      return;
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  const result = await discoverCompanySourceV2(makeCompany(), url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  // The seed page's own signals (none here) still resolve honestly; the failed second page must not
+  // throw or hang the whole attempt.
+  assert.notEqual(result.outcome, "STRUCTURED_CANDIDATE_FOUND");
+});
+
+test("21. zero DB mutation is possible from this call shape (Company object never mutated across a two-page attempt)", async () => {
+  const company = makeCompany();
+  const snapshot = { ...company };
+  const { url } = await startServer((req, res) => {
+    if (req.url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="/careers">Careers</a></body></html>`);
+    } else if (req.url === "/careers") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><a href="https://boards.greenhouse.io/nomutation">Careers</a></body></html>`);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  await discoverCompanySourceV2(company, url, { allowPrivateNetworksForTests: true, validator: passingValidator });
+  assert.deepEqual(company, snapshot);
 });
