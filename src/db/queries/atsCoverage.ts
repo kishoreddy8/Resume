@@ -55,8 +55,14 @@ const COMPANY_WITH_JOB_COUNT_SQL = `
   SELECT
     c.id, c.name, c.source_type, c.resolution_status, c.suspected_ats, c.discovery_reason,
     c.discovery_attempted_at, c.connector_health,
-    (SELECT COUNT(*) FROM jobs j WHERE j.company_id = c.id AND j.is_active = 1) AS job_count
+    COALESCE(j.job_count, 0) AS job_count
   FROM companies c
+  LEFT JOIN (
+    SELECT company_id, COUNT(*) AS job_count
+    FROM jobs
+    WHERE is_active = 1
+    GROUP BY company_id
+  ) j ON j.company_id = c.id
 `;
 
 interface RawRow {

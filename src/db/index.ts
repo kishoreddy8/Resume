@@ -73,6 +73,8 @@ function runAdditiveMigrations(db: Database.Database) {
 function ensureJobsIndexes(db: Database.Database) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_archived ON jobs(is_archived)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_pinned ON jobs(pinned)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_active_archived_posted ON jobs(is_archived, is_active, posted_at DESC, first_seen_at DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_company_active ON jobs(company_id, is_active)");
 }
 
 const COMPANIES_COLUMNS = [

@@ -131,6 +131,31 @@ export function listLatestResumeQualityWorkflowsForDedupeKeys(
   return result;
 }
 
+/** Candidate-wide lookup of all latest resume quality workflows — single bounded query with zero IN lists. */
+export function listAllLatestResumeQualityWorkflowsForCandidate(
+  candidateId: number
+): Record<string, ResumeQualityWorkflowRow> {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT t.*
+       FROM resume_quality_workflows t
+       INNER JOIN (
+         SELECT dedupe_key, MAX(id) AS max_id
+         FROM resume_quality_workflows
+         WHERE candidate_id = ?
+         GROUP BY dedupe_key
+       ) latest ON latest.max_id = t.id`
+    )
+    .all(candidateId) as ResumeQualityWorkflowRow[];
+
+  const result: Record<string, ResumeQualityWorkflowRow> = {};
+  for (const row of rows) {
+    result[row.dedupe_key] = row;
+  }
+  return result;
+}
+
 export interface TransitionWorkflowStatusOptions {
   failureReason?: string;
   latestOverallScore?: number;

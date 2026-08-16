@@ -305,3 +305,49 @@ export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys
   }
   return result;
 }
+
+/** Candidate-wide lookup of all latest match decisions — single bounded query with zero IN lists. */
+export function listAllLatestDecisionsForCandidate(candidateId: number): Record<string, LatestDecisionSummary> {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT t.dedupe_key, t.decision, t.overall_score, t.employer_evidenced_share, t.requirement_coverage,
+              t.status, t.match_engine_version, t.match_knowledge_hash, t.candidate_profile_hash,
+              t.candidate_settings_hash, t.jd_content_hash
+       FROM job_match_results t
+       INNER JOIN (
+         SELECT dedupe_key, MAX(id) AS max_id FROM job_match_results
+         WHERE candidate_id = ? GROUP BY dedupe_key
+       ) latest ON latest.max_id = t.id`
+    )
+    .all(candidateId) as {
+    dedupe_key: string;
+    decision: string;
+    overall_score: number;
+    employer_evidenced_share: number;
+    requirement_coverage: number;
+    status: "active" | "superseded";
+    match_engine_version: number;
+    match_knowledge_hash: string;
+    candidate_profile_hash: string;
+    candidate_settings_hash: string;
+    jd_content_hash: string;
+  }[];
+
+  const result: Record<string, LatestDecisionSummary> = {};
+  for (const row of rows) {
+    result[row.dedupe_key] = {
+      decision: row.decision,
+      overallScore: row.overall_score,
+      employerEvidencedShare: row.employer_evidenced_share,
+      requirementCoverage: row.requirement_coverage,
+      status: row.status,
+      matchEngineVersion: row.match_engine_version,
+      matchKnowledgeHash: row.match_knowledge_hash,
+      candidateProfileHash: row.candidate_profile_hash,
+      candidateSettingsHash: row.candidate_settings_hash,
+      jdContentHash: row.jd_content_hash,
+    };
+  }
+  return result;
+}

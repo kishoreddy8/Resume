@@ -518,6 +518,18 @@ export interface JobWithCompany extends Job {
   not_interested?: 0 | 1;
 }
 
+/**
+ * Lightweight projection of a job row for list views and ranking feeds.
+ * Omits heavy multi-KB text/HTML/JSON blobs (description_html, description_sections, raw_json).
+ * Preserves all metadata, title, department, location, compensation, dates, flags, company, and H1B fields.
+ */
+export interface JobWithCompanySummary
+  extends Omit<JobWithCompany, "description_html" | "description_sections" | "raw_json"> {
+  description_html?: never;
+  description_sections?: never;
+  raw_json?: never;
+}
+
 /** Age band computed live from posted_at (preferred) or first_seen_at — never persisted, never
  *  derived from last_seen_at. See src/lib/jobLifecycle.ts. */
 export type JobAgeBand = "fresh" | "active" | "aging" | "stale";

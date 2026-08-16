@@ -13,6 +13,7 @@ import type {
   JobHistoryChangeType,
   JobStatusHistoryEntry,
   JobWithCompany,
+  JobWithCompanySummary,
   NormalizedJob,
   PipelineStatus,
   Seniority,
@@ -108,6 +109,68 @@ const JOB_WITH_COMPANY_SELECT = `
   c.h1b_lca_count AS company_h1b_lca_count,
   c.h1b_latest_fiscal_year AS company_h1b_latest_fiscal_year
 `;
+
+export const JOB_WITH_COMPANY_SUMMARY_SELECT = `
+  j.id, j.company_id, j.source_type, j.external_id, j.title, j.location, j.department,
+  j.url, j.description_text,
+  j.employment_type, j.workplace_type, j.salary_text, j.sponsorship_snippet,
+  j.posted_at, j.first_seen_at, j.last_seen_at, j.is_active, j.dedupe_key,
+  j.sponsorship_mentioned, j.sponsorship_polarity, j.h1b_combined_confidence,
+  j.pipeline_status, j.pipeline_updated_at, j.marked_for_tailoring, j.tailoring_marked_at,
+  j.closed_at, j.missed_scan_count, j.is_archived, j.archived_at, j.archived_reason,
+  j.pinned, j.notes, j.tags, j.created_at, j.updated_at,
+  j.employment_type_normalized, j.workplace_type_normalized, j.seniority,
+  j.salary_min, j.salary_max, j.salary_currency, j.salary_period,
+  j.clearance_required, j.industry_domain,
+  c.name AS company_name,
+  c.h1b_confidence AS company_h1b_confidence,
+  c.h1b_confidence_evidence AS company_h1b_confidence_evidence,
+  c.h1b_match_employer_name AS company_h1b_match_employer_name,
+  c.h1b_match_tier AS company_h1b_match_tier,
+  c.h1b_lca_count AS company_h1b_lca_count,
+  c.h1b_latest_fiscal_year AS company_h1b_latest_fiscal_year
+`;
+
+export function listJobsByDedupeKeys(dedupeKeys: string[], candidateId?: number): JobWithCompanySummary[] {
+  if (dedupeKeys.length === 0) return [];
+  const overlay = candidateOverlay(candidateId);
+  const placeholders = dedupeKeys.map((_, i) => `@key${i}`).join(",");
+  const params: Record<string, unknown> = { ...overlay.params };
+  dedupeKeys.forEach((k, i) => {
+    params[`key${i}`] = k;
+  });
+  const sql = `
+    SELECT ${JOB_WITH_COMPANY_SUMMARY_SELECT}${overlay.selectOverride}
+    FROM jobs j
+    JOIN companies c ON c.id = j.company_id
+    ${overlay.join}
+    WHERE j.dedupe_key IN (${placeholders})
+    ORDER BY j.posted_at DESC, j.first_seen_at DESC
+  `;
+  return getDb().prepare(sql).all(params) as JobWithCompanySummary[];
+}
+
+export function listTopFreshJobs(limit = 600, candidateId?: number): JobWithCompanySummary[] {
+  const overlay = candidateOverlay(candidateId);
+  const params: Record<string, unknown> = { ...overlay.params, limit };
+  const sql = `
+    SELECT ${JOB_WITH_COMPANY_SUMMARY_SELECT}${overlay.selectOverride}
+    FROM jobs j
+    JOIN companies c ON c.id = j.company_id
+    ${overlay.join}
+    WHERE j.is_active = 1 AND j.is_archived = 0
+    ORDER BY j.posted_at DESC, j.first_seen_at DESC
+    LIMIT @limit
+  `;
+  return getDb().prepare(sql).all(params) as JobWithCompanySummary[];
+}
+
+export function countActiveUnarchivedJobs(): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS total FROM jobs WHERE is_active = 1 AND is_archived = 0")
+    .get() as { total: number };
+  return row.total;
+}
 
 export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
   const clauses: string[] = [];

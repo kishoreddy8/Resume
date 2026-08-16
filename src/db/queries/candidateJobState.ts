@@ -71,6 +71,17 @@ export function listCandidateJobStates(candidateId: number, dedupeKeys: string[]
   return result;
 }
 
+/** Candidate-wide lookup of all candidate job states — single bounded query with zero IN lists. */
+export function listAllCandidateJobStatesForCandidate(candidateId: number): Record<string, CandidateJobStateRow> {
+  const db = getDb();
+  const rows = db
+    .prepare(`SELECT * FROM candidate_job_state WHERE candidate_id = ?`)
+    .all(candidateId) as CandidateJobStateRow[];
+  const result: Record<string, CandidateJobStateRow> = {};
+  for (const row of rows) result[row.dedupe_key] = row;
+  return result;
+}
+
 function ensureRow(candidateId: number, dedupeKey: string) {
   getDb()
     .prepare(

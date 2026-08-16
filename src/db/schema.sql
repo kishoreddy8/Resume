@@ -388,6 +388,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_dedupe ON jobs(dedupe_key);
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_company_active ON jobs(company_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_jobs_pipeline ON jobs(pipeline_status);
 CREATE INDEX IF NOT EXISTS idx_jobs_h1b ON jobs(h1b_combined_confidence);
 CREATE INDEX IF NOT EXISTS idx_jobs_active ON jobs(is_active);
