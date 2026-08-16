@@ -647,6 +647,48 @@ test("ATS Health Semantics V2: recordScanRun persists unknownLocationCount and i
   assert.equal(run.is_sample_scan, 1);
 });
 
+test("ATS Health Semantics V2: an EXISTING database whose scan_runs predates unknown_location_count/is_sample_scan gets both columns added additively, with existing rows defaulting to 0 and no data loss", async () => {
+  // Same hand-built "old shape" pattern as candidateSchema.test.ts's resolution_status regression
+  // test — runScanRunsWarningMigrations is exported for exactly this reason. Every other test in
+  // this file (and the other 1700+ in the suite) proves the FRESH-install path, since they all open
+  // a brand-new temp DB via getDb() and so always go through schema.sql + every migration from
+  // scratch; none of them proves the additive-upgrade path an existing production database actually
+  // takes, where scan_runs already exists (from schema.sql, which never declared these two columns)
+  // and already has rows before this migration ever runs against it.
+  const { runScanRunsWarningMigrations } = await import("../../index");
+  const Database = (await import("better-sqlite3")).default;
+  const legacyDb = new Database(":memory:");
+  legacyDb.exec(`
+    CREATE TABLE scan_runs (
+      id INTEGER PRIMARY KEY, company_id INTEGER NOT NULL, provider TEXT NOT NULL,
+      started_at TEXT NOT NULL, finished_at TEXT NOT NULL, duration_ms INTEGER NOT NULL,
+      status TEXT NOT NULL, jobs_discovered INTEGER NOT NULL DEFAULT 0,
+      description_failures INTEGER NOT NULL DEFAULT 0, error_message TEXT
+    );
+  `);
+  legacyDb.prepare(
+    `INSERT INTO scan_runs (company_id, provider, started_at, finished_at, duration_ms, status, jobs_discovered, description_failures, error_message)
+     VALUES (1, 'greenhouse', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:05.000Z', 5000, 'partial', 10, 2, 'pre-V2 historical row')`
+  ).run();
+
+  runScanRunsWarningMigrations(legacyDb);
+
+  const columns = (legacyDb.prepare("PRAGMA table_info(scan_runs)").all() as { name: string }[]).map((c) => c.name);
+  assert.ok(columns.includes("unknown_location_count"), "existing scan_runs must gain unknown_location_count via ALTER TABLE");
+  assert.ok(columns.includes("is_sample_scan"), "existing scan_runs must gain is_sample_scan via ALTER TABLE");
+
+  const row = legacyDb.prepare("SELECT * FROM scan_runs WHERE id = 1").get() as Record<string, unknown>;
+  assert.equal(row.unknown_location_count, 0, "a pre-V2 historical row has no per-run warning data to backfill — must default to 0, not be fabricated");
+  assert.equal(row.is_sample_scan, 0, "same: no retroactive guess at whether a historical run was a sample scan");
+  assert.equal(row.description_failures, 2, "the pre-existing description_failures value must survive the ALTER TABLE untouched");
+  assert.equal(row.error_message, "pre-V2 historical row", "no existing column's data may be lost by this additive migration");
+
+  // Idempotency: calling it again (simulating a second process restart against the now-upgraded DB)
+  // must not error or duplicate columns.
+  assert.doesNotThrow(() => runScanRunsWarningMigrations(legacyDb));
+  legacyDb.close();
+});
+
 test("a sample scan never runs lifecycle actions, even when its status is success (isSampleScan is an independent gate)", () => {
   const company = makeCompany();
   const key = dedupeKeyForAts("greenhouse", company.id, "req-1");

@@ -542,7 +542,12 @@ const SCAN_RUNS_WARNING_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
   },
 ];
 
-function runScanRunsWarningMigrations(db: Database.Database) {
+// Exported (unlike this file's other migration functions, except runCompaniesDiscoveryMigrations)
+// specifically so the additive-upgrade path can be regression-tested directly against a hand-built
+// "old shape" scan_runs table — these are the first scan_runs columns that live only in this
+// migration function rather than schema.sql's CREATE TABLE, so unlike every other scan_runs column
+// (including description_failures, its closest sibling), this exact path had no prior test coverage.
+export function runScanRunsWarningMigrations(db: Database.Database) {
   const existingColumns = new Set(
     (db.prepare("PRAGMA table_info(scan_runs)").all() as { name: string }[]).map((c) => c.name)
   );
