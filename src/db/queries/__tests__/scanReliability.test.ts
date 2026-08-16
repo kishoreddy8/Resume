@@ -544,6 +544,58 @@ test("failure counters reset after success: a company recovers cleanly after pri
   assert.equal(getCompany(company.id)!.consecutive_failures, 1);
 });
 
+// --- Sample-scan (isSampleScan) status must reflect genuine per-job problems only, not the fact
+// that maxJobsPerCompany was set (src/lib/scan.ts's scanCompany, mirrored here the same way the
+// safety-rule tests above mirror its sequence, per this file's own established convention) --------
+
+test("a clean sample/verification scan (isSampleScan, zero genuine issues) reports success, not partial", () => {
+  // Mirrors scan.ts's post-fix line: determineScanStatus(descriptionFailures + unknownLocationCount)
+  // — isSampleScan no longer contributes. A 3-job verification sample that found nothing wrong must
+  // report success so connector_health becomes healthy, not a false 'degraded'.
+  const descriptionFailures = 0;
+  const unknownLocationCount = 0;
+  const status = determineScanStatus(descriptionFailures + unknownLocationCount);
+  assert.equal(status, "success", "a sample scan with zero genuine per-job issues must be a success");
+
+  const company = makeCompany();
+  recordScanSuccess(company.id);
+  assert.equal(getCompany(company.id)!.connector_health, "healthy");
+});
+
+test("a sample/verification scan still reports partial when it finds a genuine per-job issue", () => {
+  const descriptionFailures = 0;
+  const unknownLocationCount = 1;
+  const status = determineScanStatus(descriptionFailures + unknownLocationCount);
+  assert.equal(status, "partial", "a genuine per-job issue found even within a small sample must still degrade");
+
+  const company = makeCompany();
+  recordScanPartial(company.id, {
+    errorCategory: null,
+    errorMessage: "Verification sample limited to 3 job(s); lifecycle actions disabled; 1 job location(s) remained UNKNOWN and were not loaded",
+  });
+  const updated = getCompany(company.id)!;
+  assert.equal(updated.connector_health, "degraded");
+  assert.match(updated.last_error_message!, /UNKNOWN/, "the genuine issue detail must survive, not be discarded by the sample-mode note");
+});
+
+test("a sample scan never runs lifecycle actions, even when its status is success (isSampleScan is an independent gate)", () => {
+  const company = makeCompany();
+  const key = dedupeKeyForAts("greenhouse", company.id, "req-1");
+  seedJob(company.id, key);
+  const jobId = listJobs({ companyId: company.id })[0].id;
+
+  // A clean sample scan: status is "success" (per the fix above), but isSampleScan must still
+  // independently block closeStaleJobs — mirrors scan.ts's `!isSampleScan && canRunLifecycleActions(...)`.
+  const isSampleScan = true;
+  const status = determineScanStatus(0);
+  assert.equal(status, "success");
+  if (!isSampleScan && canRunLifecycleActions(status, company.source_type)) {
+    closeStaleJobs(company.id, []); // job's dedupe_key not in "seen" set — would be closed if this ran
+  }
+
+  assert.equal(getJob(jobId)!.is_active, 1, "a sample scan must never close a job even when its status reads success");
+});
+
 // --- Preserved existing behavior: pipeline/notes/tags survive, dedupe unaffected ---------------
 
 test("existing lifecycle/dedupe behavior is unaffected by the new scan-run bookkeeping", () => {

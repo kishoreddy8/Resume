@@ -1,0 +1,43 @@
+import type { SourceType } from "@/types";
+
+/** Human-readable display name for every source_type. Typed as Record<SourceType, string> so
+ *  TypeScript itself enforces this stays exhaustive as new connectors are added — no page can
+ *  silently render a blank card for a type this map hasn't caught up with. */
+export const PROVIDER_LABELS: Record<SourceType, string> = {
+  greenhouse: "Greenhouse",
+  ashby: "Ashby",
+  lever: "Lever",
+  workday: "Workday",
+  smartrecruiters: "SmartRecruiters",
+  adp_wfn: "ADP Workforce Now",
+  paylocity: "Paylocity",
+  icims: "iCIMS",
+  ukg_pro: "UKG Pro Recruiting",
+  bamboohr: "BambooHR",
+  oracle_recruiting_cloud: "Oracle Recruiting Cloud",
+  workable: "Workable",
+  rippling: "Rippling Recruiting",
+  paycom: "Paycom",
+  jazzhr: "JazzHR",
+  jobvite: "Jobvite",
+  breezy: "Breezy HR",
+  teamtailor: "Teamtailor",
+  applicantpro: "ApplicantPro",
+  pinpoint: "Pinpoint",
+  clearcompany: "ClearCompany",
+  personio: "Personio",
+  applicantstack: "ApplicantStack",
+  comeet: "Comeet",
+  cats: "CATS",
+  gohire: "GoHire",
+  newton: "Newton / Recruiting by Paycor",
+  silkroad: "SilkRoad",
+  jobdiva: "JobDiva",
+  taleo: "Taleo",
+  phenom: "Phenom",
+  adp_rm: "ADP Recruiting Management",
+  eightfold: "Eightfold",
+  cornerstone: "Cornerstone",
+  avature: "Avature",
+  career_link: "generic career page",
+};

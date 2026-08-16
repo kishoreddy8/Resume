@@ -249,12 +249,17 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
       }
     }
 
-    // SAFETY RULE: a partial scan (list complete, but ≥1 job's description permanently failed —
-    // see determineScanStatus) never closes/archives jobs, same as the pre-existing career_link
-    // exclusion below (best-effort scrapes are never authoritative). Only a fully successful ATS
-    // scan may act on "this job disappeared" — see canRunLifecycleActions's doc comment.
+    // SAFETY RULE: a partial scan (list complete, but ≥1 job's description/location permanently
+    // failed — see determineScanStatus) never closes/archives jobs, same as the pre-existing
+    // career_link exclusion below (best-effort scrapes are never authoritative). Only a fully
+    // successful ATS scan may act on "this job disappeared" — see canRunLifecycleActions's doc
+    // comment. Sample/verification scans (isSampleScan) are suppressed independently, right here via
+    // `!isSampleScan &&` — a sample scan's *status* is judged purely on whether it found a genuine
+    // per-job problem, never on the fact that it was a sample; do not fold isSampleScan back into
+    // scanStatus/determineScanStatus, or the health dashboard degrades every routine verification
+    // sample regardless of whether anything actually failed.
     const isSampleScan = options.maxJobsPerCompany !== undefined;
-    const scanStatus = determineScanStatus(descriptionFailures + unknownLocationCount + (isSampleScan ? 1 : 0));
+    const scanStatus = determineScanStatus(descriptionFailures + unknownLocationCount);
     const { jobsClosed, jobsArchived } = !isSampleScan && canRunLifecycleActions(scanStatus, company.source_type)
       ? closeStaleJobs(company.id, seenDedupeKeys)
       : { jobsClosed: 0, jobsArchived: 0 };
@@ -263,18 +268,19 @@ async function scanCompany(company: Company, settings: AppSettings, options: Run
     const durationMs = Date.now() - t0;
     const partialErrorMessage =
       scanStatus === "partial"
-        ? isSampleScan
-          ? `Verification sample limited to ${options.maxJobsPerCompany} job(s); lifecycle actions disabled`
-          : [
-              descriptionFailures > 0
-                ? `${descriptionFailures} job description(s) failed to fetch after retries`
-                : null,
-              unknownLocationCount > 0
-                ? `${unknownLocationCount} job location(s) remained UNKNOWN and were not loaded`
-                : null,
-            ]
-              .filter(Boolean)
-              .join("; ")
+        ? [
+            isSampleScan
+              ? `Verification sample limited to ${options.maxJobsPerCompany} job(s); lifecycle actions disabled`
+              : null,
+            descriptionFailures > 0
+              ? `${descriptionFailures} job description(s) failed to fetch after retries`
+              : null,
+            unknownLocationCount > 0
+              ? `${unknownLocationCount} job location(s) remained UNKNOWN and were not loaded`
+              : null,
+          ]
+            .filter(Boolean)
+            .join("; ")
         : null;
 
     recordScanRun({

@@ -2,12 +2,22 @@
 
 import { useEffect, useState } from "react";
 import type { AtsCoverageCompany, AtsCoverageSummary } from "@/db/queries/atsCoverage";
+import { PROVIDER_LABELS } from "@/lib/ats/providerLabels";
 
 const HEALTH_STYLES: Record<string, string> = {
   healthy: "text-emerald-700 dark:text-emerald-400",
   degraded: "text-amber-700 dark:text-amber-400",
   down: "text-red-600 dark:text-red-400",
   unknown: "text-zinc-400",
+};
+
+const REASON_LABELS: Record<string, string> = {
+  HEALTHY: "healthy",
+  NEVER_SCANNED: "never scanned",
+  REPEATED_FAILURES: "repeated failures",
+  TRANSIENT_FAILURE: "transient failure",
+  PARTIAL_DATA_QUALITY: "partial data quality",
+  UNCLASSIFIED: "unclassified",
 };
 
 function CompanyDrilldown({ companies, emptyLabel }: { companies: AtsCoverageCompany[]; emptyLabel: string }) {
@@ -32,6 +42,11 @@ function CompanyDrilldown({ companies, emptyLabel }: { companies: AtsCoverageCom
               </a>
               <span className={`ml-2 ${HEALTH_STYLES[c.connector_health] ?? ""}`}>{c.connector_health}</span>
               {c.job_count > 0 && <span className="ml-2 text-zinc-400">{c.job_count} active job{c.job_count === 1 ? "" : "s"}</span>}
+              {c.healthReasonCode !== "HEALTHY" && (
+                <div className="mt-0.5 max-w-md text-zinc-500" title={c.healthReasonLabel}>
+                  {c.healthReasonLabel.length > 120 ? `${c.healthReasonLabel.slice(0, 120)}…` : c.healthReasonLabel}
+                </div>
+              )}
               {c.discovery_reason && (
                 <div className="mt-0.5 max-w-md text-zinc-500" title={c.discovery_reason}>
                   {c.discovery_reason.length > 120 ? `${c.discovery_reason.slice(0, 120)}…` : c.discovery_reason}
@@ -56,13 +71,6 @@ function Section({ title, subtitle, children }: { title: string; subtitle: strin
     </section>
   );
 }
-
-const SOURCE_TYPE_LABELS: Record<string, string> = {
-  greenhouse: "Greenhouse",
-  ashby: "Ashby",
-  lever: "Lever",
-  workday: "Workday",
-};
 
 export default function AtsCoveragePage() {
   const [data, setData] = useState<AtsCoverageSummary | null>(null);
@@ -99,8 +107,8 @@ export default function AtsCoveragePage() {
       </div>
 
       <Section
-        title={`Supported connectors (${data.totals.supported})`}
-        subtitle="Real ATS connectors — Workday, Greenhouse, Lever, Ashby."
+        title={`Companies on a supported connector (${data.totals.supported})`}
+        subtitle="Every company currently on one of the 34 supported ATS connectors, regardless of current health."
       >
         {data.supported.length === 0 ? (
           <p className="text-xs text-zinc-500">No companies on a supported connector yet.</p>
@@ -109,7 +117,7 @@ export default function AtsCoveragePage() {
             {data.supported.map((g) => (
               <div key={g.sourceType} className="rounded border border-zinc-200 p-3 dark:border-zinc-800">
                 <div className="flex items-center justify-between">
-                  <span className="font-medium">{SOURCE_TYPE_LABELS[g.sourceType]}</span>
+                  <span className="font-medium">{PROVIDER_LABELS[g.sourceType]}</span>
                   <span className="text-xs text-zinc-500">
                     {g.companyCount} compan{g.companyCount === 1 ? "y" : "ies"} · {g.jobCount} active job{g.jobCount === 1 ? "" : "s"}
                   </span>
@@ -119,6 +127,14 @@ export default function AtsCoveragePage() {
                   {g.degradedCount > 0 && <span className="ml-2 text-amber-700 dark:text-amber-400">{g.degradedCount} degraded</span>}
                   {g.downCount > 0 && <span className="ml-2 text-red-600 dark:text-red-400">{g.downCount} down</span>}
                 </div>
+                {(g.degradedCount > 0 || g.downCount > 0) && (
+                  <div className="mt-0.5 text-xs text-zinc-400">
+                    {Object.entries(g.reasonBreakdown)
+                      .filter(([code]) => code !== "HEALTHY")
+                      .map(([code, count]) => `${count} ${REASON_LABELS[code] ?? code}`)
+                      .join(" · ")}
+                  </div>
+                )}
                 <div className="mt-2">
                   <CompanyDrilldown companies={g.companies} emptyLabel="" />
                 </div>

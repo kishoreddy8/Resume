@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
+import { PROVIDER_LABELS } from "@/lib/ats/providerLabels";
 import type { Company, CompanyResolutionStatus, SourceType } from "@/types";
 
 const RESOLUTION_LABELS: Record<CompanyResolutionStatus, string> = {
@@ -129,45 +130,6 @@ function UnsupportedSourcesSection({ companies, onChanged }: { companies: Compan
     </section>
   );
 }
-
-const PROVIDER_LABELS: Record<SourceType, string> = {
-  greenhouse: "Greenhouse",
-  ashby: "Ashby",
-  lever: "Lever",
-  workday: "Workday",
-  smartrecruiters: "SmartRecruiters",
-  adp_wfn: "ADP Workforce Now",
-  paylocity: "Paylocity",
-  icims: "iCIMS",
-  ukg_pro: "UKG Pro Recruiting",
-  bamboohr: "BambooHR",
-  oracle_recruiting_cloud: "Oracle Recruiting Cloud",
-  workable: "Workable",
-  rippling: "Rippling Recruiting",
-  paycom: "Paycom",
-  jazzhr: "JazzHR",
-  jobvite: "Jobvite",
-  breezy: "Breezy HR",
-  teamtailor: "Teamtailor",
-  applicantpro: "ApplicantPro",
-  pinpoint: "Pinpoint",
-  clearcompany: "ClearCompany",
-  personio: "Personio",
-  applicantstack: "ApplicantStack",
-  comeet: "Comeet",
-  cats: "CATS",
-  gohire: "GoHire",
-  newton: "Newton / Recruiting by Paycor",
-  silkroad: "SilkRoad",
-  jobdiva: "JobDiva",
-  taleo: "Taleo",
-  phenom: "Phenom",
-  adp_rm: "ADP Recruiting Management",
-  eightfold: "Eightfold",
-  cornerstone: "Cornerstone",
-  avature: "Avature",
-  career_link: "generic career page",
-};
 
 const ADVANCED_ATS_SOURCES: { value: Exclude<SourceType, "career_link">; label: string; placeholder: string }[] = [
   { value: "greenhouse", label: "Greenhouse", placeholder: "board token, e.g. gitlab" },

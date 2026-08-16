@@ -3,10 +3,11 @@ import type { Job, NormalizedJob, ScanRunStatus, SourceType } from "@/types";
 /**
  * A company's job-list fetch either fully succeeds or the whole scanCompany() call throws (handled
  * separately, in scan.ts's catch block, as "failed"). This function only decides between the two
- * outcomes reachable when nothing threw: "success" (every discovered job's description fetched
- * cleanly) or "partial" (the list itself was complete, but ≥1 job's description permanently failed
- * after retries — currently only reachable via Workday's per-detail fallback, see
- * src/lib/ats/workday.ts's fetchDetail).
+ * outcomes reachable when nothing threw: "success" (every discovered job's description/location
+ * resolved cleanly) or "partial" (the list itself was complete, but ≥1 job's description permanently
+ * failed after retries, or ≥1 job's location remained UNKNOWN — reachable on any provider, not just
+ * Workday). The input is descriptionFailures + unknownLocationCount only; scan.ts deliberately does
+ * not fold sample/verification-scan mode into this count (see its own comment on isSampleScan).
  */
 export function determineScanStatus(descriptionFailures: number): Exclude<ScanRunStatus, "failed"> {
   return descriptionFailures > 0 ? "partial" : "success";

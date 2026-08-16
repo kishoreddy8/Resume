@@ -19,6 +19,60 @@ export interface AtsCoverageCompany {
   discovery_attempted_at: string | null;
   connector_health: string;
   job_count: number;
+  healthReasonCode: HealthReasonCode;
+  healthReasonLabel: string;
+}
+
+/**
+ * Deterministic, read-time-derived reason a company has its current connector_health — built only
+ * from columns the scan pipeline already writes (src/db/queries/companies.ts's recordScanSuccess/
+ * recordScanPartial/recordScanFailure). No new table, no invented category: TRANSIENT_FAILURE and
+ * REPEATED_FAILURES both come from a genuinely thrown scan error (last_error_category is non-null
+ * only on that path); PARTIAL_DATA_QUALITY comes from a real per-job description/location problem
+ * found during a scan that otherwise completed (see src/lib/scan.ts's determineScanStatus call —
+ * sample/verification-scan mode no longer contributes to this on its own, see that file's comment).
+ */
+export type HealthReasonCode =
+  | "HEALTHY"
+  | "NEVER_SCANNED"
+  | "REPEATED_FAILURES"
+  | "TRANSIENT_FAILURE"
+  | "PARTIAL_DATA_QUALITY"
+  | "UNCLASSIFIED";
+
+interface HealthReason {
+  code: HealthReasonCode;
+  label: string;
+}
+
+function deriveHealthReason(row: RawRow): HealthReason {
+  const lastErrorSummary = row.last_error_category ?? row.last_error_message ?? "unknown error";
+  if (row.connector_health === "healthy") {
+    return { code: "HEALTHY", label: "Last scan succeeded" };
+  }
+  if (row.connector_health === "unknown") {
+    if (row.last_scanned_at === null) {
+      return { code: "NEVER_SCANNED", label: "Not yet scanned" };
+    }
+    return { code: "UNCLASSIFIED", label: "Scanned, but health has not been evaluated" };
+  }
+  if (row.connector_health === "down") {
+    return {
+      code: "REPEATED_FAILURES",
+      label: `${row.consecutive_failures} consecutive scan failures — last: ${lastErrorSummary}`,
+    };
+  }
+  // connector_health === "degraded"
+  if (row.consecutive_failures >= 1) {
+    return {
+      code: "TRANSIENT_FAILURE",
+      label: `${row.consecutive_failures} consecutive scan failure(s) — last: ${lastErrorSummary}`,
+    };
+  }
+  if (row.last_error_message) {
+    return { code: "PARTIAL_DATA_QUALITY", label: row.last_error_message };
+  }
+  return { code: "UNCLASSIFIED", label: "Marked degraded, but no failure detail is on record" };
 }
 
 export interface SupportedAtsGroup {
@@ -28,6 +82,7 @@ export interface SupportedAtsGroup {
   healthyCount: number;
   degradedCount: number;
   downCount: number;
+  reasonBreakdown: Partial<Record<HealthReasonCode, number>>;
   companies: AtsCoverageCompany[];
 }
 
@@ -55,6 +110,8 @@ const COMPANY_WITH_JOB_COUNT_SQL = `
   SELECT
     c.id, c.name, c.source_type, c.resolution_status, c.suspected_ats, c.discovery_reason,
     c.discovery_attempted_at, c.connector_health,
+    c.consecutive_failures, c.last_successful_scan_at, c.last_failed_scan_at, c.last_scanned_at,
+    c.last_error_category, c.last_error_message,
     COALESCE(j.job_count, 0) AS job_count
   FROM companies c
   LEFT JOIN (
@@ -63,6 +120,7 @@ const COMPANY_WITH_JOB_COUNT_SQL = `
     WHERE is_active = 1
     GROUP BY company_id
   ) j ON j.company_id = c.id
+  WHERE c.is_active = 1
 `;
 
 interface RawRow {
@@ -74,10 +132,17 @@ interface RawRow {
   discovery_reason: string | null;
   discovery_attempted_at: string | null;
   connector_health: string;
+  consecutive_failures: number;
+  last_successful_scan_at: string | null;
+  last_failed_scan_at: string | null;
+  last_scanned_at: string | null;
+  last_error_category: string | null;
+  last_error_message: string | null;
   job_count: number;
 }
 
 function toCoverageCompany(row: RawRow): AtsCoverageCompany {
+  const reason = deriveHealthReason(row);
   return {
     id: row.id,
     name: row.name,
@@ -87,6 +152,8 @@ function toCoverageCompany(row: RawRow): AtsCoverageCompany {
     discovery_attempted_at: row.discovery_attempted_at,
     connector_health: row.connector_health,
     job_count: row.job_count,
+    healthReasonCode: reason.code,
+    healthReasonLabel: reason.label,
   };
 }
 
@@ -102,6 +169,11 @@ export function getAtsCoverageSummary(): AtsCoverageSummary {
   const supported: SupportedAtsGroup[] = supportedSourceTypes
     .map((sourceType) => {
       const group = rows.filter((r) => r.source_type === sourceType);
+      const companies = group.map(toCoverageCompany);
+      const reasonBreakdown: Partial<Record<HealthReasonCode, number>> = {};
+      for (const company of companies) {
+        reasonBreakdown[company.healthReasonCode] = (reasonBreakdown[company.healthReasonCode] ?? 0) + 1;
+      }
       return {
         sourceType,
         companyCount: group.length,
@@ -109,7 +181,8 @@ export function getAtsCoverageSummary(): AtsCoverageSummary {
         healthyCount: group.filter((r) => r.connector_health === "healthy").length,
         degradedCount: group.filter((r) => r.connector_health === "degraded").length,
         downCount: group.filter((r) => r.connector_health === "down").length,
-        companies: group.map(toCoverageCompany),
+        reasonBreakdown,
+        companies,
       };
     })
     .filter((g) => g.companyCount > 0);
