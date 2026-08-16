@@ -995,6 +995,410 @@ dwr.engine._remoteHandleCallback('1','0',{payload:s0});
   }
 });
 
+// --- trustedCustomHost + allowStableStaleCount (CAREEROPS — SUCCESSFACTORS PHASE 2) -------------
+// One shared single-page fixture factory: a 1-job board whose detail fetch 302-redirects to a
+// configurable target host, used across the trusted-host tests below so each test only needs to
+// vary the token/trustedCustomHost/redirect target, not rebuild the whole DWR/bootstrap fixture.
+
+function startSingleJobRedirectServer(redirectTo: string) {
+  return http.createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1");
+
+    if (url.pathname === "/career" && !url.searchParams.get("career_job_req_id")) {
+      res.writeHead(200, { "Set-Cookie": "JSESSIONID=S1", "Content-Type": "text/html" });
+      res.end(`<html><body></body></html>`);
+      return;
+    }
+
+    if (url.pathname.includes("search.dwr")) {
+      req.resume();
+      const dwrText = `
+throw 'allowScriptTagRemoting is false.';
+var s0={};var s1=[];var s2={};var s4={};
+s2.id=48625;s2.title="Analyst";s1[0]=s2;
+s4.currentPage=1;s4.pageSize=10;s4.startRow=1;s4.endRow=1;s4.totalCount=1;
+s0.postings=s1;s0.options={pagination:s4,sortByColumn:"JOB_POSTING_DATE",sortOrder:"DESC"};
+dwr.engine._remoteHandleCallback('0','0',{payload:s0});
+      `;
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(dwrText);
+      return;
+    }
+
+    if (url.pathname === "/career" && url.searchParams.get("career_job_req_id")) {
+      res.writeHead(302, { Location: redirectTo });
+      res.end();
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+}
+
+function startRedirectTargetServer() {
+  return http.createServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(
+      `<html><body><h1>Analyst</h1><input type="hidden" name="jobReqId" value="48625" /><input type="hidden" name="company" value="Popularinc" /><div class="jobdescription"><p>Valid length description for testing purposes here.</p></div></body></html>`
+    );
+  });
+}
+
+async function listenOn(server: http.Server): Promise<number> {
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  return (server.address() as { port: number }).port;
+}
+
+test("trustedCustomHost: a known trusted custom host for the same company is accepted", async () => {
+  const targetServer = startRedirectTargetServer();
+  const targetPort = await listenOn(targetServer);
+  // trustedCustomHost is a BARE hostname with no port (its own validation rejects any value
+  // containing ":", matching that URL.hostname also never includes a port) — "localhost" here,
+  // deliberately different from the origin server's own "127.0.0.1", so success can only come from
+  // the explicit option, never from the origin's own hostname being auto-trusted.
+  const originServer = startSingleJobRedirectServer(`http://localhost:${targetPort}/job/48625`);
+  const originPort = await listenOn(originServer);
+
+  try {
+    const jobs = await fetchSuccessFactorsJobs("career4.successfactors.com|Popularinc", {
+      originOverride: `http://127.0.0.1:${originPort}`,
+      allowPrivateNetworksForTests: true,
+      trustedCustomHost: "localhost",
+      usOnly: false,
+    });
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0].externalId, "48625");
+    assert.ok(jobs[0].descriptionText);
+  } finally {
+    originServer.close();
+    targetServer.close();
+  }
+});
+
+test("trustedCustomHost: an unlisted redirect host remains rejected even though the option is used for a different host", async () => {
+  const targetServer = startRedirectTargetServer();
+  const targetPort = await listenOn(targetServer);
+  const originServer = startSingleJobRedirectServer(`http://localhost:${targetPort}/job/48625`);
+  const originPort = await listenOn(originServer);
+
+  try {
+    await assert.rejects(
+      fetchSuccessFactorsJobs("career4.successfactors.com|Popularinc", {
+        originOverride: `http://127.0.0.1:${originPort}`,
+        allowPrivateNetworksForTests: true,
+        // A trusted host IS configured, but it names a completely different (unused) host — proves
+        // the mechanism trusts only the exact configured value, never "any redirect" once the
+        // option is present at all.
+        trustedCustomHost: "some-other-companys-careers.example.com",
+      }),
+      /redirected to an untrusted host/
+    );
+  } finally {
+    originServer.close();
+    targetServer.close();
+  }
+});
+
+test("trustedCustomHost: a credential-bearing redirect stays rejected even when its host is trusted", async () => {
+  const targetServer = startRedirectTargetServer();
+  const targetPort = await listenOn(targetServer);
+  // The redirect target's hostname ("localhost") matches the configured trustedCustomHost, but the
+  // URL itself carries credentials — validateDetailResponseUrl rejects credential-bearing URLs
+  // unconditionally, regardless of host trust, and that must not be bypassable via this option. In
+  // practice the underlying fetch() implementation itself already refuses to follow a
+  // credentialed-URL redirect (surfacing as a generic "fetch failed" rather than ever reaching
+  // validateDetailResponseUrl) — same ambiguity this file's own ported "detailURLPrefix trust
+  // bounds" test already accounts for.
+  const originServer = startSingleJobRedirectServer(`http://user:pass@localhost:${targetPort}/job/48625`);
+  const originPort = await listenOn(originServer);
+
+  try {
+    await assert.rejects(
+      fetchSuccessFactorsJobs("career4.successfactors.com|Popularinc", {
+        originOverride: `http://127.0.0.1:${originPort}`,
+        allowPrivateNetworksForTests: true,
+        trustedCustomHost: "localhost",
+      }),
+      /must not contain user credentials|fetch failed/
+    );
+  } finally {
+    originServer.close();
+    targetServer.close();
+  }
+});
+
+test("trustedCustomHost: trust configured for one call never leaks into a separate call for a different tenant", async () => {
+  const targetServer = startRedirectTargetServer();
+  const targetPort = await listenOn(targetServer);
+  // "localhost" (not "127.0.0.1", which both origin servers below use for their own originOverride)
+  // so the redirect target is never auto-trusted just by virtue of matching the calling origin's own
+  // hostname — the only path to trust here is the explicit trustedCustomHost option.
+  const trustingOrigin = startSingleJobRedirectServer(`http://localhost:${targetPort}/job/48625`);
+  const leakOrigin = startSingleJobRedirectServer(`http://localhost:${targetPort}/job/48625`);
+
+  try {
+    // First call: explicitly trusts "localhost" and succeeds.
+    const trustingPort = await listenOn(trustingOrigin);
+    const jobs = await fetchSuccessFactorsJobs("career4.successfactors.com|Popularinc", {
+      originOverride: `http://127.0.0.1:${trustingPort}`,
+      allowPrivateNetworksForTests: true,
+      trustedCustomHost: "localhost",
+      usOnly: false,
+    });
+    assert.equal(jobs.length, 1);
+
+    // Second call: a DIFFERENT tenant, same redirect target, but this call passes NO
+    // trustedCustomHost — trustedHosts is constructed fresh inside every fetchSuccessFactorsJobs
+    // invocation (a local Set, never module-level/shared state), so the previous call's trust must
+    // not carry over.
+    const leakPort = await listenOn(leakOrigin);
+    await assert.rejects(
+      fetchSuccessFactorsJobs("career8.successfactors.com|OtherTenant", {
+        originOverride: `http://127.0.0.1:${leakPort}`,
+        allowPrivateNetworksForTests: true,
+      }),
+      /redirected to an untrusted host/
+    );
+  } finally {
+    trustingOrigin.close();
+    leakOrigin.close();
+    targetServer.close();
+  }
+});
+
+test("trustedCustomHost: the normal successfactors.com detail host still works unchanged with no option set", async () => {
+  const fixtureServer = http.createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1");
+    if (url.pathname === "/career" && !url.searchParams.get("career_job_req_id")) {
+      res.writeHead(200, { "Set-Cookie": "JSESSIONID=S1", "Content-Type": "text/html" });
+      res.end(`<html><body></body></html>`);
+      return;
+    }
+    if (url.pathname.includes("search.dwr")) {
+      req.resume();
+      const dwrText = `
+throw 'allowScriptTagRemoting is false.';
+var s0={};var s1=[];var s2={};var s4={};
+s2.id=48625;s2.title="Analyst";s1[0]=s2;
+s4.currentPage=1;s4.pageSize=10;s4.startRow=1;s4.endRow=1;s4.totalCount=1;
+s0.postings=s1;s0.options={pagination:s4,sortByColumn:"JOB_POSTING_DATE",sortOrder:"DESC"};
+dwr.engine._remoteHandleCallback('0','0',{payload:s0});
+      `;
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(dwrText);
+      return;
+    }
+    if (url.pathname === "/career" && url.searchParams.get("career_job_req_id")) {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(
+        `<html><body><h1>Analyst</h1><input type="hidden" name="jobReqId" value="48625" /><input type="hidden" name="company" value="Popularinc" /><div class="jobdescription"><p>Valid length description for testing purposes here.</p></div></body></html>`
+      );
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  const port = await listenOn(fixtureServer);
+  try {
+    const jobs = await fetchSuccessFactorsJobs("career4.successfactors.com|Popularinc", {
+      originOverride: `http://127.0.0.1:${port}`,
+      allowPrivateNetworksForTests: true,
+      usOnly: false,
+    });
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0].externalId, "48625");
+  } finally {
+    fixtureServer.close();
+  }
+});
+
+test("allowStableStaleCount: an intermediate short page remains rejected even when the mode is enabled", async () => {
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1");
+    if (url.pathname === "/career" && !url.searchParams.get("career_job_req_id")) {
+      res.writeHead(200, { "Set-Cookie": "JSESSIONID=S1", "Content-Type": "text/html" });
+      res.end(`<html><body></body></html>`);
+      return;
+    }
+    if (url.pathname.includes("search.dwr")) {
+      req.resume();
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        if (body.includes("batchId=0")) {
+          const dwrText = `
+throw 'allowScriptTagRemoting is false.';
+var s0={};var s1=[];var s2={};var s3={};var s4={};
+s2.id=1;s2.title="Job 1";s1[0]=s2;
+s3.id=2;s3.title="Job 2";s1[1]=s3;
+s4.currentPage=1;s4.pageSize=2;s4.startRow=1;s4.endRow=2;s4.totalCount=6;
+s0.postings=s1;s0.options={pagination:s4,sortByColumn:"JOB_POSTING_DATE",sortOrder:"DESC"};
+dwr.engine._remoteHandleCallback('0','0',{payload:s0});
+          `;
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end(dwrText);
+        } else {
+          // Intermediate page 2 of 3 (pageSize=2, totalCount=6) returns only 1 posting instead of 2.
+          const dwrText = `
+throw 'allowScriptTagRemoting is false.';
+var s0={};var s1=[];var s2={};var s4={};
+s2.id=3;s2.title="Job 3";s1[0]=s2;
+s4.currentPage=2;s4.pageSize=2;s4.startRow=3;s4.endRow=4;s4.totalCount=6;
+s0.postings=s1;s0.options={pagination:s4,sortByColumn:"JOB_POSTING_DATE",sortOrder:"DESC"};
+dwr.engine._remoteHandleCallback('1','0',{payload:s0});
+          `;
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end(dwrText);
+        }
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  const port = await listenOn(server);
+  try {
+    await assert.rejects(
+      fetchSuccessFactorsJobs("career4.successfactors.com|Popularinc", {
+        originOverride: `http://127.0.0.1:${port}`,
+        allowPrivateNetworksForTests: true,
+        allowStableStaleCount: true,
+      }),
+      /intermediate page 2 returned 1 postings, expected 2/
+    );
+  } finally {
+    server.close();
+  }
+});
+
+test("allowStableStaleCount: an empty page before reaching the advertised total remains rejected even when the mode is enabled", async () => {
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1");
+    if (url.pathname === "/career" && !url.searchParams.get("career_job_req_id")) {
+      res.writeHead(200, { "Set-Cookie": "JSESSIONID=S1", "Content-Type": "text/html" });
+      res.end(`<html><body></body></html>`);
+      return;
+    }
+    if (url.pathname.includes("search.dwr")) {
+      req.resume();
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        if (body.includes("batchId=0")) {
+          const dwrText = `
+throw 'allowScriptTagRemoting is false.';
+var s0={};var s1=[];var s2={};var s4={};
+s2.id=1;s2.title="Job 1";s1[0]=s2;
+s4.currentPage=1;s4.pageSize=1;s4.startRow=1;s4.endRow=1;s4.totalCount=2;
+s0.postings=s1;s0.options={pagination:s4,sortByColumn:"JOB_POSTING_DATE",sortOrder:"DESC"};
+dwr.engine._remoteHandleCallback('0','0',{payload:s0});
+          `;
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end(dwrText);
+        } else {
+          // Final page (page 2 of 2, pageSize=1) returns zero postings — a full empty page, not a
+          // short-by-a-few-jobs page.
+          const dwrText = `
+throw 'allowScriptTagRemoting is false.';
+var s0={};var s1=[];var s4={};
+s4.currentPage=2;s4.pageSize=1;s4.startRow=2;s4.endRow=2;s4.totalCount=2;
+s0.postings=s1;s0.options={pagination:s4,sortByColumn:"JOB_POSTING_DATE",sortOrder:"DESC"};
+dwr.engine._remoteHandleCallback('1','0',{payload:s0});
+          `;
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end(dwrText);
+        }
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  const port = await listenOn(server);
+  try {
+    await assert.rejects(
+      fetchSuccessFactorsJobs("career4.successfactors.com|Popularinc", {
+        originOverride: `http://127.0.0.1:${port}`,
+        allowPrivateNetworksForTests: true,
+        allowStableStaleCount: true,
+      }),
+      /pagination returned empty page 2 before reaching totalCount 2/
+    );
+  } finally {
+    server.close();
+  }
+});
+
+test("allowStableStaleCount: a large final-page mismatch that is NOT reproducible across snapshots remains rejected", async () => {
+  // 2 pages (pageSize=10, totalCount=20): page 1 is always full (10 postings). Page 2 (the true
+  // final page) returns only 2 postings on the first snapshot and a DIFFERENT count (5) on the
+  // second snapshot — a large (8-job) shortfall that is also unstable/non-reproducible, so even with
+  // allowStableStaleCount enabled it must still be rejected (instability, not just magnitude, is
+  // what's being proven here).
+  let snapCounter = 0;
+  function postingsBlock(ids: number[], varPrefix: string): string {
+    return ids.map((id, i) => `var ${varPrefix}${i}={};${varPrefix}${i}.id=${id};${varPrefix}${i}.title="Job ${id}";`).join("");
+  }
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1");
+    if (url.pathname === "/career" && !url.searchParams.get("career_job_req_id")) {
+      res.writeHead(200, { "Set-Cookie": "JSESSIONID=S1", "Content-Type": "text/html" });
+      res.end(`<html><body></body></html>`);
+      return;
+    }
+    if (url.pathname.includes("search.dwr")) {
+      req.resume();
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        if (body.includes("batchId=0")) {
+          snapCounter++;
+          const ids = Array.from({ length: 10 }, (_, i) => i + 1);
+          const dwrText = `
+throw 'allowScriptTagRemoting is false.';
+var s0={};var s1=[];${postingsBlock(ids, "j")}
+${ids.map((_, i) => `s1[${i}]=j${i};`).join("")}
+var s4={};s4.currentPage=1;s4.pageSize=10;s4.startRow=1;s4.endRow=10;s4.totalCount=20;
+s0.postings=s1;s0.options={pagination:s4,sortByColumn:"JOB_POSTING_DATE",sortOrder:"DESC"};
+dwr.engine._remoteHandleCallback('0','0',{payload:s0});
+          `;
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end(dwrText);
+        } else {
+          const ids = snapCounter === 1 ? [11, 12] : [11, 12, 13, 14, 15];
+          const dwrText = `
+throw 'allowScriptTagRemoting is false.';
+var s0={};var s1=[];${postingsBlock(ids, "k")}
+${ids.map((_, i) => `s1[${i}]=k${i};`).join("")}
+var s4={};s4.currentPage=2;s4.pageSize=10;s4.startRow=11;s4.endRow=20;s4.totalCount=20;
+s0.postings=s1;s0.options={pagination:s4,sortByColumn:"JOB_POSTING_DATE",sortOrder:"DESC"};
+dwr.engine._remoteHandleCallback('1','0',{payload:s0});
+          `;
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end(dwrText);
+        }
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  const port = await listenOn(server);
+  try {
+    await assert.rejects(
+      fetchSuccessFactorsJobs("career4.successfactors.com|Popularinc", {
+        originOverride: `http://127.0.0.1:${port}`,
+        allowPrivateNetworksForTests: true,
+        allowStableStaleCount: true,
+      }),
+      /STABLE_STALE_COUNT mode detected posting count change between snapshots/
+    );
+    assert.equal(snapCounter, 2, "instability can only be detected by actually taking the second snapshot");
+  } finally {
+    server.close();
+  }
+});
+
 // --- DB-isolated allowlist integration test (isolated temp DB, same convention as
 // organizationRegistry.test.ts) -------------------------------------------------------------
 

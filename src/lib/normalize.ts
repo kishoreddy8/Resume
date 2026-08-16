@@ -32,7 +32,8 @@ import { fetchAdpRmJobs } from "@/lib/ats/adpRecruitingManagement";
 import { fetchEightfoldJobs } from "@/lib/ats/eightfold";
 import { fetchCornerstoneJobs } from "@/lib/ats/cornerstone";
 import { fetchAvatureJobs } from "@/lib/ats/avature";
-import { fetchSuccessFactorsJobs } from "@/lib/ats/successfactors";
+import { fetchSuccessFactorsJobs, normalizeSuccessFactorsToken } from "@/lib/ats/successfactors";
+import { SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS } from "@/lib/ats/successfactorsTrustedHosts";
 import { fetchWorkdayJobs } from "@/lib/ats/workday";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import type { LocationFilterOptions } from "@/lib/ats/locationFilter";
@@ -149,9 +150,18 @@ export async function fetchJobsForCompany(
     case "taleo":
       if (!company.ats_board_token) throw new Error("Missing Taleo host/career-section token");
       return fetchTaleoJobs(company.ats_board_token, options);
-    case "successfactors":
+    case "successfactors": {
       if (!company.ats_board_token) throw new Error("Missing SuccessFactors host/company token");
-      return fetchSuccessFactorsJobs(company.ats_board_token, options);
+      // trustedCustomHost: looked up per-tenant from a human-reviewed, evidence-backed allowlist
+      // (see successfactorsTrustedHosts.ts's own doc comment for exactly what was verified and how)
+      // — never derived from the redirect itself. allowStableStaleCount is safe to enable
+      // unconditionally here: its own internal double-snapshot verification (exact ID-sequence
+      // match across two independent fetches, discrepancy strictly confined to the final page) is
+      // what provides the safety guarantee, not any per-company fact, so it doesn't need — and
+      // structurally can't be broadened by — per-tenant gating the way host trust does.
+      const trustedCustomHost = SUCCESSFACTORS_TRUSTED_CUSTOM_HOSTS[normalizeSuccessFactorsToken(company.ats_board_token)];
+      return fetchSuccessFactorsJobs(company.ats_board_token, { ...options, trustedCustomHost, allowStableStaleCount: true });
+    }
     case "phenom":
       if (!company.ats_board_token) throw new Error("Missing Phenom host/locale token");
       return fetchPhenomJobs(company.ats_board_token, options);
