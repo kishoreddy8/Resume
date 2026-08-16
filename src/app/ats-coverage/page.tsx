@@ -279,6 +279,94 @@ function SourceProposalsSection() {
   );
 }
 
+interface ConnectorReliabilitySummary {
+  healthy: number;
+  recovering: number;
+  needsReview: number;
+  down: number;
+  unknown: number;
+  needsAttention: { id: number; name: string; sourceType: string; state: "NEEDS_REVIEW" | "DOWN"; reason: string }[];
+}
+
+interface ProviderHealthSummary {
+  provider: string;
+  eligibleCompanies: number;
+  recentSuccessfulScans: number;
+  recentFailedScans: number;
+  successRate: number | null;
+  dominantFailureCategory: string | null;
+  recoveringCount: number;
+  needsReviewCount: number;
+  downCount: number;
+  healthyCount: number;
+}
+
+const RELIABILITY_STATE_STYLES: Record<string, string> = {
+  NEEDS_REVIEW: "text-blue-700 dark:text-blue-400",
+  DOWN: "text-red-600 dark:text-red-400",
+};
+
+/** Phase 11 — the top-line "Connector Reliability" counts, per-provider success rates, and the
+ *  "Needs Attention" list (NEEDS_REVIEW/DOWN only — RECOVERING is deliberately never listed here, so
+ *  the panel isn't overwhelmed by expected, self-healing transient failures). */
+function ReliabilitySection() {
+  const [data, setData] = useState<{ summary: ConnectorReliabilitySummary; providers: ProviderHealthSummary[] } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/connector-reliability");
+      setData(await res.json());
+    })();
+  }, []);
+
+  if (!data) return null;
+  const { summary, providers } = data;
+
+  return (
+    <Section
+      title="Connector reliability"
+      subtitle="Automatic failure detection, retry, and stale-source rediscovery status — derived from real scan outcomes, never from a discovery attempt alone."
+    >
+      <div className="flex flex-wrap gap-4 text-sm">
+        <span className="text-emerald-700 dark:text-emerald-400">{summary.healthy} healthy</span>
+        <span className="text-amber-700 dark:text-amber-400">{summary.recovering} recovering</span>
+        <span className="text-blue-700 dark:text-blue-400">{summary.needsReview} needs review</span>
+        <span className="text-red-600 dark:text-red-400">{summary.down} down</span>
+        {summary.unknown > 0 && <span className="text-zinc-400">{summary.unknown} never scanned</span>}
+      </div>
+
+      {providers.length > 0 && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {providers.map((p) => (
+            <div key={p.provider} className="flex items-center justify-between rounded border border-zinc-200 px-3 py-1.5 text-xs dark:border-zinc-800">
+              <span>{PROVIDER_LABELS[p.provider as keyof typeof PROVIDER_LABELS] ?? p.provider}</span>
+              <span className="text-zinc-500">
+                {p.successRate === null ? "no recent scans" : `${Math.round(p.successRate * 100)}% success`}
+                {p.dominantFailureCategory ? ` · mostly ${p.dominantFailureCategory}` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {summary.needsAttention.length > 0 && (
+        <div className="mt-3 space-y-1">
+          <p className="text-xs font-medium text-zinc-500">Needs attention</p>
+          {summary.needsAttention.map((c) => (
+            <div key={c.id} className="text-xs">
+              <span className={RELIABILITY_STATE_STYLES[c.state]}>{c.state === "NEEDS_REVIEW" ? "Needs review" : "Down"}</span>
+              {" — "}
+              <span className="font-medium">{c.name}</span>
+              {" — "}
+              <span className="text-zinc-500">{c.reason}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 function Section({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return (
     <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
@@ -324,6 +412,8 @@ export default function AtsCoveragePage() {
           page to add sources or retry discovery.
         </p>
       </div>
+
+      <ReliabilitySection />
 
       <SourceProposalsSection />
 

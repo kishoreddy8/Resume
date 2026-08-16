@@ -226,6 +226,18 @@ export function recordScanFailure(
   });
 }
 
+/** Connector Reliability Control Plane V1 (src/lib/ats/reliability/) — records that a bounded
+ *  Discovery V2 rediscovery attempt just happened for this company, success or failure alike. The
+ *  ONLY write this feature makes outside of the existing recordScanSuccess/Partial/Failure and
+ *  createProposalFromDiscoveryV2/approveProposal paths — a pure cooldown timestamp, never company
+ *  identity. See COMPANIES_RELIABILITY_ADDITIVE_COLUMNS in src/db/index.ts for why this one column
+ *  exists at all. */
+export function recordRediscoveryAttempt(id: number): void {
+  getDb()
+    .prepare(`UPDATE companies SET last_rediscovery_attempted_at = datetime('now') WHERE id = @id`)
+    .run({ id });
+}
+
 /**
  * Writes the result of an ATS discovery attempt (src/lib/ats/discovery.ts) — see AGENTS.md §13/§14.
  * On VERIFIED, promotes the company to the real ATS connector (source_type/ats_board_token) so the

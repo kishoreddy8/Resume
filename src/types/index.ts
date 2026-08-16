@@ -109,6 +109,12 @@ export interface Company {
   last_error_category: ErrorCategory | null;
   last_error_message: string | null;
   connector_health: ConnectorHealth;
+  /** Connector Reliability Control Plane V1 (see src/lib/ats/reliability/) — when a bounded
+   *  Discovery V2 rediscovery attempt was last made for this company, success or failure alike.
+   *  The only new persisted signal this feature adds; everything else about reliability state is
+   *  derived at read time. Used purely as a cooldown gate to prevent repeatedly re-running an
+   *  expensive browser-rendered rediscovery against the same still-broken company every tick. */
+  last_rediscovery_attempted_at: string | null;
   // --- Source/ATS discovery (Phase 2.5; see src/lib/ats/discovery.ts) --------------------------
   // Whether Career-Ops itself could resolve a scannable source for this company. Distinct from
   // Phase 2's candidate-facing NEEDS_REVIEW match decision — this is company-registry state, not

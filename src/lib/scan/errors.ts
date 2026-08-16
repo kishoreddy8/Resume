@@ -48,7 +48,12 @@ export function categorizeHttpError(
 
   if (res) {
     if (res.status === 429) return "rate_limited";
-    if (res.status === 403) return "blocked";
+    // 401 (unauthenticated) and 403 (unauthorized) are both "access denied," not "malformed
+    // request" — grouping them keeps the existing 'blocked' category's meaning (see the Connector
+    // Reliability Control Plane's failure-classification table, which reads this the same way
+    // AUTH_OR_ACCESS would) rather than leaving 401 indistinguishable from a generic 4xx config
+    // problem, which invalid_config otherwise means below.
+    if (res.status === 401 || res.status === 403) return "blocked";
     if (res.status >= 500) return "provider_5xx";
     if (res.status >= 400) return "invalid_config";
   }

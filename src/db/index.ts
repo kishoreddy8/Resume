@@ -522,6 +522,30 @@ function runScanHealthMigrations(db: Database.Database) {
   }
 }
 
+// Connector Reliability Control Plane V1 — the ONE new persisted signal this feature needs beyond
+// what scan health/discovery already write (see src/lib/ats/reliability/'s own doc comments for why
+// every other piece of state is derived, never migrated). A rediscovery attempt (Discovery V2
+// against a currently-failing company) is expensive (real browser render — see discoveryConfig.ts's
+// MAX_V2_TOTAL_BUDGET_MS) and, unlike a normal scan, does not always leave a durable trace: a
+// NO_SOURCE_FOUND/GENERIC_ONLY outcome creates no ats_source_proposals row at all, so without this
+// timestamp the reliability controller would have no way to tell "we already tried and found
+// nothing five minutes ago" from "never tried" and would re-attempt on every tick — exactly the
+// thrashing/repair-loop risk the mission's Phase 6/8 explicitly warn against.
+const COMPANIES_RELIABILITY_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
+  { name: "last_rediscovery_attempted_at", ddl: "ALTER TABLE companies ADD COLUMN last_rediscovery_attempted_at TEXT" },
+];
+
+function runReliabilityMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(companies)").all() as { name: string }[]).map((c) => c.name)
+  );
+  for (const column of COMPANIES_RELIABILITY_ADDITIVE_COLUMNS) {
+    if (!existingColumns.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+}
+
 // ATS Health Semantics V2 — two new scan_runs columns, purely additive, mirroring
 // description_failures' own existing pattern exactly (same INTEGER NOT NULL DEFAULT 0 shape). Both
 // are per-run observability data src/lib/scan.ts already computes locally but previously only
@@ -784,6 +808,7 @@ function createConnection(): Database.Database {
   runStructuredIntelMigrations(db);
   ensureStructuredIntelIndexes(db);
   runScanHealthMigrations(db);
+  runReliabilityMigrations(db);
   runScanRunsWarningMigrations(db);
   migrateAiEnrichmentsEntityKey(db, schema);
   runCompaniesDiscoveryMigrations(db);

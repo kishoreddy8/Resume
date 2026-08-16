@@ -4,9 +4,15 @@ import type { IncrementalMatchResult } from "@/lib/match/incrementalMatch";
 import type { NotificationGenerationResult } from "@/lib/notifications/generateNotifications";
 import { runLifecycleMaintenance, type LifecycleMaintenanceResult } from "@/lib/scan/lifecycleMaintenance";
 import { runScanWithIncrementalMatching } from "@/lib/scan/runScanWithMatching";
+import { runConnectorRecovery, type RecoveryControllerSummary } from "@/lib/ats/reliability/recoveryController";
 import type { ScanSummary } from "@/types";
 import { acquireScanLock, releaseScanLock } from "./lock";
 import { getLastMaintenanceStartedAt, recordMaintenanceCompleted, recordMaintenanceStarted } from "./maintenanceState";
+import {
+  getLastReliabilityRunStartedAt,
+  recordReliabilityRunCompleted,
+  recordReliabilityRunStarted,
+} from "./reliabilityState";
 import {
   getSchedulerRuntimeState,
   recordSchedulerTickFailed,
@@ -22,6 +28,15 @@ import { isEnabled, isIntervalDue, isWithinWindow } from "./window";
 // connector_health_check_runs). Not user-configurable: adding a persisted setting for a single fixed
 // constant would be unnecessary surface area for something with no real reason to change per-user.
 const MAINTENANCE_INTERVAL_MINUTES = 24 * 60;
+
+// Connector Reliability Control Plane V1 — independent of both scan cadence AND
+// MAINTENANCE_INTERVAL_MINUTES above, same reasoning: a bounded Discovery V2 rediscovery attempt is
+// a real browser render (discoveryConfig.ts's MAX_V2_TOTAL_BUDGET_MS), so it should not fire on
+// every scan tick (which can run every few minutes), but genuinely broken connectors deserve
+// attention well before a once-a-day maintenance-style cadence — hourly is a reasonable middle
+// ground given recoveryController.ts's own 6-hour per-company cooldown already bounds how often any
+// SINGLE company can be re-attempted regardless of how often this outer tick fires.
+const RELIABILITY_INTERVAL_MINUTES = 60;
 
 export type SchedulerTickOutcome =
   | { outcome: "SKIPPED_DISABLED" }
@@ -41,6 +56,14 @@ export type SchedulerTickOutcome =
       /** Set only if maintenance was due and threw — isolated so a maintenance failure never turns
        *  an already-successful scan+matching+notifications result into a FAILED tick. */
       maintenanceError?: string;
+      /** null when the reliability phase wasn't due this tick (see RELIABILITY_INTERVAL_MINUTES) —
+       *  same "absence is not failure" contract as maintenance above. */
+      reliability: RecoveryControllerSummary | null;
+      /** Set only if the reliability phase was due and threw — isolated for the exact same reason
+       *  maintenanceError is: a reliability-controller failure must never turn an already-successful
+       *  scan+matching+notifications result into a FAILED tick, and must never block maintenance or
+       *  vice versa (Phase 12's explicit independence requirement). */
+      reliabilityError?: string;
     }
   | { outcome: "FAILED"; error: string };
 
@@ -58,11 +81,17 @@ export type SchedulerTickOutcome =
  * SchedulerTickOutcome, so a caller (the instrumentation.ts timer, or a test) never needs its own
  * try/catch around this function.
  *
- * Four phases in order: scan -> matching -> notifications (all three inside
- * runScanWithIncrementalMatching) -> maintenance (this function's own, gated by its own independent
- * MAINTENANCE_INTERVAL_MINUTES cadence, not run every tick). Scanning itself never runs lifecycle
- * maintenance as a side effect — see RunScanOptions.runAgeSweep's doc comment in src/lib/scan.ts for
- * why that coupling was removed.
+ * Five phases in order: scan -> matching -> notifications (all three inside
+ * runScanWithIncrementalMatching) -> maintenance -> connector reliability (Connector Reliability
+ * Control Plane V1) — the last two each on their own independent cadence (MAINTENANCE_INTERVAL_MINUTES,
+ * RELIABILITY_INTERVAL_MINUTES), neither run every tick, and neither coupled to the other or to
+ * scanning itself. Scanning never runs lifecycle maintenance as a side effect — see
+ * RunScanOptions.runAgeSweep's doc comment in src/lib/scan.ts for why that coupling was removed —
+ * and the reliability phase follows that exact same precedent rather than reintroducing a new
+ * coupling. The reliability phase only ever reads scan-produced health state and creates/refreshes
+ * ats_source_proposals rows (see recoveryController.ts); it never calls runScan itself, never touches
+ * lifecycle maintenance, and has no dependency on (or effect on) the external-signals ingestion
+ * pipeline, which remains its own, entirely separate system (src/lib/externalSignals/).
  */
 export async function runSchedulerTick(now: Date = new Date()): Promise<SchedulerTickOutcome> {
   const settings = getAppSettings();
@@ -123,6 +152,25 @@ export async function runSchedulerTick(now: Date = new Date()): Promise<Schedule
       }
     }
 
+    // Connector Reliability phase — explicit and separate from every phase above, on its own
+    // independent cadence (RELIABILITY_INTERVAL_MINUTES), same isolation pattern as maintenance
+    // just above (own try/catch, own started/completed bookkeeping, never lets a failure here turn
+    // an already-successful scan+matching+notifications+maintenance result into a FAILED tick).
+    // Only ever reads scan-produced health state and creates/refreshes proposals; never calls
+    // runScan, never touches lifecycle maintenance, never touches external-signals ingestion.
+    let reliability: RecoveryControllerSummary | null = null;
+    let reliabilityError: string | undefined;
+    if (isIntervalDue(getLastReliabilityRunStartedAt(), RELIABILITY_INTERVAL_MINUTES, now)) {
+      recordReliabilityRunStarted(now);
+      try {
+        reliability = await runConnectorRecovery();
+      } catch (err) {
+        reliabilityError = err instanceof Error ? err.message : String(err);
+      } finally {
+        recordReliabilityRunCompleted();
+      }
+    }
+
     return {
       outcome: "RAN",
       companiesScanned: companies.length,
@@ -131,6 +179,8 @@ export async function runSchedulerTick(now: Date = new Date()): Promise<Schedule
       notifications,
       maintenance,
       ...(maintenanceError ? { maintenanceError } : {}),
+      reliability,
+      ...(reliabilityError ? { reliabilityError } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

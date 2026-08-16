@@ -48,6 +48,7 @@ function makeCompany(overrides: Partial<Company> = {}): Company {
     connector_health: "unknown", resolution_status: "UNRESOLVED", discovered_jobs_url: null,
     discovery_attempted_at: null, discovery_reason: null, suspected_ats: null, verified_domain: null,
     domain_identity_status: "UNRESOLVED", last_successful_discovery_at: null,
+    last_rediscovery_attempted_at: null,
     created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
