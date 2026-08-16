@@ -35,6 +35,7 @@ export const PROVIDER_LABELS: Record<SourceType, string> = {
   jobdiva: "JobDiva",
   taleo: "Taleo",
   phenom: "Phenom",
+  successfactors: "SAP SuccessFactors",
   adp_rm: "ADP Recruiting Management",
   eightfold: "Eightfold",
   cornerstone: "Cornerstone",

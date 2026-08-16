@@ -13,7 +13,6 @@ export interface UnsupportedAtsSignature {
  * load jobs until a provider adapter and company-specific validation are complete.
  */
 export const UNSUPPORTED_ATS_SIGNATURES: readonly UnsupportedAtsSignature[] = [
-  { name: "SAP SuccessFactors", hostname: /^[a-z0-9.-]+\.successfactors\.(?:com|eu)$/i, path: /\/(?:career|sfcareer)(?:\/|$)|[?&]company=/i, excludePath: /\/(?:verp|ui\/extlib|assets?)\//i },
   { name: "Recruitee", hostname: /^(?:[a-z0-9-]+\.)?recruitee\.com$/i },
   { name: "Dayforce", hostname: /^(?:jobs\.)?dayforcehcm\.com$/i, path: /\/(?:CandidatePortal|mydayforce|jobs)(?:\/|$)/i },
   { name: "Phenom", hostname: /^(?!cdn\.)(?:[a-z0-9-]+\.)+phenompeople\.com$/i },

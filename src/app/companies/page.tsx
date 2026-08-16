@@ -167,6 +167,7 @@ const ADVANCED_ATS_SOURCES: { value: Exclude<SourceType, "career_link">; label: 
   { value: "eightfold", label: "Eightfold", placeholder: "tenant host|embedded domain" },
   { value: "cornerstone", label: "Cornerstone", placeholder: "tenant.csod.com|career site ID|corp" },
   { value: "avature", label: "Avature", placeholder: "host|template or legacy|portal path|page" },
+  { value: "successfactors", label: "SAP SuccessFactors", placeholder: "career{N}.successfactors.com|company ID" },
 ];
 
 interface DetectionPreview {

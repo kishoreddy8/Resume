@@ -32,6 +32,7 @@ import { fetchAdpRmJobs } from "@/lib/ats/adpRecruitingManagement";
 import { fetchEightfoldJobs } from "@/lib/ats/eightfold";
 import { fetchCornerstoneJobs } from "@/lib/ats/cornerstone";
 import { fetchAvatureJobs } from "@/lib/ats/avature";
+import { fetchSuccessFactorsJobs } from "@/lib/ats/successfactors";
 import { fetchWorkdayJobs } from "@/lib/ats/workday";
 import type { FetchWithRetryOptions } from "@/lib/scan/retry";
 import type { LocationFilterOptions } from "@/lib/ats/locationFilter";
@@ -148,6 +149,9 @@ export async function fetchJobsForCompany(
     case "taleo":
       if (!company.ats_board_token) throw new Error("Missing Taleo host/career-section token");
       return fetchTaleoJobs(company.ats_board_token, options);
+    case "successfactors":
+      if (!company.ats_board_token) throw new Error("Missing SuccessFactors host/company token");
+      return fetchSuccessFactorsJobs(company.ats_board_token, options);
     case "phenom":
       if (!company.ats_board_token) throw new Error("Missing Phenom host/locale token");
       return fetchPhenomJobs(company.ats_board_token, options);

@@ -8,7 +8,6 @@ import {
 } from "@/lib/ats/unsupportedCatalog";
 
 const EXAMPLES: [string, string][] = [
-  ["https://career5.successfactors.com/career?company=example", "SAP SuccessFactors"],
   ["https://example.recruitee.com/", "Recruitee"],
   ["https://jobs.dayforcehcm.com/en-US/example/jobs", "Dayforce"],
   ["https://example.phenompeople.com/us/en/search-results", "Phenom"],
@@ -159,4 +158,12 @@ test("resolved Avature job boards preserve explicit portal modes", async () => {
   const legacy = await discoverCompanySource("https://xerox.avature.net/en_US/careers");
   assert.equal(legacy.status, "VERIFIED"); assert.equal(legacy.sourceType, "avature");
   assert.equal(legacy.atsBoardToken, "xerox.avature.net|legacy|en_US/careers|SearchJobs");
+});
+
+test("resolved SuccessFactors job board preserves exact host/company identity", async () => {
+  const result = await discoverCompanySource("https://career4.successfactors.com/career?company=Popularinc");
+  assert.equal(result.status, "VERIFIED");
+  assert.equal(result.sourceType, "successfactors");
+  assert.equal(result.atsBoardToken, "career4.successfactors.com|Popularinc");
+  assert.equal(result.discoveredJobsUrl, "https://career4.successfactors.com/career?company=Popularinc");
 });

@@ -95,7 +95,7 @@ function connectorCounts(): { approved: number; pending: number } {
        FROM job_sources
        WHERE provider IN ('greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters', 'adp_wfn',
                           'paylocity', 'icims', 'ukg_pro', 'bamboohr', 'oracle_recruiting_cloud',
-                          'workable', 'rippling', 'paycom', 'jazzhr', 'jobvite', 'breezy', 'teamtailor', 'applicantpro', 'pinpoint', 'clearcompany', 'personio', 'applicantstack', 'comeet', 'cats', 'gohire', 'newton', 'silkroad', 'jobdiva', 'taleo', 'adp_rm', 'eightfold', 'cornerstone', 'avature')`
+                          'workable', 'rippling', 'paycom', 'jazzhr', 'jobvite', 'breezy', 'teamtailor', 'applicantpro', 'pinpoint', 'clearcompany', 'personio', 'applicantstack', 'comeet', 'cats', 'gohire', 'newton', 'silkroad', 'jobdiva', 'taleo', 'adp_rm', 'eightfold', 'cornerstone', 'avature', 'successfactors')`
     )
     .get() as { approved: number; pending: number };
 }

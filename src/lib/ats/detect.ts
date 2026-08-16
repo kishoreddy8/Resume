@@ -27,6 +27,7 @@ import { canonicalAdpRmUrl, normalizeAdpRmToken } from "@/lib/ats/adpRecruitingM
 import { canonicalEightfoldUrl, normalizeEightfoldToken } from "@/lib/ats/eightfold";
 import { canonicalCornerstoneUrl, normalizeCornerstoneToken } from "@/lib/ats/cornerstone";
 import { canonicalAvatureUrl, normalizeAvatureToken } from "@/lib/ats/avature";
+import { canonicalSuccessFactorsUrl, normalizeSuccessFactorsToken } from "@/lib/ats/successfactors";
 import { canonicalClearCompanyUrl, normalizeClearCompanyTenant } from "@/lib/ats/clearcompany";
 import { canonicalSmartRecruitersUrl, normalizeSmartRecruitersToken } from "@/lib/ats/smartrecruiters";
 import type { SourceType } from "@/types";
@@ -524,6 +525,36 @@ function detectAvature(value: string): AtsDetection | null {
   } catch { return null; }
 }
 
+function detectSuccessFactors(value: string): AtsDetection | null {
+  let url: URL;
+  try {
+    url = new URL(decodeSavedUrl(value));
+  } catch {
+    return null;
+  }
+  if (!/^[a-z0-9.-]+\.successfactors\.(?:com|eu)$/i.test(url.hostname)) return null;
+  if (/\.(?:js|css|png|jpe?g|gif|svg|pdf)(?:$|[?&#%])/i.test(`${url.pathname}${url.search}`)) return null;
+  if (/\/(?:verp|ui\/extlib|assets?|saml2|idp)\//i.test(url.pathname)) return null;
+
+  const company = url.searchParams.get("company") || url.searchParams.get("career_company") || url.searchParams.get("bplte_company");
+  if (!company || !/^[a-z0-9_.-]+$/i.test(company)) return null;
+
+  if (!/^\/(?:career|careers|portalcareer|sfcareer(?:\/jobreqcareerpvt|\/jobsearch)?)\/?$/i.test(url.pathname)) {
+    return null;
+  }
+
+  try {
+    const token = normalizeSuccessFactorsToken(`${url.hostname}|${company}`);
+    return {
+      sourceType: "successfactors",
+      atsBoardToken: token,
+      canonicalSourceUrl: canonicalSuccessFactorsUrl(token),
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Order matters only in that each pattern is tried in turn; a URL should never match more than one.
 const SIMPLE_PATTERNS: { sourceType: Exclude<SourceType, "career_link" | "workday">; pattern: RegExp }[] = [
   { sourceType: "ashby", pattern: /jobs\.ashbyhq\.com\/([^/?#]+)/i },
@@ -596,6 +627,8 @@ export function detectAtsFromUrlString(url: string): AtsDetection | null {
   if (cornerstone) return cornerstone;
   const avature = detectAvature(url);
   if (avature) return avature;
+  const successfactors = detectSuccessFactors(url);
+  if (successfactors) return successfactors;
 
   for (const { sourceType, pattern } of SIMPLE_PATTERNS) {
     const match = url.match(pattern);
