@@ -3,7 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
 import { categorizeHttpError, ScanConnectorError } from "../errors";
-import { fetchWithRetry, parseJsonOrThrow } from "../retry";
+import { computeDelayMs, fetchWithRetry, parseJsonOrThrow } from "../retry";
 
 /**
  * Retry/backoff/error-categorization tests for src/lib/scan/retry.ts — run against a real,
@@ -128,6 +128,101 @@ test("network error: connection refused is categorized as network and retried", 
   );
   assert.equal(retries, 1, "network failures are retryable");
   assert.equal(getCount(), 0, "the real (unrelated) server on the other port was never hit");
+});
+
+// --- Shared 429 retry-budget expansion (src/lib/scan/retry.ts's rateLimitedMaxAttempts) ---------
+// Regression coverage for the fix restoring this: previously the expansion only activated when the
+// caller omitted maxAttempts entirely, but every real caller (scan.ts, connectorHealthCheck.ts,
+// secLookup.ts, etc.) always passes one explicitly — silently making the expansion dead code in
+// production. The fix drops that gate: rate_limited always gets max(configured, 5), every other
+// category keeps exactly the caller's configured budget.
+
+test("rate_limited: configured maxAttempts=3 is expanded to allow up to 5 attempts total", async () => {
+  const { url, getCount } = await startServer((_req, res) => jsonResponse(res, 429, { error: "rate limited" }));
+  await assert.rejects(
+    () => fetchWithRetry(url, {}, { baseDelayMs: 1, maxAttempts: 3 }),
+    (err: unknown) => {
+      assert.ok(err instanceof ScanConnectorError);
+      assert.equal(err.category, "rate_limited");
+      assert.equal(err.retryCount, 4, "4 retries before the 5th and final attempt is exhausted");
+      return true;
+    }
+  );
+  assert.equal(getCount(), 5, "a caller-configured budget of 3 must still get the full 5-attempt rate-limit floor");
+});
+
+test("rate_limited: configured maxAttempts=5 (already at the floor) stays at exactly 5", async () => {
+  const { url, getCount } = await startServer((_req, res) => jsonResponse(res, 429, { error: "rate limited" }));
+  await assert.rejects(
+    () => fetchWithRetry(url, {}, { baseDelayMs: 1, maxAttempts: 5 }),
+    (err: unknown) => {
+      assert.ok(err instanceof ScanConnectorError);
+      assert.equal(err.retryCount, 4);
+      return true;
+    }
+  );
+  assert.equal(getCount(), 5);
+});
+
+test("rate_limited: configured maxAttempts=7 (above the floor) is preserved, never clamped down to 5", async () => {
+  const { url, getCount } = await startServer((_req, res) => jsonResponse(res, 429, { error: "rate limited" }));
+  await assert.rejects(
+    () => fetchWithRetry(url, {}, { baseDelayMs: 1, maxAttempts: 7 }),
+    (err: unknown) => {
+      assert.ok(err instanceof ScanConnectorError);
+      assert.equal(err.retryCount, 6, "the expansion only ever raises the floor to 5, never lowers a larger configured budget");
+      return true;
+    }
+  );
+  assert.equal(getCount(), 7);
+});
+
+test("provider_5xx with configured maxAttempts=3 is NOT expanded — stays at exactly 3 (only rate_limited gets the floor)", async () => {
+  const { url, getCount } = await startServer((_req, res) => jsonResponse(res, 503, { error: "unavailable" }));
+  await assert.rejects(
+    () => fetchWithRetry(url, {}, { baseDelayMs: 1, maxAttempts: 3 }),
+    (err: unknown) => {
+      assert.ok(err instanceof ScanConnectorError);
+      assert.equal(err.category, "provider_5xx");
+      assert.equal(err.retryCount, 2, "a non-rate-limited transient category keeps the caller's exact configured budget");
+      return true;
+    }
+  );
+  assert.equal(getCount(), 3);
+});
+
+test("404 (invalid_config) remains non-retryable even with the rate-limit floor in place", async () => {
+  const { url, getCount } = await startServer((_req, res) => jsonResponse(res, 404, { error: "not found" }));
+  await assert.rejects(
+    () => fetchWithRetry(url, {}, { baseDelayMs: 1, maxAttempts: 3 }),
+    (err: unknown) => {
+      assert.ok(err instanceof ScanConnectorError);
+      assert.equal(err.category, "invalid_config");
+      assert.equal(err.retryCount, 0);
+      return true;
+    }
+  );
+  assert.equal(getCount(), 1, "a non-retryable category must never be retried, regardless of the rate-limit floor");
+});
+
+test("rate_limited: a successful response before the expanded budget is exhausted exits early, not at the floor", async () => {
+  const { url, getCount } = await startServer((_req, res, count) => {
+    if (count <= 3) return jsonResponse(res, 429, { error: "rate limited" });
+    jsonResponse(res, 200, { ok: true });
+  });
+  const res = await fetchWithRetry(url, {}, { baseDelayMs: 1, maxAttempts: 3 });
+  assert.equal(res.status, 200);
+  assert.equal(getCount(), 4, "succeeds on the 4th attempt, within the expanded 5-attempt floor, without needing the 5th");
+});
+
+test("rate_limited: Retry-After's hard 60s cap is still enforced under the expanded budget", () => {
+  // A real 60s+ wait isn't practical in a fast unit test, and mocking global setTimeout conflicts
+  // with fetch()'s own internal timer usage in this real-local-server integration style — so this
+  // exercises computeDelayMs directly (a pure function, unaffected by the rate-limit-floor fix).
+  const oneHourMs = 60 * 60 * 1000;
+  const delay = computeDelayMs(1, 1, 5000, oneHourMs);
+  assert.ok(delay <= 60_000, `Retry-After of 1 hour must still be capped at 60s, got ${delay}ms`);
+  assert.ok(delay >= 60_000, `the cap is a floor for a Retry-After this large, not a smaller backoff value, got ${delay}ms`);
 });
 
 test("Retry-After header on 429 is honored (waits at least as long as it says)", async () => {

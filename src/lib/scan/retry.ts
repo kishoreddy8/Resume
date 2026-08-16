@@ -27,7 +27,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function computeDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: number, retryAfterMs?: number): number {
+/** Exported for direct, deterministic unit testing of the Retry-After hard cap (see
+ *  retry.test.ts) — a real 60s+ wait isn't practical in a fast unit test, and this is a pure
+ *  function with no timers/network involved, so testing it directly is more reliable than faking
+ *  global timers around a real HTTP integration test. */
+export function computeDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: number, retryAfterMs?: number): number {
   const backoff = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
   const jitter = Math.random() * Math.min(100, backoff);
   const computed = backoff + jitter;
@@ -67,12 +71,14 @@ export async function fetchWithRetry(
   const baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  // 429s get a higher retry budget because recovery depends on honoring the server's Retry-After
-  // delay, not on giving up quickly. The expanded budget only activates if the caller hasn't
-  // explicitly overridden maxAttempts (so test fixtures still control their own retry count).
-  const rateLimitedMaxAttempts = options.maxAttempts !== undefined
-    ? baseMaxAttempts
-    : Math.max(baseMaxAttempts, RATE_LIMITED_MAX_ATTEMPTS);
+  // 429s get a higher retry budget than other transient categories because recovery depends on
+  // honoring the server's Retry-After delay, not on giving up quickly. Always at least
+  // RATE_LIMITED_MAX_ATTEMPTS regardless of the caller's configured maxAttempts — a caller asking
+  // for fewer attempts is expressing "don't retry forever," not "give a 429 no more chances than a
+  // hard failure," and every other retryable category still gets exactly the caller's configured
+  // budget (this only ever raises the ceiling for rate_limited, never lowers it — a caller that
+  // explicitly configured MORE than RATE_LIMITED_MAX_ATTEMPTS keeps that larger budget).
+  const rateLimitedMaxAttempts = Math.max(baseMaxAttempts, RATE_LIMITED_MAX_ATTEMPTS);
 
   let maxAttempts = baseMaxAttempts;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
