@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { MorningReadinessSection } from "./MorningReadinessSection";
 
 /**
  * Phase 4 Stage 6 — read-only Operations & Automation Health Dashboard. Fetches one coherent
@@ -195,6 +196,8 @@ export default function OperationsPage() {
           </button>
         </div>
       </div>
+
+      <MorningReadinessSection />
 
       {error && (
         <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
