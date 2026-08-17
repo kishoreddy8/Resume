@@ -46,23 +46,31 @@ export function classifyEmployerRelationship(job: NormalizedExternalJob, match: 
       // for an unnamed/mismatched client" pattern — treated as agency evidence even with no
       // language hit. A destination on a well-known ATS vendor's own domain (e.g. boards.
       // greenhouse.io) is NOT a mismatch — that's the employer's real board, just vendor-hosted.
-      if (destinationDomain && !isSameOrAtsHostedDomain(destinationDomain, verifiedDomain)) {
+      if (destinationDomain && !isSameOrAtsHostedDomain(destinationDomain, verifiedDomain, destinationUrl)) {
         return "STAFFING_AGENCY";
       }
     }
   }
 
+  // ATS_BOARD is standalone-strong evidence (an existing company's own board/token identity).
+  // NAME is only ever returned by matchCompanyForObservation when already corroborated by
+  // independent ATS/apply-URL evidence (Stage 12's multi-signal requirement) — safe to trust here too.
   if (match.confidence === "DOMAIN") return "DIRECT_EMPLOYER";
   if (match.confidence === "ALIAS") return "DIRECT_EMPLOYER";
+  if (match.confidence === "ATS_BOARD") return "DIRECT_EMPLOYER";
+  if (match.confidence === "NAME") return "DIRECT_EMPLOYER";
   return "UNKNOWN_EMPLOYER_RELATIONSHIP";
 }
 
-function isSameOrAtsHostedDomain(destinationDomain: string, verifiedDomain: string): boolean {
+function isSameOrAtsHostedDomain(destinationDomain: string, verifiedDomain: string, destinationUrl: string): boolean {
   if (destinationDomain === verifiedDomain || destinationDomain.endsWith(`.${verifiedDomain}`)) return true;
   // A real ATS vendor domain (boards.greenhouse.io, X.wd5.myworkdayjobs.com, ...) is a legitimate
   // employer board even though it isn't the employer's own domain — detectAtsFromUrlString already
-  // knows the full list of these, so defer to it rather than re-listing vendor domains here.
-  return detectAtsFromUrlString(`https://${destinationDomain}`) !== null;
+  // knows the full list of these, so defer to it rather than re-listing vendor domains here. Must be
+  // called with the FULL destination URL (not a domain-only reconstruction): several detectors
+  // (Workday's tenant/site, Greenhouse's board token, ...) only appear in the URL PATH, so a
+  // domain-only "https://{host}" always fails detection even for a genuine, real employer board.
+  return detectAtsFromUrlString(destinationUrl) !== null;
 }
 
 export function classifyUrlEvidence(job: NormalizedExternalJob, match: CompanyMatchResult): { classification: UrlClassification; provider: string | null; boardToken: string | null } {

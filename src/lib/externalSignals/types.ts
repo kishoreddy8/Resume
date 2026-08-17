@@ -43,7 +43,7 @@ export interface NormalizedExternalJob {
   raw: unknown;
 }
 
-export type MatchConfidence = "DOMAIN" | "ALIAS" | "NAME" | "AMBIGUOUS" | "UNMATCHED";
+export type MatchConfidence = "DOMAIN" | "ATS_BOARD" | "ALIAS" | "NAME" | "AMBIGUOUS" | "UNMATCHED";
 
 export interface CompanyMatchResult {
   companyId: number | null;

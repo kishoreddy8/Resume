@@ -208,6 +208,44 @@ export function findCompanyIdsByAliasName(name: string): number[] {
   return rows.map((r) => r.id);
 }
 
+/**
+ * Stage 12 — ATS-board identity tier: an external listing's detected ATS provider+board token
+ * (detectAtsFromUrlString) already uniquely belongs to an existing CareerOps company. Safe by
+ * construction: idx_companies_ats is a UNIQUE index on (source_type, ats_board_token), so this can
+ * never return more than one row — no ambiguity handling needed here.
+ */
+export function findCompanyIdByAtsBoardIdentity(sourceType: string, boardToken: string): number | undefined {
+  const row = getDb()
+    .prepare("SELECT id FROM companies WHERE source_type = ? AND ats_board_token = ?")
+    .get(sourceType, boardToken) as { id: number } | undefined;
+  return row?.id;
+}
+
+/**
+ * Stage 12 — bounded, index-assisted candidate narrowing for the safe legal-name normalization tier
+ * (see src/lib/externalSignals/companyMatch.ts). Returns every alias whose stored, already-normalized
+ * text STARTS WITH the given (already suffix/punctuation-stripped) prefix — e.g. prefix "PFIZER"
+ * matches the stored alias "PFIZER INC." Never a fuzzy/substring/similarity search: the caller still
+ * performs an exact-equality check (after applying the same stripping to each candidate alias) before
+ * treating anything here as a real match. Bounded to 50 rows as a defensive cap against a pathological
+ * prefix; in practice a specific company-name prefix matches only a handful of aliases.
+ */
+export function findCompanyIdsByAliasPrefix(prefix: string): { companyId: number; alias: string }[] {
+  if (!prefix) return [];
+  const escaped = prefix.replace(/[\\%_]/g, "\\$&");
+  const rows = getDb()
+    .prepare(
+      `SELECT DISTINCT c.id AS companyId, a.alias AS alias
+       FROM companies c
+       JOIN organization_company_links l ON l.company_id = c.id
+       JOIN organization_aliases a ON a.organization_id = l.organization_id
+       WHERE a.alias_normalized LIKE ? ESCAPE '\\'
+       LIMIT 50`
+    )
+    .all(`${escaped}%`) as { companyId: number; alias: string }[];
+  return rows;
+}
+
 export function listOrganizations(input: { limit?: number; offset?: number } = {}): Organization[] {
   const limit = Math.max(1, Math.min(input.limit ?? 100, 1000));
   const offset = Math.max(0, input.offset ?? 0);
