@@ -128,7 +128,7 @@ function fakeResult(overrides: Partial<JobMatchResult>): JobMatchResult {
     jdContentHash: "jd-hash",
     computedAt: "2026-01-01T00:00:00Z",
     eligibility: { status: "PASS", reasons: [], sponsorship: { signal: "not_applicable", note: "n/a" } },
-    dimensionScores: { required: 90, preferred: 50, experience: 100, seniority: 100 },
+    dimensionScores: { roleAlignment: null, required: 90, preferred: 50, experience: 100, seniority: 100 },
     overallScore: 50,
     requirementCoverage: 0.5,
     employerEvidencedShare: 0.5,
@@ -143,6 +143,7 @@ function fakeResult(overrides: Partial<JobMatchResult>): JobMatchResult {
     recommendedTrack: "General / Unclassified",
     decision: "NEEDS_REVIEW",
     blockingReasons: [],
+    roleAlignmentDetail: null,
     ...overrides,
   };
 }

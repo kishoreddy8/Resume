@@ -22,11 +22,20 @@ const DECISION_FILTER_LABELS: Record<DecisionFilter, string> = {
   "Not Evaluated": "Not Evaluated",
 };
 
+interface ListMatchSummary {
+  decision: MatchDecision;
+  overallScore: number;
+  /** Stage 24B — the engine's own JD-evidence-quality flag, carried through
+   *  /api/jobs/match-decisions so this list can distinguish an untrustworthy score from a real one
+   *  exactly as the For You feed does. */
+  insufficientJdSignal: boolean;
+}
+
 /** Batch-fetches the latest Phase 2 match decision for every visible job's dedupe_key in one
  *  request — never one request per row. Purely additive/client-side: does not touch listJobs'
  *  server-side SQL or JobFilterSidebar's URL-param-driven filters. */
-function useMatchDecisions(jobs: JobWithCompany[], candidateId: number): Record<string, { decision: MatchDecision; overallScore: number }> {
-  const [decisions, setDecisions] = useState<Record<string, { decision: MatchDecision; overallScore: number }>>({});
+function useMatchDecisions(jobs: JobWithCompany[], candidateId: number): Record<string, ListMatchSummary> {
+  const [decisions, setDecisions] = useState<Record<string, ListMatchSummary>>({});
   const dedupeKeysKey = jobs.map((j) => j.dedupe_key).join(",");
 
   useEffect(() => {
@@ -34,7 +43,7 @@ function useMatchDecisions(jobs: JobWithCompany[], candidateId: number): Record<
     let cancelled = false;
     // Always resolves asynchronously (even the empty-list case) so setDecisions is never called
     // synchronously within the effect body itself.
-    const request: Promise<Record<string, { decision: MatchDecision; overallScore: number }>> =
+    const request: Promise<Record<string, ListMatchSummary>> =
       dedupeKeys.length === 0
         ? Promise.resolve({})
         : fetch("/api/jobs/match-decisions", {
@@ -113,17 +122,77 @@ function TailoringCheckbox({ jobId, initial, candidateId }: { jobId: number; ini
   );
 }
 
+/** Stage 24B — same three-state contract as the For You feed's cell (not evaluated / insufficient
+ *  data / evaluated). Kept local to this component rather than shared, because the two lists read
+ *  from different response shapes; the SEMANTICS are what must agree, and they do. */
+function MatchFitCell({ summary }: { summary: ListMatchSummary | undefined }) {
+  if (!summary) return <span className="text-xs text-zinc-400">Not evaluated</span>;
+  if (summary.insufficientJdSignal) {
+    return (
+      <span
+        className="inline-flex items-center rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+        title="This posting did not yield enough structured requirements to score reliably."
+      >
+        Insufficient data
+      </span>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-0.5">
+      <MatchDecisionBadge decision={summary.decision} />
+      <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">{Math.round(summary.overallScore)}/100</span>
+    </div>
+  );
+}
+
+/** Stage 24B (Phase 13) — deterministic best-first ordering for the All Jobs view, which previously
+ *  rendered listJobs()' raw SQL order and could therefore show an unevaluated or insufficient-signal
+ *  posting above a strong fresh match. Same key philosophy as src/lib/rank/forYou.ts, applied to the
+ *  facts this view actually has: decision, evidence quality, score, then recency, then a stable id
+ *  tie-break. Client-side and display-only — it does not touch listJobs' SQL or its filters. */
+const LIST_DECISION_RANK: Record<MatchDecision, number> = { READY_FOR_TAILORING: 0, NEEDS_REVIEW: 1, BLOCKED: 3 };
+
+function compareJobsBestFirst(
+  a: JobWithCompany,
+  b: JobWithCompany,
+  decisions: Record<string, ListMatchSummary>
+): number {
+  const am = decisions[a.dedupe_key];
+  const bm = decisions[b.dedupe_key];
+
+  const aDecision = am ? LIST_DECISION_RANK[am.decision] : 2; // not evaluated sits above BLOCKED
+  const bDecision = bm ? LIST_DECISION_RANK[bm.decision] : 2;
+  if (aDecision !== bDecision) return aDecision - bDecision;
+
+  const aEvidence = am ? (am.insufficientJdSignal ? 1 : 0) : 2;
+  const bEvidence = bm ? (bm.insufficientJdSignal ? 1 : 0) : 2;
+  if (aEvidence !== bEvidence) return aEvidence - bEvidence;
+
+  const aScore = am && !am.insufficientJdSignal ? am.overallScore : -1;
+  const bScore = bm && !bm.insufficientJdSignal ? bm.overallScore : -1;
+  if (aScore !== bScore) return bScore - aScore;
+
+  const aPosted = a.posted_at ? new Date(a.posted_at).getTime() : 0;
+  const bPosted = b.posted_at ? new Date(b.posted_at).getTime() : 0;
+  if (aPosted !== bPosted) return bPosted - aPosted;
+
+  return b.id - a.id;
+}
+
 export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; thresholds: LifecycleThresholds }) {
   const candidateId = useActiveCandidateId();
   const decisions = useMatchDecisions(jobs, candidateId);
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>("All");
 
-  const visibleJobs = jobs.filter((job) => {
-    if (decisionFilter === "All") return true;
-    const entry = decisions[job.dedupe_key];
-    if (decisionFilter === "Not Evaluated") return !entry;
-    return entry?.decision === decisionFilter;
-  });
+  const visibleJobs = jobs
+    .filter((job) => {
+      if (decisionFilter === "All") return true;
+      const entry = decisions[job.dedupe_key];
+      if (decisionFilter === "Not Evaluated") return !entry;
+      return entry?.decision === decisionFilter;
+    })
+    .slice()
+    .sort((a, b) => compareJobsBestFirst(a, b, decisions));
 
   return (
     <div className="space-y-2">
@@ -183,11 +252,7 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
                 <H1bBadge confidence={job.h1b_combined_confidence} />
               </td>
               <td className="px-3 py-2">
-                {decisions[job.dedupe_key] ? (
-                  <MatchDecisionBadge decision={decisions[job.dedupe_key].decision} />
-                ) : (
-                  <span className="text-xs text-zinc-400">—</span>
-                )}
+                <MatchFitCell summary={decisions[job.dedupe_key]} />
               </td>
               <td className="px-3 py-2">
                 <PipelineStatusSelect jobId={job.id} value={job.pipeline_status} candidateId={candidateId} />

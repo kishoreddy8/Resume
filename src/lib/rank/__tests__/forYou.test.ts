@@ -21,8 +21,11 @@ function job(overrides: Partial<ForYouJobInput> & { jobId: number }): ForYouJobI
   };
 }
 
-function match(decision: ForYouJobInput["match"] & object) {
-  return decision;
+/** Defaults insufficientJdSignal to false so every pre-Stage-24B case here keeps meaning exactly
+ *  what it meant: a trustworthy evaluation. Cases that exercise the new evidence tier pass it
+ *  explicitly. */
+function match(decision: Omit<NonNullable<ForYouJobInput["match"]>, "insufficientJdSignal"> & { insufficientJdSignal?: boolean }) {
+  return { insufficientJdSignal: false, ...decision };
 }
 
 // --- computeFreshnessTier ------------------------------------------------------------------------
@@ -80,7 +83,13 @@ test("C vs D: C is READY (92, historical strong, 17d old) beats D NEEDS_REVIEW (
   assert.deepEqual(ranked.map((j) => j.jobId), [1, 2], "READY must outrank NEEDS_REVIEW regardless of D's fresher posting or better sponsorship signal");
 });
 
-test("E vs F: candidate's preferred-role-family job (88 READY) ranks above a stronger off-preference job (94 READY) — preference is evaluated before score, per the approved key order", () => {
+test("Stage 24B E vs F: a stronger off-preference job (94 READY) now ranks above a weaker preferred-family one (88 READY) — score band is evaluated before declared preference", () => {
+  // BEHAVIOUR CHANGE, deliberate (Stage 24B Phase 13). Declared target roles used to be the FIRST
+  // sort key, which meant a merely-preferred posting outranked a genuinely stronger one, and a
+  // preferred-but-unevaluated posting outranked an evaluated strong match entirely. Role identity is
+  // now scored inside overallScore itself (src/lib/match/roleAlignment.ts), so the declared
+  // preference has been demoted to a tie-break WITHIN a score band — which is what a stated
+  // preference should do, and it still never touches the score.
   const inFamily = job({
     jobId: 1, title: "Java Developer", roleFamilyTier: "PRIMARY",
     match: match({ decision: "READY_FOR_TAILORING", overallScore: 88, employerEvidencedShare: 0.7, requirementCoverage: 0.85 }),
@@ -89,11 +98,59 @@ test("E vs F: candidate's preferred-role-family job (88 READY) ranks above a str
     jobId: 2, title: "Data Engineer", roleFamilyTier: "NONE",
     match: match({ decision: "READY_FOR_TAILORING", overallScore: 94, employerEvidencedShare: 0.9, requirementCoverage: 0.95 }),
   });
-  const ranked = rankForYou([offFamily, inFamily]);
-  assert.deepEqual(ranked.map((j) => j.jobId), [1, 2]);
+  const ranked = rankForYou([inFamily, offFamily]);
+  assert.deepEqual(ranked.map((j) => j.jobId), [2, 1]);
   // Critically: preference never touched the underlying score — both numbers are exactly as given.
-  assert.equal(ranked[0].match?.overallScore, 88);
-  assert.equal(ranked[1].match?.overallScore, 94, "the off-preference job's honest higher score is preserved, not modified, even though it ranks lower");
+  assert.equal(ranked[0].match?.overallScore, 94);
+  assert.equal(ranked[1].match?.overallScore, 88, "the preferred job's honest lower score is preserved, not modified, even though it ranks lower");
+});
+
+test("Stage 24B: declared role-family preference still breaks ties WITHIN a score band", () => {
+  const inFamily = job({
+    jobId: 1, roleFamilyTier: "PRIMARY",
+    match: match({ decision: "READY_FOR_TAILORING", overallScore: 92, employerEvidencedShare: 0.8, requirementCoverage: 0.9 }),
+  });
+  const offFamily = job({
+    jobId: 2, roleFamilyTier: "NONE",
+    match: match({ decision: "READY_FOR_TAILORING", overallScore: 95, employerEvidencedShare: 0.8, requirementCoverage: 0.9 }),
+  });
+  const ranked = rankForYou([offFamily, inFamily]);
+  assert.deepEqual(ranked.map((j) => j.jobId), [1, 2], "same 90s band -> the candidate's declared target role wins");
+});
+
+test("Stage 24B: an insufficient-signal 100 never outranks a fully-evidenced 88 inside the same decision tier", () => {
+  const untrustworthy = job({
+    jobId: 1, postedAt: daysAgo(0),
+    match: match({ decision: "NEEDS_REVIEW", overallScore: 100, employerEvidencedShare: 0, requirementCoverage: 0, insufficientJdSignal: true }),
+  });
+  const trustworthy = job({
+    jobId: 2, postedAt: daysAgo(5),
+    match: match({ decision: "NEEDS_REVIEW", overallScore: 88, employerEvidencedShare: 0.8, requirementCoverage: 0.9 }),
+  });
+  const ranked = rankForYou([untrustworthy, trustworthy], { now: NOW });
+  assert.deepEqual(ranked.map((j) => j.jobId), [2, 1]);
+});
+
+test("Stage 24B Phase 14: a 95 match from 5 days ago outranks a 50 match posted today, but the newer of two equally strong jobs comes first", () => {
+  const strongOlder = job({
+    jobId: 1, postedAt: daysAgo(5),
+    match: match({ decision: "NEEDS_REVIEW", overallScore: 95, employerEvidencedShare: 0.8, requirementCoverage: 0.9 }),
+  });
+  const weakToday = job({
+    jobId: 2, postedAt: daysAgo(0),
+    match: match({ decision: "NEEDS_REVIEW", overallScore: 50, employerEvidencedShare: 0.8, requirementCoverage: 0.9 }),
+  });
+  assert.deepEqual(rankForYou([weakToday, strongOlder], { now: NOW }).map((j) => j.jobId), [1, 2], "fit dominates freshness");
+
+  const equallyStrongToday = job({
+    jobId: 3, postedAt: daysAgo(0),
+    match: match({ decision: "NEEDS_REVIEW", overallScore: 95, employerEvidencedShare: 0.8, requirementCoverage: 0.9 }),
+  });
+  assert.deepEqual(
+    rankForYou([strongOlder, equallyStrongToday], { now: NOW }).map((j) => j.jobId),
+    [3, 1],
+    "identical fit on every key -> the newer posting wins the recency tie-break"
+  );
 });
 
 test("G: a candidate-not-interested job is excluded entirely from that candidate's ranked list", () => {

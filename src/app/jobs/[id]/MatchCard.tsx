@@ -12,6 +12,13 @@ import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
  * eligibility with its own caveat text, requirement coverage, all four evidence-strength buckets
  * kept visually distinct, critical gaps called out first, recommended track, and the decision plus
  * every blocking reason, never a bare score.
+ *
+ * STAGE 24B. Evaluation is now automatic (src/lib/match/tick.ts): a job normally already has a
+ * result by the time this card mounts, and the Evaluate/Re-evaluate buttons below are an explicit
+ * refresh/recovery action, not the normal workflow. The card additionally renders the roleAlignment
+ * dimension with its traceable "why" note, states plainly that an insufficient-signal score is an
+ * unknown rather than a low match, and labels an UNKNOWN sponsorship signal as the advisory it is
+ * rather than leaving it looking like a blocker.
  */
 
 type GetResponse = { status: "none" } | { status: "ok"; result: JobMatchResult } | { error: string };
@@ -153,19 +160,25 @@ export function MatchCard({ jobId }: { jobId: number }) {
         <div className="space-y-3">
           {result.insufficientJdSignal && (
             <div className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400">
-              Evaluated with insufficient structured JD data — the score below reflects near-zero
-              signal, not a genuine negative match. Re-run Evaluate Match after the job has real
-              extracted requirements.
+              <span className="font-semibold">Insufficient structured JD data.</span> Fewer than the
+              minimum number of requirements could be extracted from this posting, so the score below
+              is an unknown — it is neither a confident match nor a confident non-match, and lists
+              rank this posting below every fully-evidenced one. Re-run Evaluate Match once the job
+              has real extracted requirements.
             </div>
           )}
           <div>
             <div className="text-xs font-medium text-zinc-500">
-              Overall Score{result.insufficientJdSignal && <span className="ml-1 font-normal text-amber-600 dark:text-amber-500">(low confidence)</span>}
+              Overall Score{result.insufficientJdSignal && <span className="ml-1 font-normal text-amber-600 dark:text-amber-500">(not reliable — insufficient data)</span>}
             </div>
             <div className="text-lg font-semibold">{typeof result.overallScore === "number" ? Math.round(result.overallScore) : "—"}</div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
+            <div>
+              <div className="text-zinc-500">Role Alignment</div>
+              <div className="font-medium">{pct(result.dimensionScores?.roleAlignment ?? null)}</div>
+            </div>
             <div>
               <div className="text-zinc-500">Required</div>
               <div className="font-medium">{pct(result.dimensionScores?.required ?? null)}</div>
@@ -184,6 +197,13 @@ export function MatchCard({ jobId }: { jobId: number }) {
             </div>
           </div>
 
+          {result.roleAlignmentDetail && (
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="text-zinc-500">Role alignment: </span>
+              {result.roleAlignmentDetail.note}
+            </p>
+          )}
+
           <div className="text-xs">
             <span className="text-zinc-500">Requirement Coverage: </span>
             <span className="font-medium">{typeof result.requirementCoverage === "number" ? Math.round(result.requirementCoverage * 100) : "—"}%</span>
@@ -195,6 +215,11 @@ export function MatchCard({ jobId }: { jobId: number }) {
             <div className="mb-1 font-semibold">
               Eligibility: <span className={result.eligibility?.status === "BLOCKED" ? "text-red-600" : result.eligibility?.status === "UNKNOWN" ? "text-amber-600" : "text-emerald-700 dark:text-emerald-400"}>{result.eligibility?.status ?? "Unknown"}</span>
               {result.eligibility?.status === "PASS" && <span className="ml-1 font-normal text-zinc-500">(no known hard blocker — not a confirmation)</span>}
+              {result.eligibility?.status === "UNKNOWN" && (
+                <span className="ml-1 font-normal text-zinc-500">
+                  (advisory — an unknown sponsorship signal is not treated as a blocker, and is not read as a &ldquo;no&rdquo;)
+                </span>
+              )}
             </div>
             <ul className="space-y-0.5 text-zinc-600 dark:text-zinc-400">
               {(result.eligibility?.reasons ?? []).map((r, i) => (

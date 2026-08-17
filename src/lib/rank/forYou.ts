@@ -33,6 +33,12 @@ export interface ForYouMatch {
   overallScore: number;
   employerEvidencedShare: number;
   requirementCoverage: number;
+  /** Stage 24B — true when the engine could not extract enough structured requirements to trust the
+   *  score (scoring.ts's MIN_REQUIREMENT_UNITS floor). Measured on the real corpus this was 53.7% of
+   *  evaluated active jobs, and because nothing consumed it, jobs whose ONLY applicable dimension was
+   *  a years-of-experience minimum sat at the very top of the feed at score 100. It is a distinct
+   *  sort tier here — never folded into the score, never presented as a low score. */
+  insufficientJdSignal: boolean;
 }
 
 export interface ForYouJobInput {
@@ -70,6 +76,13 @@ export interface RankedForYouJob extends ForYouJobInput {
 }
 
 const ROLE_FAMILY_RANK: Record<RoleFamilyTier, number> = { PRIMARY: 0, SECONDARY: 1, NONE: 2 };
+
+/** Sufficiently-evidenced(0) before insufficient(1) before never-evaluated(2). A job with no match
+ *  row is genuinely unknown and must not be fabricated a tier that competes with a real one. */
+function evidenceTier(match: ForYouMatch | undefined): number {
+  if (!match) return 2;
+  return match.insufficientJdSignal ? 1 : 0;
+}
 
 /** READY(0) < NEEDS_REVIEW(1) < NOT_EVALUATED(2) < BLOCKED(3) — see design record §11/§12: a
  *  not-yet-evaluated job must never be fabricated a score, but also must not be buried behind a
@@ -120,10 +133,17 @@ export interface ForYouOptions {
 }
 
 /**
- * Returns jobs sorted per the approved key order (design record §3/§16):
- * validity/not-interested gate -> role-family tier -> decision rank -> score band -> sponsorship
- * tier -> exact overall score -> employer-evidenced share -> requirement coverage -> freshness ->
- * posted_at -> id (final deterministic tie-break).
+ * Returns jobs sorted per the Stage 24B key order (Phase 13/14):
+ * validity/not-interested gate -> decision rank -> JD-evidence tier -> score band -> role-family
+ * tier -> sponsorship tier -> exact overall score -> employer-evidenced share -> requirement
+ * coverage -> freshness -> posted_at -> id (final deterministic tie-break).
+ *
+ * FRESHNESS vs FIT (Phase 14): freshness sits BELOW every fit signal, so a 95% match from five days
+ * ago outranks a 50% match posted today — but two comparably strong jobs in the same 10-point band
+ * with the same decision, evidence tier, role family and sponsorship tier are separated by the exact
+ * score first and then by recency, so the newer of two equally strong postings does come first. The
+ * whole key is a deterministic lexicographic comparison over already-computed facts; there is no
+ * learned or opaque component anywhere in it.
  */
 export function rankForYou(jobs: ForYouJobInput[], options: ForYouOptions = {}): RankedForYouJob[] {
   const now = options.now ?? new Date();
@@ -139,15 +159,25 @@ export function rankForYou(jobs: ForYouJobInput[], options: ForYouOptions = {}):
     .filter((job) => options.includeStale || job.freshnessTier !== "STALE" || job.protectedFromStale);
 
   enriched.sort((a, b) => {
-    const roleFamilyDiff = ROLE_FAMILY_RANK[a.roleFamilyTier] - ROLE_FAMILY_RANK[b.roleFamilyTier];
-    if (roleFamilyDiff !== 0) return roleFamilyDiff;
-
+    // Stage 24B key order (Phase 13). Decision and evidence quality lead, because "is this
+    // actionable and did we actually understand the posting" outranks every preference signal. Role
+    // FAMILY (the candidate's declared target roles) moved BELOW score band: role identity is now
+    // scored inside overallScore itself via the roleAlignment dimension, so leaving a declared
+    // preference as the top-level key would have let a PRIMARY-tier unevaluated posting outrank a
+    // genuinely strong SECONDARY-tier one. It still breaks ties within a band, which is what a
+    // stated preference should do.
     const decisionDiff = a.decisionRank - b.decisionRank;
     if (decisionDiff !== 0) return decisionDiff;
+
+    const evidenceDiff = evidenceTier(a.match) - evidenceTier(b.match);
+    if (evidenceDiff !== 0) return evidenceDiff;
 
     // scoreBand is ascending (higher number = stronger fit) — want the stronger band FIRST, so b-a.
     const bandDiff = scoreBand(b.match) - scoreBand(a.match);
     if (bandDiff !== 0) return bandDiff;
+
+    const roleFamilyDiff = ROLE_FAMILY_RANK[a.roleFamilyTier] - ROLE_FAMILY_RANK[b.roleFamilyTier];
+    if (roleFamilyDiff !== 0) return roleFamilyDiff;
 
     const sponsorshipDiff = a.sponsorshipTier - b.sponsorshipTier;
     if (sponsorshipDiff !== 0) return sponsorshipDiff;

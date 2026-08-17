@@ -40,12 +40,35 @@ test("computeCoverageDimensionScore is the mean credit across the pool, scaled t
 });
 
 test("computeOverallScore redistributes weight when a dimension is null, never divides by zero", () => {
-  const score = computeOverallScore({ required: 100, preferred: null, experience: null, seniority: null });
-  assert.equal(score, 100, "with only 'required' applicable, its full redistributed weight determines the score");
+  const score = computeOverallScore({ roleAlignment: 100, required: 100, preferred: null, experience: null, seniority: null });
+  assert.equal(score, 100, "with only role alignment and 'required' applicable, their redistributed weight determines the score");
 });
 
 test("computeOverallScore returns 0 (not NaN/undefined) when every dimension is inapplicable", () => {
-  assert.equal(computeOverallScore({ required: null, preferred: null, experience: null, seniority: null }), 0);
+  assert.equal(computeOverallScore({ roleAlignment: null, required: null, preferred: null, experience: null, seniority: null }), 0);
+});
+
+test("Stage 24B requirement anchor: experience alone cannot carry the score when the JD yielded no requirements at all", () => {
+  // The exact shape that produced 1,535 real jobs at overallScore 100 before Stage 24B — a posting
+  // whose only extractable fact was a years-of-experience minimum the candidate clears.
+  const score = computeOverallScore({ roleAlignment: 0, required: null, preferred: null, experience: 100, seniority: 100 });
+  assert.equal(score, 0, "experience/seniority are supporting dimensions, never the whole basis of a fit claim");
+});
+
+test("Stage 24B requirement anchor: experience and seniority DO count once a requirement dimension is applicable", () => {
+  const score = computeOverallScore({ roleAlignment: 100, required: 100, preferred: null, experience: 100, seniority: 100 });
+  assert.equal(score, 100);
+  const withoutSupport = computeOverallScore({ roleAlignment: 100, required: 100, preferred: null, experience: 0, seniority: 0 });
+  assert.ok(withoutSupport < 100, "a candidate short on years/level scores lower than one who is not");
+});
+
+test("Stage 24B: role identity outweighs raw skill overlap — a wrong-profession job with perfect skill coverage scores far below an aligned one", () => {
+  const alignedButPartialSkills = computeOverallScore({ roleAlignment: 100, required: 60, preferred: 60, experience: 100, seniority: null });
+  const misalignedWithPerfectSkills = computeOverallScore({ roleAlignment: 0, required: 100, preferred: 100, experience: 100, seniority: null });
+  assert.ok(
+    alignedButPartialSkills > misalignedWithPerfectSkills,
+    `expected the aligned role (${alignedButPartialSkills}) to outscore the misaligned one (${misalignedWithPerfectSkills})`
+  );
 });
 
 test("computeRequirementCoverage: zero units -> 0 confidence, never a vacuous 100%", () => {

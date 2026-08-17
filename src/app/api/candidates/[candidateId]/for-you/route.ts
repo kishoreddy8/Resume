@@ -62,6 +62,10 @@ export interface ForYouRanking {
   /** null = NOT_EVALUATED for this candidate — never a fabricated decision/score. */
   decision: Decision | null;
   overallScore: number | null;
+  /** Stage 24B — true when the persisted evaluation could not extract enough structured JD
+   *  requirements to trust `overallScore`. The list UI must render this as "Insufficient data", never
+   *  as a confident percentage, and never as a 0% match. null = never evaluated. */
+  insufficientJdSignal: boolean | null;
   primaryBucket: CandidateJobBucket | null;
   badges: CandidateJobBadges;
   hasReadyResume: boolean;
@@ -201,6 +205,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
             decision: match.decision as Decision,
             overallScore: match.overallScore,
             isCurrent: isMatchCurrent,
+            insufficientJdSignal: match.insufficientJdSignal,
           }
         : undefined,
       latestResumeQualityWorkflow: wf ? { status: wf.status } : null,
@@ -285,6 +290,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
             overallScore: match.overallScore,
             employerEvidencedShare: match.employerEvidencedShare,
             requirementCoverage: match.requirementCoverage,
+            insufficientJdSignal: match.insufficientJdSignal,
           }
         : undefined,
       notInterested: state?.not_interested === 1,
@@ -304,6 +310,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
             decision: match.decision as Decision,
             overallScore: match.overallScore,
             isCurrent: isMatchCurrent,
+            insufficientJdSignal: match.insufficientJdSignal,
           }
         : undefined,
       latestResumeQualityWorkflow: workflow ? { status: workflow.status } : null,
@@ -354,9 +361,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
   }
 
   if (minScore !== null) {
+    // Stage 24B: a minimum-score filter is a request for jobs that genuinely score at least this
+    // well. An insufficient-signal evaluation's number is explicitly not trustworthy, so it never
+    // satisfies the filter — it would otherwise fill a "90+ Score" view with postings whose only
+    // applicable dimension was a years-of-experience minimum.
     filtered = filtered.filter((item) => {
-      const score = item.forYouInput.match?.overallScore;
-      return score !== undefined && score >= minScore;
+      const match = item.forYouInput.match;
+      return match !== undefined && !match.insufficientJdSignal && match.overallScore >= minScore;
     });
   }
 
@@ -415,6 +426,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
       });
     } else if (normalizedBucket === "READY_FOR_TAILORING" || normalizedBucket === "NEEDS_REVIEW" || normalizedBucket === "TOP_MATCH") {
       filtered.sort((a, b) => {
+        // Stage 24B: trustworthy evaluations first, so an insufficient-signal 100 never sits above a
+        // fully-evidenced 88 inside a decision bucket.
+        const aTrusted = a.forYouInput.match && !a.forYouInput.match.insufficientJdSignal ? 0 : 1;
+        const bTrusted = b.forYouInput.match && !b.forYouInput.match.insufficientJdSignal ? 0 : 1;
+        if (aTrusted !== bTrusted) return aTrusted - bTrusted;
         const aScore = a.forYouInput.match?.overallScore ?? -1;
         const bScore = b.forYouInput.match?.overallScore ?? -1;
         if (bScore !== aScore) return bScore - aScore;
@@ -455,6 +471,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
     }
   } else if (sortBy === "score") {
     filtered.sort((a, b) => {
+      const aTrusted = a.forYouInput.match && !a.forYouInput.match.insufficientJdSignal ? 0 : 1;
+      const bTrusted = b.forYouInput.match && !b.forYouInput.match.insufficientJdSignal ? 0 : 1;
+      if (aTrusted !== bTrusted) return aTrusted - bTrusted;
       const aScore = a.forYouInput.match?.overallScore ?? -1;
       const bScore = b.forYouInput.match?.overallScore ?? -1;
       return sortOrder === "asc" ? aScore - bScore : bScore - aScore;
@@ -505,6 +524,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
         roleFamilyTier: item.forYouInput.roleFamilyTier,
         decision: item.forYouInput.match?.decision ?? null,
         overallScore: item.forYouInput.match?.overallScore ?? null,
+        insufficientJdSignal: item.forYouInput.match?.insufficientJdSignal ?? null,
         primaryBucket: item.primaryBucket,
         badges: item.badges,
         hasReadyResume: item.hasReadyResume,

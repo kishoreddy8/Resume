@@ -1,5 +1,5 @@
 import { getDb } from "@/db";
-import type { EligibilityResult, JobMatchResult, RequirementMatch } from "@/lib/match/types";
+import type { EligibilityResult, JobMatchResult, RequirementMatch, RoleAlignmentDetail } from "@/lib/match/types";
 
 /**
  * Persistence layer for job_match_results — mirrors src/db/queries/aiEnrichments.ts's
@@ -95,6 +95,9 @@ function serializeResult(data: JobMatchResult) {
       criticalGaps: data.criticalGaps,
       unrecognizedCandidateSkills: data.unrecognizedCandidateSkills,
       eligibilitySponsorship: data.eligibility.sponsorship,
+      // Stage 24B — traceable role-alignment provenance rides in the same JSON bucket every other
+      // non-columnar field already uses; no schema migration, and old rows simply lack the key.
+      roleAlignmentDetail: data.roleAlignmentDetail,
     }),
     recommendedTrack: data.recommendedTrack,
     decision: data.decision,
@@ -111,6 +114,22 @@ interface RequirementBreakdown {
   criticalGaps?: RequirementMatch[]; // absent on rows written before the Phase 2.5 persistence fix
   unrecognizedCandidateSkills: string[];
   eligibilitySponsorship?: EligibilityResult["sponsorship"]; // absent on pre-fix rows
+  roleAlignmentDetail?: RoleAlignmentDetail | null; // absent on rows written before MATCH_ENGINE_VERSION 3
+}
+
+/** Stage 24B — a v2-or-earlier persisted row's dimension_scores JSON has no `roleAlignment` key at
+ *  all. Normalize that absence to an explicit null so consumers render "—" for it, rather than
+ *  letting an `undefined` be mistaken for a real 0. Every other key is passed through untouched:
+ *  job_match_results rows are immutable snapshots and are never re-derived from current code. */
+function normalizeDimensionScores(json: string): JobMatchResult["dimensionScores"] {
+  const parsed = JSON.parse(json) as Partial<JobMatchResult["dimensionScores"]>;
+  return {
+    roleAlignment: parsed.roleAlignment ?? null,
+    required: parsed.required ?? null,
+    preferred: parsed.preferred ?? null,
+    experience: parsed.experience ?? null,
+    seniority: parsed.seniority ?? null,
+  };
 }
 
 const LEGACY_ROW_SPONSORSHIP: EligibilityResult["sponsorship"] = {
@@ -148,7 +167,9 @@ export function deserializeJobMatchResult(row: JobMatchResultRow): JobMatchResul
       reasons: JSON.parse(row.eligibility_reasons),
       sponsorship: breakdown.eligibilitySponsorship ?? LEGACY_ROW_SPONSORSHIP,
     },
-    dimensionScores: JSON.parse(row.dimension_scores),
+    // Stage 24B: a v2-or-earlier row's dimension_scores JSON has no roleAlignment key. Normalize the
+    // absence to an explicit null so consumers render "—" rather than treating `undefined` as 0.
+    dimensionScores: normalizeDimensionScores(row.dimension_scores),
     overallScore: row.overall_score,
     requirementCoverage: row.requirement_coverage,
     employerEvidencedShare: row.employer_evidenced_share,
@@ -163,6 +184,7 @@ export function deserializeJobMatchResult(row: JobMatchResultRow): JobMatchResul
     recommendedTrack: row.recommended_track as JobMatchResult["recommendedTrack"],
     decision: row.decision as JobMatchResult["decision"],
     blockingReasons: JSON.parse(row.blocking_reasons),
+    roleAlignmentDetail: breakdown.roleAlignmentDetail ?? null,
   };
 }
 
@@ -245,6 +267,11 @@ export interface LatestDecisionSummary {
    *  decision/overallScore. */
   employerEvidencedShare: number;
   requirementCoverage: number;
+  /** Stage 24B — the JD-evidence-quality flag, surfaced here so the For You ranking layer can put
+   *  every sufficiently-evidenced match above every insufficient one, and so the list UI can render
+   *  "Insufficient data" instead of a confident-looking number. Never inferred: it is the exact
+   *  value the engine persisted for this row. */
+  insufficientJdSignal: boolean;
   status?: "active" | "superseded";
   matchEngineVersion?: number;
   matchKnowledgeHash?: string;
@@ -266,8 +293,8 @@ export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys
   const rows = db
     .prepare(
       `SELECT t.dedupe_key, t.decision, t.overall_score, t.employer_evidenced_share, t.requirement_coverage,
-              t.status, t.match_engine_version, t.match_knowledge_hash, t.candidate_profile_hash,
-              t.candidate_settings_hash, t.jd_content_hash
+              t.insufficient_jd_signal, t.status, t.match_engine_version, t.match_knowledge_hash,
+              t.candidate_profile_hash, t.candidate_settings_hash, t.jd_content_hash
        FROM job_match_results t
        INNER JOIN (
          SELECT dedupe_key, MAX(id) AS max_id FROM job_match_results
@@ -280,6 +307,7 @@ export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys
     overall_score: number;
     employer_evidenced_share: number;
     requirement_coverage: number;
+    insufficient_jd_signal: 0 | 1;
     status: "active" | "superseded";
     match_engine_version: number;
     match_knowledge_hash: string;
@@ -295,6 +323,7 @@ export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys
       overallScore: row.overall_score,
       employerEvidencedShare: row.employer_evidenced_share,
       requirementCoverage: row.requirement_coverage,
+      insufficientJdSignal: Boolean(row.insufficient_jd_signal),
       status: row.status,
       matchEngineVersion: row.match_engine_version,
       matchKnowledgeHash: row.match_knowledge_hash,
@@ -312,8 +341,8 @@ export function listAllLatestDecisionsForCandidate(candidateId: number): Record<
   const rows = db
     .prepare(
       `SELECT t.dedupe_key, t.decision, t.overall_score, t.employer_evidenced_share, t.requirement_coverage,
-              t.status, t.match_engine_version, t.match_knowledge_hash, t.candidate_profile_hash,
-              t.candidate_settings_hash, t.jd_content_hash
+              t.insufficient_jd_signal, t.status, t.match_engine_version, t.match_knowledge_hash,
+              t.candidate_profile_hash, t.candidate_settings_hash, t.jd_content_hash
        FROM job_match_results t
        INNER JOIN (
          SELECT dedupe_key, MAX(id) AS max_id FROM job_match_results
@@ -326,6 +355,7 @@ export function listAllLatestDecisionsForCandidate(candidateId: number): Record<
     overall_score: number;
     employer_evidenced_share: number;
     requirement_coverage: number;
+    insufficient_jd_signal: 0 | 1;
     status: "active" | "superseded";
     match_engine_version: number;
     match_knowledge_hash: string;
@@ -341,6 +371,7 @@ export function listAllLatestDecisionsForCandidate(candidateId: number): Record<
       overallScore: row.overall_score,
       employerEvidencedShare: row.employer_evidenced_share,
       requirementCoverage: row.requirement_coverage,
+      insufficientJdSignal: Boolean(row.insufficient_jd_signal),
       status: row.status,
       matchEngineVersion: row.match_engine_version,
       matchKnowledgeHash: row.match_knowledge_hash,

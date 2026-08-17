@@ -104,7 +104,7 @@ function fakeMatch(candidateId: number, dedupeKey: string, jobId: number) {
     jdContentHash: "jdhash",
     computedAt: new Date().toISOString(),
     eligibility: { status: "PASS" as const, reasons: [], sponsorship: { signal: "explicit_positive" as const, note: "n/a" } },
-    dimensionScores: { required: 90, preferred: 90, experience: 90, seniority: 90 },
+    dimensionScores: { roleAlignment: null, required: 90, preferred: 90, experience: 90, seniority: 90 },
     overallScore: 95,
     requirementCoverage: 0.9,
     employerEvidencedShare: 0.9,
@@ -119,6 +119,7 @@ function fakeMatch(candidateId: number, dedupeKey: string, jobId: number) {
     recommendedTrack: "General / Unclassified" as const,
     decision: "READY_FOR_TAILORING" as const,
     blockingReasons: [],
+    roleAlignmentDetail: null,
   };
 }
 

@@ -17,20 +17,42 @@ import type { DimensionScores, RequirementCriticality, RequirementMatch } from "
  * v2 (bumped during real-data validation): computeEmployerEvidencedShare now excludes education/
  * certification units from its calculation — they were incorrectly diluting/inflating a gate meant
  * specifically for skill evidence strength. See that function's doc comment for the full story.
+ *
+ * v3 (Stage 24B, bumped after auditing 19,665 real evaluations for candidate 1): TWO algorithmic
+ * changes, both forced by what that audit found, both documented at their call sites below.
+ *   (a) A `roleAlignment` dimension now participates in the score (src/lib/match/roleAlignment.ts).
+ *       Before this, role identity had ZERO weight anywhere in the score and the top of the ranked
+ *       list was "Cust Care Rep II", "Mammography Technologist" and "Classroom Floater", all at 100.
+ *   (b) computeOverallScore no longer lets experience/seniority carry the score on their own — see
+ *       its doc comment. 1,255 jobs scored >= 80 with NO skill dimension applicable at all, purely
+ *       because a JD stating nothing but "3+ years experience" left `experience` as the single
+ *       applicable dimension and weight redistribution handed it 100% of the weight.
  */
-export const MATCH_ENGINE_VERSION = 2;
+export const MATCH_ENGINE_VERSION = 3;
 
+/**
+ * Stage 24B weights. `roleAlignment` is deliberately the second-heaviest term: Phase 4's requirement
+ * is that a Senior/Azure/Snowflake/Databricks/Platform Data Engineer role outranks an unrelated role
+ * that merely shares Python/SQL/Docker, and only a real role-identity term can express that. Required
+ * coverage stays dominant — role identity decides WHETHER this is the candidate's kind of job,
+ * required coverage decides HOW WELL they cover it.
+ */
 export const SCORING_WEIGHTS = {
-  required: 50,
-  preferred: 15,
-  experience: 20,
-  seniority: 15,
+  roleAlignment: 25,
+  required: 40,
+  preferred: 10,
+  experience: 15,
+  seniority: 10,
 } as const;
 
 export const READINESS_THRESHOLDS = {
   minScore: 80,
   minCoverage: 0.85,
   minEmployerEvidencedShare: 0.5,
+  /** Stage 24B Phase 10: readiness is not score alone. A job the candidate should TAILOR A RESUME FOR
+   *  must be their kind of job — 0.75 is "same profession with overlapping specialisation" or better
+   *  (see roleAlignment.ts's scoreTitleAlignment), never the bare same-profession 0.35 tier. */
+  minRoleAlignment: 0.75,
 } as const;
 
 export const MIN_REQUIREMENT_UNITS = 3;
@@ -50,15 +72,37 @@ export function computeCoverageDimensionScore(matches: RequirementMatch[]): numb
   return (totalCredit / matches.length) * 100;
 }
 
-/** Honest weighted average over only the APPLICABLE (non-null) dimensions — weight is redistributed
- *  proportionally, never divided by zero, never mutated/capped afterward (Revision 4 §7 removed the
- *  earlier score-cap in favor of decide()'s independent critical-gap gate). */
+/**
+ * Honest weighted average over only the APPLICABLE (non-null) dimensions — weight is redistributed
+ * proportionally, never divided by zero, never mutated/capped afterward (Revision 4 §7 removed the
+ * earlier score-cap in favor of decide()'s independent critical-gap gate).
+ *
+ * STAGE 24B — REQUIREMENT ANCHOR. Experience and seniority are SUPPORTING dimensions: they qualify a
+ * fit, they cannot constitute one. They participate only when at least one requirement-coverage
+ * dimension (required/preferred) is applicable. Without this rule, weight redistribution let a JD
+ * that stated nothing but a years-of-experience minimum produce a perfect score: measured on the real
+ * corpus, 1,255 jobs scored >= 80 with no skill dimension at all, and the entire 100-point band was
+ * roles like "Classroom Floater" and "Material Handler" whose only applicable dimension was
+ * `experience: 100`. Role alignment is exempt from the anchor because it is itself an independent
+ * fit signal derived from the candidate's own employment history, and because keeping it always
+ * applicable guarantees the applicable set is never empty.
+ *
+ * This does NOT invent a floor or a cap. A job with no extracted requirements now scores what its
+ * role alignment alone supports, and `insufficientJdSignal` (set independently) tells every consumer
+ * that even that number is low-confidence — an unknown, never a confident verdict.
+ */
 export function computeOverallScore(dimensions: DimensionScores): number {
+  const hasRequirementAnchor = dimensions.required !== null || dimensions.preferred !== null;
+
   const applicable: { weight: number; score: number }[] = [];
+  // `!= null` (not `!== null`) on purpose: a v2-or-earlier persisted row round-tripped back through
+  // this function has no roleAlignment key at all, and an `undefined` must be treated as
+  // inapplicable, never pushed as a NaN-producing weight.
+  if (dimensions.roleAlignment != null) applicable.push({ weight: SCORING_WEIGHTS.roleAlignment, score: dimensions.roleAlignment });
   if (dimensions.required !== null) applicable.push({ weight: SCORING_WEIGHTS.required, score: dimensions.required });
   if (dimensions.preferred !== null) applicable.push({ weight: SCORING_WEIGHTS.preferred, score: dimensions.preferred });
-  if (dimensions.experience !== null) applicable.push({ weight: SCORING_WEIGHTS.experience, score: dimensions.experience });
-  if (dimensions.seniority !== null) applicable.push({ weight: SCORING_WEIGHTS.seniority, score: dimensions.seniority });
+  if (hasRequirementAnchor && dimensions.experience !== null) applicable.push({ weight: SCORING_WEIGHTS.experience, score: dimensions.experience });
+  if (hasRequirementAnchor && dimensions.seniority !== null) applicable.push({ weight: SCORING_WEIGHTS.seniority, score: dimensions.seniority });
 
   const totalWeight = applicable.reduce((sum, a) => sum + a.weight, 0);
   if (totalWeight === 0) return 0; // pathological (every dimension inapplicable) — never divide by zero

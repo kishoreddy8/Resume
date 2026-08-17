@@ -278,7 +278,7 @@ before(async () => {
     jdContentHash: "jd-content-hash",
     computedAt: new Date().toISOString(),
     eligibility: { status: "PASS", reasons: [], sponsorship: { signal: "not_applicable", note: "n/a" } },
-    dimensionScores: { required: 95, preferred: 80, experience: 100, seniority: 100 },
+    dimensionScores: { roleAlignment: null, required: 95, preferred: 80, experience: 100, seniority: 100 },
     overallScore: 95,
     requirementCoverage: 0.95,
     employerEvidencedShare: 0.95,
@@ -293,6 +293,7 @@ before(async () => {
     recommendedTrack: "Data Engineer",
     decision: "READY_FOR_TAILORING",
     blockingReasons: [],
+    roleAlignmentDetail: null,
   });
 
   setMarkedForTailoring(candidateAliceId, jobOne.dedupe_key, true, {

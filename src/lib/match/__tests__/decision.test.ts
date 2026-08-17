@@ -26,7 +26,7 @@ function gap(): RequirementMatch {
   return { requirement: unit({}), matchType: "MISSING", credit: 0 };
 }
 
-const goodBaseline = { insufficientJdSignal: false, criticalGaps: [], overallScore: 90, requirementCoverage: 0.95, employerEvidencedShare: 0.9 };
+const goodBaseline = { insufficientJdSignal: false, criticalGaps: [], overallScore: 90, requirementCoverage: 0.95, employerEvidencedShare: 0.9, roleAlignment: 1 };
 
 test("eligibility BLOCKED wins regardless of an otherwise excellent score", () => {
   const result = decide({ eligibility: eligibility({ status: "BLOCKED", reasons: ["hard blocker"] }), ...goodBaseline });
@@ -62,9 +62,25 @@ test("insufficient JD signal forces NEEDS_REVIEW regardless of score", () => {
   assert.ok(result.blockingReasons.some((r) => r.toLowerCase().includes("sparse")));
 });
 
-test("eligibility UNKNOWN forces NEEDS_REVIEW, never a silent PASS-through to READY", () => {
+test("Stage 24B: eligibility UNKNOWN is an ADVISORY, not a readiness veto — a strong fit with an unknown sponsorship signal can still be READY", () => {
   const result = decide({ eligibility: eligibility({ status: "UNKNOWN", reasons: ["unknown sponsorship"] }), ...goodBaseline });
+  assert.equal(result.decision, "READY_FOR_TAILORING");
+  assert.deepEqual(result.blockingReasons, [], "the unknown-sponsorship caveat lives on eligibility.reasons/sponsorship.note, not in blockingReasons");
+});
+
+test("Stage 24B: eligibility BLOCKED is still absolute — an explicit hard blocker is never downgraded to an advisory", () => {
+  const result = decide({
+    eligibility: eligibility({ status: "BLOCKED", reasons: ["This posting explicitly states no visa sponsorship — hard blocker."] }),
+    ...goodBaseline,
+  });
+  assert.equal(result.decision, "BLOCKED");
+  assert.ok(result.blockingReasons.some((r) => r.includes("no visa sponsorship")));
+});
+
+test("Stage 24B: role alignment below threshold alone forces NEEDS_REVIEW (a perfect skill overlap in the wrong profession is not tailoring-ready)", () => {
+  const result = decide({ eligibility: eligibility({}), ...goodBaseline, roleAlignment: 0.35 });
   assert.equal(result.decision, "NEEDS_REVIEW");
+  assert.ok(result.blockingReasons.some((r) => r.includes("Role alignment")));
 });
 
 test("everything passing every gate -> READY_FOR_TAILORING with empty blockingReasons", () => {
@@ -81,6 +97,7 @@ test("multiple simultaneous failures are ALL collected, not just the first", () 
     overallScore: 50,
     requirementCoverage: 0.4,
     employerEvidencedShare: 0.1,
+    roleAlignment: 1,
   });
   assert.equal(result.decision, "NEEDS_REVIEW");
   assert.ok(result.blockingReasons.length >= 3);

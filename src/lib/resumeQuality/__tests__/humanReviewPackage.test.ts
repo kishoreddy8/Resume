@@ -190,7 +190,7 @@ async function authorizeJob(candId: number, j: { id: number; dedupe_key: string 
     jdContentHash: "jd",
     computedAt: new Date().toISOString(),
     eligibility: { status: "PASS", reasons: [], sponsorship: { signal: "not_applicable", note: "n/a" } },
-    dimensionScores: { required: 90, preferred: 50, experience: 100, seniority: 100 },
+    dimensionScores: { roleAlignment: null, required: 90, preferred: 50, experience: 100, seniority: 100 },
     overallScore: 90,
     requirementCoverage: 0.9,
     employerEvidencedShare: 0.9,
@@ -205,6 +205,7 @@ async function authorizeJob(candId: number, j: { id: number; dedupe_key: string 
     recommendedTrack: "Data Engineer",
     decision: "READY_FOR_TAILORING",
     blockingReasons: [],
+    roleAlignmentDetail: null,
   });
   setMarkedForTailoring(candId, j.dedupe_key, true, { approvalType: "READY_DIRECT", decision: "READY_FOR_TAILORING" });
   const { run } = startTailoringRun({ candidateId: candId, jobId: j.id });

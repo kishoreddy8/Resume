@@ -89,7 +89,7 @@ function fakeMatch(data: { candidateId: number; dedupeKey: string; jobId: number
       reasons: [],
       sponsorship: { signal: "explicit_positive", note: "Sponsorship available" },
     },
-    dimensionScores: { required: data.overallScore, preferred: data.overallScore, experience: data.overallScore, seniority: data.overallScore },
+    dimensionScores: { roleAlignment: null, required: data.overallScore, preferred: data.overallScore, experience: data.overallScore, seniority: data.overallScore },
     overallScore: data.overallScore,
     requirementCoverage: 0.9,
     employerEvidencedShare: 0.8,
@@ -104,6 +104,7 @@ function fakeMatch(data: { candidateId: number; dedupeKey: string; jobId: number
     recommendedTrack: "Data Engineer",
     decision: data.decision,
     blockingReasons: [],
+    roleAlignmentDetail: null,
   };
 }
 

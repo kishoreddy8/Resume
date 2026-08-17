@@ -2,6 +2,14 @@ import crypto from "node:crypto";
 import { SKILL_TAXONOMY } from "@/lib/jobIntel/skillsTaxonomy";
 import { CREDIT } from "./creditTable";
 import { HANDS_ON_CUES } from "./handsOnCues";
+import {
+  UBIQUITOUS_CATEGORIES,
+  RESPONSIBILITY_MIN_EMPLOYER_MATCHED_UNITS,
+  RESPONSIBILITY_MODERATE_SCORE,
+  RESPONSIBILITY_MODERATE_WEIGHT_SHARE,
+  RESPONSIBILITY_STRONG_SCORE,
+  RESPONSIBILITY_STRONG_WEIGHT_SHARE,
+} from "./roleAlignment";
 import { CRITICALITY_WEIGHT, MIN_REQUIREMENT_UNITS, READINESS_THRESHOLDS, SCORING_WEIGHTS } from "./scoring";
 import { TRACK_PROFILES } from "./trackProfiles";
 import { TRANSFERABLE_SKILLS } from "./transferableSkills";
@@ -26,6 +34,18 @@ export function computeMatchKnowledgeHash(): string {
     minRequirementUnits: MIN_REQUIREMENT_UNITS,
     trackProfiles: TRACK_PROFILES,
     handsOnCuesSource: HANDS_ON_CUES.source,
+    // Stage 24B — role-alignment's purely-DATA constants join the same automatic invalidation
+    // contract as every other tunable above, so recalibrating them needs no manual version bump.
+    // (roleAlignment.ts's ALGORITHM — the title parser and the responsibility rule — is covered by
+    // MATCH_ENGINE_VERSION instead, exactly as scoring.ts's doc comment prescribes.)
+    roleAlignment: {
+      responsibilityMinEmployerMatchedUnits: RESPONSIBILITY_MIN_EMPLOYER_MATCHED_UNITS,
+      responsibilityStrongWeightShare: RESPONSIBILITY_STRONG_WEIGHT_SHARE,
+      responsibilityModerateWeightShare: RESPONSIBILITY_MODERATE_WEIGHT_SHARE,
+      responsibilityStrongScore: RESPONSIBILITY_STRONG_SCORE,
+      responsibilityModerateScore: RESPONSIBILITY_MODERATE_SCORE,
+      ubiquitousCategories: UBIQUITOUS_CATEGORIES,
+    },
   });
   return crypto.createHash("sha256").update(payload).digest("hex");
 }

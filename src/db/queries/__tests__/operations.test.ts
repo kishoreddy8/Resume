@@ -110,7 +110,7 @@ function fakeMatch(candidateId: number, dedupeKey: string, jobId: number, decisi
     jdContentHash: `jdhash-${jobId}`,
     computedAt: new Date().toISOString(),
     eligibility: { status: decision === "BLOCKED" ? ("BLOCKED" as const) : ("PASS" as const), reasons: [], sponsorship: { signal: "explicit_positive" as const, note: "n/a" } },
-    dimensionScores: { required: 80, preferred: 80, experience: 80, seniority: 80 },
+    dimensionScores: { roleAlignment: null, required: 80, preferred: 80, experience: 80, seniority: 80 },
     overallScore,
     requirementCoverage: 0.8,
     employerEvidencedShare: 0.8,
@@ -125,6 +125,7 @@ function fakeMatch(candidateId: number, dedupeKey: string, jobId: number, decisi
     recommendedTrack: "General / Unclassified" as const,
     decision,
     blockingReasons: [],
+    roleAlignmentDetail: null,
   };
 }
 

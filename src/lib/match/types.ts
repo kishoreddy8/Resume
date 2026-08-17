@@ -150,6 +150,11 @@ export interface CandidateSeniorityEstimate {
 export type Decision = "BLOCKED" | "NEEDS_REVIEW" | "READY_FOR_TAILORING";
 
 export interface DimensionScores {
+  /** Stage 24B — 0..100 from src/lib/match/roleAlignment.ts. Always populated by
+   *  MATCH_ENGINE_VERSION >= 3 (every job has a title). Rows persisted by v2 and earlier have no such
+   *  key; deserializeJobMatchResult normalizes those to null rather than fabricating a value, and the
+   *  UI renders null as "—", never as 0. */
+  roleAlignment: number | null;
   required: number | null; // 0..100, null = inapplicable (zero Required units)
   preferred: number | null;
   experience: number | null;
@@ -187,6 +192,18 @@ export interface JobMatchResult {
   recommendedTrack: ResumeTrack;
   decision: Decision;
   blockingReasons: string[]; // empty iff decision === READY_FOR_TAILORING
+  /** Stage 24B — the traceable "why" behind dimensionScores.roleAlignment (Phase 8). Persisted in
+   *  requirement_breakdown's JSON bucket; null on rows written before MATCH_ENGINE_VERSION 3, never
+   *  reconstructed from current code (job_match_results rows are immutable snapshots). */
+  roleAlignmentDetail: RoleAlignmentDetail | null;
+}
+
+export interface RoleAlignmentDetail {
+  /** 0..1 — max(titleScore, responsibilityScore); dimensionScores.roleAlignment is this x 100. */
+  score: number;
+  titleScore: number;
+  responsibilityScore: number;
+  note: string;
 }
 
 export type EvaluateMatchResult =

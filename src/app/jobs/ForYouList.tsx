@@ -122,6 +122,50 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+/**
+ * Stage 24B — the single place the list turns a persisted evaluation into a fit label.
+ *
+ * Three states, never conflated (Phase 15):
+ *   NOT EVALUATED      — no job_match_results row for this candidate yet. No number is invented.
+ *   INSUFFICIENT DATA  — evaluated, but the engine could not extract enough structured requirements
+ *                        to trust the number (scoring.ts's MIN_REQUIREMENT_UNITS floor). The score is
+ *                        deliberately NOT shown as a percentage: showing "100%" for a posting whose
+ *                        only applicable dimension was a years-of-experience minimum, or "0%" for one
+ *                        whose description never parsed, is exactly the fake-confidence problem this
+ *                        stage exists to remove.
+ *   EVALUATED          — decision badge plus the real score.
+ */
+function MatchFitCell({ ranking }: { ranking: ForYouResponseEntry["ranking"] }) {
+  if (!ranking.decision) {
+    return <span className="text-xs text-zinc-400">Not evaluated</span>;
+  }
+
+  if (ranking.insufficientJdSignal) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span
+          className="inline-flex w-fit items-center rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+          title="This posting did not yield enough structured requirements to score reliably — the underlying number is not a confident match or non-match."
+        >
+          Insufficient data
+        </span>
+        <span className="text-[11px] text-zinc-400">score not reliable</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <MatchDecisionBadge decision={ranking.decision as MatchDecision} />
+      {ranking.overallScore !== null && (
+        <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+          Score: {Math.round(ranking.overallScore)}/100
+        </span>
+      )}
+    </div>
+  );
+}
+
 interface ForYouApiResponse {
   candidateId: number;
   preferences: CandidateRankingPreferences;
@@ -299,18 +343,7 @@ export function ForYouList({ candidateId }: { candidateId: number }) {
                   </td>
 
                   <td className="px-3 py-2">
-                    {ranking.decision ? (
-                      <div className="flex flex-col gap-0.5">
-                        <MatchDecisionBadge decision={ranking.decision as MatchDecision} />
-                        {ranking.overallScore !== null && (
-                          <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
-                            Score: {ranking.overallScore}/100
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-zinc-400">Not evaluated</span>
-                    )}
+                    <MatchFitCell ranking={ranking} />
                   </td>
 
                   <td className="px-3 py-2">

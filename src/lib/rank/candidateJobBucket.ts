@@ -38,6 +38,11 @@ export interface CandidateJobBucketMatch {
   /** True or omitted = current/active match. False = stale (superseded or hash mismatch), which
    *  disqualifies the match from READY_FOR_TAILORING, NEEDS_REVIEW, and TOP_MATCH. */
   isCurrent?: boolean;
+  /** Stage 24B — true when the engine could not extract enough structured requirements to trust the
+   *  score. Omitted/false = trusted. TOP_MATCH is a claim about fit strength, so it is withheld when
+   *  the score is not trustworthy; the authoritative READY_FOR_TAILORING/NEEDS_REVIEW decisions
+   *  already account for this flag inside the engine and are unaffected. */
+  insufficientJdSignal?: boolean;
 }
 
 export interface CandidateJobBucketInput {
@@ -102,9 +107,12 @@ export function classifyCandidateJobBucket(input: CandidateJobBucketInput): Cand
     return "NEEDS_REVIEW";
   }
 
-  // 7. Top Match: High match score (>= 90 by default) and not BLOCKED
+  // 7. Top Match: High match score (>= 90 by default), not BLOCKED, and actually trustworthy.
+  //    Stage 24B: without the insufficient-signal condition this bucket was dominated by postings
+  //    whose only applicable dimension was a years-of-experience minimum — 2,080 of the 2,189 jobs
+  //    scoring >= 80 on the real corpus carried insufficient_jd_signal = 1.
   const minScore = input.topMatchMinScore ?? TOP_MATCH_DEFAULT_MIN_SCORE;
-  if (isMatchValid && match && match.decision !== "BLOCKED" && match.overallScore >= minScore) {
+  if (isMatchValid && match && match.decision !== "BLOCKED" && !match.insufficientJdSignal && match.overallScore >= minScore) {
     return "TOP_MATCH";
   }
 
@@ -135,7 +143,7 @@ export function computeCandidateJobBadges(input: CandidateJobBucketInput): Candi
     isReadyToApply: input.latestResumeQualityWorkflow?.status === "READY",
     isReadyForTailoring: Boolean(isMatchValid && match?.decision === "READY_FOR_TAILORING"),
     isNeedsReview: Boolean(isMatchValid && match?.decision === "NEEDS_REVIEW"),
-    isTopMatch: Boolean(isMatchValid && match && match.decision !== "BLOCKED" && match.overallScore >= minScore),
+    isTopMatch: Boolean(isMatchValid && match && match.decision !== "BLOCKED" && !match.insufficientJdSignal && match.overallScore >= minScore),
     isNewToday: ageDays === 0,
     isTerminal: input.pipelineStatus === "Offer" || input.pipelineStatus === "Employer Rejected",
   };

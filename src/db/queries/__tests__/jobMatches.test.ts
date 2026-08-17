@@ -83,7 +83,7 @@ function fakeResult(overrides: Partial<JobMatchResult> = {}): JobMatchResult {
     jdContentHash: "jd-hash-1",
     computedAt: "2026-01-01T00:00:00Z",
     eligibility: { status: "PASS", reasons: ["No known hard blocker identified."], sponsorship: { signal: "not_applicable", note: "n/a" } },
-    dimensionScores: { required: 90, preferred: 50, experience: 100, seniority: 100 },
+    dimensionScores: { roleAlignment: null, required: 90, preferred: 50, experience: 100, seniority: 100 },
     overallScore: 87,
     requirementCoverage: 0.95,
     employerEvidencedShare: 0.9,
@@ -98,6 +98,7 @@ function fakeResult(overrides: Partial<JobMatchResult> = {}): JobMatchResult {
     recommendedTrack: "Data Engineer",
     decision: "READY_FOR_TAILORING",
     blockingReasons: [],
+    roleAlignmentDetail: null,
     ...overrides,
   };
 }

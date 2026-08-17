@@ -31,6 +31,7 @@ import {
   isInsufficientJdSignal,
   MATCH_ENGINE_VERSION,
 } from "./scoring";
+import { computeRoleAlignment } from "./roleAlignment";
 import { estimateCandidateSeniority, seniorityAlignmentScore } from "./seniority";
 import { matchAllRequirementUnits } from "./skillMatching";
 import { recommendTrack } from "./trackRecommendation";
@@ -114,7 +115,13 @@ export function evaluateJobMatch(
       ? null
       : clampExperienceScore(totalYearsExperience, input.experienceMinYears) * 100;
 
+  // Stage 24B — role identity from the candidate's OWN employment history plus the JD's own required
+  // skills. Computed after matching because the responsibility path reads requiredMatches; see
+  // roleAlignment.ts for why declared target roles are deliberately not an input.
+  const roleAlignment = computeRoleAlignment(input.jobTitle, profile.experience, requiredMatches);
+
   const dimensionScores: DimensionScores = {
+    roleAlignment: roleAlignment.score * 100,
     required: computeCoverageDimensionScore(requiredMatches),
     preferred: computeCoverageDimensionScore(preferredMatches),
     experience: experienceScore,
@@ -146,6 +153,7 @@ export function evaluateJobMatch(
     overallScore,
     requirementCoverage,
     employerEvidencedShare,
+    roleAlignment: roleAlignment.score,
   });
 
   const result: JobMatchResult = {
@@ -174,6 +182,12 @@ export function evaluateJobMatch(
     recommendedTrack: recommendTrack(allUnits),
     decision,
     blockingReasons,
+    roleAlignmentDetail: {
+      score: roleAlignment.score,
+      titleScore: roleAlignment.titleScore,
+      responsibilityScore: roleAlignment.responsibilityScore,
+      note: roleAlignment.note,
+    },
   };
 
   return { status: "ok", data: result };
