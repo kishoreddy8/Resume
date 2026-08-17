@@ -218,53 +218,96 @@ export function parseBuiltInDetailPage(html: string, listingUrl: string): RawBui
   };
 }
 
+/** Fetches and parses ONE role query's search-results page — list-level only (name + url), no
+ *  detail-page fetch yet. Split out from the old single-role search() so Stage 13's multi-role
+ *  orchestration (searchBuiltInAcrossRoles) can merge/dedupe list items across several role queries
+ *  BEFORE paying for any detail fetch (Phase 10) — never a fatal error, an empty list just means zero
+ *  candidates for this specific role. */
+async function fetchBuiltInSearchResultsList(role: string, limit: number): Promise<BuiltInListItem[]> {
+  const searchUrl = new URL("/jobs", BUILT_IN_ORIGIN);
+  searchUrl.searchParams.set("search", role);
+  searchUrl.searchParams.set("country", "USA");
+  // Optimization only, never a substitute for the mandatory local <=20-day check every result
+  // still goes through in classify.ts (see CANONICAL_INGESTION_MAX_AGE_DAYS).
+  searchUrl.searchParams.set("daysSinceUpdated", "20");
+
+  try {
+    const res = await fetchWithTimeout(searchUrl.toString(), BUILT_IN_SEARCH_TIMEOUT_MS);
+    if (!res.ok) return [];
+    const searchHtml = await res.text();
+    return parseBuiltInSearchResults(searchHtml).slice(0, limit);
+  } catch {
+    // A failed search request yields zero external candidates for this role — never throws, so a
+    // Built In outage can never abort the caller's broader multi-role search loop.
+    return [];
+  }
+}
+
+/** Bounded-concurrency detail-fetch for an already-deduped list of items. One broken/unparseable
+ *  listing must never abort the batch (Section 14) — just skipped. */
+async function fetchBuiltInDetailPages(items: BuiltInListItem[]): Promise<RawBuiltInResult[]> {
+  const results: RawBuiltInResult[] = [];
+  let index = 0;
+  async function worker() {
+    while (index < items.length) {
+      const item = items[index++];
+      try {
+        const res = await fetchWithTimeout(item.url, BUILT_IN_DETAIL_TIMEOUT_MS);
+        if (!res.ok) continue;
+        const detailHtml = await res.text();
+        const parsed = parseBuiltInDetailPage(detailHtml, item.url);
+        if (parsed) results.push(parsed);
+      } catch {
+        continue;
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(BUILT_IN_DETAIL_CONCURRENCY, items.length || 1) }, worker));
+  return results;
+}
+
 export const builtInProvider: ExternalHiringSignalProvider = {
   source: "built_in",
   async search(query: SearchQuery): Promise<unknown[]> {
     const limit = Math.max(1, Math.min(query.limit ?? 10, BUILT_IN_MAX_RESULTS));
-    const searchUrl = new URL("/jobs", BUILT_IN_ORIGIN);
-    searchUrl.searchParams.set("search", query.role);
-    searchUrl.searchParams.set("country", "USA");
-    // Optimization only, never a substitute for the mandatory local <=20-day check every result
-    // still goes through in classify.ts (see CANONICAL_INGESTION_MAX_AGE_DAYS).
-    searchUrl.searchParams.set("daysSinceUpdated", "20");
-
-    let searchHtml: string;
-    try {
-      const res = await fetchWithTimeout(searchUrl.toString(), BUILT_IN_SEARCH_TIMEOUT_MS);
-      if (!res.ok) return [];
-      searchHtml = await res.text();
-    } catch {
-      // A failed search request yields zero external candidates for this role — never throws, so a
-      // Built In outage can never abort the caller's broader multi-role search loop.
-      return [];
-    }
-
-    const items = parseBuiltInSearchResults(searchHtml).slice(0, limit);
-    const results: RawBuiltInResult[] = [];
-    let index = 0;
-    async function worker() {
-      while (index < items.length) {
-        const item = items[index++];
-        try {
-          const res = await fetchWithTimeout(item.url, BUILT_IN_DETAIL_TIMEOUT_MS);
-          if (!res.ok) continue;
-          const detailHtml = await res.text();
-          const parsed = parseBuiltInDetailPage(detailHtml, item.url);
-          // One broken/unparseable listing must never abort the batch (Section 14) — just skipped.
-          if (parsed) results.push(parsed);
-        } catch {
-          continue;
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(BUILT_IN_DETAIL_CONCURRENCY, items.length || 1) }, worker));
-    return results;
+    const items = await fetchBuiltInSearchResultsList(query.role, limit);
+    return fetchBuiltInDetailPages(items);
   },
   normalize(rawResult: unknown): NormalizedExternalJob {
     return normalizeBuiltInResult(rawResult as RawBuiltInResult);
   },
 };
+
+/**
+ * Stage 13 Phase 9/10 — role-based market discovery across CareerOps' existing DEFAULT_SEARCH_ROLES
+ * (or a caller-supplied role list), with cross-query dedup BEFORE any detail-page fetch: the same
+ * requisition frequently surfaces under multiple related role searches (a "Senior Data Engineer"
+ * posting appearing under both "Data Engineer" and "Databricks Engineer"). Listing URL is the dedup
+ * key — Built In's own stable per-job identifier. Bounded overall (maxTotalUnique caps the combined,
+ * deduped candidate set actually detail-fetched, independent of how many role queries ran).
+ */
+export async function searchBuiltInAcrossRoles(
+  roles: readonly string[],
+  options: { limitPerRole?: number; maxTotalUnique?: number } = {}
+): Promise<RawBuiltInResult[]> {
+  const limitPerRole = Math.max(1, Math.min(options.limitPerRole ?? 10, BUILT_IN_MAX_RESULTS));
+  const maxTotalUnique = Math.max(1, Math.min(options.maxTotalUnique ?? BUILT_IN_MAX_RESULTS, 100));
+
+  const seenUrls = new Set<string>();
+  const uniqueItems: BuiltInListItem[] = [];
+  for (const role of roles) {
+    if (uniqueItems.length >= maxTotalUnique) break;
+    const items = await fetchBuiltInSearchResultsList(role, limitPerRole);
+    for (const item of items) {
+      if (uniqueItems.length >= maxTotalUnique) break;
+      if (seenUrls.has(item.url)) continue;
+      seenUrls.add(item.url);
+      uniqueItems.push(item);
+    }
+  }
+
+  return fetchBuiltInDetailPages(uniqueItems);
+}
 
 export function getProvider(source: "google_jobs" | "indeed" | "built_in"): ExternalHiringSignalProvider {
   if (source === "indeed") return indeedProvider;

@@ -246,6 +246,32 @@ export function findCompanyIdsByAliasPrefix(prefix: string): { companyId: number
   return rows;
 }
 
+/**
+ * Stage 13 — bare organization-level identity lookups (no join through organization_company_links /
+ * companies), needed for safe new-employer onboarding: Stage 12 discovered that H1B-derived
+ * organizations frequently exist with NO linked company row at all. Finding the organization by
+ * domain/alias FIRST — independent of whether it has a company — lets onboarding reuse that existing
+ * organization (Phase 15's "do not create a duplicate organization") rather than creating a second
+ * one whenever a domain/name happens to already be registered from H1B/DOL data.
+ */
+export function findOrganizationIdByDomain(domain: string): number | undefined {
+  const normalized = normalizeOrganizationDomain(domain);
+  if (!normalized) return undefined;
+  const rows = getDb()
+    .prepare("SELECT DISTINCT organization_id FROM organization_domains WHERE domain = ? LIMIT 2")
+    .all(normalized) as { organization_id: number }[];
+  return rows.length === 1 ? rows[0].organization_id : undefined;
+}
+
+export function findOrganizationIdsByAliasName(name: string): number[] {
+  const normalized = normalizeOrganizationAlias(name);
+  if (!normalized) return [];
+  const rows = getDb()
+    .prepare("SELECT DISTINCT organization_id FROM organization_aliases WHERE alias_normalized = ?")
+    .all(normalized) as { organization_id: number }[];
+  return rows.map((r) => r.organization_id);
+}
+
 export function listOrganizations(input: { limit?: number; offset?: number } = {}): Organization[] {
   const limit = Math.max(1, Math.min(input.limit ?? 100, 1000));
   const offset = Math.max(0, input.offset ?? 0);

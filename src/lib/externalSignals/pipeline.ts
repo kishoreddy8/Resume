@@ -3,6 +3,7 @@ import { getCompany } from "@/db/queries/companies";
 import { upsertExternalHiringObservation, type UpsertObservationInput } from "@/db/queries/externalHiringObservations";
 import { classifyEmployerRelationship, classifySignal, classifyUrlEvidence, evaluateQualityGate, type CoverageState } from "./classify";
 import { matchCompanyForObservation } from "./companyMatch";
+import { onboardNewEmployerIfEligible, type NewEmployerOnboardingResult } from "./companyOnboarding";
 import { fingerprintFor, normalizeRawResult } from "./normalize";
 import { stageSecondaryJob, type StageSecondaryJobResult } from "./secondaryIngestion";
 import { bridgeCoverageMismatchToDiscoveryV2, type DiscoveryV2BridgeResult } from "./discoveryV2Bridge";
@@ -10,8 +11,9 @@ import type { ExternalHiringObservationRow, ExternalSignalSource, NormalizedExte
 
 /**
  * The one orchestration function tying every Stage 7 piece together (Phase 5's staging boundary):
- *   raw result -> normalize -> company match -> agency/URL classification -> quality gate ->
- *   signal classification -> [persist observation] -> [stage secondary job] -> [Discovery V2 bridge]
+ *   raw result -> normalize -> company match -> [Stage 13: new-employer onboarding, if UNMATCHED] ->
+ *   agency/URL classification -> quality gate -> signal classification -> [persist observation] ->
+ *   [stage secondary job] -> [Discovery V2 bridge]
  *
  * Every side-effecting step is its own explicit boolean option, defaulting to false/off (Phase 12) —
  * calling this with no options is a pure, in-memory classification with ZERO database writes.
@@ -20,6 +22,10 @@ export interface PipelineOptions {
   persistObservations?: boolean;
   persistSecondaryJobs?: boolean;
   triggerDiscoveryV2?: boolean;
+  /** Stage 13 — when the observation is genuinely UNMATCHED (never AMBIGUOUS), attempt safe new-
+   *  employer onboarding via companyOnboarding.ts. A brand-new/linked company then flows through the
+   *  EXACT SAME rest of this pipeline (re-matched via the normal tiers) — no second persistence path. */
+  onboardNewEmployers?: boolean;
 }
 
 export interface PipelineItemResult {
@@ -33,6 +39,7 @@ export interface PipelineItemResult {
   observation: ExternalHiringObservationRow | null;
   stagedJob: StageSecondaryJobResult | null;
   discoveryBridge: DiscoveryV2BridgeResult | null;
+  newEmployerOnboarding: NewEmployerOnboardingResult | null;
 }
 
 function getCoverageState(companyId: number | null): CoverageState | null {
@@ -51,7 +58,18 @@ export async function processExternalListing(
   const normalized = normalizeRawResult(source, raw);
   const fingerprint = fingerprintFor(normalized);
 
-  const match = matchCompanyForObservation(normalized);
+  let match = matchCompanyForObservation(normalized);
+
+  let newEmployerOnboarding: NewEmployerOnboardingResult | null = null;
+  if (options.onboardNewEmployers && match.confidence === "UNMATCHED") {
+    newEmployerOnboarding = onboardNewEmployerIfEligible(normalized, match);
+    if (newEmployerOnboarding.companyId) {
+      // Re-run through the SAME matching entry point (Phase 7: no second persistence path) — the
+      // freshly created/linked company now has its own primary alias and resolves normally.
+      match = matchCompanyForObservation(normalized);
+    }
+  }
+
   const employerRelationship = classifyEmployerRelationship(normalized, match);
   const urlClassification = classifyUrlEvidence(normalized, match);
   const coverage = getCoverageState(match.companyId);
@@ -98,5 +116,5 @@ export async function processExternalListing(
     }
   }
 
-  return { normalized, fingerprint, match, employerRelationship, urlClassification, signalClassification, decision, observation, stagedJob, discoveryBridge };
+  return { normalized, fingerprint, match, employerRelationship, urlClassification, signalClassification, decision, observation, stagedJob, discoveryBridge, newEmployerOnboarding };
 }

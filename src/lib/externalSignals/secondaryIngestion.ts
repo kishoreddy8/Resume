@@ -3,7 +3,26 @@ import { getCompany } from "@/db/queries/companies";
 import { archiveJob, upsertJob } from "@/db/queries/jobs";
 import { markObservationResultingJob } from "@/db/queries/externalHiringObservations";
 import { dedupeKeyForAts } from "@/lib/dedupe";
+import { parseAtsDate } from "@/lib/ats/jobFreshness";
+import type { ExternalSignalSource } from "./types";
 import type { ExternalHiringObservationRow, NormalizedExternalJob } from "./types";
+
+/**
+ * Stage 13 Phase 8 — provider/date-confidence-aware posted_at persistence. Built In's own datePosted
+ * is a reliable plain YYYY-MM-DD (confirmed live, Stage 11) — safe to persist. Google Jobs' posted
+ * date is confirmed relative text ("3 days ago", Stage 7's own fixture/live investigation), and
+ * Indeed's reliability was never independently confirmed either — both stay null, completely
+ * unchanged, per the explicit "must NOT be broadened" instruction. Deliberately a per-source
+ * allowlist (not "parseable => trust it") so a future low-quality source can't silently start writing
+ * posted_at just because its dates happen to parse.
+ */
+const SOURCES_WITH_RELIABLE_POSTED_DATE = new Set<ExternalSignalSource>(["built_in"]);
+
+function reliablePostedAtIso(source: ExternalSignalSource, rawPostedAt: string | null): string | null {
+  if (!SOURCES_WITH_RELIABLE_POSTED_DATE.has(source) || !rawPostedAt) return null;
+  const parsed = parseAtsDate(rawPostedAt);
+  return parsed ? parsed.toISOString() : null;
+}
 
 /**
  * Phase 9 — the ONLY function in this module that ever writes to `jobs`. Reuses upsertJob's exact
@@ -45,7 +64,7 @@ export function stageSecondaryJob(
       employmentType: job.employmentType,
       workplaceType: null,
       salaryText: job.salaryText,
-      postedAt: null, // provider dates are frequently relative text ("2 days ago"), not reliable ISO
+      postedAt: reliablePostedAtIso(observation.source, job.postedAt),
       raw: job.raw,
     },
     descriptionSections: null,

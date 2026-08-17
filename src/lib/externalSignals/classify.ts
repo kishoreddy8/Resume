@@ -32,8 +32,14 @@ const AGENCY_LANGUAGE_PATTERNS: RegExp[] = [
   /\bexecutive search\b/i,
 ];
 
+/** Exported so other modules (e.g. Stage 13's new-employer onboarding eligibility check) can reuse
+ *  the exact same evidence-based detection without duplicating the pattern list. */
+export function containsAgencyLanguage(employerName: string): boolean {
+  return AGENCY_LANGUAGE_PATTERNS.some((re) => re.test(employerName));
+}
+
 export function classifyEmployerRelationship(job: NormalizedExternalJob, match: CompanyMatchResult): EmployerRelationship {
-  if (AGENCY_LANGUAGE_PATTERNS.some((re) => re.test(job.employerName))) return "STAFFING_AGENCY";
+  if (containsAgencyLanguage(job.employerName)) return "STAFFING_AGENCY";
 
   if (match.companyId) {
     const company = getCompany(match.companyId);
