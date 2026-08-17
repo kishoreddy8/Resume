@@ -32,8 +32,11 @@ import type { CompanyMatchResult, NormalizedExternalJob } from "./types";
 export function matchCompanyForObservation(job: NormalizedExternalJob): CompanyMatchResult {
   // Tier 1: verified employer domain, from whichever field looks like an employer's own domain
   // rather than an aggregator's (directEmployerUrl first, since employerName never carries a URL).
+  // ATS vendor domains (e.g. greenhouse.io, icims.com, myworkdayjobs.com) are skipped here — they
+  // prove ATS identity in Tier 2, never company.verified_domain.
   for (const candidateUrl of [job.directEmployerUrl, job.applyUrl]) {
     if (!candidateUrl) continue;
+    if (detectAtsFromUrlString(candidateUrl)) continue;
     const domain = safeDomainFromUrl(candidateUrl);
     if (!domain) continue;
     const companyId = findCompanyIdByVerifiedDomain(domain);
@@ -96,13 +99,13 @@ export function matchCompanyForObservation(job: NormalizedExternalJob): CompanyM
     }
     if (matchedCompanyIds.size === 1) {
       const candidateUrl = job.directEmployerUrl ?? job.applyUrl;
-      const hasCorroboratingAtsEvidence = candidateUrl ? detectAtsFromUrlString(candidateUrl) !== null : false;
-      if (hasCorroboratingAtsEvidence) {
+      const hasCorroboratingEvidence = candidateUrl ? (detectAtsFromUrlString(candidateUrl) !== null || safeDomainFromUrl(candidateUrl) !== null) : false;
+      if (hasCorroboratingEvidence) {
         const [companyId] = matchedCompanyIds;
         return {
           companyId,
           confidence: "NAME",
-          reason: `Legal-name-normalized match on "${observed.stripped}", corroborated by a recognized ATS apply URL`,
+          reason: `Legal-name-normalized match on "${observed.stripped}", corroborated by apply URL evidence`,
         };
       }
       // A normalized-name match with no independent corroborating evidence is not confident enough
@@ -122,11 +125,12 @@ function safeDomainFromUrl(url: string): string | null {
   }
 }
 
-/** Deliberately conservative: strips exactly ONE trailing legal-suffix token (never chained — see
- *  Stage 12's own audit note on why "X Holdings Group" must not collapse to just "X"), and only after
- *  normalizing "&"/"and" equivalence and stripping punctuation. `safe` is false for anything that
- *  would resolve to a short or generically-named residual — Stage 12's explicit "GM must never become
- *  General Motors" / "United", "Global", "First" must never be guessed requirement. */
+/** Deliberately conservative: strips exactly ONE leading "THE" article and ONE trailing legal-suffix
+ *  token (never chained — see Stage 12's own audit note on why "X Holdings Group" must not collapse
+ *  to just "X"), and only after normalizing "&"/"and" equivalence and stripping punctuation. `safe` is
+ *  false for anything that would resolve to a short or generically-named residual — Stage 12's
+ *  explicit "GM must never become General Motors" / "United", "Global", "First" must never be
+ *  guessed requirement. */
 const LEGAL_SUFFIX_TOKENS = new Set([
   "INCORPORATED", "INC", "LLC", "LLP", "LTD", "LIMITED", "CORPORATION", "CORP",
   "COMPANY", "CO", "HOLDINGS", "GROUP",
@@ -147,6 +151,9 @@ function normalizeForLegalNameMatch(value: string): { stripped: string; safe: bo
   s = s.replace(/\s+/g, " ").trim();
 
   const tokens = s.split(" ").filter(Boolean);
+  if (tokens.length > 1 && tokens[0] === "THE") {
+    tokens.shift();
+  }
   if (tokens.length > 1 && LEGAL_SUFFIX_TOKENS.has(tokens[tokens.length - 1])) {
     tokens.pop();
   }
@@ -161,5 +168,9 @@ function normalizeForLegalNameMatch(value: string): { stripped: string; safe: bo
  *  final match decision, which always goes through normalizeForLegalNameMatch on both sides. */
 function firstWordPrefix(value: string): string {
   const normalized = value.normalize("NFKC").trim().replace(/\s+/g, " ").toUpperCase();
-  return normalized.split(" ")[0] ?? "";
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length > 1 && words[0] === "THE") {
+    return words[1];
+  }
+  return words[0] ?? "";
 }

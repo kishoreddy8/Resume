@@ -191,7 +191,28 @@ export function findCompanyIdByVerifiedDomain(domain: string): number | undefine
        LIMIT 2`
     )
     .all(normalized) as { id: number }[];
-  return row.length === 1 ? row[0].id : undefined;
+  if (row.length === 1) return row[0].id;
+  if (row.length > 1) return undefined;
+
+  // Subdomain -> parent/registrable domain candidates (e.g. "careers.micron.com" -> "micron.com")
+  const parts = normalized.split(".");
+  for (let i = 1; i < parts.length - 1; i++) {
+    const parentCand = parts.slice(i).join(".");
+    if (parts.length - i >= 2) {
+      const parentRow = getDb()
+        .prepare(
+          `SELECT c.id FROM companies c
+           JOIN organization_company_links l ON l.company_id = c.id
+           JOIN organization_domains d ON d.organization_id = l.organization_id
+           WHERE d.domain = ? AND d.identity_status = 'VERIFIED'
+           LIMIT 2`
+        )
+        .all(parentCand) as { id: number }[];
+      if (parentRow.length === 1) return parentRow[0].id;
+      if (parentRow.length > 1) return undefined;
+    }
+  }
+  return undefined;
 }
 
 export function findCompanyIdsByAliasName(name: string): number[] {
@@ -232,18 +253,40 @@ export function findCompanyIdByAtsBoardIdentity(sourceType: string, boardToken: 
  */
 export function findCompanyIdsByAliasPrefix(prefix: string): { companyId: number; alias: string }[] {
   if (!prefix) return [];
-  const escaped = prefix.replace(/[\\%_]/g, "\\$&");
-  const rows = getDb()
-    .prepare(
-      `SELECT DISTINCT c.id AS companyId, a.alias AS alias
-       FROM companies c
-       JOIN organization_company_links l ON l.company_id = c.id
-       JOIN organization_aliases a ON a.organization_id = l.organization_id
-       WHERE a.alias_normalized LIKE ? ESCAPE '\\'
-       LIMIT 50`
-    )
-    .all(`${escaped}%`) as { companyId: number; alias: string }[];
-  return rows;
+  const prefixes = [prefix];
+  if (prefix.startsWith("THE ")) {
+    const withoutThe = prefix.slice(4).trim();
+    if (withoutThe) prefixes.push(withoutThe);
+  } else {
+    prefixes.push(`THE ${prefix}`);
+  }
+
+  const results: { companyId: number; alias: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const p of prefixes) {
+    const escaped = p.replace(/[\\%_]/g, "\\$&");
+    const rows = getDb()
+      .prepare(
+        `SELECT DISTINCT c.id AS companyId, a.alias AS alias
+         FROM companies c
+         JOIN organization_company_links l ON l.company_id = c.id
+         JOIN organization_aliases a ON a.organization_id = l.organization_id
+         WHERE a.alias_normalized LIKE ? ESCAPE '\\'
+         LIMIT 50`
+      )
+      .all(`${escaped}%`) as { companyId: number; alias: string }[];
+
+    for (const r of rows) {
+      const key = `${r.companyId}|${r.alias}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        results.push(r);
+      }
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -260,7 +303,22 @@ export function findOrganizationIdByDomain(domain: string): number | undefined {
   const rows = getDb()
     .prepare("SELECT DISTINCT organization_id FROM organization_domains WHERE domain = ? LIMIT 2")
     .all(normalized) as { organization_id: number }[];
-  return rows.length === 1 ? rows[0].organization_id : undefined;
+  if (rows.length === 1) return rows[0].organization_id;
+  if (rows.length > 1) return undefined;
+
+  // Subdomain -> parent/registrable domain candidates
+  const parts = normalized.split(".");
+  for (let i = 1; i < parts.length - 1; i++) {
+    const parentCand = parts.slice(i).join(".");
+    if (parts.length - i >= 2) {
+      const parentRows = getDb()
+        .prepare("SELECT DISTINCT organization_id FROM organization_domains WHERE domain = ? LIMIT 2")
+        .all(parentCand) as { organization_id: number }[];
+      if (parentRows.length === 1) return parentRows[0].organization_id;
+      if (parentRows.length > 1) return undefined;
+    }
+  }
+  return undefined;
 }
 
 export function findOrganizationIdsByAliasName(name: string): number[] {
@@ -269,7 +327,25 @@ export function findOrganizationIdsByAliasName(name: string): number[] {
   const rows = getDb()
     .prepare("SELECT DISTINCT organization_id FROM organization_aliases WHERE alias_normalized = ?")
     .all(normalized) as { organization_id: number }[];
-  return rows.map((r) => r.organization_id);
+  if (rows.length > 0) return rows.map((r) => r.organization_id);
+
+  // If no exact match, check leading article variant ("THE " prefix)
+  const variants: string[] = [];
+  if (normalized.startsWith("THE ")) {
+    const withoutThe = normalized.slice(4).trim();
+    if (withoutThe) variants.push(withoutThe);
+  } else {
+    variants.push(`THE ${normalized}`);
+  }
+
+  for (const v of variants) {
+    const vRows = getDb()
+      .prepare("SELECT DISTINCT organization_id FROM organization_aliases WHERE alias_normalized = ?")
+      .all(v) as { organization_id: number }[];
+    if (vRows.length === 1) return [vRows[0].organization_id];
+  }
+
+  return [];
 }
 
 export function listOrganizations(input: { limit?: number; offset?: number } = {}): Organization[] {

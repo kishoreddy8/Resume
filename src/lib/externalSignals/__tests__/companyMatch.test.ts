@@ -114,3 +114,44 @@ test("Parent/subsidiary ambiguity: a subsidiary alias is not silently guessed on
   const result = matchCompanyForObservation(job);
   assert.equal(result.companyId, null, "a similar-but-not-identical name must not fuzzy-match a parent company");
 });
+
+test("Subdomain apex domain matching: careers.micron.com matches verified domain micron.com", () => {
+  const company = makeVerifiedCompany("Micron Technology, Inc.", "micron.com");
+  const job = makeJob({ employerName: "Micron Technology", directEmployerUrl: "https://careers.micron.com/careers/job/43794824" });
+  const result = matchCompanyForObservation(job);
+  assert.equal(result.companyId, company.id);
+  assert.equal(result.confidence, "DOMAIN");
+});
+
+test("ATS vendor domain exclusion: icims.com URL does not match an iCIMS company by domain", () => {
+  const icimsCompany = makeVerifiedCompany("iCims, Inc.", "icims.com");
+  const job = makeJob({
+    employerName: "EchoStar",
+    applyUrl: "https://attract-careers1-echostar.icims.com/jobs/100627/login",
+  });
+  const result = matchCompanyForObservation(job);
+  assert.notEqual(result.companyId, icimsCompany.id, "ATS vendor domain must not match the ATS vendor as employer");
+});
+
+test("Leading article legal-name normalization: 'The Boeing Company' matches 'Boeing' with corroborating evidence", () => {
+  const boeing = createCompany({ name: "Boeing", source_type: "career_link" });
+  const job = makeJob({
+    employerName: "The Boeing Company",
+    directEmployerUrl: "https://jobs.boeing.com/job/123",
+  });
+  const result = matchCompanyForObservation(job);
+  assert.equal(result.companyId, boeing.id);
+  assert.equal(result.confidence, "NAME");
+});
+
+test("Leading article legal-name normalization: 'The Trade Desk' matches 'Trade Desk, Inc.' with corroborating ATS evidence", () => {
+  const tradeDesk = createCompany({ name: "Trade Desk, Inc.", source_type: "greenhouse", ats_board_token: "thetradedesk" });
+  const job = makeJob({
+    employerName: "The Trade Desk",
+    applyUrl: "https://boards.greenhouse.io/thetradedesk/jobs/999",
+  });
+  const result = matchCompanyForObservation(job);
+  assert.equal(result.companyId, tradeDesk.id);
+  assert.ok(result.confidence === "ATS_BOARD" || result.confidence === "NAME");
+});
+
