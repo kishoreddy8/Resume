@@ -1277,7 +1277,7 @@ CREATE INDEX IF NOT EXISTS idx_ats_source_proposals_status
 -- DISCOVERY_BEACON_ONLY (feeding the Discovery V2 bridge) or an earlier rejection decision.
 CREATE TABLE IF NOT EXISTS external_hiring_observations (
   id INTEGER PRIMARY KEY,
-  source TEXT NOT NULL, -- 'google_jobs' | 'indeed' (future: 'linkedin' | 'dice' | ...)
+  source TEXT NOT NULL, -- 'google_jobs' | 'indeed' | 'built_in' (future: 'linkedin' | 'dice' | ...)
   provider_job_id TEXT, -- stable external listing ID, when the provider supplies one
   -- Deterministic dedup key: provider_job_id when available, else a hash of
   -- employer+title+location+listing_url. Computed once at normalization time, never recomputed —

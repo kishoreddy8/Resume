@@ -20,7 +20,7 @@
  * real ATS outranks one we can only match by name/domain."
  */
 
-export type ExternalSignalSource = "google_jobs" | "indeed";
+export type ExternalSignalSource = "google_jobs" | "indeed" | "built_in";
 
 /** Raw evidence for one external listing, after provider-specific normalization. Deliberately NOT
  *  NormalizedJob and never passed to upsertJob directly — see the module doc comment in pipeline.ts

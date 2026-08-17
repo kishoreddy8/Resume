@@ -101,7 +101,104 @@ export function normalizeGoogleJobsResult(raw: RawGoogleJobsResult): NormalizedE
   };
 }
 
+// --- Built In (public builtin.com job pages — confirmed live field shape, Stage 10 feasibility) ---
+// FREE_DIRECT: a plain local fetch() against builtin.com's own public HTML/JSON-LD, no paid
+// scraping service of any kind (see providers.ts's builtInProvider). Every field below was
+// confirmed against real, live builtin.com responses during Stage 10's read-only feasibility probe.
+
+/** A small, deterministic set of known ad-tracking redirect hosts Built In's own Apply button
+ *  sometimes wraps a destination URL in (e.g. a paid-placement listing). The real destination
+ *  appears unencoded as the final segment of the tracking URL's own query string — this never
+ *  follows the redirect over the network, and never touches an unrecognized host; anything else is
+ *  returned completely unchanged. */
+const AD_TRACKING_REDIRECT_HOSTS = new Set(["ad.doubleclick.net"]);
+
+/** Confirmed live example (Stage 10): an Optum/UnitedHealth Group listing's Apply href was
+ *  "https://ad.doubleclick.net/ddm/clk/638473186;444755998;k?https://careers.unitedhealthgroup.com/job/...".
+ *  Deterministically extracts the LAST embedded absolute URL in the string and validates it parses
+ *  as a real URL before using it — never a network follow, never a guess. */
+export function unwrapTrackingRedirect(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (!AD_TRACKING_REDIRECT_HOSTS.has(parsed.hostname.toLowerCase())) return url;
+  const matches = [...url.matchAll(/https?:\/\//g)];
+  if (matches.length < 2) return url;
+  const embedded = url.slice(matches[matches.length - 1].index);
+  try {
+    new URL(embedded);
+    return embedded;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Combined shape this module's own provider.search() produces per listing — the schema.org
+ * JobPosting fields from the job-detail page's own JSON-LD, plus the Apply button's raw href
+ * (extracted from the surrounding HTML, since Built In never puts the apply destination in the
+ * JSON-LD itself — see Stage 10's investigation). Never fabricated: every field is either present
+ * on the real page or left null/undefined, exactly as scraped.
+ */
+export interface RawBuiltInResult {
+  identifierValue?: string;
+  title?: string;
+  hiringOrganizationName?: string;
+  datePosted?: string;
+  description?: string;
+  addressLocality?: string;
+  addressRegion?: string;
+  addressCountry?: string;
+  jobLocationType?: string;
+  employmentType?: string;
+  baseSalaryText?: string;
+  listingUrl?: string;
+  applyHref?: string;
+  [key: string]: unknown;
+}
+
+function builtInLocationText(raw: RawBuiltInResult): string | null {
+  const cityState = [raw.addressLocality, raw.addressRegion].filter(Boolean).join(", ");
+  if (cityState) return cityState;
+  const isUs = raw.addressCountry?.toUpperCase() === "USA" || raw.addressCountry?.toUpperCase() === "US";
+  if (raw.jobLocationType === "TELECOMMUTE" && isUs) return "Remote - United States";
+  if (isUs) return "United States";
+  return raw.addressCountry ?? null;
+}
+
+export function normalizeBuiltInResult(raw: RawBuiltInResult): NormalizedExternalJob {
+  const applyUrl = raw.applyHref ? unwrapTrackingRedirect(raw.applyHref) : null;
+  return {
+    source: "built_in",
+    providerJobId: raw.identifierValue ?? null,
+    employerName: raw.hiringOrganizationName ?? "",
+    title: raw.title ?? "",
+    location: builtInLocationText(raw),
+    description: raw.description ?? null,
+    // Built In's datePosted is a plain YYYY-MM-DD (no time component) — stored as-is; classify.ts's
+    // shared parseAtsDate already handles this exact format.
+    postedAt: raw.datePosted ?? null,
+    listingUrl: raw.listingUrl ?? "",
+    applyUrl,
+    // Built In's own JobPosting JSON-LD carries directApply:false on every listing observed in
+    // Stage 10 — application always happens off-Built-In, on the employer's real ATS/careers site
+    // (or, rarely, through a wrapped ad-tracking redirect to that same real destination — see
+    // unwrapTrackingRedirect above). Same convention as Indeed's own normalizer: the raw apply
+    // destination is recorded here at face value; whether it's genuinely a direct employer/ATS link
+    // vs. a staffing intermediary is classify.ts's decision (classifyEmployerRelationship/
+    // classifyUrlEvidence), never something normalize() decides on its own.
+    directEmployerUrl: applyUrl,
+    employmentType: raw.employmentType ?? null,
+    salaryText: raw.baseSalaryText ?? null,
+    raw,
+  };
+}
+
 export function normalizeRawResult(source: ExternalSignalSource, raw: unknown): NormalizedExternalJob {
   if (source === "indeed") return normalizeIndeedResult(raw as RawIndeedResult);
+  if (source === "built_in") return normalizeBuiltInResult(raw as RawBuiltInResult);
   return normalizeGoogleJobsResult(raw as RawGoogleJobsResult);
 }

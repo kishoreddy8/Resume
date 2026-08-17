@@ -15,15 +15,16 @@ import { DEFAULT_SEARCH_ROLES, type ExternalSignalSource } from "../src/lib/exte
  * Usage:
  *   npm run external-jobs-shadow -- --source indeed --limit 10
  *   npm run external-jobs-shadow -- --source google --limit 10 --persist-observations
+ *   npm run external-jobs-shadow -- --source built_in --limit 10 --persist-observations
  *   npm run external-jobs-shadow -- --source indeed --company-id 530 --persist-observations --persist-secondary-jobs --trigger-discovery-v2
  */
 async function main() {
   const sourceIndex = process.argv.indexOf("--source");
   const sourceArg = sourceIndex >= 0 ? process.argv[sourceIndex + 1] : null;
-  if (sourceArg !== "google" && sourceArg !== "indeed") {
-    throw new Error("--source must be one of: google, indeed");
+  if (sourceArg !== "google" && sourceArg !== "indeed" && sourceArg !== "built_in") {
+    throw new Error("--source must be one of: google, indeed, built_in");
   }
-  const source: ExternalSignalSource = sourceArg === "google" ? "google_jobs" : "indeed";
+  const source: ExternalSignalSource = sourceArg === "google" ? "google_jobs" : sourceArg === "built_in" ? "built_in" : "indeed";
 
   const limitIndex = process.argv.indexOf("--limit");
   const limit = limitIndex >= 0 ? Number.parseInt(process.argv[limitIndex + 1] ?? "", 10) : 10;
@@ -47,11 +48,13 @@ async function main() {
     throw new Error("--trigger-discovery-v2 requires --persist-observations");
   }
 
-  const live = isLiveProviderConfigured();
+  const live = source === "built_in" ? true : isLiveProviderConfigured();
   console.log(
-    live
-      ? `External hiring-signal shadow run — source=${source}, limit=${limit}, LIVE (APIFY_API_TOKEN configured).`
-      : `External hiring-signal shadow run — source=${source}, limit=${limit}, FIXTURE MODE (LIVE_PROVIDER_NOT_CONFIGURED — set APIFY_API_TOKEN for real data).`
+    source === "built_in"
+      ? `External hiring-signal shadow run — source=built_in, limit=${limit}, LIVE (FREE_DIRECT — always a real, bounded fetch against builtin.com, no credentials involved).`
+      : live
+        ? `External hiring-signal shadow run — source=${source}, limit=${limit}, LIVE (APIFY_API_TOKEN configured).`
+        : `External hiring-signal shadow run — source=${source}, limit=${limit}, FIXTURE MODE (LIVE_PROVIDER_NOT_CONFIGURED — set APIFY_API_TOKEN for real data).`
   );
   console.log(
     `Persist observations: ${persistObservations}. Persist secondary jobs: ${persistSecondaryJobs}. Trigger Discovery V2: ${triggerDiscoveryV2}.\n`

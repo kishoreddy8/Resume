@@ -1,4 +1,4 @@
-import { normalizeGoogleJobsResult, normalizeIndeedResult, type RawGoogleJobsResult, type RawIndeedResult } from "./normalize";
+import { normalizeBuiltInResult, normalizeGoogleJobsResult, normalizeIndeedResult, type RawBuiltInResult, type RawGoogleJobsResult, type RawIndeedResult } from "./normalize";
 import { FIXTURE_GOOGLE_JOBS_RESULTS, FIXTURE_INDEED_RESULTS } from "./fixtures";
 import type { ExternalHiringSignalProvider, NormalizedExternalJob, SearchQuery } from "./types";
 
@@ -10,11 +10,18 @@ import type { ExternalHiringSignalProvider, NormalizedExternalJob, SearchQuery }
  */
 export type ProviderCostClass = "FREE_DIRECT" | "FREE_OFFICIAL_API" | "FREE_BROWSER" | "OPTIONAL_PAID" | "MANUAL_ONLY" | "UNSUPPORTED";
 
-export const PROVIDER_COST_CLASS: Record<"google_jobs" | "indeed", ProviderCostClass> = {
+export const PROVIDER_COST_CLASS: Record<"google_jobs" | "indeed" | "built_in", ProviderCostClass> = {
   // Both run through pay-per-result Apify actors (see runActorSync below) — genuinely OPTIONAL_PAID,
   // never the zero-cost default. See Stage 8's audit for the full provider cost survey.
   google_jobs: "OPTIONAL_PAID",
   indeed: "OPTIONAL_PAID",
+  // Stage 11: a plain local fetch() against builtin.com's own public pages — no paid scraping
+  // service, no Apify, no proxy. Genuinely FREE_DIRECT, and unlike google_jobs/indeed this never
+  // checks isLiveProviderConfigured()/CAREER_OPS_ALLOW_PAID_EXTERNAL/APIFY_API_TOKEN at all — there
+  // is no paid path here to gate in the first place. See Stage 10's feasibility investigation for
+  // why builtin.com specifically (no login, no CAPTCHA, clean schema.org JobPosting on every
+  // detail page, direct employer/ATS apply links on the majority of listings sampled).
+  built_in: "FREE_DIRECT",
 };
 
 /** Deployment-level opt-in for ANY paid external provider — same shape as CAREER_OPS_AI_ENABLED:
@@ -95,6 +102,172 @@ export const googleJobsProvider: ExternalHiringSignalProvider = {
   },
 };
 
-export function getProvider(source: "google_jobs" | "indeed"): ExternalHiringSignalProvider {
-  return source === "indeed" ? indeedProvider : googleJobsProvider;
+// --- Built In (public builtin.com pages — FREE_DIRECT, Stage 11) ---------------------------------
+// A plain local fetch() against builtin.com's own public search/detail pages. No Apify, no paid
+// service, no isLiveProviderConfigured()/fixture-fallback gate at all — this always makes a real,
+// bounded HTTP request, matching Stage 10's confirmed feasibility (no login, no CAPTCHA).
+
+const BUILT_IN_ORIGIN = "https://builtin.com";
+/** Every bound below is deliberately small and independent of the caller's requested limit —
+ *  Section 14's "sensible bounds... no infinite pagination... no recursive crawling" requirement.
+ *  Never fetches a second search-results page. */
+const BUILT_IN_MAX_RESULTS = 20;
+const BUILT_IN_DETAIL_CONCURRENCY = 3;
+const BUILT_IN_SEARCH_TIMEOUT_MS = 15_000;
+const BUILT_IN_DETAIL_TIMEOUT_MS = 10_000;
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { headers: { Accept: "text/html" }, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+interface BuiltInListItem {
+  name: string;
+  url: string;
+}
+
+/** Decodes the small, fixed set of HTML entities builtin.com uses inside HTML attribute values (e.g.
+ *  "&amp;" between query-string params on the Apply link) — without this, the extracted URL is
+ *  malformed. Deterministic decode of known named/numeric entities only; never guesses. */
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number.parseInt(dec, 10)));
+}
+
+/** Parses the search-results page's own schema.org ItemList (@graph -> ItemList -> itemListElement)
+ *  — the exact structure confirmed live during Stage 10. Never throws on a malformed/missing block;
+ *  an empty result here just means zero candidates for this search, not a fatal error. */
+export function parseBuiltInSearchResults(html: string): BuiltInListItem[] {
+  const blocks = [...html.matchAll(/<script[^>]*type=["']application\/ld(?:\+|&#x2B;|&#43;)json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  for (const block of blocks) {
+    try {
+      const parsed = JSON.parse(block[1]) as { "@graph"?: Array<Record<string, unknown>> };
+      const itemList = parsed["@graph"]?.find((node) => node["@type"] === "ItemList");
+      const elements = itemList?.itemListElement;
+      if (!Array.isArray(elements)) continue;
+      return elements
+        .map((el) => ({ name: String((el as Record<string, unknown>).name ?? ""), url: String((el as Record<string, unknown>).url ?? "") }))
+        .filter((item) => item.name && item.url);
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
+/** Parses one job-detail page: the schema.org JobPosting JSON-LD (@graph -> JobPosting) plus the
+ *  Apply button's raw href, extracted from the surrounding HTML exactly as observed in Stage 10
+ *  ('<a href="...">... @click="applyClick"'). Never fabricates a field; anything not present on the
+ *  real page is left undefined, matching Section 4's "do not fabricate missing values." */
+export function parseBuiltInDetailPage(html: string, listingUrl: string): RawBuiltInResult | null {
+  const blocks = [...html.matchAll(/<script[^>]*type=["']application\/ld(?:\+|&#x2B;|&#43;)json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  let posting: Record<string, unknown> | null = null;
+  for (const block of blocks) {
+    try {
+      const parsed = JSON.parse(block[1]) as { "@graph"?: Array<Record<string, unknown>> };
+      const found = parsed["@graph"]?.find((node) => node["@type"] === "JobPosting");
+      if (found) {
+        posting = found;
+        break;
+      }
+    } catch {
+      continue;
+    }
+  }
+  if (!posting) return null;
+
+  const identifier = posting.identifier as { value?: unknown } | undefined;
+  const hiringOrganization = posting.hiringOrganization as { name?: unknown } | undefined;
+  const jobLocation = posting.jobLocation as { address?: Record<string, unknown> } | undefined;
+  const address = jobLocation?.address;
+  const baseSalary = posting.baseSalary as { value?: { minValue?: unknown; maxValue?: unknown; unitText?: unknown } } | undefined;
+  const salaryValue = baseSalary?.value;
+  const baseSalaryText = salaryValue?.minValue
+    ? `$${Number(salaryValue.minValue).toLocaleString()}${salaryValue.maxValue && salaryValue.maxValue !== salaryValue.minValue ? ` - $${Number(salaryValue.maxValue).toLocaleString()}` : ""}`
+    : undefined;
+
+  const applyMatch = html.match(/<a href="(https?:\/\/[^"]+)"[^>]*@click="applyClick"/);
+
+  return {
+    identifierValue: identifier?.value !== undefined ? String(identifier.value) : undefined,
+    title: typeof posting.title === "string" ? posting.title : undefined,
+    hiringOrganizationName: typeof hiringOrganization?.name === "string" ? hiringOrganization.name : undefined,
+    datePosted: typeof posting.datePosted === "string" ? posting.datePosted : undefined,
+    description: typeof posting.description === "string" ? posting.description : undefined,
+    addressLocality: typeof address?.addressLocality === "string" ? address.addressLocality : undefined,
+    addressRegion: typeof address?.addressRegion === "string" ? address.addressRegion : undefined,
+    addressCountry: typeof address?.addressCountry === "string" ? address.addressCountry : undefined,
+    jobLocationType: typeof posting.jobLocationType === "string" ? posting.jobLocationType : undefined,
+    employmentType: typeof posting.employmentType === "string" ? posting.employmentType : undefined,
+    baseSalaryText,
+    listingUrl,
+    // href attribute values are HTML-attribute-encoded on the page (e.g. "&amp;" between query
+    // params) — decode so the extracted URL is actually usable, not fabricated content.
+    applyHref: applyMatch?.[1] ? decodeHtmlEntities(applyMatch[1]) : undefined,
+  };
+}
+
+export const builtInProvider: ExternalHiringSignalProvider = {
+  source: "built_in",
+  async search(query: SearchQuery): Promise<unknown[]> {
+    const limit = Math.max(1, Math.min(query.limit ?? 10, BUILT_IN_MAX_RESULTS));
+    const searchUrl = new URL("/jobs", BUILT_IN_ORIGIN);
+    searchUrl.searchParams.set("search", query.role);
+    searchUrl.searchParams.set("country", "USA");
+    // Optimization only, never a substitute for the mandatory local <=20-day check every result
+    // still goes through in classify.ts (see CANONICAL_INGESTION_MAX_AGE_DAYS).
+    searchUrl.searchParams.set("daysSinceUpdated", "20");
+
+    let searchHtml: string;
+    try {
+      const res = await fetchWithTimeout(searchUrl.toString(), BUILT_IN_SEARCH_TIMEOUT_MS);
+      if (!res.ok) return [];
+      searchHtml = await res.text();
+    } catch {
+      // A failed search request yields zero external candidates for this role — never throws, so a
+      // Built In outage can never abort the caller's broader multi-role search loop.
+      return [];
+    }
+
+    const items = parseBuiltInSearchResults(searchHtml).slice(0, limit);
+    const results: RawBuiltInResult[] = [];
+    let index = 0;
+    async function worker() {
+      while (index < items.length) {
+        const item = items[index++];
+        try {
+          const res = await fetchWithTimeout(item.url, BUILT_IN_DETAIL_TIMEOUT_MS);
+          if (!res.ok) continue;
+          const detailHtml = await res.text();
+          const parsed = parseBuiltInDetailPage(detailHtml, item.url);
+          // One broken/unparseable listing must never abort the batch (Section 14) — just skipped.
+          if (parsed) results.push(parsed);
+        } catch {
+          continue;
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(BUILT_IN_DETAIL_CONCURRENCY, items.length || 1) }, worker));
+    return results;
+  },
+  normalize(rawResult: unknown): NormalizedExternalJob {
+    return normalizeBuiltInResult(rawResult as RawBuiltInResult);
+  },
+};
+
+export function getProvider(source: "google_jobs" | "indeed" | "built_in"): ExternalHiringSignalProvider {
+  if (source === "indeed") return indeedProvider;
+  if (source === "built_in") return builtInProvider;
+  return googleJobsProvider;
 }

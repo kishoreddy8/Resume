@@ -1,4 +1,4 @@
-import type { RawGoogleJobsResult, RawIndeedResult } from "./normalize";
+import type { RawBuiltInResult, RawGoogleJobsResult, RawIndeedResult } from "./normalize";
 
 /**
  * Deterministic, synthetic fixtures — NOT copied from any real provider response. Field shapes match
@@ -35,6 +35,40 @@ export const FIXTURE_INDEED_RESULTS: RawIndeedResult[] = [
     isRemote: true,
     descriptionText: "Staffing agency posting on behalf of an undisclosed client.",
     location: { formattedAddressShort: "Remote", countryCode: "US" },
+  },
+];
+
+/** Field shapes verified against real, live builtin.com responses during Stage 10's read-only
+ *  feasibility probe (job-detail JobPosting JSON-LD + the Apply button's own href) — every value
+ *  below is still invented for testing, not copied. Used by builtInProvider's own unit tests, which
+ *  exercise normalizeBuiltInResult() directly rather than through a live search() call. */
+export const FIXTURE_BUILT_IN_RESULTS: RawBuiltInResult[] = [
+  {
+    identifierValue: "fixture-builtin-001",
+    title: "Senior Data Engineer",
+    hiringOrganizationName: "Acme Robotics, Inc.",
+    datePosted: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+    description: "Build and own our core data pipeline. 5+ years experience with Spark and Airflow.",
+    addressLocality: "Austin",
+    addressRegion: "TX",
+    addressCountry: "USA",
+    jobLocationType: "ONSITE",
+    employmentType: "FULL_TIME",
+    baseSalaryText: "$140,000 - $180,000",
+    listingUrl: "https://builtin.com/job/senior-data-engineer/fixture-builtin-001",
+    applyHref: "https://job-boards.greenhouse.io/acmerobotics/jobs/9988776",
+  },
+  {
+    identifierValue: "fixture-builtin-002",
+    title: "Machine Learning Engineer",
+    hiringOrganizationName: "Nimbus Analytics LLC",
+    datePosted: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+    description: "Design ML pipelines for real-time inference across our platform.",
+    addressCountry: "USA",
+    jobLocationType: "TELECOMMUTE",
+    employmentType: "FULL_TIME",
+    listingUrl: "https://builtin.com/job/machine-learning-engineer/fixture-builtin-002",
+    applyHref: "https://nimbusanalytics.com/careers/apply/ml-engineer",
   },
 ];
 

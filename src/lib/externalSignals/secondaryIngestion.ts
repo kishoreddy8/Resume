@@ -79,7 +79,7 @@ export function stageSecondaryJob(
 export function retireSupersededSecondaryJobs(companyId: number): number[] {
   const db = getDb();
   const company = getCompany(companyId);
-  if (!company || company.source_type === "career_link" || company.source_type === "google_jobs" || company.source_type === "indeed") return [];
+  if (!company || company.source_type === "career_link" || company.source_type === "google_jobs" || company.source_type === "indeed" || company.source_type === "built_in") return [];
 
   const officialTitles = (
     db
@@ -89,7 +89,7 @@ export function retireSupersededSecondaryJobs(companyId: number): number[] {
   if (officialTitles.length === 0) return [];
 
   const secondaryJobs = db
-    .prepare("SELECT id, title FROM jobs WHERE company_id = ? AND source_type IN ('google_jobs', 'indeed') AND is_active = 1")
+    .prepare("SELECT id, title FROM jobs WHERE company_id = ? AND source_type IN ('google_jobs', 'indeed', 'built_in') AND is_active = 1")
     .all(companyId) as { id: number; title: string }[];
 
   const retiredIds: number[] = [];
