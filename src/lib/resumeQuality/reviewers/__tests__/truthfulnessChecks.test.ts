@@ -47,10 +47,10 @@ test("7. title mismatch: resume title shares no wording with Master Resume's tit
   assert.ok(result.truthfulnessIssues.some((i) => i.includes("Chief Marketing Officer")));
 });
 
-test("8. date mismatch: resume year doesn't match Master Resume's recorded years for that employer -> flagged", () => {
+test("8. date mismatch: resume year doesn't match Master Resume's recorded years for that employer -> blocking (Stage 21: dates are a hard fact)", () => {
   const resume = baseResume({ experience: [{ title: "Senior Data Engineer", company: "Acme Corp", dates: "2015 - 2016", bullets: ["Built pipelines."] }] });
   const result = evaluateTruthfulness(resume, baseMasterProfile());
-  assert.ok(result.truthfulnessIssues.some((i) => i.includes("2015")));
+  assert.ok(result.blockingIssues.some((i) => i.includes("2015")));
 });
 
 test("9. education mismatch: resume claims an institution/degree with no Master Resume evidence -> flagged", () => {

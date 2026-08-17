@@ -1,10 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getCandidate } from "@/db/queries/candidates";
+import { getJobByDedupeKey } from "@/db/queries/jobs";
 import { getResumeQualityWorkflow } from "@/db/queries/resumeQualityWorkflows";
 import { getCandidateJobState } from "@/db/queries/candidateJobState";
 import { getTailoringRun } from "@/db/queries/tailoringRuns";
+import { buildAtsCoverageReport, renderAtsCoverageReport } from "../atsCoverageReport";
 import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
+import { buildJdPriorityMatrix, type JdPriorityMatrix } from "../jdPriorityMatrix";
+import { recommendedPositioningSummary } from "../positioningEngine";
+import { recommendedSkillOrder } from "../skillRanking";
 import { buildWorkspacePackage } from "../workspacePackage";
 import { getIterationDirectory, getHandoffDirectory, type QualityWorkflowLocation } from "../workspace";
 import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orchestrator";
@@ -38,6 +43,14 @@ export function buildExternalWriterPrompt(input: {
   latestReview?: StructuredResumeReview;
   requiredCorrections?: ResumeWriterInput["requiredCorrections"];
   blockingIssues?: string[];
+  /** Stage 21 (Evidence-Grounded Resume Quality V2) — the computed JD Priority Matrix/positioning/
+   *  skill-order/ATS-coverage data the writer should actually USE, not just prose guidance about it.
+   *  All optional: absent only when neither jobRequirements nor a target role title were available
+   *  at export time (never fabricated to fill the gap). */
+  jdPriorityMatrix?: JdPriorityMatrix;
+  positioningRecommendation?: string;
+  recommendedSkillOrder?: string[];
+  atsCoverageReportText?: string;
 }): string {
   const { candidateName, iterationNumber, selectedTrack, latestReview, requiredCorrections, blockingIssues } = input;
 
@@ -102,6 +115,35 @@ Target Role Track: **${selectedTrack ?? "General Engineering Track"}**
    - Every major achievement bullet should include quantifiable, realistic impact you could defend and elaborate on if asked about it in an interview — never an invented or exaggerated metric.
 
 6. **Self-check before returning**: before writing \`writer_output.json\`, re-read \`resume_tailoring_instructions.md\` end to end and verify your draft against every guardrail in it (hard facts, MSI, architecture integrity, technology grouping, no contradicting technologies, metric inference policy, banned language, duplicate bullets, years/education honesty, bullet caps, verb tense, ATS formatting). Report your own findings in the optional \`writerValidation\` field below — but note that this is diagnostic only and does not substitute for CareerOps's own independent review.
+
+7. **Lock the resume before writing the cover letter**: finish and finalize the \`resume\` field FIRST, against the JD Priority Matrix below. Only once that resume is finalized, write the \`coverLetter\` field USING that finalized resume as one of its sources — never generate the cover letter from independent JD-only reasoning. Every technology or accomplishment the cover letter attributes to a specific past employer must be traceable to that SAME employer's bullets in the resume you just wrote (CareerOps's cross-document validator enforces this: e.g. a technology used only at Employer A can never be attributed to Employer B in the cover letter, even if it's genuinely evidenced elsewhere in your history).
+
+---
+
+## JD PRIORITY MATRIX — use this to decide POSITIONING, SKILL ORDER, and BULLET EMPHASIS
+${
+  input.jdPriorityMatrix
+    ? `Target role (P0): **${input.jdPriorityMatrix.targetRoleTitle ?? "not specified"}**
+
+${input.jdPriorityMatrix.requirements
+  .slice()
+  .sort((a, b) => a.priority.localeCompare(b.priority))
+  .map((r) => `- [${r.priority}] ${r.requirement} (${r.requiredOrPreferred}, candidate evidence: ${r.evidenceStrength})`)
+  .join("\n")}
+
+P0/P1 are core role identity/must-have requirements — these MUST dominate the headline and summary. P3/P4 (preferred/secondary) technologies may appear as supporting capabilities further down, but must NEVER headline the resume or crowd out P0/P1 content, even if they seem to have more JD mentions. An UNSUPPORTED requirement (candidate evidence: NONE above) must NEVER be added to the resume — report it as a gap, do not fabricate it.`
+    : "Not available for this iteration (no structured job requirements or target role title were supplied)."
+}
+
+${input.positioningRecommendation ? `**Positioning guidance:** ${input.positioningRecommendation}` : ""}
+
+${
+  input.recommendedSkillOrder && input.recommendedSkillOrder.length > 0
+    ? `**Recommended skill order (highest JD-relevance first):** ${input.recommendedSkillOrder.slice(0, 12).join(", ")}`
+    : ""
+}
+
+${input.atsCoverageReportText ? `### ATS Coverage Report (current draft, if any)\n\`\`\`\n${input.atsCoverageReportText}\`\`\`` : ""}
 
 ---
 
@@ -374,11 +416,28 @@ export function exportExternalWriterPackage(
         currentResume: writerInput.currentResume,
         currentCoverLetter: writerInput.currentCoverLetter,
         latestReview: writerInput.latestReview,
+        targetRoleTitle: getJobByDedupeKey(workflow.dedupe_key)?.title ?? null,
       },
       null,
       2
     )
   );
+
+  // Stage 21 — compute the JD Priority Matrix/positioning/skill-order/ATS-coverage data the writer
+  // prompt below actually embeds, so the writer sees the real ranked structure rather than only
+  // prose guidance about it. The JD is never treated as candidate evidence here either — evidence
+  // strength is computed against writerInput.masterProfile exclusively (see jdPriorityMatrix.ts).
+  const exportTargetRoleTitle = getJobByDedupeKey(workflow.dedupe_key)?.title;
+  const exportJdPriorityMatrix = buildJdPriorityMatrix(
+    writerInput.jobRequirements,
+    exportTargetRoleTitle ?? null,
+    writerInput.masterProfile
+  );
+  const exportPositioningRecommendation = recommendedPositioningSummary(exportJdPriorityMatrix);
+  const exportSkillOrder = writerInput.masterProfile ? recommendedSkillOrder(writerInput.masterProfile, exportJdPriorityMatrix) : [];
+  const exportAtsCoverageText = writerInput.currentResume
+    ? renderAtsCoverageReport(buildAtsCoverageReport(writerInput.currentResume, exportJdPriorityMatrix))
+    : undefined;
 
   // 2. writer_prompt.md
   const promptContent = buildExternalWriterPrompt({
@@ -393,6 +452,10 @@ export function exportExternalWriterPackage(
     latestReview: writerInput.latestReview,
     requiredCorrections: writerInput.requiredCorrections,
     blockingIssues: writerInput.blockingIssues,
+    jdPriorityMatrix: exportJdPriorityMatrix,
+    positioningRecommendation: exportPositioningRecommendation,
+    recommendedSkillOrder: exportSkillOrder,
+    atsCoverageReportText: exportAtsCoverageText,
   });
   writePackageFile("writer_prompt.md", promptContent);
 

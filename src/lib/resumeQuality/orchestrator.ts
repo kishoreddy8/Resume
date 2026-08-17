@@ -466,6 +466,10 @@ export async function executeResumeQualityIteration(
     const reviewer = input.reviewer ?? new DeterministicResumeReviewer();
     const resumeDocxPath = input.resumeDocxPath ?? iterResumeDocx;
     const jobDescriptionPath = path.join(workspaceDir, "job_description.md");
+    // Stage 21 — the job's OWN posted title is P0 role identity for the JD Priority Matrix/Positioning
+    // Engine; never derived from jobRequirements or the resume itself (see types.ts's own doc comment
+    // on ResumeReviewerInput.targetRoleTitle).
+    const targetRoleTitle = getJobByDedupeKey(workflow.dedupe_key)?.title;
 
     const reviewerInput: ResumeReviewerInput = {
       applicationId: workflow.application_id,
@@ -480,6 +484,7 @@ export async function executeResumeQualityIteration(
       coverLetter: input.coverLetter,
       priorResume,
       docxValidation,
+      targetRoleTitle,
     };
 
     const { review: rawReview } = await reviewer.review(reviewerInput);

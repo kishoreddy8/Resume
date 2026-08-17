@@ -112,8 +112,8 @@ const PERFECT_RESUME: ResumeContent = {
   name: "Alice Smith",
   tagline: "Senior Data Engineer",
   location: "Remote, US",
-  phone: "555-0100",
-  email: "alice@example.com",
+  phone: "312-555-9821",
+  email: "alice@gmail.com",
   summary: [
     "Senior Data Engineer with 5+ years building Azure Data Factory and Databricks pipelines for enterprise analytics platforms.",
   ],
@@ -147,8 +147,8 @@ const FLAWED_RESUME: ResumeContent = {
 const COVER_LETTER: CoverLetterContent = {
   name: "Alice Smith",
   location: "Remote, US",
-  phone: "555-0100",
-  email: "alice@example.com",
+  phone: "312-555-9821",
+  email: "alice@gmail.com",
   salutation: "Dear Hiring Team,",
   paragraphs: ["I am excited to apply for the Senior Data Engineer position."],
   closing: "Sincerely,\nAlice Smith",

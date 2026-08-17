@@ -47,8 +47,8 @@ const STRONG_RESUME: ResumeContent = {
   name: "Test Candidate",
   tagline: "Senior Data Engineer",
   location: "Remote",
-  phone: "555-0100",
-  email: "test@example.com",
+  phone: "312-555-9821",
+  email: "test@gmail.com",
   summary: [
     "Senior Data Engineer with 5+ years building Azure Data Factory and Databricks pipelines for enterprise analytics platforms, with deep expertise in Azure-native architectures.",
   ],
@@ -148,7 +148,13 @@ test("34. readiness is decided ONLY through Stage 7's existing evaluateQualityGa
 });
 
 test("a strong, fully-aligned, fully-truthful resume can reach READY through the real composition of reviewer + gate", () => {
-  const review = reviewResumeDeterministically({ resume: STRONG_RESUME, jobRequirements: STRONG_REQUIREMENTS, masterResumeProfile: masterProfile() });
+  const review = reviewResumeDeterministically({
+    resume: STRONG_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+    // Stage 21: matches STRONG_RESUME.tagline so positioning/recruiter-quality genuinely PASSes.
+    targetRoleTitle: "Senior Data Engineer",
+  });
   assert.equal(review.blockingIssues.length, 0);
   assert.equal(review.truthfulnessScore, 100);
   assert.equal(review.architectureConsistencyScore, 100);

@@ -65,8 +65,8 @@ const PERFECT_RESUME: ResumeContent = {
   name: "Priya Nair",
   tagline: "Senior Data Engineer",
   location: "Remote, US",
-  phone: "555-0100",
-  email: "priya@example.com",
+  phone: "312-555-9821",
+  email: "priya@gmail.com",
   summary: [
     "Senior Data Engineer with 5+ years building Azure Data Factory and Databricks pipelines for enterprise analytics platforms.",
   ],
@@ -88,8 +88,8 @@ const PERFECT_RESUME: ResumeContent = {
 const COVER_LETTER: CoverLetterContent = {
   name: "Priya Nair",
   location: "Remote, US",
-  phone: "555-0100",
-  email: "priya@example.com",
+  phone: "312-555-9821",
+  email: "priya@gmail.com",
   salutation: "Dear Hiring Team,",
   paragraphs: ["I am excited to apply for the Senior Data Engineer position."],
   closing: "Sincerely,\nPriya Nair",

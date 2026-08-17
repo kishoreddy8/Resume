@@ -26,12 +26,27 @@ export type QualityGateOutcome = "READY" | "IMPROVEMENT_NEEDED" | "NEEDS_HUMAN_R
  *      is instead satisfied by keeping soft-gate checks genuinely PASS-able (see
  *      instructionCompliance.ts's SOFT_GATE_CHECKS) rather than by letting a real violation slide.
  *
- * A high overall score can never compensate for a factual, architectural, OR canonical-compliance
- * problem — the exact "never let a numeric score alone hide a factual or architectural error" rule
- * from the Stage 7 spec, now extended to the full canonical standard. Otherwise: more iterations
- * remain -> IMPROVEMENT_NEEDED; at maxIterations with the gate still failing -> NEEDS_HUMAN_REVIEW
- * (mapped to workflow status FAILED with an explanatory failure_reason — see
- * resumeQualityWorkflows.ts).
+ * PLUS, additively (Stage 21 — Evidence-Grounded Resume Quality V2 §10/§16):
+ *
+ *   7. review.blockingFailures is present AND empty. This is what actually stops a placeholder
+ *      contact value (there is no canonical-instruction guardrail named for that specific defect, so
+ *      condition 6 alone would never catch it) or an employer-misattributed cross-document claim from
+ *      reaching READY. Same "absence is failure, never a free pass" treatment as instructionCompliance.
+ *   8. review.recruiterQualityAssessment is present and its status is exactly "PASS" — REVIEW (which
+ *      recruiterQualityGate.ts returns when no target role title was supplied, so positioning was
+ *      never actually verified) blocks READY too, the same "ambiguous evidence is never treated as
+ *      compliant" rule every other Stage 21/hardening check follows. This is what stops the exact real
+ *      observed failure — a headline hijacked by secondary technology — from reaching READY;
+ *      recruiterQualityAssessment.score itself is diagnostic ONLY and never substitutes for this
+ *      presence/status check (a high score can never override a BLOCKING recruiter-quality issue,
+ *      mirroring the mission's own explicit "blocking failures remain absolute" instruction).
+ *
+ * A high overall score can never compensate for a factual, architectural, canonical-compliance,
+ * typed-blocking-failure, OR recruiter-quality-positioning problem — the exact "never let a numeric
+ * score alone hide a factual or architectural error" rule from the Stage 7 spec, now extended three
+ * times over. Otherwise: more iterations remain -> IMPROVEMENT_NEEDED; at maxIterations with the gate
+ * still failing -> NEEDS_HUMAN_REVIEW (mapped to workflow status FAILED with an explanatory
+ * failure_reason — see resumeQualityWorkflows.ts).
  */
 export function evaluateQualityGate(review: StructuredResumeReview, iteration: number, maxIterations: number): QualityGateOutcome {
   const passesOriginalStage7Gate =
@@ -44,7 +59,13 @@ export function evaluateQualityGate(review: StructuredResumeReview, iteration: n
   const passesCanonicalComplianceGate =
     compliance !== undefined && matchesCurrentInstructions(compliance) && allChecksPass(compliance);
 
-  const passesGate = passesOriginalStage7Gate && passesCanonicalComplianceGate;
+  const passesTypedBlockingFailureGate = review.blockingFailures !== undefined && review.blockingFailures.length === 0;
+
+  const passesRecruiterQualityGate =
+    review.recruiterQualityAssessment !== undefined && review.recruiterQualityAssessment.status === "PASS";
+
+  const passesGate =
+    passesOriginalStage7Gate && passesCanonicalComplianceGate && passesTypedBlockingFailureGate && passesRecruiterQualityGate;
 
   if (passesGate) return "READY";
   if (iteration < maxIterations) return "IMPROVEMENT_NEEDED";

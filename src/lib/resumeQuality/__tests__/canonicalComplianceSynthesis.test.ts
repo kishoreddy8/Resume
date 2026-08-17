@@ -58,8 +58,8 @@ const CLEAN_RESUME: ResumeContent = {
   name: "Jordan Rivera",
   tagline: "Senior Data Engineer",
   location: "Remote",
-  phone: "555-0100",
-  email: "jordan@example.com",
+  phone: "312-555-9821",
+  email: "jordan@gmail.com",
   summary: [
     "Senior Data Engineer with 10+ years building Azure Data Factory and Databricks pipelines for enterprise analytics platforms.",
   ],
@@ -87,8 +87,8 @@ const CLEAN_REQUIREMENTS: RequirementUnit[] = [
 const CLEAN_COVER_LETTER: CoverLetterContent = {
   name: "Jordan Rivera",
   location: "Remote",
-  phone: "555-0100",
-  email: "jordan@example.com",
+  phone: "312-555-9821",
+  email: "jordan@gmail.com",
   salutation: "Dear Hiring Team,",
   paragraphs: ["I'm excited to apply my Azure Data Factory and Databricks experience to this role."],
   closing: "Sincerely,\nJordan Rivera",
@@ -100,6 +100,9 @@ function cleanReview(): StructuredResumeReview {
     jobRequirements: CLEAN_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     coverLetter: CLEAN_COVER_LETTER,
+    // Stage 21: matches CLEAN_RESUME.tagline so the positioning/recruiter-quality gate genuinely
+    // PASSes rather than REVIEW-ing for a missing target role.
+    targetRoleTitle: "Senior Data Engineer",
   });
 }
 

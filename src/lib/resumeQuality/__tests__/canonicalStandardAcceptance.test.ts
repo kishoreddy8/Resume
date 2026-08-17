@@ -101,8 +101,8 @@ const BASELINE_RESUME: ResumeContent = {
   name: "Amara Okafor",
   tagline: "Data Engineer",
   location: "Remote, US",
-  phone: "555-0142",
-  email: "amara@example.com",
+  phone: "312-555-9821",
+  email: "amara@gmail.com",
   summary: ["Data Engineer with experience building data pipelines."],
   skillGroups: [{ label: "Technical Skills", items: ["Python", "SQL"] }],
   experience: [
@@ -136,8 +136,8 @@ const LIGHT_PATCH_RESUME: ResumeContent = {
 const COVER_LETTER: CoverLetterContent = {
   name: "Amara Okafor",
   location: "Remote, US",
-  phone: "555-0142",
-  email: "amara@example.com",
+  phone: "312-555-9821",
+  email: "amara@gmail.com",
   salutation: "Dear Hiring Team,",
   paragraphs: ["I'm excited to bring my Snowflake, dbt, and Airflow experience to this role."],
   closing: "Sincerely,\nAmara Okafor",
@@ -151,8 +151,8 @@ const DEEP_TAILORED_RESUME: ResumeContent = {
   name: "Amara Okafor",
   tagline: "Senior Data Engineer",
   location: "Remote, US",
-  phone: "555-0142",
-  email: "amara@example.com",
+  phone: "312-555-9821",
+  email: "amara@gmail.com",
   summary: [
     "Senior Data Engineer with 7+ years designing Snowflake data warehouses and dbt transformation pipelines orchestrated by Airflow for logistics and supply-chain analytics.",
   ],

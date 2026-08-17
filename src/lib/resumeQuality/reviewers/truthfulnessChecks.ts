@@ -71,7 +71,11 @@ function checkEmploymentFacts(resumeExperience: ExperienceEntry[], master: Candi
       const masterEndYear = yearOf(matchedEmployer.endDate);
       const resumeYear = resumeYearMatch[0];
       if (masterStartYear && masterEndYear && resumeYear !== masterStartYear && resumeYear !== masterEndYear) {
-        issues.push(`Dates "${role.dates}" at ${role.company} don't match the Master Resume's recorded ${masterStartYear}–${masterEndYear ?? "present"}.`);
+        // Stage 21 Phase 3 — dates are a HARD fact, promoted from a soft issue to a blocking one
+        // (DATE_CONTRADICTION): a date mismatch against the Master Resume's own recorded employment
+        // dates is exactly the class of fabrication-risk fact this stage requires blocking, not just
+        // flagging for review.
+        blocking.push(`Dates "${role.dates}" at ${role.company} don't match the Master Resume's recorded ${masterStartYear}–${masterEndYear ?? "present"}.`);
       }
     }
   }

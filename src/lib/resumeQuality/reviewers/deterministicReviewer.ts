@@ -1,7 +1,11 @@
+import { buildAtsCoverageReport } from "../atsCoverageReport";
+import { buildJdPriorityMatrix } from "../jdPriorityMatrix";
 import { evaluateInstructionCompliance, hardGateFailureCorrections } from "../instructionCompliance";
+import { evaluateRecruiterQuality } from "../recruiterQualityGate";
 import type { RequiredCorrection, ResumeReviewerAgent, ResumeReviewerInput, ResumeReviewerOutput, StructuredResumeReview } from "../types";
 import { evaluateAtsAlignment } from "./atsChecks";
 import { evaluateArchitectureConsistency } from "./architectureChecks";
+import { buildBlockingFailures } from "./blockingFailureSynthesis";
 import { evaluateBulletChecks } from "./bulletChecks";
 import { evaluateCrossDocumentConsistency } from "./crossDocumentChecks";
 import { evaluateDeepRewrite } from "./deepRewriteCheck";
@@ -10,6 +14,7 @@ import { evaluateBulletCaps, evaluateVerbTense } from "./lengthAndTenseChecks";
 import { evaluateMetricProvenance } from "./metricProvenanceChecks";
 import { evaluateMsiCompliance } from "./msiComplianceChecks";
 import { evaluateOnePrimaryTechnologyPerResponsibility } from "./onePrimaryTechnologyCheck";
+import { evaluatePlaceholderIntegrity } from "./placeholderChecks";
 import { evaluateSkillsOrdering } from "./skillsOrderingChecks";
 import { evaluateStructuralChecks } from "./structuralChecks";
 import { evaluateSummaryAlignment } from "./summaryChecks";
@@ -73,9 +78,12 @@ function clamp(n: number): number {
  *  additional READY requirement rather than folding into (and potentially distorting) the original
  *  four-condition gate. */
 export function reviewResumeDeterministically(
-  input: Pick<ResumeReviewerInput, "resume" | "jobRequirements" | "masterResumeProfile" | "coverLetter" | "priorResume" | "docxValidation">
+  input: Pick<
+    ResumeReviewerInput,
+    "resume" | "jobRequirements" | "masterResumeProfile" | "coverLetter" | "priorResume" | "docxValidation" | "targetRoleTitle"
+  >
 ): StructuredResumeReview {
-  const { resume, jobRequirements, masterResumeProfile, coverLetter, priorResume, docxValidation } = input;
+  const { resume, jobRequirements, masterResumeProfile, coverLetter, priorResume, docxValidation, targetRoleTitle } = input;
 
   const ats = evaluateAtsAlignment(resume, jobRequirements);
   const structural = evaluateStructuralChecks(resume);
@@ -180,6 +188,39 @@ export function reviewResumeDeterministically(
   // touched blockingIssues above.
   requiredCorrections.push(...hardGateFailureCorrections(instructionCompliance));
 
+  // --- Stage 21 (Evidence-Grounded Resume Quality V2): typed blocking failures -------------------
+  // A structured, named-taxonomy VIEW of facts already reflected in blockingIssues/requiredCorrections
+  // above (never a second independent source of truth) — see instructionCompliance.ts/
+  // blockingFailureSynthesis.ts's own "pure synthesis, detects nothing new" design. Consumed directly
+  // by evaluateQualityGate() and Phase 17's failure-explanation rendering; deliberately NOT re-pushed
+  // into requiredCorrections a second time, since that would just duplicate the same facts under a
+  // different string.
+  const placeholderFindings = evaluatePlaceholderIntegrity(resume, coverLetter);
+  const blockingFailures = buildBlockingFailures({
+    ungroundedTechnologies: msi.ungroundedTechnologies,
+    metricProvenance,
+    placeholderFindings,
+    employerScopedContradictions: crossDocument.employerScopedContradictions,
+    generalContradictions: crossDocument.generalContradictions,
+    truthfulnessBlockingIssues: truthfulness.blockingIssues,
+  });
+
+  // --- Stage 21 NEXT 1-9: JD Priority Matrix, positioning/ranking, recruiter quality, ATS coverage ---
+  // The JD is NEVER treated as candidate evidence here — buildJdPriorityMatrix only classifies JD
+  // requirements by tier; evidenceStrength for every one of them is computed against
+  // masterResumeProfile exclusively (see jdPriorityMatrix.ts).
+  const jdPriorityMatrixResult = buildJdPriorityMatrix(jobRequirements, targetRoleTitle ?? null, masterResumeProfile);
+  const recruiterQualityAssessment = evaluateRecruiterQuality({
+    resume,
+    matrix: jdPriorityMatrixResult,
+    candidateProfile: masterResumeProfile,
+    genericBulletsCount: bullets.genericBullets.length,
+    bannedLanguageCount: bullets.bannedLanguageCount,
+    duplicateBulletCount: bullets.duplicateBulletCount,
+    recruiterReadabilityScore,
+  });
+  const atsCoverageReportResult = buildAtsCoverageReport(resume, jdPriorityMatrixResult);
+
   return {
     overallScore,
     atsScore: clamp(ats.atsScore),
@@ -200,6 +241,10 @@ export function reviewResumeDeterministically(
     requiredCorrections,
     instructionCompliance,
     metricProvenance,
+    blockingFailures,
+    jdPriorityMatrix: jdPriorityMatrixResult,
+    recruiterQualityAssessment,
+    atsCoverageReport: atsCoverageReportResult,
   };
 }
 

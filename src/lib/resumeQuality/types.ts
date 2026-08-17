@@ -1,6 +1,12 @@
 import { z } from "zod";
 import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring-engine/types";
 export type { CoverLetterContent, ResumeContent };
+// Stage 21 (Evidence-Grounded Resume Quality V2) — type-only imports, erased at compile time, so
+// this creates no runtime circularity even though jdPriorityMatrix.ts/recruiterQualityGate.ts/
+// atsCoverageReport.ts themselves import types FROM this file (e.g. ComplianceStatus).
+import { JD_PRIORITY_TIERS, EVIDENCE_STRENGTHS, type JdPriorityMatrix } from "./jdPriorityMatrix";
+import type { RecruiterQualityAssessment } from "./recruiterQualityGate";
+import { ATS_COVERAGE_STATUSES, type AtsCoverageEntry } from "./atsCoverageReport";
 // Type-only reuse of Phase 2's own JD-requirement and candidate-profile models — read-only import,
 // zero Phase 2 logic touched. This is exactly "reuse existing types, don't invent a duplicate
 // schema": RequirementUnit already IS the structured JD-side requirement model (criticality,
@@ -91,6 +97,56 @@ export interface StructuredResumeReview {
    *  CURRENT DeterministicResumeReviewer always populates both for every fresh review. */
   instructionCompliance?: InstructionComplianceResult;
   metricProvenance?: MetricProvenanceResult;
+
+  /** Additive (Stage 21 — Evidence-Grounded Resume Quality V2). Optional for the exact same
+   *  backward-compatibility reason as instructionCompliance above; qualityGate.ts treats absence as
+   *  failure, never a free pass. The CURRENT DeterministicResumeReviewer always populates this. */
+  blockingFailures?: BlockingFailure[];
+
+  /** Additive (Stage 21 NEXT 1-9). Optional for the same backward-compatibility reason as every other
+   *  Stage 21 field. The JD Priority Matrix this review was computed against — kept on the review so
+   *  final artifacts (instruction_snapshot-style provenance) and the ATS coverage report renderer can
+   *  reference the exact ranking without recomputing it. */
+  jdPriorityMatrix?: JdPriorityMatrix;
+  /** qualityGate.ts requires this present with status !== "FAIL" for READY — see recruiterQualityGate.ts. */
+  recruiterQualityAssessment?: RecruiterQualityAssessment;
+  /** Reporting only (Phase 15/NEXT 9) — never a gate condition on its own; see atsCoverageReport.ts's
+   *  own "UNSUPPORTED must never become an inserted keyword" invariant. */
+  atsCoverageReport?: AtsCoverageEntry[];
+}
+
+// --- Typed blocking failures (additive — Stage 21 Evidence-Grounded Resume Quality V2) --------------
+//
+// A separate, named taxonomy from instructionCompliance's 22 canonical-guardrail checks (which stay
+// fixed to the canonical instruction text's own enumerated names/hash). This layer exists so a
+// specific class of defect — unsupported claim, unsupported metric, placeholder contact, date/
+// employer/certification contradiction, cross-artifact contradiction — can be reported with WHY it
+// failed (evidence searched, a supported alternative, a recommended correction) rather than only a
+// PASS/FAIL verdict. evaluateQualityGate() requires this array to be present and empty for READY,
+// exactly mirroring instructionCompliance's "absence is failure, never a free pass" rule.
+
+export const BLOCKING_FAILURE_TYPES = [
+  "UNSUPPORTED_CLAIM",
+  "UNSUPPORTED_METRIC",
+  "PLACEHOLDER_CONTACT",
+  "DATE_CONTRADICTION",
+  "EMPLOYER_CONTRADICTION",
+  "CERTIFICATION_CONTRADICTION",
+  "CROSS_ARTIFACT_CONTRADICTION",
+] as const;
+export type BlockingFailureType = (typeof BLOCKING_FAILURE_TYPES)[number];
+
+export interface BlockingFailure {
+  type: BlockingFailureType;
+  description: string;
+  /** Where CareerOps looked for supporting evidence before concluding this is unsupported — e.g.
+   *  ["Comerica bullets", "Master Skills Inventory", "Master Resume"]. Optional: not every failure
+   *  type has a meaningful evidence search (e.g. PLACEHOLDER_CONTACT doesn't search for evidence). */
+  evidenceSearched?: string[];
+  /** A weaker claim that IS supported, when one exists — e.g. "improved pipeline reliability"
+   *  instead of the unsupported "reduced pipeline failures by 30%". */
+  supportedAlternative?: string;
+  recommendedCorrection?: string;
 }
 
 const scoreSchema = z.number().min(0).max(100);
@@ -247,6 +303,68 @@ export const structuredResumeReviewSchema = z
         ),
         unsupportedCount: z.number().int().min(0),
       })
+      .optional(),
+    // Additive — Stage 21. Same optional-for-backward-compat treatment as instructionCompliance
+    // above; the DETERMINISTIC reviewer always populates it going forward.
+    blockingFailures: z
+      .array(
+        z.object({
+          type: z.enum(BLOCKING_FAILURE_TYPES),
+          description: z.string().min(1),
+          evidenceSearched: z.array(z.string()).optional(),
+          supportedAlternative: z.string().optional(),
+          recommendedCorrection: z.string().optional(),
+        })
+      )
+      .optional(),
+    // Stage 21 (Evidence-Grounded Resume Quality V2) — NEXT 1-9. All optional for the same
+    // backward-compatibility reason as every field above.
+    jdPriorityMatrix: z
+      .object({
+        targetRoleTitle: z.string().nullable(),
+        requirements: z.array(
+          z.object({
+            requirement: z.string(),
+            priority: z.enum(JD_PRIORITY_TIERS),
+            memberSkillNames: z.array(z.string()),
+            requiredOrPreferred: z.enum(["REQUIRED", "PREFERRED", "UNSPECIFIED"]),
+            evidenceAvailable: z.boolean(),
+            evidenceStrength: z.enum(EVIDENCE_STRENGTHS),
+            evidenceReferences: z.array(z.string()),
+          })
+        ),
+      })
+      .optional(),
+    recruiterQualityAssessment: z
+      .object({
+        status: complianceStatusSchema,
+        score: z.number().min(0).max(100),
+        issues: z.array(
+          z.object({
+            dimension: z.enum([
+              "targetRoleClarity",
+              "firstTenSecondFit",
+              "topSkillRelevance",
+              "topBulletRelevance",
+              "excessiveSecondaryTechEmphasis",
+              "genericOrRepetitiveLanguage",
+              "underselling",
+              "readability",
+            ]),
+            severity: z.enum(["BLOCKING", "ADVISORY"]),
+            description: z.string().min(1),
+          })
+        ),
+      })
+      .optional(),
+    atsCoverageReport: z
+      .array(
+        z.object({
+          requirement: z.string(),
+          priority: z.enum(JD_PRIORITY_TIERS),
+          status: z.enum(ATS_COVERAGE_STATUSES),
+        })
+      )
       .optional(),
   })
   .strict();
@@ -471,6 +589,13 @@ export interface ResumeReviewerInput {
    *  the structured JSON shape. Absent (not failed — literally not yet rendered) is common for
    *  callers that review before generating the .docx; treated as REVIEW, never as a pass or a fail. */
   docxValidation?: { resume?: { valid: boolean; violations: string[] }; coverLetter?: { valid: boolean; violations: string[] } };
+
+  /** Additive (Stage 21 — Evidence-Grounded Resume Quality V2). The job posting's OWN title — P0
+   *  role identity for the JD Priority Matrix/Positioning Engine. Deliberately a plain string, not
+   *  derived from jobRequirements (RequirementUnit has no "this is the role itself" concept) or from
+   *  the resume (the resume is what's being validated, not the source of truth for the target role).
+   *  Absent -> positioning/recruiter-quality checks return REVIEW, never a guessed role. */
+  targetRoleTitle?: string;
 }
 
 export interface ResumeReviewerOutput {

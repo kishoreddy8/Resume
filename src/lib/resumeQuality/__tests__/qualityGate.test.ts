@@ -27,6 +27,11 @@ function perfectReview(overrides: Partial<StructuredResumeReview> = {}): Structu
     // needs one so these tests keep exercising the ORIGINAL four-condition rules they're named for,
     // not incidentally failing on the new, separately-tested compliance gate.
     instructionCompliance: fullyCompliantInstructionCompliance(),
+    // Stage 21: evaluateQualityGate() ALSO now requires blockingFailures present and empty, and
+    // recruiterQualityAssessment present with status exactly "PASS" — same "keep this file's fixtures
+    // exercising the ORIGINAL rules they're named for" reasoning as above.
+    blockingFailures: [],
+    recruiterQualityAssessment: { status: "PASS", score: 100, issues: [] },
     ...overrides,
   };
 }
