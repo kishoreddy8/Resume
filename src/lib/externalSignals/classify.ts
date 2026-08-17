@@ -145,6 +145,11 @@ export function evaluateQualityGate(
 
   const locationScope = classifyJobLocation(job.location);
   if (locationScope === "NON_US") return "NON_US";
+  // Stage 14: an UNKNOWN location scope must never be silently treated as US-eligible — the ATS scan
+  // path's filterJobsToUs already excludes both NON_US and UNKNOWN from new insertion (see
+  // src/lib/ats/locationFilter.ts); this mirrors that exact policy for external-signal observations,
+  // using the same evidence-only fallback the unparseable-date branch below already uses.
+  if (locationScope === "UNKNOWN") return "DISCOVERY_BEACON_ONLY";
 
   if (!job.title.trim()) return "INVALID";
   const candidateUrl = job.listingUrl || job.applyUrl;
