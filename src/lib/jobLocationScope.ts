@@ -44,6 +44,31 @@ const NON_US_COUNTRY_RE = phraseRegex(NON_US_COUNTRIES);
 // Biltmore Lane"), where the state code opens the string with no preceding comma/paren/dash/slash
 // for the existing pattern to anchor on.
 const US_STATE_CODE_RE = new RegExp(`(?:^|,|\\(|\\-|/)\\s*(?:${US_STATE_CODES.join("|")})(?:\\s|,|\\)|/|$)`);
+
+// Stage 15 — some Workday tenants render locations as "STATE-CITY[, address...]" with NO space
+// around the hyphen (e.g. "GA-ATLANTA, 740 W PEACHTREE ST NW"), which US_STATE_CODE_RE's trailing
+// terminator set (space/comma/paren/slash/end) does not match — the code is immediately followed by
+// a hyphen, not a delimiter. A real state code IS legitimate evidence here ("IN-INDIANAPOLIS" is a
+// genuine Indianapolis, Indiana address, confirmed from production Workday data), but the two-letter
+// prefix alone is not enough: "IN-PERSON" and "OR-REMOTE" are common workplace-type phrases, not
+// places, and Indiana/Oregon are real states. The deterministic, non-guessing distinguisher is the
+// SUFFIX: a real address always names an actual place after the code, never a generic employment/
+// workplace descriptor. This never infers a state from an ambiguous or malformed suffix — only an
+// exact-match blocklist rejects known non-place phrasings; everything else after a valid state code
+// is treated as place evidence, same as any other conservative-but-real signal in this classifier.
+const WORKPLACE_TYPE_TERMS = new Set([
+  "PERSON", "IN PERSON", "REMOTE", "HOME", "WORK FROM HOME", "OFFICE", "HYBRID", "ONSITE",
+  "ON SITE", "SITE", "VIRTUAL", "TELECOMMUTE", "FIELD", "TRAVEL", "NATIONWIDE", "ANYWHERE",
+]);
+const US_STATE_CODE_PREFIX_RE = new RegExp(`(?:^|[^A-Za-z])(${US_STATE_CODES.join("|")})-([A-Za-z][A-Za-z .]*?)(?:,|$)`, "g");
+
+function hasValidStateCityPrefix(value: string): boolean {
+  for (const match of value.matchAll(US_STATE_CODE_PREFIX_RE)) {
+    const suffix = match[2].trim().toUpperCase();
+    if (suffix && !WORKPLACE_TYPE_TERMS.has(suffix)) return true;
+  }
+  return false;
+}
 // ADP and some other feeds render Canadian addresses as "Toronto, ON, CA". In that shape the
 // final CA is the ISO country code, not California. Recognize the province + country suffix before
 // applying the U.S. state-code rule.
@@ -111,6 +136,10 @@ export function classifyJobLocation(location: string | null | undefined): JobLoc
 
   // 3. U.S. state codes/names — only after country-level evidence is exhausted
   if (US_STATE_CODE_RE.test(value) || US_STATE_NAME_RE.test(value)) return "US";
+  // 3b. Stage 15 — "STATE-CITY" with no space around the hyphen (e.g. "GA-ATLANTA"), validated by an
+  // explicit non-place-phrase blocklist rather than trusting any two-letter prefix (see
+  // hasValidStateCityPrefix's own doc comment).
+  if (hasValidStateCityPrefix(value)) return "US";
 
   if (/(?:^|[^a-z])u\.?k\.?(?:$|[^a-z])/i.test(value)) return "NON_US";
   if (NON_US_COUNTRY_RE.test(value)) return "NON_US";
