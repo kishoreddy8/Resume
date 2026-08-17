@@ -356,6 +356,8 @@ export interface ScanRun {
   /** ATS Health Semantics V2 — see src/db/queries/scanRuns.ts's RecordScanRunInput doc comments. */
   unknown_location_count: number;
   is_sample_scan: number;
+  jobs_non_us_rejected?: number;
+  jobs_stale_rejected?: number;
   retry_count: number;
   error_category: ErrorCategory | null;
   error_message: string | null;

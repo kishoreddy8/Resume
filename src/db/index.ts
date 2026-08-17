@@ -564,6 +564,14 @@ const SCAN_RUNS_WARNING_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
     name: "is_sample_scan",
     ddl: "ALTER TABLE scan_runs ADD COLUMN is_sample_scan INTEGER NOT NULL DEFAULT 0",
   },
+  {
+    name: "jobs_non_us_rejected",
+    ddl: "ALTER TABLE scan_runs ADD COLUMN jobs_non_us_rejected INTEGER NOT NULL DEFAULT 0",
+  },
+  {
+    name: "jobs_stale_rejected",
+    ddl: "ALTER TABLE scan_runs ADD COLUMN jobs_stale_rejected INTEGER NOT NULL DEFAULT 0",
+  },
 ];
 
 // Exported (unlike this file's other migration functions, except runCompaniesDiscoveryMigrations)

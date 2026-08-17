@@ -22,6 +22,10 @@ export interface RecordScanRunInput {
    *  excluded from ingestion — a data-quality/content signal (the connector fetched them fine),
    *  never an operational-health signal. See src/db/queries/atsCoverage.ts's warning derivation. */
   unknownLocationCount?: number;
+  /** Jobs explicitly filtered because location is outside the US */
+  jobsNonUsRejected?: number;
+  /** Jobs rejected because they are older than the freshness threshold */
+  jobsStaleRejected?: number;
   /** ATS Health Semantics V2: true when this run was a bounded verification/sample probe
    *  (options.maxJobsPerCompany was set), not a full scan. Recorded per-run so the UI can show
    *  "verification passed, full scan pending" as distinct from a genuine full-scan result — this
@@ -44,11 +48,13 @@ export function recordScanRun(input: RecordScanRunInput): number {
         company_id, provider, started_at, finished_at, duration_ms, status,
         jobs_discovered, jobs_added, jobs_updated, jobs_unchanged, duplicates_skipped,
         jobs_closed, jobs_archived, jobs_deleted, description_failures, unknown_location_count,
+        jobs_non_us_rejected, jobs_stale_rejected,
         is_sample_scan, retry_count, error_category, error_message
       ) VALUES (
         @companyId, @provider, @startedAt, @finishedAt, @durationMs, @status,
         @jobsDiscovered, @jobsAdded, @jobsUpdated, @jobsUnchanged, @duplicatesSkipped,
         @jobsClosed, @jobsArchived, @jobsDeleted, @descriptionFailures, @unknownLocationCount,
+        @jobsNonUsRejected, @jobsStaleRejected,
         @isSampleScan, @retryCount, @errorCategory, @errorMessage
       )`
     )
@@ -56,6 +62,8 @@ export function recordScanRun(input: RecordScanRunInput): number {
       ...input,
       jobsDeleted: input.jobsDeleted ?? 0,
       unknownLocationCount: input.unknownLocationCount ?? 0,
+      jobsNonUsRejected: input.jobsNonUsRejected ?? 0,
+      jobsStaleRejected: input.jobsStaleRejected ?? 0,
       isSampleScan: input.isSampleScan ? 1 : 0,
       errorCategory: input.errorCategory ?? null,
       errorMessage: input.errorMessage ?? null,

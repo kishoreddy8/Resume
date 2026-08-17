@@ -676,10 +676,14 @@ test("ATS Health Semantics V2: an EXISTING database whose scan_runs predates unk
   const columns = (legacyDb.prepare("PRAGMA table_info(scan_runs)").all() as { name: string }[]).map((c) => c.name);
   assert.ok(columns.includes("unknown_location_count"), "existing scan_runs must gain unknown_location_count via ALTER TABLE");
   assert.ok(columns.includes("is_sample_scan"), "existing scan_runs must gain is_sample_scan via ALTER TABLE");
+  assert.ok(columns.includes("jobs_non_us_rejected"), "existing scan_runs must gain jobs_non_us_rejected via ALTER TABLE");
+  assert.ok(columns.includes("jobs_stale_rejected"), "existing scan_runs must gain jobs_stale_rejected via ALTER TABLE");
 
   const row = legacyDb.prepare("SELECT * FROM scan_runs WHERE id = 1").get() as Record<string, unknown>;
   assert.equal(row.unknown_location_count, 0, "a pre-V2 historical row has no per-run warning data to backfill — must default to 0, not be fabricated");
   assert.equal(row.is_sample_scan, 0, "same: no retroactive guess at whether a historical run was a sample scan");
+  assert.equal(row.jobs_non_us_rejected, 0, "jobs_non_us_rejected must default to 0 for historical rows");
+  assert.equal(row.jobs_stale_rejected, 0, "jobs_stale_rejected must default to 0 for historical rows");
   assert.equal(row.description_failures, 2, "the pre-existing description_failures value must survive the ALTER TABLE untouched");
   assert.equal(row.error_message, "pre-V2 historical row", "no existing column's data may be lost by this additive migration");
 

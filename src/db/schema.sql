@@ -603,6 +603,10 @@ CREATE TABLE IF NOT EXISTS scan_runs (
   -- to any one scan_run. Kept as a column for the full field set this feature was asked to track.
   jobs_deleted INTEGER NOT NULL DEFAULT 0,
   description_failures INTEGER NOT NULL DEFAULT 0,
+  unknown_location_count INTEGER NOT NULL DEFAULT 0,
+  is_sample_scan INTEGER NOT NULL DEFAULT 0,
+  jobs_non_us_rejected INTEGER NOT NULL DEFAULT 0,
+  jobs_stale_rejected INTEGER NOT NULL DEFAULT 0,
   retry_count INTEGER NOT NULL DEFAULT 0,
   error_category TEXT,
   error_message TEXT
