@@ -11,6 +11,8 @@ import { processExternalListing } from "@/lib/externalSignals/pipeline";
 import { retireSupersededSecondaryJobs } from "@/lib/externalSignals/secondaryIngestion";
 import {
   acquireProductionCycleLock,
+  heartbeatProductionCycleLock,
+  PRODUCTION_LOCK_HEARTBEAT_INTERVAL_MS,
   recordProductionCycleCompleted,
   recordProductionCycleFailed,
   recordProductionCycleStarted,
@@ -688,21 +690,45 @@ function deriveOverallStatus(phases: {
 /**
  * Main Production Cycle Orchestrator.
  * Coordinates Reliability, Approved ATS Scanning, Built In Ingestion, Cross-Source Dedup, and Discovery V2.
- * Enforces mutual exclusion via SQLite lock. Never triggers lifecycle maintenance or resume tailoring.
+ * Enforces mutual exclusion via a heartbeating lease (see ./state.ts) — a healthy cycle renews its
+ * own lease every heartbeatIntervalMs, so only a genuinely abandoned (heartbeat-stopped) cycle can
+ * ever be taken over, regardless of total wall-clock duration. Never triggers lifecycle maintenance
+ * or resume tailoring.
  */
 export async function runProductionCycle(
   options: RunProductionCycleOptions = {},
   now: Date = new Date()
 ): Promise<ProductionCycleSummary> {
   const lockResult = acquireProductionCycleLock(now);
-  if (!lockResult.acquired) {
+  if (!lockResult.acquired || !lockResult.ownerId) {
     throw new Error(`Production cycle already running (locked since ${lockResult.heldSince})`);
   }
+  const ownerId = lockResult.ownerId;
 
   const startedAt = now.toISOString();
   const startedMs = now.getTime();
   const cycleId = createCycleId(now);
   recordProductionCycleStarted(now);
+
+  // Lease heartbeat — its own timer, independent of phase boundaries, so a single slow real call
+  // (Discovery V2 candidates have been observed taking up to ~90s) never starves it. A failed
+  // renewal (lost ownership — e.g. this process stalled long enough for the lease to already be
+  // considered stale and taken over) is recorded, never silently ignored: see leaseWarning below.
+  let leaseWarning: string | undefined;
+  const heartbeatIntervalMs = options.heartbeatIntervalMs ?? PRODUCTION_LOCK_HEARTBEAT_INTERVAL_MS;
+  const heartbeatTimer = setInterval(() => {
+    if (leaseWarning) return; // already lost the lease; no point retrying with a stolen ownerId.
+    try {
+      const stillOwned = heartbeatProductionCycleLock(ownerId);
+      if (!stillOwned) {
+        leaseWarning = "Lease heartbeat failed: another production cycle now owns the lock (this cycle's lease expired mid-run).";
+      }
+    } catch (err) {
+      leaseWarning = `Lease heartbeat threw: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }, heartbeatIntervalMs);
+  // Never let the heartbeat's own timer keep the Node process alive on its own.
+  heartbeatTimer.unref?.();
 
   try {
     // 1. Reliability & Recovery Phase
@@ -723,13 +749,18 @@ export async function runProductionCycle(
     const completedAt = new Date().toISOString();
     const durationMs = Date.now() - startedMs;
 
-    const { status, reason } = deriveOverallStatus({
+    const derived = deriveOverallStatus({
       reliability,
       atsScan,
       builtIn,
       crossSourceDedup,
       discoveryV2,
     });
+    // A lost lease means a second cycle may now legitimately be running concurrently — never
+    // report READY as if nothing happened, even if every phase this cycle ran itself completed
+    // cleanly, since a concurrent cycle's writes are exactly the hazard this lease exists to prevent.
+    const status = leaseWarning && derived.status === "READY" ? "DEGRADED" : derived.status;
+    const reason = derived.reason;
 
     const summary: ProductionCycleSummary = {
       cycleId,
@@ -737,7 +768,7 @@ export async function runProductionCycle(
       completedAt,
       durationMs,
       status,
-      statusReason: reason,
+      statusReason: leaseWarning ? `${reason} | ${leaseWarning}` : reason,
       phases: {
         reliability,
         atsScan,
@@ -745,6 +776,7 @@ export async function runProductionCycle(
         crossSourceDedup,
         discoveryV2,
       },
+      ...(leaseWarning ? { leaseWarning } : {}),
     };
 
     recordProductionCycleCompleted(summary);
@@ -754,6 +786,9 @@ export async function runProductionCycle(
     recordProductionCycleFailed(errorMsg);
     throw err;
   } finally {
-    releaseProductionCycleLock();
+    clearInterval(heartbeatTimer);
+    // Ownership-checked: if the lease was already lost (leaseWarning set), this safely no-ops
+    // rather than clearing whichever new cycle now legitimately owns the lock.
+    releaseProductionCycleLock(ownerId);
   }
 }

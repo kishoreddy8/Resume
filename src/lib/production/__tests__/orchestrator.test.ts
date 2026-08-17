@@ -23,6 +23,7 @@ let getProductionCycleLockStatus: typeof import("../state").getProductionCycleLo
 let getProductionCycleRuntimeState: typeof import("../state").getProductionCycleRuntimeState;
 let releaseProductionCycleLock: typeof import("../state").releaseProductionCycleLock;
 let resetProductionCycleStateForTests: typeof import("../state").resetProductionCycleStateForTests;
+let STALE_PRODUCTION_LOCK_TIMEOUT_MINUTES: typeof import("../state").STALE_PRODUCTION_LOCK_TIMEOUT_MINUTES;
 let runProductionCycle: typeof import("../orchestrator").runProductionCycle;
 let getMorningReadinessSummary: typeof import("../readiness").getMorningReadinessSummary;
 let listScanReadyCompanies: typeof import("@/db/queries/organizationRegistry").listScanReadyCompanies;
@@ -51,6 +52,7 @@ before(async () => {
     getProductionCycleRuntimeState,
     releaseProductionCycleLock,
     resetProductionCycleStateForTests,
+    STALE_PRODUCTION_LOCK_TIMEOUT_MINUTES,
   } = await import("../state"));
   ({ runProductionCycle } = await import("../orchestrator"));
   ({ getMorningReadinessSummary } = await import("../readiness"));
@@ -215,6 +217,7 @@ describe("Stage 20: Unified Production Orchestrator & Morning Readiness", () => 
   it("6. Overlapping production cycle is rejected when lock is held", async () => {
     const lockRes = acquireProductionCycleLock();
     assert.equal(lockRes.acquired, true);
+    assert.ok(lockRes.ownerId);
 
     await assert.rejects(
       async () => {
@@ -223,15 +226,18 @@ describe("Stage 20: Unified Production Orchestrator & Morning Readiness", () => 
       /already running/
     );
 
-    releaseProductionCycleLock();
+    releaseProductionCycleLock(lockRes.ownerId!);
   });
 
-  it("7. Stale lock is automatically recoverable after 180 minute timeout", async () => {
+  it("7. Stale lease is automatically recoverable once past STALE_PRODUCTION_LOCK_TIMEOUT_MINUTES", async () => {
     const db = getDb();
-    const fourHoursAgo = new Date(Date.now() - 4 * 3600 * 1000).toISOString();
+    const longAgo = new Date(Date.now() - (STALE_PRODUCTION_LOCK_TIMEOUT_MINUTES + 60) * 60_000).toISOString();
     db.prepare(
       "INSERT INTO settings (key, value, updated_at) VALUES ('production_cycle_lock.acquired_at', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-    ).run(fourHoursAgo);
+    ).run(longAgo);
+    db.prepare(
+      "INSERT INTO settings (key, value, updated_at) VALUES ('production_cycle_lock.owner_id', 'dead-owner', datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    ).run();
 
     const lockStatus = getProductionCycleLockStatus();
     assert.equal(lockStatus.stale, true);
@@ -252,6 +258,47 @@ describe("Stage 20: Unified Production Orchestrator & Morning Readiness", () => 
       }),
     });
     assert.ok(summary.cycleId);
+  });
+
+  it("7b. A running cycle renews its own lease via heartbeat before phases complete", async () => {
+    // A controlled artificial delay (not a real network call) guarantees the cycle stays open long
+    // enough for a 15ms heartbeat interval to fire multiple times — deterministic, no real timing
+    // dependency on external services.
+    let sawHeartbeatBump = false;
+    const cyclePromise = runProductionCycle({
+      heartbeatIntervalMs: 15,
+      skipPhases: ["atsScan", "builtIn", "crossSourceDedup", "discoveryV2"],
+      recoveryRunner: async () => {
+        await new Promise((r) => setTimeout(r, 150));
+        return {
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          durationMs: 150,
+          eligibleFound: 0,
+          attempted: 0,
+          skippedByCircuitBreaker: [],
+          openCircuits: [],
+          outcomes: [],
+          proposalsCreated: 0,
+        };
+      },
+    });
+
+    let sawReadinessRunning = false;
+    for (let i = 0; i < 25; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      const status = getProductionCycleLockStatus();
+      if (status.held && status.acquiredAt && status.trueAcquiredAt && status.acquiredAt > status.trueAcquiredAt) {
+        sawHeartbeatBump = true;
+        const readiness = getMorningReadinessSummary();
+        sawReadinessRunning = readiness.productionCycle.isRunning === true && readiness.productionCycle.runningSinceAt === status.trueAcquiredAt;
+        break;
+      }
+    }
+
+    await cyclePromise;
+    assert.ok(sawHeartbeatBump, "expected at least one heartbeat renewal to move acquiredAt past trueAcquiredAt while the cycle ran");
+    assert.ok(sawReadinessRunning, "Morning Readiness must report isRunning=true and the correct runningSinceAt while a cycle is in flight");
   });
 
   it("8. Only approved ATS sources scanned by default", () => {
@@ -446,6 +493,9 @@ describe("Stage 20: Unified Production Orchestrator & Morning Readiness", () => 
 
     assert.equal(readiness.productionCycle.status, runtime.lastStatus, "readiness status must be derived from runtime state, not a separate source of truth");
     assert.equal(readiness.productionCycle.lastRunAt, runtime.lastCompletedAt);
+    assert.equal(readiness.productionCycle.isRunning, false, "no cycle is running between tests (beforeEach resets lock state)");
+    assert.equal(readiness.productionCycle.runningSinceAt, null);
+    assert.equal(typeof readiness.productionCycle.scanReadyCompaniesNeverScanned, "number");
 
     assert.ok(readiness.productionCycle);
     assert.ok(readiness.ats);

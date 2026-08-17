@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { getDb } from "@/db";
 import type { ProductionCycleStatus, ProductionCycleSummary } from "./types";
 
@@ -5,7 +6,18 @@ import type { ProductionCycleStatus, ProductionCycleSummary } from "./types";
  * Production Cycle Lock and Runtime State persistence.
  * Reuses the existing `settings` table (key TEXT PRIMARY KEY) with atomic conditional updates.
  *
- * Lock key: "production_cycle_lock.acquired_at"
+ * Lock keys (Stage 23 — lease + heartbeat):
+ *   - "production_cycle_lock.acquired_at" — the lease's last-known-alive timestamp. Set on
+ *     acquire, then refreshed on every heartbeat while the cycle runs. Staleness is judged against
+ *     THIS timestamp, so a healthy long-running cycle that keeps heartbeating never goes stale
+ *     regardless of total wall-clock duration — this is what fixes the Stage 22 finding that a
+ *     legitimate ~3h41m unbounded cycle could outlive a flat 180-minute acquired-at-only timeout.
+ *   - "production_cycle_lock.owner_id" — opaque ID for whichever acquire() call currently holds
+ *     the lease. heartbeat()/release() only succeed when the caller's ownerId still matches this
+ *     value, so one cycle can never renew or clear another cycle's lock.
+ *   - "production_cycle_lock.true_acquired_at" — the ORIGINAL acquisition time, never touched by
+ *     heartbeats. Kept separately so status/observability callers (Morning Readiness) can show
+ *     "running since X" distinct from "last heartbeat at Y".
  * Runtime keys:
  *   - "production_cycle.last_started_at"
  *   - "production_cycle.last_completed_at"
@@ -18,7 +30,21 @@ import type { ProductionCycleStatus, ProductionCycleSummary } from "./types";
  */
 
 const LOCK_KEY = "production_cycle_lock.acquired_at";
-export const STALE_PRODUCTION_LOCK_TIMEOUT_MINUTES = 180;
+const OWNER_KEY = "production_cycle_lock.owner_id";
+const TRUE_ACQUIRED_KEY = "production_cycle_lock.true_acquired_at";
+
+// Derived from real Stage 22 acceptance timings, not picked arbitrarily: a single Discovery V2
+// candidate fetch was observed taking up to ~90s (Under Armour: 63,364ms), and the phase processes
+// its bounded cohort sequentially — so the heartbeat must run on its own timer independent of phase
+// boundaries, not just "once per phase", or a single slow candidate could starve it. 30s gives
+// several heartbeat opportunities even across the slowest single observed real call.
+export const PRODUCTION_LOCK_HEARTBEAT_INTERVAL_MS = 30_000;
+
+// 10x the heartbeat interval ("substantially larger", per the lease-safety requirement): comfortably
+// absorbs a missed beat or two (GC pause, brief event-loop delay) without false-flagging a healthy
+// cycle as abandoned, while recovering a genuinely dead process in minutes instead of the old flat
+// 180-minute window (which a real ~3h41m unbounded ATS scan phase was observed to exceed).
+export const STALE_PRODUCTION_LOCK_TIMEOUT_MINUTES = (PRODUCTION_LOCK_HEARTBEAT_INTERVAL_MS * 10) / 60_000;
 
 const RUNTIME_KEYS = {
   lastStartedAt: "production_cycle.last_started_at",
@@ -34,12 +60,20 @@ const RUNTIME_KEYS = {
 export interface LockAcquireResult {
   acquired: boolean;
   heldSince?: string;
+  /** Present only when acquired is true — pass to heartbeatProductionCycleLock()/
+   *  releaseProductionCycleLock() so only this attempt can renew or clear its own lease. */
+  ownerId?: string;
 }
 
 export interface ProductionLockStatus {
   held: boolean;
   acquiredAt: string | null;
   stale: boolean;
+  /** Opaque ID of whichever acquire() currently holds the lease, or null when free. */
+  ownerId: string | null;
+  /** Original acquisition time, distinct from `acquiredAt` (which is heartbeat-refreshed) — the
+   *  field to show "running since" in observability/UI without it drifting on every heartbeat. */
+  trueAcquiredAt: string | null;
 }
 
 export interface ProductionCycleRuntimeState {
@@ -75,8 +109,12 @@ function setValue(key: string, value: string | null): void {
 }
 
 /**
- * Attempts to acquire the production cycle lock.
- * Succeeds if lock is free or held by a stale attempt.
+ * Attempts to acquire the production cycle lease. Succeeds if the lease is free or its last
+ * heartbeat (see PRODUCTION_LOCK_HEARTBEAT_INTERVAL_MS) is older than the stale threshold — i.e.
+ * genuinely abandoned, not merely long-running. On success, also stamps a fresh owner_id and
+ * true_acquired_at; only the winner of the atomic UPDATE below ever reaches those statements (no
+ * other JS can interleave between synchronous better-sqlite3 calls in this single-process app), so
+ * this stays race-free without needing a single combined statement.
  */
 export function acquireProductionCycleLock(now: Date = new Date()): LockAcquireResult {
   const db = getDb();
@@ -94,7 +132,10 @@ export function acquireProductionCycleLock(now: Date = new Date()): LockAcquireR
     .run(nowIso, LOCK_KEY, staleThresholdIso(now));
 
   if (result.changes === 1) {
-    return { acquired: true };
+    const ownerId = crypto.randomUUID();
+    setValue(OWNER_KEY, ownerId);
+    setValue(TRUE_ACQUIRED_KEY, nowIso);
+    return { acquired: true, ownerId };
   }
 
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(LOCK_KEY) as
@@ -104,23 +145,74 @@ export function acquireProductionCycleLock(now: Date = new Date()): LockAcquireR
 }
 
 /**
- * Releases the production cycle lock unconditionally.
+ * Renews the lease for a still-running cycle. Only refreshes the alive-timestamp when `ownerId`
+ * still matches the stored owner — a cycle that has already lost its lease (stolen after going
+ * stale) gets `false` back instead of silently overwriting whoever holds it now. Callers must treat
+ * `false` as "I may no longer hold this lock" (see runProductionCycle's heartbeat wiring), never as
+ * a reason to assume the lock is still safely theirs.
  */
-export function releaseProductionCycleLock(): void {
-  getDb().prepare(`UPDATE settings SET value = '', updated_at = datetime('now') WHERE key = ?`).run(LOCK_KEY);
+export function heartbeatProductionCycleLock(ownerId: string, now: Date = new Date()): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE settings SET value = ?, updated_at = datetime('now')
+       WHERE key = ? AND EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)`
+    )
+    .run(now.toISOString(), LOCK_KEY, OWNER_KEY, ownerId);
+  return result.changes === 1;
 }
 
 /**
- * Checks current production cycle lock status.
+ * Releases the production cycle lease — but ONLY if `ownerId` still matches the current owner. A
+ * cycle whose lease was already stolen (e.g. it stalled past the stale threshold and a new cycle
+ * took over) can never clear the NEW owner's active lock this way; the call becomes a safe no-op.
+ */
+export function releaseProductionCycleLock(ownerId: string): void {
+  const db = getDb();
+  const result = db
+    .prepare(
+      `UPDATE settings SET value = '', updated_at = datetime('now')
+       WHERE key = ? AND EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)`
+    )
+    .run(LOCK_KEY, OWNER_KEY, ownerId);
+  if (result.changes === 1) {
+    setValue(OWNER_KEY, null);
+    setValue(TRUE_ACQUIRED_KEY, null);
+  }
+}
+
+/**
+ * Unconditionally frees the lease regardless of current owner. Reserved for operator/test recovery
+ * paths (e.g. clearing a confirmed-abandoned lock found by inspection) — never called by
+ * runProductionCycle() itself, which always releases through its own ownerId.
+ */
+export function forceReleaseProductionCycleLock(): void {
+  const db = getDb();
+  db.prepare(`UPDATE settings SET value = '', updated_at = datetime('now') WHERE key = ?`).run(LOCK_KEY);
+  setValue(OWNER_KEY, null);
+  setValue(TRUE_ACQUIRED_KEY, null);
+}
+
+/**
+ * Checks current production cycle lease status. `stale` reflects the heartbeat-refreshed
+ * `acquiredAt`, so a healthy cycle that keeps heartbeating never reads as stale regardless of how
+ * long it has actually been running — see `trueAcquiredAt` for that.
  */
 export function getProductionCycleLockStatus(now: Date = new Date()): ProductionLockStatus {
   const row = getDb().prepare("SELECT value FROM settings WHERE key = ?").get(LOCK_KEY) as
     | { value: string }
     | undefined;
   const acquiredAt = row?.value || null;
-  if (!acquiredAt) return { held: false, acquiredAt: null, stale: false };
+  if (!acquiredAt) {
+    return { held: false, acquiredAt: null, stale: false, ownerId: null, trueAcquiredAt: null };
+  }
   const stale = acquiredAt < staleThresholdIso(now);
-  return { held: !stale, acquiredAt, stale };
+  return {
+    held: !stale,
+    acquiredAt,
+    stale,
+    ownerId: stale ? null : getValue(OWNER_KEY),
+    trueAcquiredAt: stale ? null : getValue(TRUE_ACQUIRED_KEY),
+  };
 }
 
 export function recordProductionCycleStarted(now: Date = new Date()): void {
@@ -179,7 +271,7 @@ export function getProductionCycleRuntimeState(): ProductionCycleRuntimeState {
 
 export function resetProductionCycleStateForTests(): void {
   const db = getDb();
-  releaseProductionCycleLock();
+  forceReleaseProductionCycleLock();
   for (const key of Object.values(RUNTIME_KEYS)) {
     db.prepare("DELETE FROM settings WHERE key = ?").run(key);
   }

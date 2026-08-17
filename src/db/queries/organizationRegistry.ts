@@ -28,6 +28,35 @@ export function listScanReadyCompanies(): Company[] {
 }
 
 /**
+ * Stage 23 — bounded, fair rotation subset of listScanReadyCompanies() for scheduled production
+ * cycles. A single unattended run scanning all ~981 scan-ready companies was observed (Stage 22) to
+ * take 3h41m+ against real ATS boards — too large for one morning cycle. Rather than a new scoring
+ * system, this reuses the existing `companies.last_scanned_at` column (already written by every real
+ * scan — see scan.ts's recordScanRun) as a plain oldest-first FIFO: never-scanned companies first
+ * (new Built In/Discovery V2 onboardings get covered promptly), then whichever scan-ready company
+ * has gone longest without a scan. Every company's last_scanned_at moves forward once scanned, so it
+ * naturally cycles to the back of the queue — no company can starve indefinitely as long as batches
+ * keep running.
+ */
+export function listScanReadyCompaniesForRotation(limit: number): Company[] {
+  const boundedLimit = Math.max(1, Math.trunc(limit));
+  return getDb()
+    .prepare(
+      `SELECT c.* FROM companies c
+       JOIN job_sources js ON js.legacy_company_id = c.id
+       WHERE c.is_active = 1 AND js.is_active = 1 AND js.resolution_status = 'VERIFIED'
+         AND js.review_status = 'APPROVED'
+         AND js.provider IN ('greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters', 'adp_wfn', 'adp_rm', 'eightfold', 'cornerstone', 'avature', 'paylocity', 'icims', 'ukg_pro', 'bamboohr', 'oracle_recruiting_cloud', 'workable', 'rippling', 'paycom', 'jazzhr', 'jobvite', 'breezy', 'teamtailor', 'applicantpro', 'pinpoint', 'clearcompany', 'personio', 'applicantstack', 'comeet', 'cats', 'gohire', 'newton', 'silkroad', 'jobdiva', 'taleo', 'successfactors')
+       ORDER BY
+         (CASE WHEN c.last_scanned_at IS NULL THEN 0 ELSE 1 END),
+         c.last_scanned_at ASC,
+         c.id
+       LIMIT ?`
+    )
+    .all(boundedLimit) as Company[];
+}
+
+/**
  * Discovery V2, Stage shadow — candidates worth spending a browser render on: UNRESOLVED and/or
  * GENERIC_SUPPORTED companies with zero currently-active jobs (a company already yielding real jobs
  * via generic scraping has less to gain here). Priority order matches the task's stated design:

@@ -122,6 +122,11 @@ export interface ProductionCycleSummary {
     crossSourceDedup: CrossSourceDedupPhaseResult;
     discoveryV2: DiscoveryV2PhaseResult;
   };
+  /** Set only if a heartbeat renewal ever failed mid-cycle (lost lease ownership — see
+   *  runProductionCycle's heartbeat wiring in orchestrator.ts). Never silently swallowed: a lost
+   *  lease means another cycle may now also be running, which callers/operators must know about
+   *  even though the phases that already completed are left as-is. */
+  leaseWarning?: string;
 }
 
 export interface RunProductionCycleOptions {
@@ -145,6 +150,10 @@ export interface RunProductionCycleOptions {
   builtInSearcher?: typeof import("@/lib/externalSignals/providers").searchBuiltInAcrossRoles;
   /** Optional custom Discovery V2 discoverer for testing */
   discoverer?: typeof import("@/lib/ats/discoveryV2").discoverCompanySourceV2;
+  /** Testing-only override for the lease heartbeat interval (defaults to
+   *  PRODUCTION_LOCK_HEARTBEAT_INTERVAL_MS) — lets tests observe heartbeat/lease-loss behavior in
+   *  milliseconds instead of waiting out the real 30s interval. */
+  heartbeatIntervalMs?: number;
 }
 
 export interface MorningReadinessSummary {
@@ -153,6 +162,15 @@ export interface MorningReadinessSummary {
     durationMs: number | null;
     status: ProductionCycleStatus | null;
     statusReason: string | null;
+    /** True when a cycle currently holds the lease (heartbeating, not merely stale-but-unclaimed). */
+    isRunning: boolean;
+    /** Original acquisition time of the currently-running cycle's lease, or null when not running —
+     *  distinct from the lease's heartbeat-refreshed internal timestamp, so this never drifts. */
+    runningSinceAt: string | null;
+    /** Scan-ready companies that have never been scanned even once (companies.last_scanned_at IS
+     *  NULL) — the rotation's own highest-priority tier (see listScanReadyCompaniesForRotation).
+     *  Purely informational: never gates anything. */
+    scanReadyCompaniesNeverScanned: number;
   };
   ats: {
     scanReadyCompanies: number;

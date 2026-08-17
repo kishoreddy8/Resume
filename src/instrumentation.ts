@@ -1,26 +1,37 @@
 /**
- * Next.js instrumentation entry point (Phase 4 Stage 1). `register()` is called once when a new
- * Next.js server instance initializes, before it starts handling requests — stable since v15.0.0
- * (v13.2.0 as an experimental feature), confirmed via node_modules/next/dist/docs/.../
- * instrumentation.md. This is the Next.js-blessed place to start the scheduler's in-process
- * interval timer; there is no custom server in this project (next.config.ts is default/minimal) and
- * none is being introduced here.
+ * Next.js instrumentation entry point (Phase 4 Stage 1; Stage 23 added the production-cycle tick
+ * below). `register()` is called once when a new Next.js server instance initializes, before it
+ * starts handling requests — stable since v15.0.0 (v13.2.0 as an experimental feature), confirmed
+ * via node_modules/next/dist/docs/.../instrumentation.md. This is the Next.js-blessed place to start
+ * in-process interval timers; there is no custom server in this project (next.config.ts is
+ * default/minimal) and none is being introduced here.
+ *
+ * IMPORTANT — this is a purely local, single-machine scheduling model: both timers below only run
+ * for as long as THIS Node.js process (`next dev` / `next start`) is alive. There is no cloud cron,
+ * no external scheduler, no wake-on-schedule mechanism. If the Mac is asleep, shut down, or the app
+ * isn't running, NOTHING here fires — scheduled production cycles and scans simply don't happen
+ * until the app is running again, at which point the "run once immediately" restart-safety behavior
+ * below picks up whatever became overdue while it was down. Do not treat this as cloud-like
+ * reliability; if that's ever needed, it requires a genuinely different deployment (e.g. an external
+ * cron hitting an API route, or a hosted always-on process), which is out of scope here.
  *
  * `register()` runs in both the Node.js and Edge runtimes — guarded below with NEXT_RUNTIME so the
- * timer (which needs setInterval + better-sqlite3, neither meaningful/available under Edge) is only
+ * timers (which need setInterval + better-sqlite3, neither meaningful/available under Edge) are only
  * ever started once, under Node.js.
  *
- * Starting the app with the scheduler disabled must create no scans: this file only ever starts a
- * periodic CHECK — every actual run/no-run decision, including whether the scheduler is enabled at
- * all, happens fresh inside runSchedulerTick() (src/lib/scheduler/tick.ts) on every tick. Nothing
- * here reads or caches `scheduler.enabled` itself.
+ * Starting the app with the scheduler disabled must create no scans/cycles: this file only ever
+ * starts periodic CHECKS — every actual run/no-run decision, including whether the scheduler is
+ * enabled at all, happens fresh inside runSchedulerTick() (src/lib/scheduler/tick.ts) and
+ * runProductionCycleTick() (src/lib/production/tick.ts) on every tick. Nothing here reads or caches
+ * `scheduler.enabled` itself.
  */
 
 let schedulerTimerStarted = false;
 
-// How often to CHECK whether a scan is due — not the scan cadence itself, which is governed by
+// How often to CHECK whether a scan/cycle is due — not the cadence itself, which is governed by
 // scheduler.intervalMinutes (min 30, enforced in src/lib/settings.ts's SCHEDULER_BOUNDS) inside
-// runSchedulerTick. A 60s check interval notices a newly-due window/interval promptly without
+// runSchedulerTick, and by PRODUCTION_CYCLE_INTERVAL_MINUTES (src/lib/production/tick.ts) inside
+// runProductionCycleTick. A 60s check interval notices a newly-due window/interval promptly without
 // meaningfully polling the DB.
 const TICK_CHECK_INTERVAL_MS = 60_000;
 
@@ -34,6 +45,7 @@ export async function register() {
   schedulerTimerStarted = true;
 
   const { runSchedulerTick } = await import("@/lib/scheduler/tick");
+  const { runProductionCycleTick } = await import("@/lib/production/tick");
 
   const tick = () => {
     runSchedulerTick().catch((err) => {
@@ -44,9 +56,22 @@ export async function register() {
     });
   };
 
-  // Run once immediately (restart safety: if a scan was already due before this server instance
-  // started, don't make it wait up to TICK_CHECK_INTERVAL_MS to be noticed), then on a fixed
-  // interval thereafter.
+  const productionCycleTick = () => {
+    // Same never-throw contract as runSchedulerTick — see runProductionCycleTick's own doc comment.
+    // Independent lock (the production-cycle lease, not the scan lock), so this can never contend
+    // with a concurrently-running scheduled scan for the same mutex.
+    runProductionCycleTick().catch((err) => {
+      console.error("[production-cycle] unexpected error in runProductionCycleTick:", err);
+    });
+  };
+
+  // Run once immediately (restart safety: if a scan/cycle was already due before this server
+  // instance started — e.g. the Mac was asleep past the scheduled window — don't make it wait up to
+  // TICK_CHECK_INTERVAL_MS to be noticed, and don't require more than this ONE immediate catch-up
+  // attempt; isIntervalDue's own bookkeeping naturally prevents a burst of back-to-back catch-up
+  // cycles once this one starts), then on a fixed interval thereafter.
   tick();
+  productionCycleTick();
   setInterval(tick, TICK_CHECK_INTERVAL_MS);
+  setInterval(productionCycleTick, TICK_CHECK_INTERVAL_MS);
 }

@@ -2,17 +2,22 @@ import { getDb } from "@/db";
 import { listScanReadyCompanies } from "@/db/queries/organizationRegistry";
 import { getConnectorReliabilitySummary } from "@/db/queries/reliability";
 import { getCircuitBreakerDecisions } from "@/lib/ats/reliability/circuitBreaker";
-import { getProductionCycleRuntimeState } from "./state";
+import { getProductionCycleLockStatus, getProductionCycleRuntimeState } from "./state";
 import type { MorningReadinessSummary } from "./types";
 
 export function getMorningReadinessSummary(): MorningReadinessSummary {
   const db = getDb();
   const runtime = getProductionCycleRuntimeState();
+  const lockStatus = getProductionCycleLockStatus();
   const reliabilitySummary = getConnectorReliabilitySummary();
   const circuitDecisions = getCircuitBreakerDecisions(24);
   const openCircuits = circuitDecisions.filter((d) => d.open).map((d) => d.provider);
 
-  const scanReadyCompanies = listScanReadyCompanies().length;
+  const scanReadyCompaniesList = listScanReadyCompanies();
+  const scanReadyCompanies = scanReadyCompaniesList.length;
+  const scanReadyCompaniesNeverScanned = scanReadyCompaniesList.filter(
+    (c) => !c.last_scanned_at
+  ).length;
 
   // Fresh active US jobs (<= 20 days old)
   const freshJobsRow = db
@@ -136,6 +141,9 @@ export function getMorningReadinessSummary(): MorningReadinessSummary {
       durationMs: runtime.lastDurationMs,
       status: runtime.lastStatus,
       statusReason: lastSummary?.statusReason ?? runtime.lastError,
+      isRunning: lockStatus.held,
+      runningSinceAt: lockStatus.held ? lockStatus.trueAcquiredAt : null,
+      scanReadyCompaniesNeverScanned,
     },
     ats: {
       scanReadyCompanies,

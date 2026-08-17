@@ -21,6 +21,7 @@ function formatDuration(ms: number | null): string {
 }
 
 const STATUS_STYLES: Record<string, string> = {
+  RUNNING: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-400 border-blue-300 dark:border-blue-800",
   READY: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800",
   DEGRADED: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-400 border-amber-300 dark:border-amber-800",
   FAILED: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-400 border-red-300 dark:border-red-800",
@@ -76,7 +77,7 @@ export function MorningReadinessSection() {
 
   const readiness = data?.readiness;
   const lock = data?.lock;
-  const status = readiness?.productionCycle.status || "UNINITIALIZED";
+  const status = readiness?.productionCycle.isRunning ? "RUNNING" : readiness?.productionCycle.status || "UNINITIALIZED";
 
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -93,11 +94,16 @@ export function MorningReadinessSection() {
             </span>
           </div>
           <p className="mt-1 text-xs text-zinc-500">
-            {readiness?.productionCycle.lastRunAt
-              ? `Last production cycle: ${formatTimestamp(readiness.productionCycle.lastRunAt)} (duration: ${formatDuration(
-                  readiness.productionCycle.durationMs
-                )})`
-              : "No production cycle executed yet."}
+            {readiness?.productionCycle.isRunning
+              ? `Running since ${formatTimestamp(readiness.productionCycle.runningSinceAt)}`
+              : readiness?.productionCycle.lastRunAt
+                ? `Last production cycle: ${formatTimestamp(readiness.productionCycle.lastRunAt)} (duration: ${formatDuration(
+                    readiness.productionCycle.durationMs
+                  )})`
+                : "No production cycle executed yet."}
+            {readiness && readiness.productionCycle.scanReadyCompaniesNeverScanned > 0
+              ? ` · ${readiness.productionCycle.scanReadyCompaniesNeverScanned} scan-ready compan${readiness.productionCycle.scanReadyCompaniesNeverScanned === 1 ? "y" : "ies"} never scanned`
+              : ""}
           </p>
         </div>
 
