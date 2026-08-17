@@ -281,6 +281,11 @@ export async function GET(
       isAuthorized,
       blockingReason: authorizationBlockingReason,
       matchDecision: matchResult?.decision ?? "NO_MATCH",
+      // Stage 24A — surfaced separately from matchDecision (never a new Decision enum value, which
+      // would touch ~21 existing call sites) so the UI can distinguish "genuinely reviewed
+      // borderline case" from "evaluated with too little structured JD data to mean anything" —
+      // both currently collapse into the same NEEDS_REVIEW decision.
+      insufficientJdSignal: Boolean(matchResult?.insufficient_jd_signal),
     },
     iterations,
     latestReview,

@@ -1,10 +1,10 @@
 /**
- * Next.js instrumentation entry point (Phase 4 Stage 1; Stage 23 added the production-cycle tick
- * below). `register()` is called once when a new Next.js server instance initializes, before it
- * starts handling requests — stable since v15.0.0 (v13.2.0 as an experimental feature), confirmed
- * via node_modules/next/dist/docs/.../instrumentation.md. This is the Next.js-blessed place to start
- * in-process interval timers; there is no custom server in this project (next.config.ts is
- * default/minimal) and none is being introduced here.
+ * Next.js instrumentation entry point (Phase 4 Stage 1; Stage 23 added the production-cycle tick;
+ * Stage 24A added the job-evaluation tick below). `register()` is called once when a new Next.js
+ * server instance initializes, before it starts handling requests — stable since v15.0.0 (v13.2.0 as
+ * an experimental feature), confirmed via node_modules/next/dist/docs/.../instrumentation.md. This
+ * is the Next.js-blessed place to start in-process interval timers; there is no custom server in
+ * this project (next.config.ts is default/minimal) and none is being introduced here.
  *
  * IMPORTANT — this is a purely local, single-machine scheduling model: both timers below only run
  * for as long as THIS Node.js process (`next dev` / `next start`) is alive. There is no cloud cron,
@@ -46,6 +46,7 @@ export async function register() {
 
   const { runSchedulerTick } = await import("@/lib/scheduler/tick");
   const { runProductionCycleTick } = await import("@/lib/production/tick");
+  const { runJobEvaluationTick } = await import("@/lib/match/tick");
 
   const tick = () => {
     runSchedulerTick().catch((err) => {
@@ -65,13 +66,23 @@ export async function register() {
     });
   };
 
-  // Run once immediately (restart safety: if a scan/cycle was already due before this server
-  // instance started — e.g. the Mac was asleep past the scheduled window — don't make it wait up to
-  // TICK_CHECK_INTERVAL_MS to be noticed, and don't require more than this ONE immediate catch-up
-  // attempt; isIntervalDue's own bookkeeping naturally prevents a burst of back-to-back catch-up
-  // cycles once this one starts), then on a fixed interval thereafter.
+  const jobEvaluationTick = () => {
+    // Same never-throw contract — see runJobEvaluationTick's own doc comment for why this is a
+    // separate tick from productionCycleTick rather than a phase inside runProductionCycle().
+    runJobEvaluationTick().catch((err) => {
+      console.error("[job-evaluation] unexpected error in runJobEvaluationTick:", err);
+    });
+  };
+
+  // Run once immediately (restart safety: if a scan/cycle/evaluation was already due before this
+  // server instance started — e.g. the Mac was asleep past the scheduled window — don't make it
+  // wait up to TICK_CHECK_INTERVAL_MS to be noticed, and don't require more than this ONE immediate
+  // catch-up attempt; isIntervalDue's own bookkeeping naturally prevents a burst of back-to-back
+  // catch-up cycles once this one starts), then on a fixed interval thereafter.
   tick();
   productionCycleTick();
+  jobEvaluationTick();
   setInterval(tick, TICK_CHECK_INTERVAL_MS);
   setInterval(productionCycleTick, TICK_CHECK_INTERVAL_MS);
+  setInterval(jobEvaluationTick, TICK_CHECK_INTERVAL_MS);
 }

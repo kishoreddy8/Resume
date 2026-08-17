@@ -151,8 +151,17 @@ export function MatchCard({ jobId }: { jobId: number }) {
 
       {state === "ok" && result && (
         <div className="space-y-3">
+          {result.insufficientJdSignal && (
+            <div className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400">
+              Evaluated with insufficient structured JD data — the score below reflects near-zero
+              signal, not a genuine negative match. Re-run Evaluate Match after the job has real
+              extracted requirements.
+            </div>
+          )}
           <div>
-            <div className="text-xs font-medium text-zinc-500">Overall Score</div>
+            <div className="text-xs font-medium text-zinc-500">
+              Overall Score{result.insufficientJdSignal && <span className="ml-1 font-normal text-amber-600 dark:text-amber-500">(low confidence)</span>}
+            </div>
             <div className="text-lg font-semibold">{typeof result.overallScore === "number" ? Math.round(result.overallScore) : "—"}</div>
           </div>
 

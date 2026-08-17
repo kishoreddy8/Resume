@@ -39,6 +39,7 @@ interface QualityWorkflowResponse {
     isAuthorized: boolean;
     blockingReason: string | null;
     matchDecision: string;
+    insufficientJdSignal: boolean;
   };
   iterations: Array<{
     id: number;
@@ -477,6 +478,24 @@ export function ResumeQualityPipeline({
               >
                 {actionBusy ? "Authorizing…" : "Approve & Start Tailoring"}
               </button>
+            ) : authorization.matchDecision === "NEEDS_REVIEW" && authorization.insufficientJdSignal ? (
+              // Stage 24A: this is NOT a genuinely-reviewed borderline case — the evaluation ran
+              // with too little structured JD data to mean anything (see insufficientJdSignal on
+              // JobMatchResult). Offering the same override button here would make "CareerOps
+              // failed to evaluate" look identical to "a human reviewed this and it's a real
+              // judgment call". Re-evaluating (now that job intelligence exists) is the correct
+              // next step, not an exceptional override.
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-amber-700 dark:text-amber-500">
+                  Evaluated with insufficient structured JD data — this is not a real match judgment yet.
+                </p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="rounded border border-amber-300 px-3.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/40"
+                >
+                  Re-evaluate from the job page, then return here
+                </button>
+              </div>
             ) : authorization.matchDecision === "NEEDS_REVIEW" ? (
               <button
                 onClick={() => handleStartTailoring("NEEDS_REVIEW_OVERRIDE")}

@@ -2,10 +2,36 @@ import { getDb } from "@/db";
 import { getCompany } from "@/db/queries/companies";
 import { archiveJob, upsertJob } from "@/db/queries/jobs";
 import { markObservationResultingJob } from "@/db/queries/externalHiringObservations";
+import { upsertJobIntel } from "@/db/queries/jobIntel";
 import { dedupeKeyForAts } from "@/lib/dedupe";
 import { parseAtsDate } from "@/lib/ats/jobFreshness";
+import { htmlToBlockText, parseDescriptionSections } from "@/lib/parseSections";
+import { scanSponsorshipLanguage } from "@/lib/h1b/keywordScan";
+import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
+import { extractJobIntel } from "@/lib/jobIntel/extractJobIntel";
 import type { ExternalSignalSource } from "./types";
 import type { ExternalHiringObservationRow, NormalizedExternalJob } from "./types";
+
+// External-signals providers (Built In today; google_jobs/indeed if ever enabled) hand back either
+// clean plain text or raw HTML in their description field depending on the provider's own payload
+// shape — unlike ATS adapters (src/lib/ats/*), which each normalize this themselves before it ever
+// reaches this module. A simple tag sniff is enough to tell the two apart without a full HTML parser.
+// Exported for reuse by scripts/backfill-job-intelligence.ts, which applies the identical split to
+// already-stored rows whose description_text still holds pre-fix raw HTML.
+export function looksLikeHtml(text: string): boolean {
+  return /<[a-z][\s\S]*>/i.test(text);
+}
+
+/** Splits a provider's raw description into (descriptionHtml, descriptionText) the same way every
+ *  ATS adapter already does before calling upsertJob — descriptionHtml preserves block/bullet
+ *  boundaries (via htmlToBlockText) for downstream parsing (parseDescriptionSections,
+ *  extractJobIntel's toLines), descriptionText is the clean human-readable form. Plain-text input
+ *  (no HTML) passes through unchanged in both directions it's already needed. */
+export function splitDescription(raw: string | null): { descriptionHtml: string | null; descriptionText: string | null } {
+  if (!raw) return { descriptionHtml: null, descriptionText: null };
+  if (!looksLikeHtml(raw)) return { descriptionHtml: null, descriptionText: raw };
+  return { descriptionHtml: raw, descriptionText: htmlToBlockText(raw) };
+}
 
 /**
  * Stage 13 Phase 8 — provider/date-confidence-aware posted_at persistence. Built In's own datePosted
@@ -48,6 +74,11 @@ export function stageSecondaryJob(
   companyId: number
 ): StageSecondaryJobResult {
   const dedupeKey = dedupeKeyForAts(observation.source, companyId, observation.fingerprint);
+  const { descriptionHtml, descriptionText } = splitDescription(job.description);
+  const sections = parseDescriptionSections(descriptionHtml);
+  const { mentioned, polarity, snippet } = scanSponsorshipLanguage(descriptionText);
+  const company = getCompany(companyId);
+  const { confidence: h1bCombinedConfidence } = combineH1bConfidence(company?.h1b_confidence ?? "Unknown", polarity);
 
   const outcome = upsertJob({
     companyId,
@@ -59,23 +90,46 @@ export function stageSecondaryJob(
       location: job.location,
       department: null,
       url: job.listingUrl,
-      descriptionHtml: null,
-      descriptionText: job.description,
+      descriptionHtml,
+      descriptionText,
       employmentType: job.employmentType,
       workplaceType: null,
       salaryText: job.salaryText,
       postedAt: reliablePostedAtIso(observation.source, job.postedAt),
       raw: job.raw,
     },
-    descriptionSections: null,
-    sponsorshipMentioned: false,
-    sponsorshipPolarity: "none",
-    sponsorshipSnippet: null,
-    h1bCombinedConfidence: "Unknown",
+    descriptionSections: sections ? JSON.stringify(sections) : null,
+    sponsorshipMentioned: mentioned,
+    sponsorshipPolarity: polarity,
+    sponsorshipSnippet: snippet,
+    h1bCombinedConfidence,
   });
 
   const row = getDb().prepare("SELECT id FROM jobs WHERE dedupe_key = ?").get(dedupeKey) as { id: number } | undefined;
   if (row) markObservationResultingJob(observation.id, row.id);
+
+  // Structured Job Intelligence — same best-effort, non-fatal pattern scan.ts's ATS path already
+  // uses: a failure here must never take down secondary-job ingestion, since this is purely
+  // additive metadata, not load-bearing for lifecycle/H1B/tailoring. Skipped for "suppressed"
+  // outcomes (no job row was written to attach intel to).
+  if (outcome !== "suppressed" && row) {
+    try {
+      const intel = extractJobIntel({
+        title: job.title,
+        descriptionText,
+        descriptionHtml,
+        employmentTypeNative: job.employmentType,
+        workplaceTypeNative: null,
+        locationNative: job.location,
+        salaryTextNative: job.salaryText,
+        sponsorshipPolarity: polarity,
+        sponsorshipSnippet: snippet,
+      });
+      upsertJobIntel(row.id, intel);
+    } catch (err) {
+      console.error(`Structured Job Intelligence extraction failed for ${dedupeKey}:`, err);
+    }
+  }
 
   return { outcome, jobId: row?.id ?? null, dedupeKey };
 }
