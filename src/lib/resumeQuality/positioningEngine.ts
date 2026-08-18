@@ -12,8 +12,8 @@ import { extractCanonicalSkillsFromText, resolveSkillForReview } from "./reviewe
  *
  * Two deterministic checks, both against the JD Priority Matrix (jdPriorityMatrix.ts) — never against
  * raw JD keyword frequency:
- *   1. ROLE IDENTITY: the tagline must share real wording with the target role (P0). A resume that
- *      drops "Senior" or substitutes an unrelated title is flagged.
+ *   1. ROLE IDENTITY: the tagline must share the target role's SPECIALISATION, not merely its
+ *      profession noun, and must not contradict its seniority. See evaluateRoleIdentity.
  *   2. SECONDARY-TECH HIJACK: the tagline/summary opening must not be built entirely from P3/P4
  *      (preferred/optional) technologies while P1 (critical) requirements the candidate actually has
  *      evidence for are absent from it. This is what would have caught the real observed failure.
@@ -26,6 +26,29 @@ export interface PositioningEvaluation {
 
 const TITLE_STOPWORDS = new Set(["the", "a", "of", "and", "for", "in", "on", "with"]);
 
+/**
+ * Profession nouns almost every technical title contains. They say WHAT KIND of professional someone
+ * is, never WHICH role — "Sales Engineer", "Network Engineer" and "Data Engineer" all share
+ * "engineer" and are three different jobs. Sharing only one of these is not shared role identity.
+ */
+const GENERIC_PROFESSION_NOUNS = new Set([
+  "engineer", "engineering", "developer", "programmer", "analyst", "scientist", "architect",
+  "administrator", "specialist", "consultant", "manager", "director", "designer", "technician",
+]);
+
+/**
+ * Headline words that unambiguously claim an EARLY-CAREER level. Deliberately not a full seniority
+ * ladder: this engine only detects a headline that contradicts a mid-or-above target, never a
+ * Senior-vs-Staff or IC-vs-management gap. src/lib/match/seniority.ts already documents why those
+ * are not linearly comparable across employers, and treating them as ordered here would manufacture
+ * positioning failures on ordinary, perfectly well-targeted applications.
+ */
+const EARLY_CAREER_WORDS = new Set(["intern", "internship", "trainee", "apprentice", "junior", "jr", "entry"]);
+
+/** Target-role words that place the role at mid level or above — the only case an early-career
+ *  headline actually contradicts. A target with no stated level is left alone. */
+const MID_OR_ABOVE_WORDS = new Set(["mid", "senior", "sr", "staff", "lead", "principal", "director", "head", "vp"]);
+
 function significantTitleWords(title: string): Set<string> {
   return new Set(
     title
@@ -35,16 +58,58 @@ function significantTitleWords(title: string): Set<string> {
   );
 }
 
+const hasAny = (words: Set<string>, vocabulary: Set<string>): boolean => [...words].some((w) => vocabulary.has(w));
+
+/**
+ * STAGE 25A — WHY THIS IS NO LONGER A BARE WORD-OVERLAP TEST. The previous implementation flagged a
+ * headline only when it shared ZERO words with the target role. Because virtually every engineering
+ * title ends in the same profession noun, that made the check inert for the entire class of failures
+ * it was written to catch. Measured directly against a "Senior Data Engineer" target, all of these
+ * passed: "Data Engineer" (the documented drop-"Senior" case the comment claimed was flagged),
+ * "Junior Data Engineer" (an outright demotion), "Sales Engineer" and "Network Engineer" (different
+ * professions). Only "Mammography Technologist" — sharing literally no word — failed.
+ *
+ * Two precise rules replace it:
+ *   a. SPECIALISATION. The overlap must contain at least one word that is not a generic profession
+ *      noun. "Sales Engineer" vs "Senior Data Engineer" overlaps only on "engineer" and is flagged;
+ *      "Data Engineer" vs "Senior Data Engineer" also shares "data" and is not.
+ *   b. SENIORITY CONTRADICTION, narrowly. Only an EARLY-CAREER headline ("Junior"/"Intern"/"Entry")
+ *      against a mid-or-above target is flagged. Two things are deliberately NOT flagged. Omitting
+ *      the level entirely: correcting a contradiction only means deleting a word, whereas demanding a
+ *      level the headline never claimed would pressure the writer into asserting seniority the
+ *      candidate's history may not support — underselling by omission is a recruiter-quality
+ *      judgement (recruiterQualityGate.ts's `underselling` dimension), never a job for the engine
+ *      that could invite a fabricated title. And Senior-vs-Staff or IC-vs-management gaps: those are
+ *      not linearly comparable across employers (see src/lib/match/seniority.ts's own note), so
+ *      ordering them here would fail ordinary, well-targeted applications.
+ */
 function evaluateRoleIdentity(resume: ResumeContent, targetRoleTitle: string): string[] {
   const target = significantTitleWords(targetRoleTitle);
   const tagline = significantTitleWords(resume.tagline);
+  const issues: string[] = [];
+
   const overlap = [...target].filter((w) => tagline.has(w));
+  const specialisationOverlap = overlap.filter(
+    (w) => !GENERIC_PROFESSION_NOUNS.has(w) && !EARLY_CAREER_WORDS.has(w) && !MID_OR_ABOVE_WORDS.has(w)
+  );
+
   if (overlap.length === 0) {
-    return [
-      `Resume headline "${resume.tagline}" shares no wording with the target role "${targetRoleTitle}" — role identity is not obvious within the first few seconds of reading.`,
-    ];
+    issues.push(
+      `Resume headline "${resume.tagline}" shares no wording with the target role "${targetRoleTitle}" — role identity is not obvious within the first few seconds of reading.`
+    );
+  } else if (specialisationOverlap.length === 0) {
+    issues.push(
+      `Resume headline "${resume.tagline}" shares only the generic profession noun (${overlap.join(", ")}) with the target role "${targetRoleTitle}" — it does not communicate the specific role being applied for.`
+    );
   }
-  return [];
+
+  if (hasAny(tagline, EARLY_CAREER_WORDS) && hasAny(target, MID_OR_ABOVE_WORDS)) {
+    issues.push(
+      `Resume headline "${resume.tagline}" claims an early-career level while the target role "${targetRoleTitle}" is mid-level or above — the headline contradicts the level the application is for.`
+    );
+  }
+
+  return issues;
 }
 
 function skillsInText(text: string): Set<string> {
