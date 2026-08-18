@@ -57,11 +57,21 @@ export const SKILL_TAXONOMY: SkillTaxonomyEntry[] = [
   { canonical: "dbt", category: "Data Engineering", aliases: ["dbt"] },
   { canonical: "Azure Data Factory", category: "Data Engineering", aliases: ["azure data factory"] },
   { canonical: "Hadoop", category: "Data Engineering", aliases: ["hadoop"] },
-  // Added during Phase 2 real-data taxonomy coverage pass. CDC/SCD are extremely common, unambiguous
-  // data-engineering terms; the two duplicate real-world phrasings ("CDC" and "Change Data Capture
-  // (CDC)") both resolve to one canonical entry.
+  // Added during Phase 2 real-data taxonomy coverage pass. The two duplicate real-world phrasings
+  // ("CDC" and "Change Data Capture (CDC)") both resolve to one canonical entry.
+  //
+  // STAGE 25B — the bare "scd" alias is REMOVED. That pass called these acronyms "unambiguous"; the
+  // real corpus disagreed. Across 20,410 jobs the bare alias produced exactly ONE match, and it was
+  // wrong: "experience with a PhD, DrPH, PharmD, MD, ScD, or equivalent advanced training" on a
+  // Senior Clinical Research Scientist posting, where ScD is a Doctor of Science degree. Matching is
+  // case-insensitive, so a two-letter-plus acronym that collides with a common credential cannot
+  // carry itself. The unambiguous expansions are kept and still match every genuine usage.
+  //
+  // "cdc" is deliberately KEPT despite the same shape: it earns its place (12 matches, of which the
+  // Kafka/Flink/streaming ones are genuine), but see the Stage 25B report for the hardware
+  // "Clock Domain Crossing" collisions it still produces on digital-design postings.
   { canonical: "CDC", category: "Data Engineering", aliases: ["change data capture", "cdc"] },
-  { canonical: "SCD", category: "Data Engineering", aliases: ["slowly changing dimension", "scd type 1", "scd type 2", "scd"] },
+  { canonical: "SCD", category: "Data Engineering", aliases: ["slowly changing dimension", "scd type 1", "scd type 2"] },
   // Data-modeling pattern terms — legitimate, commonly-named JD requirements, not tools, but real
   // matchable technical concepts. "Snowflake Schema" is deliberately its own entry with its own
   // full-phrase alias so it can never be confused with the "Snowflake" warehouse product (see the

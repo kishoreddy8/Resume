@@ -1,6 +1,6 @@
 import { getDb } from "@/db";
 import type { StructuredJobIntel } from "@/lib/jobIntel/types";
-import type { JobCertification, JobSkill } from "@/types";
+import type { DescriptionSections, JobCertification, JobSkill } from "@/types";
 
 function toJsonOrNull(value: unknown): string | null {
   return value === null || value === undefined ? null : JSON.stringify(value);
@@ -131,6 +131,28 @@ export function upsertJobIntel(jobId: number, intel: StructuredJobIntel): void {
     }
   });
   run();
+}
+
+/**
+ * Stage 25B — refreshes jobs.description_sections from a freshly-parsed section map.
+ *
+ * WHY THIS IS SEPARATE FROM upsertJobIntel. That function persists every structured FIELD it is
+ * given, but description_sections was only ever written by upsertJob() at scan time. So a change to
+ * src/lib/parseSections.ts reached job_skills immediately (extraction parses sections in memory and
+ * classifies from them) while leaving the stored column on the OLD parse — and
+ * buildEvaluateJobMatchInput reads that stored column to feed detectUnclaimedRequirements. The two
+ * halves of requirement construction would then disagree with each other: skills derived from the
+ * new boundaries, unresolved requirement units from the old ones. Exactly the stale-derived-data
+ * split that made Blocker 3's sponsorship polarity wrong, in a different column.
+ *
+ * Kept as its own call rather than folded into upsertJobIntel because upsertJobIntel receives
+ * StructuredJobIntel, whose `sections` field is the relabelled ExtractedSections view (it drops the
+ * `skills` bucket); writing that back would silently lose a section the extractor still uses.
+ */
+export function setJobDescriptionSections(jobId: number, sections: DescriptionSections | null): void {
+  getDb()
+    .prepare(`UPDATE jobs SET description_sections = @sections, updated_at = datetime('now') WHERE id = @jobId`)
+    .run({ jobId, sections: sections ? JSON.stringify(sections) : null });
 }
 
 export function getJobSkills(jobId: number): JobSkill[] {

@@ -47,13 +47,32 @@ export async function register() {
   const { runSchedulerTick } = await import("@/lib/scheduler/tick");
   const { runProductionCycleTick } = await import("@/lib/production/tick");
   const { runJobEvaluationTick } = await import("@/lib/match/tick");
+  const { closeDbConnection } = await import("@/db");
+  const { handleDbFailure } = await import("@/db/health");
+
+  /**
+   * Stage 25B — the ticks are where a poisoned SQLite handle actually showed up in production: the
+   * scheduler tick logged `database disk image is malformed` every 60 seconds for over six hours
+   * while nothing reopened the connection. Classifying the failure here discards the dead handle so
+   * the very next tick (and every API request in between) gets a healthy one. Nothing is retried in
+   * place — these ticks are already idempotent and will simply run again on their own schedule,
+   * which is exactly the safe way to recover work that may have half-completed.
+   */
+  const onTickError = (scope: string, err: unknown) => {
+    const outcome = handleDbFailure(err, closeDbConnection);
+    if (outcome === "unrelated") {
+      console.error(`[${scope}] unexpected error:`, err);
+      return;
+    }
+    console.error(`[${scope}] database connection failure; recovery outcome: ${outcome}`);
+  };
 
   const tick = () => {
     runSchedulerTick().catch((err) => {
       // runSchedulerTick() is designed to never throw — every failure path resolves to a FAILED
       // outcome instead. This catch is a last-resort safety net only, so a truly unexpected error
       // can never take down the interval timer itself.
-      console.error("[scheduler] unexpected error in runSchedulerTick:", err);
+      onTickError("scheduler", err);
     });
   };
 
@@ -62,7 +81,7 @@ export async function register() {
     // Independent lock (the production-cycle lease, not the scan lock), so this can never contend
     // with a concurrently-running scheduled scan for the same mutex.
     runProductionCycleTick().catch((err) => {
-      console.error("[production-cycle] unexpected error in runProductionCycleTick:", err);
+      onTickError("production-cycle", err);
     });
   };
 
@@ -70,7 +89,7 @@ export async function register() {
     // Same never-throw contract — see runJobEvaluationTick's own doc comment for why this is a
     // separate tick from productionCycleTick rather than a phase inside runProductionCycle().
     runJobEvaluationTick().catch((err) => {
-      console.error("[job-evaluation] unexpected error in runJobEvaluationTick:", err);
+      onTickError("job-evaluation", err);
     });
   };
 

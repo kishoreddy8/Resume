@@ -838,3 +838,28 @@ export function getDb(): Database.Database {
   }
   return global.__careerOpsDb;
 }
+
+/**
+ * Stage 25B — discards the cached connection so the NEXT getDb() opens a fresh one.
+ *
+ * This exists because the cached handle is process-lifetime and had no path that ever released it:
+ * when its WAL index was pulled out from under it (see src/db/health.ts for the full incident), the
+ * server returned HTTP 500 from every API route for six hours while the file on disk was provably
+ * intact. Closing is best-effort on purpose — a poisoned handle can fail to close, and refusing to
+ * drop the reference in that case would defeat the entire recovery.
+ *
+ * Not a general-purpose "reset the database" helper: reconnecting re-runs createConnection()'s
+ * schema/migration pass, which is idempotent but not free, so this is only called from the health
+ * layer's bounded recovery path.
+ */
+export function closeDbConnection(): void {
+  const existing = global.__careerOpsDb;
+  global.__careerOpsDb = undefined;
+  if (!existing) return;
+  try {
+    existing.close();
+  } catch {
+    // Intentionally swallowed: the reference is already dropped, so the next getDb() reconnects
+    // regardless of whether this handle could be closed cleanly.
+  }
+}

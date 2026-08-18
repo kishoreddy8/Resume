@@ -30,8 +30,15 @@ import { toExtractedSections } from "./sections";
  *  REQUIRED bucket (2,452 jobs), and "Required …" headings matched no rule at all so their content
  *  was discarded (+1,211 jobs). Both change which requirement_level a skill is stored under and
  *  whether it is stored at all, so every already-extracted job carries the old classification in
- *  job_skills until re-extracted with `npm run extract-job-intel`. */
-export const EXTRACTION_VERSION = 3;
+ *  job_skills until re-extracted with `npm run extract-job-intel`.
+ *
+ *  v4 (Stage 25B): parseSections.ts now terminates a section context-awarely — an unmatched
+ *  heading-shaped line only closes an open section when it reads like a genuine section label, so
+ *  sub-headings ("To be successful in this role you have:") and heading-shaped requirement bullets
+ *  ("Bachelor's degree") no longer discard the requirements that follow them. Changes which lines
+ *  land in requiredQualifications/preferredQualifications, and therefore which job_skills rows exist
+ *  and at what requirement_level. */
+export const EXTRACTION_VERSION = 4;
 
 /**
  * Orchestrates every extractor over one job's already-stored data. Pure function — no DB access,

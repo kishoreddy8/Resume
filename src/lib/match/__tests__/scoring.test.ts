@@ -148,3 +148,20 @@ test("criticalGaps returns only CRITICAL units that are MISSING or UNRESOLVED", 
   ]);
   assert.equal(gaps.length, 1);
 });
+
+test("Stage 25B: an UNRESOLVED free-text requirement line does not anchor the score", () => {
+  // detectUnclaimedRequirements emits kind "skill" with an EMPTY memberSkillNames. Those units are
+  // deliberately UNRESOLVED against coverage; treating them as a skill anchor let a posting with no
+  // taxonomy-resolved skill at all (e.g. "Crisis & Referral Specialist", whose only evidenced unit
+  // was a Bachelor's degree) reach 61.1 with role alignment 0 and outrank real engineering postings.
+  const dims = { roleAlignment: 0, required: 100, preferred: 0, experience: 100, seniority: null };
+  assert.equal(computeOverallScore(dims, true), 61.1);
+  assert.equal(computeOverallScore(dims, false), 53.3);
+  assert.ok(computeOverallScore(dims, false) < computeOverallScore(dims, true));
+});
+
+test("Stage 25B: a resolved skill requirement still anchors experience and seniority", () => {
+  const dims = { roleAlignment: 100, required: 90, preferred: 80, experience: 100, seniority: 100 };
+  assert.equal(computeOverallScore(dims, true), computeOverallScore(dims));
+  assert.ok(computeOverallScore(dims, true) > computeOverallScore(dims, false));
+});

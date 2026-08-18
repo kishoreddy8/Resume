@@ -30,7 +30,7 @@
  *     npx tsx tools/acceptance/stage24c-acceptance.ts            # Phase 5 items 1-14, Phase 6 A-D
  *     npx tsx tools/acceptance/stage24c-acceptance.ts --top20    # also item 15 (needs `npm run dev`)
  *
- * Expected versions after Stage 25A: MATCH_ENGINE_VERSION 4, EXTRACTION_VERSION 3.
+ * Expected versions after Stage 25B: MATCH_ENGINE_VERSION 6, EXTRACTION_VERSION 4.
  */
 import { getDb, getDbPath } from "../../src/db";
 import { MATCH_ENGINE_VERSION } from "../../src/lib/match/scoring";
@@ -38,8 +38,8 @@ import { EXTRACTION_VERSION } from "../../src/lib/jobIntel/extractJobIntel";
 import { countJobsNeedingEvaluation } from "../../src/lib/match/autoEvaluate";
 
 const CANDIDATE_ID = 1;
-const EXPECTED_MATCH_ENGINE_VERSION = 4;
-const EXPECTED_EXTRACTION_VERSION = 3;
+const EXPECTED_MATCH_ENGINE_VERSION = 6;
+const EXPECTED_EXTRACTION_VERSION = 4;
 
 const db = getDb();
 const one = <T>(sql: string, ...params: unknown[]): T => db.prepare(sql).get(...params) as T;
@@ -124,7 +124,7 @@ console.log("\n-- 4/5. evaluations ---------------------------------------------
 console.log("latest active results    :", latestRows.length);
 console.log(
   "results by engine version:", JSON.stringify(Object.fromEntries(byVersion)),
-  byVersion.size === 1 && byVersion.has(EXPECTED_MATCH_ENGINE_VERSION) ? "OK — all at v4" : "MIXED — re-evaluation incomplete"
+  byVersion.size === 1 && byVersion.has(EXPECTED_MATCH_ENGINE_VERSION) ? `OK — all at v${EXPECTED_MATCH_ENGINE_VERSION}` : "MIXED — re-evaluation incomplete"
 );
 console.log("errors                   : (report the `errored` count printed by rematch-candidate — not persisted in the DB)");
 

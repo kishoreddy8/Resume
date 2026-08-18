@@ -28,6 +28,7 @@
     "match-h1b": "tsx scripts/match-h1b.ts",
     "rematch-candidate": "tsx scripts/rematch-candidate.ts",
     "extract-job-intel": "tsx scripts/extract-job-intel.ts",
+    "refresh-sponsorship-signals": "tsx scripts/refresh-sponsorship-signals.ts",
     "discover-employers": "tsx scripts/discover-employers.ts",
     "discover-organizations": "tsx scripts/discover-organizations.ts",
     "discover-organizations-continuous": "tsx scripts/discover-organizations-continuous.ts",

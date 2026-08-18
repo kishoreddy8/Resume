@@ -20,6 +20,44 @@ export interface AutomaticEvaluationResult {
 }
 
 /**
+ * The single WHERE clause both the selector and the counter use, so they can never drift apart.
+ * Stage 25B: this was previously inlined in the selector only, and countJobsNeedingEvaluation
+ * re-implemented "count" by materializing every id with LIMIT Number.MAX_SAFE_INTEGER and reading
+ * .length — which on the real corpus (17,961 active jobs, ~113k job_match_results rows) took minutes
+ * per call and made the acceptance harness, which calls it twice, unusable. Same predicate, one
+ * definition, COUNT(*) pushed into SQL.
+ */
+const NEEDS_EVALUATION_FROM_WHERE = `
+  FROM jobs j
+  LEFT JOIN (
+    SELECT dedupe_key, created_at, match_engine_version, match_knowledge_hash,
+           candidate_profile_hash, candidate_settings_hash,
+           ROW_NUMBER() OVER (PARTITION BY dedupe_key ORDER BY id DESC) AS rn
+    FROM job_match_results
+    WHERE candidate_id = @candidateId
+  ) latest ON latest.dedupe_key = j.dedupe_key AND latest.rn = 1
+  WHERE j.is_active = 1
+    AND j.is_archived = 0
+    AND (
+      latest.dedupe_key IS NULL
+      OR latest.match_engine_version <> @matchEngineVersion
+      OR latest.match_knowledge_hash <> @matchKnowledgeHash
+      OR latest.candidate_profile_hash <> @candidateProfileHash
+      OR latest.candidate_settings_hash <> @candidateSettingsHash
+      OR j.updated_at > latest.created_at
+    )`;
+
+function identityParams(candidateId: number, identity: CandidateMatchIdentity) {
+  return {
+    candidateId,
+    matchEngineVersion: identity.matchEngineVersion,
+    matchKnowledgeHash: identity.matchKnowledgeHash,
+    candidateProfileHash: identity.candidateProfileHash,
+    candidateSettingsHash: identity.candidateSettingsHash,
+  };
+}
+
+/**
  * Selects jobs genuinely needing (re-)evaluation for one candidate. Three independent reasons, all
  * evaluated against the candidate's CURRENT matching identity:
  *   1. No job_match_results row at all for this candidate (Stage 24A).
@@ -59,35 +97,11 @@ export interface AutomaticEvaluationResult {
 function listJobIdsNeedingEvaluation(candidateId: number, identity: CandidateMatchIdentity, limit: number): number[] {
   const rows = getDb()
     .prepare(
-      `SELECT j.id FROM jobs j
-       LEFT JOIN (
-         SELECT dedupe_key, created_at, match_engine_version, match_knowledge_hash,
-                candidate_profile_hash, candidate_settings_hash,
-                ROW_NUMBER() OVER (PARTITION BY dedupe_key ORDER BY id DESC) AS rn
-         FROM job_match_results
-         WHERE candidate_id = @candidateId
-       ) latest ON latest.dedupe_key = j.dedupe_key AND latest.rn = 1
-       WHERE j.is_active = 1
-         AND j.is_archived = 0
-         AND (
-           latest.dedupe_key IS NULL
-           OR latest.match_engine_version <> @matchEngineVersion
-           OR latest.match_knowledge_hash <> @matchKnowledgeHash
-           OR latest.candidate_profile_hash <> @candidateProfileHash
-           OR latest.candidate_settings_hash <> @candidateSettingsHash
-           OR j.updated_at > latest.created_at
-         )
+      `SELECT j.id ${NEEDS_EVALUATION_FROM_WHERE}
        ORDER BY j.posted_at DESC, j.id DESC
        LIMIT @limit`
     )
-    .all({
-      candidateId,
-      matchEngineVersion: identity.matchEngineVersion,
-      matchKnowledgeHash: identity.matchKnowledgeHash,
-      candidateProfileHash: identity.candidateProfileHash,
-      candidateSettingsHash: identity.candidateSettingsHash,
-      limit,
-    }) as { id: number }[];
+    .all({ ...identityParams(candidateId, identity), limit }) as { id: number }[];
   return rows.map((r) => r.id);
 }
 
@@ -97,7 +111,10 @@ function listJobIdsNeedingEvaluation(candidateId: number, identity: CandidateMat
 export function countJobsNeedingEvaluation(candidateId: number): number {
   const identity = resolveCandidateMatchIdentity(candidateId, getMatchAffectingSettings(candidateId));
   if (identity.status === "unavailable") return 0;
-  return listJobIdsNeedingEvaluation(candidateId, identity.identity, Number.MAX_SAFE_INTEGER).length;
+  const row = getDb()
+    .prepare(`SELECT COUNT(*) AS c ${NEEDS_EVALUATION_FROM_WHERE}`)
+    .get(identityParams(candidateId, identity.identity)) as { c: number };
+  return row.c;
 }
 
 /**

@@ -123,3 +123,117 @@ export function backfillJobIntelligence(limit: number): BackfillJobIntelligenceR
 
   return result;
 }
+
+// --- Stage 25B: sponsorship-signal refresh --------------------------------------------------------
+
+export interface SponsorshipRefreshRow {
+  jobId: number;
+  company: string;
+  title: string;
+  currentPolarity: string;
+  recomputedPolarity: string;
+  currentConfidence: string;
+  recomputedConfidence: string;
+  snippet: string | null;
+}
+
+export interface SponsorshipRefreshResult {
+  scanned: number;
+  differing: number;
+  updated: number;
+  /** "none->negative", "positive->negative", ... — the full transition histogram. */
+  transitions: Record<string, number>;
+  rows: SponsorshipRefreshRow[];
+}
+
+/**
+ * Stage 25B — Blocker 3. Recomputes each job's SPONSORSHIP SIGNAL from its already-stored
+ * description and rewrites only the rows whose stored value disagrees.
+ *
+ * WHY THIS IS NEEDED. jobs.sponsorship_polarity is written at SCAN time (src/lib/scan.ts and
+ * src/lib/externalSignals/secondaryIngestion.ts) and nowhere else — `npm run extract-job-intel`
+ * takes it as an INPUT and never recomputes it. So when Stage 25A taught keywordScan.ts to
+ * recognise the negated VERB form ("<Employer> does not sponsor <object>"), the fix applied to all
+ * FUTURE ingestion while 42 already-ingested postings kept a stale polarity of 'none' — and one
+ * kept a stale 'positive'. Those postings reached the candidate as eligibility UNKNOWN or PASS when
+ * the JD explicitly says the employer will not sponsor: the most costly direction this system can
+ * be wrong in for a candidate who requires sponsorship.
+ *
+ * THERE IS NO SECOND CLASSIFIER HERE. Polarity comes from scanSponsorshipLanguage() and the
+ * combined confidence from combineH1bConfidence() — the exact two functions the scan path calls,
+ * imported at the top of this same module and used identically by backfillJobIntelligence above.
+ * This function only decides WHICH rows to recompute and writes the result.
+ *
+ * Company H1B history keeps its existing meaning: combineH1bConfidence is what folds it in, and it
+ * remains propensity evidence about the COMPANY, never proof about one requisition. A JD-level
+ * negative still wins outright, which is what makes the affected rows BLOCKED rather than advisory.
+ *
+ * Defaults to a DRY RUN so the exact rows can be reviewed before anything is written.
+ */
+export function refreshSponsorshipSignals(
+  options: { dryRun?: boolean; limit?: number } = {}
+): SponsorshipRefreshResult {
+  const dryRun = options.dryRun ?? true;
+  const db = getDb();
+
+  const rows = db
+    .prepare(
+      `SELECT j.id, j.company_id, j.title, j.description_text, j.sponsorship_polarity, j.h1b_combined_confidence,
+              c.name AS company_name, c.h1b_confidence AS company_h1b_confidence
+         FROM jobs j JOIN companies c ON c.id = j.company_id
+        WHERE j.is_active = 1 AND j.is_archived = 0 AND j.description_text IS NOT NULL
+        ORDER BY j.id ASC`
+    )
+    .all() as {
+    id: number;
+    company_id: number;
+    title: string;
+    description_text: string;
+    sponsorship_polarity: string;
+    h1b_combined_confidence: string;
+    company_name: string;
+    company_h1b_confidence: string;
+  }[];
+
+  const update = db.prepare(
+    `UPDATE jobs SET sponsorship_mentioned = ?, sponsorship_polarity = ?, sponsorship_snippet = ?,
+       h1b_combined_confidence = ?, updated_at = datetime('now')
+     WHERE id = ?`
+  );
+
+  const result: SponsorshipRefreshResult = { scanned: 0, differing: 0, updated: 0, transitions: {}, rows: [] };
+  const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
+
+  for (const row of rows) {
+    result.scanned++;
+    const { mentioned, polarity, snippet } = scanSponsorshipLanguage(row.description_text);
+    const { confidence } = combineH1bConfidence(
+      (row.company_h1b_confidence ?? "Unknown") as Parameters<typeof combineH1bConfidence>[0],
+      polarity
+    );
+    if (polarity === row.sponsorship_polarity && confidence === row.h1b_combined_confidence) continue;
+
+    result.differing++;
+    const key = `${row.sponsorship_polarity}->${polarity}`;
+    result.transitions[key] = (result.transitions[key] ?? 0) + 1;
+    if (result.rows.length < 200) {
+      result.rows.push({
+        jobId: row.id,
+        company: row.company_name,
+        title: row.title,
+        currentPolarity: row.sponsorship_polarity,
+        recomputedPolarity: polarity,
+        currentConfidence: row.h1b_combined_confidence,
+        recomputedConfidence: confidence,
+        snippet: snippet ? snippet.slice(0, 160) : null,
+      });
+    }
+
+    if (!dryRun && result.updated < limit) {
+      update.run(mentioned ? 1 : 0, polarity, snippet, confidence, row.id);
+      result.updated++;
+    }
+  }
+
+  return result;
+}

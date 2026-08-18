@@ -36,7 +36,7 @@ import type { DimensionScores, RequirementCriticality, RequirementMatch } from "
  * "Data Engineer Intern" posting scored identically to a "Senior Data Engineer" one. No candidate
  * seniority is claimed or inferred anywhere by that rule.
  */
-export const MATCH_ENGINE_VERSION = 4;
+export const MATCH_ENGINE_VERSION = 6;
 
 /**
  * Stage 24B weights. `roleAlignment` is deliberately the second-heaviest term: Phase 4's requirement
@@ -99,8 +99,26 @@ export function computeCoverageDimensionScore(matches: RequirementMatch[]): numb
  * role alignment alone supports, and `insufficientJdSignal` (set independently) tells every consumer
  * that even that number is low-confidence — an unknown, never a confident verdict.
  */
-export function computeOverallScore(dimensions: DimensionScores): number {
-  const hasRequirementAnchor = dimensions.required !== null || dimensions.preferred !== null;
+export function computeOverallScore(dimensions: DimensionScores, hasSkillRequirement = true): number {
+  // STAGE 25B — THE ANCHOR MUST BE A *SKILL* REQUIREMENT.
+  //
+  // Stage 24B established that experience/seniority cannot constitute a fit on their own, and gated
+  // them behind "at least one requirement-coverage dimension is applicable". Stage 25B's section-
+  // boundary fix extracts requirements from ~1,750 more postings, and that surfaced the same
+  // inflation through a different door: a posting whose ONLY extracted requirement unit is an
+  // EDUCATION unit. Measured on the real corpus, 29 live jobs landed on
+  // {roleAlignment: 0, required: 100, preferred: 0, experience: 100} = 61.1 — "Pharmaceutical Sales
+  // Representative" (only unit: "BA/BS required" -> Bachelor's, which the candidate holds),
+  // "Crisis & Referral Specialist", "Vaccines Specialist", "Facilities Technician" — and they
+  // outranked genuine postings like "Data Platform Engineer, VP II" (57) in the For You feed.
+  //
+  // A matched degree is a binary "does the candidate hold this" fact. It is not evidence that this
+  // posting is the candidate's kind of job, which is exactly why computeEmployerEvidencedShare
+  // already excludes education/certification units from ITS gate. The same reasoning applies here:
+  // education alone does not open the door for experience/seniority to carry a score.
+  //
+  // Callers that cannot distinguish unit kinds default to `true`, preserving the previous behaviour.
+  const hasRequirementAnchor = (dimensions.required !== null || dimensions.preferred !== null) && hasSkillRequirement;
 
   const applicable: { weight: number; score: number }[] = [];
   // `!= null` (not `!== null`) on purpose: a v2-or-earlier persisted row round-tripped back through

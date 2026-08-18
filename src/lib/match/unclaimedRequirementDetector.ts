@@ -48,6 +48,22 @@ const BOILERPLATE_LINE_PATTERNS: RegExp[] = [
   /reasonable accommodation/i,
   /background check/i,
   /^(requirements?|qualifications?|responsibilities|nice to have|preferred|required)\s*:?\s*$/i,
+  // STAGE 25B — defence in depth for the context-aware section termination in parseSections.ts.
+  // That change deliberately keeps a qualifications section open across sub-headings and
+  // heading-shaped requirement bullets, which means a JD that never emits a recognized closing
+  // heading can trail compensation/EEO/benefit prose into the requirement text. Measured on the
+  // real 14,584-job corpus, only 64 jobs (0.44%) gained any boilerplate-matching requirement unit —
+  // these patterns cover exactly the classes that audit surfaced, so a leaked line is filtered here
+  // even when the section boundary itself could not be resolved. A false negative (dropping a real
+  // requirement) is the safe direction; a fabricated requirement is not.
+  /\b(base|annual|starting) (salary|pay)\b|\bsalary range\b|\bpay range\b|\btotal (rewards|compensation)\b/i,
+  /\bon target earnings\b|\bOTE\b|\bbonus (potential|program|opportunit)/i,
+  /\b(dental|vision|life|disability) insurance\b|\bflexible spending\b|\bstock (purchase|option|grant)\b/i,
+  /\bequity\b.*\b(award|grant|package)\b/i,
+  /\bwithout regard to (race|color|religion)\b|\baffirmative action\b|\be-?verify\b|\bprotected veteran/i,
+  /\brecruitment fraud\b|\bstaffing agenc|\bunsolicited resumes?\b|\bthird[- ]party recruiters?\b/i,
+  /\bapplication deadline\b|\bhow to apply\b|\bsubmit your application\b/i,
+  /\bdrug[- ]free workplace\b|\bE-Verify\b/i,
 ];
 
 const ALL_ALIAS_REGEXES = SKILL_TAXONOMY.flatMap((entry) =>

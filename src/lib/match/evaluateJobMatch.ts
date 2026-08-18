@@ -130,7 +130,21 @@ export function evaluateJobMatch(
     seniority: seniorityScore === null ? null : seniorityScore * 100,
   };
 
-  const overallScore = computeOverallScore(dimensionScores);
+  // Stage 25B: only a RESOLVED skill requirement anchors the score — an education-only requirement
+  // pool must not let experience/seniority carry it. See computeOverallScore.
+  //
+  // `memberSkillNames.length > 0` is load-bearing, not defensive. detectUnclaimedRequirements builds
+  // its units with kind "skill" and an EMPTY memberSkillNames (they are free-text qualification
+  // lines the taxonomy could not resolve, deliberately counted as UNRESOLVED against coverage), so
+  // testing `kind` alone was satisfied by virtually every posting and the anchor never actually
+  // engaged. An unresolved line is evidence that a requirement exists, not evidence that this is the
+  // candidate's kind of job — which is precisely what the anchor is asking.
+  const hasSkillRequirement = allMatches.some(
+    (m) =>
+      (m.requirement.kind === "skill" || m.requirement.kind === "skill_group") &&
+      m.requirement.memberSkillNames.length > 0
+  );
+  const overallScore = computeOverallScore(dimensionScores, hasSkillRequirement);
   const requirementCoverage = computeRequirementCoverage(allMatches);
   const employerEvidencedShare = computeEmployerEvidencedShare(requiredMatches);
   const insufficientJdSignal = isInsufficientJdSignal(allMatches);

@@ -1,5 +1,6 @@
 import { listJobs } from "../src/db/queries/jobs";
-import { getJobCertifications, getJobSkills, upsertJobIntel } from "../src/db/queries/jobIntel";
+import { getJobCertifications, getJobSkills, setJobDescriptionSections, upsertJobIntel } from "../src/db/queries/jobIntel";
+import { parseDescriptionSections } from "../src/lib/parseSections";
 import { extractJobIntel } from "../src/lib/jobIntel/extractJobIntel";
 
 /**
@@ -41,6 +42,11 @@ async function main() {
       sponsorshipSnippet: job.sponsorship_snippet,
     });
 
+    // Stage 25B: the stored section map must be refreshed alongside the extraction it was derived
+    // from — buildEvaluateJobMatchInput reads jobs.description_sections, so leaving it on the old
+    // parse would feed detectUnclaimedRequirements stale boundaries while job_skills used the new
+    // ones. Same parse call, same input, one source of truth.
+    setJobDescriptionSections(job.id, parseDescriptionSections(job.description_html));
     upsertJobIntel(job.id, intel);
     processed++;
     if (intel.skills.length > 0) withSkills++;
