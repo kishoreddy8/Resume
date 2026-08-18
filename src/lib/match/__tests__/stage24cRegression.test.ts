@@ -193,3 +193,49 @@ test("Stage 24C: role-alignment and seniority tunables remain inside the cache i
   assert.ok(fingerprint.roleAlignment, "role-alignment constants must stay in the fingerprint");
   assert.ok(fingerprint.jobLevelIncompatibility, "seniority incompatibility thresholds must stay in the fingerprint");
 });
+
+// --- Full-system pass: the comma-list collapse must not swallow a surrounding AND list ----------
+
+test("mixed AND/OR: an OR pair inside a comma list stays scoped to its own pair", () => {
+  // Stage 24C's first cut collapsed the whole run and produced ONE four-way group here, which
+  // UNDER-constrains: it would let a candidate satisfy the requirement with Airflow alone.
+  assert.deepEqual(unitLabels("Experience with Python, Databricks or Snowflake, Airflow"), [
+    "Airflow",
+    "Databricks OR Snowflake",
+    "Python",
+  ]);
+});
+
+test("mixed AND/OR: a slash pair inside a comma list is likewise scoped", () => {
+  assert.deepEqual(unitLabels("Experience with Python, Databricks/Snowflake, Airflow"), [
+    "Airflow",
+    "Databricks OR Snowflake",
+    "Python",
+  ]);
+});
+
+test("mixed AND/OR: an OR pair followed by an AND tail keeps both semantics", () => {
+  assert.deepEqual(unitLabels("Experience with AWS or Azure, Kubernetes, and Terraform"), [
+    "AWS OR Azure",
+    "Kubernetes",
+    "Terraform",
+  ]);
+});
+
+test("mixed AND/OR: an AND head followed by an OR tail keeps both semantics", () => {
+  assert.deepEqual(unitLabels("Experience with Python, SQL, and AWS or Azure"), [
+    "AWS OR Azure",
+    "Python",
+    "SQL",
+  ]);
+});
+
+test("chained or/or without commas still collapses to one group", () => {
+  assert.deepEqual(unitLabels("Experience with Databricks or Snowflake or Redshift"), [
+    "Databricks OR Snowflake OR Redshift",
+  ]);
+});
+
+test("'either X or Y' collapses to one group", () => {
+  assert.deepEqual(unitLabels("Experience with either Databricks or Snowflake"), ["Databricks OR Snowflake"]);
+});

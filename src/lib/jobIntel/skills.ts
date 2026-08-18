@@ -61,12 +61,22 @@ type ConnectorKind = "ALTERNATION" | "LIST_COMMA" | "BREAK";
  * alternatives" rule on the single most common way a job description writes one, and it failed on
  * this function's own previously-documented example, "AWS, Azure, or GCP".
  *
- * THE RULE NOW: a maximal RUN of matches joined only by alternation connectors and bare list commas
- * collapses into ONE alternative group — but only if at least one connector inside that run is an
- * explicit "or"/"/". A run joined by commas alone stays a set of INDEPENDENT requirements (a plain
- * "Python, SQL, Spark" list is an AND list, not an alternation), and any other connector — notably
- * ", and " — ends the run outright. Conservative in both directions: no alternation is ever invented
- * without an explicit "or"/"/", and none is split apart once one is present.
+ * THE RULE NOW, in two parts. Within a RUN of matches (a run ends at any connector that is neither
+ * an alternation nor a bare list comma — notably ", and "):
+ *
+ *   1. COMMA-LIST ALTERNATION. If the run has exactly ONE alternation connector, it is the run's
+ *      LAST connector, and every other connector is a bare comma, the whole run is one group. That
+ *      is the "A, B, or C" shape, where English puts the single "or" immediately before the final
+ *      item and the commas are part of the same alternation.
+ *   2. OTHERWISE, PAIRWISE. Alternation connectors join only their two immediate neighbours and a
+ *      bare comma splits. "Python, Databricks or Snowflake, Airflow" is an AND list that happens to
+ *      contain an OR pair, and must stay [Python] + (Databricks OR Snowflake) + [Airflow]; likewise
+ *      "Java or Python, Spark or Flink" is two independent OR pairs, not one group of four.
+ *
+ * The distinguishing evidence is where the "or" sits. Commas continuing AFTER an "or" mean the "or"
+ * bound only its own pair; an "or" at the end of a comma run means the whole run was the alternation
+ * all along. Conservative in both directions: no alternation is invented without an explicit
+ * "or"/"/", and none is widened past the items the sentence actually offers as alternatives.
  */
 function groupAlternatives(matches: LineMatch[], line: string): LineMatch[][] {
   if (matches.length === 0) return [];
@@ -86,9 +96,29 @@ function groupAlternatives(matches: LineMatch[], line: string): LineMatch[][] {
     if (i !== matches.length - 1 && connectors[i] !== "BREAK") continue;
     const run = matches.slice(runStart, i + 1);
     // connectors.slice(runStart, i) is exactly the connectors strictly INSIDE this run.
-    const isAlternation = run.length > 1 && connectors.slice(runStart, i).some((c) => c === "ALTERNATION");
-    if (isAlternation) groups.push(run);
-    else for (const m of run) groups.push([m]);
+    const inner = connectors.slice(runStart, i);
+    const alternationCount = inner.filter((c) => c === "ALTERNATION").length;
+    const isCommaListAlternation =
+      run.length > 1 &&
+      alternationCount === 1 &&
+      inner[inner.length - 1] === "ALTERNATION" &&
+      inner.slice(0, -1).every((c) => c === "LIST_COMMA");
+
+    if (isCommaListAlternation) {
+      groups.push(run);
+    } else {
+      // Pairwise: chain across adjacent ALTERNATION connectors only, split on anything else.
+      let current: LineMatch[] = [run[0]];
+      for (let k = 1; k < run.length; k++) {
+        if (inner[k - 1] === "ALTERNATION") {
+          current.push(run[k]);
+        } else {
+          groups.push(current);
+          current = [run[k]];
+        }
+      }
+      groups.push(current);
+    }
     runStart = i + 1;
   }
   return groups;
