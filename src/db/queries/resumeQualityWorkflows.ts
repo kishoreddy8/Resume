@@ -355,9 +355,20 @@ export function listResumeQualityIterations(candidateId: number, workflowId: num
  * anything. status = 'IMPROVEMENT_RUNNING' is exactly the workflow's existing, already-computed
  * "waiting for external writer" signal (see the quality-workflow GET route's own waitingFor logic) —
  * no new status value is introduced here.
+ *
+ * Stage 26 adds 'CREATED' to the same set, for the same reason and with no new status value either:
+ * a CREATED workflow is one a human has already approved (the POST route refuses to create one
+ * otherwise) whose FIRST resume has not been written yet. Before Stage 26 the route filled that gap
+ * by synthesizing a placeholder resume purely so iteration 1 could exist — which fabricated contact
+ * details and bullets and burned a real quality iteration on a document nobody wrote. The writer now
+ * produces iteration 1 itself, so 'CREATED' means exactly what 'IMPROVEMENT_RUNNING' means here:
+ * approved, non-terminal, waiting for the writer. READY/FAILED are terminal and never returned, so a
+ * completed workflow can never be replayed.
  */
 export function listWorkflowsAwaitingWriter(): ResumeQualityWorkflowRow[] {
   return getDb()
-    .prepare(`SELECT * FROM resume_quality_workflows WHERE status = 'IMPROVEMENT_RUNNING' ORDER BY updated_at ASC`)
+    .prepare(
+      `SELECT * FROM resume_quality_workflows WHERE status IN ('CREATED', 'IMPROVEMENT_RUNNING') ORDER BY updated_at ASC`
+    )
     .all() as ResumeQualityWorkflowRow[];
 }

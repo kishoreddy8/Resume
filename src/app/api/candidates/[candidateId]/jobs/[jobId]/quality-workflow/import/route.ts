@@ -31,10 +31,16 @@ export async function POST(
     return NextResponse.json({ error: "No quality workflow found for this job" }, { status: 404 });
   }
 
-  if (workflow.status !== "IMPROVEMENT_RUNNING") {
+  // Stage 26 — CREATED is accepted alongside IMPROVEMENT_RUNNING because it is now a real
+  // awaiting-writer state (its target is iteration 1, written by the writer rather than synthesized
+  // by the server). Keeping the manual export/import path available for iteration 1 too means the
+  // human fallback covers every iteration the automatic writer covers, not all-but-the-first.
+  // READY/FAILED are still refused here, and the orchestrator independently refuses terminal
+  // workflows regardless of what this route allows.
+  if (workflow.status !== "IMPROVEMENT_RUNNING" && workflow.status !== "CREATED") {
     return NextResponse.json(
       {
-        error: `Workflow is in status ${workflow.status}, not IMPROVEMENT_RUNNING. Cannot import external writer output.`,
+        error: `Workflow is in status ${workflow.status}, not IMPROVEMENT_RUNNING or CREATED. Cannot import external writer output.`,
         code: "INVALID_WORKFLOW_STATUS",
       },
       { status: 400 }

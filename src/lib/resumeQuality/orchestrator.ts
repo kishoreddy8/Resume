@@ -33,6 +33,7 @@ import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring
 import { validateDocx } from "../../../tools/tailoring-engine/validate-docx";
 import {
   structuredResumeReviewSchema,
+  type BlockingFailure,
   type RequiredCorrection,
   type ResumeQualityLoopResult,
   type ResumeReviewerAgent,
@@ -623,8 +624,29 @@ export async function executeResumeQualityIteration(
       // no non-READY workflow has any path to it. Failing to publish never unwinds an approval that
       // genuinely happened: final/ remains the authoritative approved-artifact directory and the
       // workflow stays READY, so the failure is reported on the result instead of thrown.
+      //
+      // Stage 26 — every reason publication does not happen is now NAMED. Previously the three
+      // preconditions below were a single silent `if`: when the job or company row could not be
+      // resolved, publication was skipped with no publishedApplication AND no publicationError, so
+      // "published successfully" and "never even attempted" were indistinguishable to every caller
+      // and to the UI. A READY workflow stays READY either way — final/ remains the authoritative
+      // approved-artifact directory — but the failure is now reported instead of swallowed.
       let publishedApplication: PublishedApplication | undefined;
       let publicationError: string | undefined;
+      if (!finalResumePath) {
+        publicationError =
+          `No approved resume DOCX was rendered for iteration ${iterationNumber}; nothing to publish. ` +
+          `The approved artifacts remain available in the workflow's final/ directory.`;
+      } else if (!coldEmailJob) {
+        publicationError =
+          `Publication skipped: no job row could be resolved for dedupe_key ${workflow.dedupe_key} ` +
+          `(the posting may have been deleted or archived since approval). The approved artifacts ` +
+          `remain available in the workflow's final/ directory.`;
+      } else if (!coldEmailCompany) {
+        publicationError =
+          `Publication skipped: no company row could be resolved for company_id ${coldEmailJob.company_id} ` +
+          `(job ${coldEmailJob.id}). The approved artifacts remain available in the workflow's final/ directory.`;
+      }
       if (finalResumePath && coldEmailJob && coldEmailCompany) {
         try {
           publishedApplication = publishFinalApplicationArtifacts({
@@ -654,6 +676,36 @@ export async function executeResumeQualityIteration(
         } catch (error) {
           publicationError = error instanceof Error ? error.message : String(error);
         }
+      }
+
+      // Durable, truthful publication record next to the approved artifacts. The orchestration
+      // result carries publishedApplication/publicationError only to its immediate caller, which is
+      // gone by the time a human opens the job page — so the GET /quality-workflow route reads THIS
+      // file instead of re-deriving (or worse, assuming) a publication outcome. Written for both
+      // outcomes on purpose: an absent file means "this workflow predates Stage 26", never
+      // "published fine". Paths are stored repo-relative so the record stays portable, matching the
+      // discipline the published manifest itself already follows. Never touches finalPublication.ts
+      // or anything it wrote — publication itself stays exactly-once and atomic.
+      const publicationStatus = {
+        schemaVersion: 1 as const,
+        status: publishedApplication ? ("PUBLISHED" as const) : ("FAILED" as const),
+        recordedAt: new Date().toISOString(),
+        iterationNumber,
+        directory: publishedApplication ? path.relative(process.cwd(), publishedApplication.directory) : null,
+        resume: publishedApplication ? path.relative(process.cwd(), publishedApplication.resumePath) : null,
+        coverLetter:
+          publishedApplication?.coverLetterPath ? path.relative(process.cwd(), publishedApplication.coverLetterPath) : null,
+        reviewFeedback:
+          publishedApplication?.reviewFeedbackPath
+            ? path.relative(process.cwd(), publishedApplication.reviewFeedbackPath)
+            : null,
+        error: publicationError ?? null,
+      };
+      try {
+        fs.writeFileSync(path.join(finalDir, "publication_status.json"), JSON.stringify(publicationStatus, null, 2), "utf-8");
+      } catch {
+        // Recording the outcome must never be able to unwind a genuine approval. A missing status
+        // file degrades the UI to "publication state unknown", which is still truthful.
       }
 
       // Informational workflow-status snapshot (see WorkflowStatusFile) — READY/COMPLETED, nothing
@@ -850,6 +902,7 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
   let latestReview: StructuredResumeReview | undefined;
   let requiredCorrections: RequiredCorrection[] | undefined;
   let blockingIssues: string[] | undefined;
+  let blockingFailures: BlockingFailure[] | undefined;
 
   if (workflow.current_iteration > 0) {
     const priorIterNum = workflow.current_iteration;
@@ -885,6 +938,9 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
         latestReview = JSON.parse(fs.readFileSync(priorReviewJson, "utf-8")) as StructuredResumeReview;
         requiredCorrections = latestReview.requiredCorrections;
         blockingIssues = latestReview.blockingIssues;
+        // Stage 26 — without this the writer never learns why it was actually rejected; see
+        // blockingFailuresSection in reviewFeedback.ts.
+        blockingFailures = latestReview.blockingFailures;
       } catch {
         // Fall back to undefined if unparseable
       }
@@ -934,6 +990,7 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
     latestReview,
     requiredCorrections,
     blockingIssues,
+    blockingFailures,
     dedupeKey: workflow.dedupe_key,
     iterationNumber: workflow.current_iteration + 1,
     masterProfile,
@@ -987,7 +1044,15 @@ export async function executeResumeImprovementIteration(
     throw new IterationExceedsMaxError(workflowId, workflow.current_iteration + 1, workflow.max_iterations);
   }
 
-  if (workflow.current_iteration === 0) {
+  // Stage 26 — a workflow that has never run an iteration is a legitimate writer target when, and
+  // only when, it is still CREATED: that is the "human approved this, nothing has been written yet"
+  // state, and the writer's output BECOMES iteration 1. (Before Stage 26 the POST route filled that
+  // slot with a synthesized placeholder resume so this guard could stay absolute; that placeholder
+  // fabricated contact details and bullets and consumed a genuine quality iteration.) Any OTHER
+  // status at current_iteration 0 is still a real inconsistency and is still refused — and
+  // executeResumeQualityIteration below independently re-validates every status transition through
+  // the unchanged state machine, so this relaxation cannot open an illegal path.
+  if (workflow.current_iteration === 0 && workflow.status !== "CREATED") {
     throw new ResumeQualityOrchestrationError(
       "INVALID_WORKFLOW_STATE",
       `Cannot execute improvement iteration on a workflow that has not executed iteration 1 (current status: ${workflow.status})`

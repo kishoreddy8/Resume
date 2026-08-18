@@ -43,6 +43,10 @@ export function buildExternalWriterPrompt(input: {
   latestReview?: StructuredResumeReview;
   requiredCorrections?: ResumeWriterInput["requiredCorrections"];
   blockingIssues?: string[];
+  /** Stage 26 — the reviewer's HARD blocking failures. These are what actually withhold READY
+   *  (qualityGate.ts condition 7) and can be non-empty while blockingIssues is empty, so a prompt that
+   *  showed only the latter told the writer nothing about why it was rejected. */
+  blockingFailures?: ResumeWriterInput["blockingFailures"];
   /** Stage 21 (Evidence-Grounded Resume Quality V2) — the computed JD Priority Matrix/positioning/
    *  skill-order/ATS-coverage data the writer should actually USE, not just prose guidance about it.
    *  All optional: absent only when neither jobRequirements nor a target role title were available
@@ -52,7 +56,7 @@ export function buildExternalWriterPrompt(input: {
   recommendedSkillOrder?: string[];
   atsCoverageReportText?: string;
 }): string {
-  const { candidateName, iterationNumber, selectedTrack, latestReview, requiredCorrections, blockingIssues } = input;
+  const { candidateName, iterationNumber, selectedTrack, latestReview, requiredCorrections, blockingIssues, blockingFailures } = input;
 
   const correctionsBlock =
     requiredCorrections && requiredCorrections.length > 0
@@ -64,6 +68,17 @@ export function buildExternalWriterPrompt(input: {
   const blockingBlock =
     blockingIssues && blockingIssues.length > 0
       ? blockingIssues.map((b) => `- **[BLOCKING]**: ${b}`).join("\n")
+      : "None.";
+
+  // Rendered with the reviewer's own recommendedCorrection so the writer is told exactly what to do,
+  // not merely that something is wrong. Observed on the real corpus: four PLACEHOLDER_CONTACT failures
+  // withheld approval from a resume scoring 100 across the board, and appeared in no feedback the
+  // writer could see — so the next iteration would have repeated the same mistake.
+  const blockingFailuresBlock =
+    blockingFailures && blockingFailures.length > 0
+      ? blockingFailures
+          .map((f) => `- **[${f.type}]**: ${f.description}${f.recommendedCorrection ? `\n  - Correction: ${f.recommendedCorrection}` : ""}`)
+          .join("\n")
       : "None.";
 
   const scoresBlock = latestReview
@@ -151,6 +166,9 @@ ${input.atsCoverageReportText ? `### ATS Coverage Report (current draft, if any)
 
 ### Review Scores
 ${scoresBlock}
+
+### Hard Blocking Failures — these alone prevent approval, resolve every one
+${blockingFailuresBlock}
 
 ### Blocking Issues to Resolve
 ${blockingBlock}
@@ -413,6 +431,7 @@ export function exportExternalWriterPackage(
         instructionHash: INSTRUCTION_HASH,
         requiredCorrections: writerInput.requiredCorrections ?? [],
         blockingIssues: writerInput.blockingIssues ?? [],
+        blockingFailures: writerInput.blockingFailures ?? [],
         currentResume: writerInput.currentResume,
         currentCoverLetter: writerInput.currentCoverLetter,
         latestReview: writerInput.latestReview,
@@ -452,6 +471,7 @@ export function exportExternalWriterPackage(
     latestReview: writerInput.latestReview,
     requiredCorrections: writerInput.requiredCorrections,
     blockingIssues: writerInput.blockingIssues,
+    blockingFailures: writerInput.blockingFailures,
     jdPriorityMatrix: exportJdPriorityMatrix,
     positioningRecommendation: exportPositioningRecommendation,
     recommendedSkillOrder: exportSkillOrder,

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { runWorkerPass } from "@/lib/resumeQuality/writers/writerWorkerCore";
+import { runGuardedWriterPass } from "@/lib/resumeQuality/writers/writerWorkerCore";
 
 /**
  * Stage 12 — the automatic external-writer worker's process entrypoint. Follows the exact convention
@@ -10,6 +10,14 @@ import { runWorkerPass } from "@/lib/resumeQuality/writers/writerWorkerCore";
  * (claim, export, invoke Claude CLI, import, review, notify) lives in
  * src/lib/resumeQuality/writers/writerWorkerCore.ts, which this thin wrapper calls every tick — that
  * SAME call is also the startup reconciliation scan, since it's the very first thing this loop does.
+ *
+ * Stage 26 — this script is no longer REQUIRED for automatic tailoring: the same worker core now runs
+ * on the scheduled resume-writer tick inside the app process (src/lib/resumeQuality/writers/tick.ts,
+ * registered in src/instrumentation.ts). It is kept as an optional operator tool for draining a
+ * backlog on demand, outside the configured automation window, or with the app stopped. It now goes
+ * through runGuardedWriterPass, so it shares the machine-wide writer lease with the tick and the two
+ * can never invoke Claude concurrently — its own file lock below is retained unchanged as the
+ * additional single-instance guard for this process.
  *
  * Run via: npm run resume-writer-worker-continuous
  */
@@ -57,7 +65,7 @@ function releaseLock(): void {
   }
 }
 
-function writeReport(summary: Awaited<ReturnType<typeof runWorkerPass>>): void {
+function writeReport(summary: Awaited<ReturnType<typeof runGuardedWriterPass>>): void {
   fs.mkdirSync(REPORT_DIR, { recursive: true });
   fs.appendFileSync(path.join(REPORT_DIR, "batches.jsonl"), `${JSON.stringify({ ...summary, at: new Date().toISOString() })}\n`);
   const temp = path.join(REPORT_DIR, `latest.${process.pid}.tmp`);
@@ -81,10 +89,16 @@ async function main(): Promise<void> {
 
   while (true) {
     try {
-      const summary = await runWorkerPass();
+      const summary = await runGuardedWriterPass();
       if (firstPass) {
-        console.log(`Startup reconciliation: found ${summary.attempted} workflow(s) awaiting writer.`);
+        console.log(`Startup reconciliation: found ${summary.pending} workflow(s) awaiting writer.`);
         firstPass = false;
+      }
+      if (!summary.ran) {
+        // The scheduled tick (or another operator pass) holds the lease — wait, never run alongside it.
+        console.log(`Writer lease held since ${summary.heldSince ?? "unknown"}; waiting.`);
+        await sleep(BATCH_PAUSE_MS);
+        continue;
       }
       if (summary.attempted === 0) {
         await sleep(IDLE_PAUSE_MS);

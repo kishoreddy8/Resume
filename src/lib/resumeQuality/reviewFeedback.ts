@@ -71,6 +71,27 @@ function complianceSection(review: StructuredResumeReview): string {
   return out;
 }
 
+/**
+ * Stage 26 — the hard blocking failures (see BLOCKING_FAILURE_TYPES) rendered for the writer.
+ *
+ * These, not `blockingIssues`, are what actually withhold READY: qualityGate.ts condition 7 requires
+ * `blockingFailures` to be empty. Before Stage 26 they were rendered nowhere and carried nowhere, so a
+ * writer could be rejected repeatedly for a reason it was never told — observed on the real corpus,
+ * where a resume scoring 100/100/100/100 with zero blockingIssues was correctly refused for four
+ * PLACEHOLDER_CONTACT failures that appeared in no feedback the writer ever saw. Each entry carries
+ * the reviewer's own recommendedCorrection verbatim; nothing is re-derived or re-judged here.
+ */
+function blockingFailuresSection(review: StructuredResumeReview): string {
+  const failures = review.blockingFailures ?? [];
+  if (failures.length === 0) return "";
+  let out = "\n## Blocking Failures (must be resolved before approval)\n\n";
+  for (const failure of failures) {
+    out += `- **${failure.type}** — ${failure.description}\n`;
+    if (failure.recommendedCorrection) out += `  - Correction: ${failure.recommendedCorrection}\n`;
+  }
+  return out;
+}
+
 export function renderReviewFeedbackMarkdown(review: StructuredResumeReview): string {
   let out = "# Resume Review Feedback\n\n";
   out += "## Scores\n\n";
@@ -82,6 +103,7 @@ export function renderReviewFeedbackMarkdown(review: StructuredResumeReview): st
   out += `${scoreLine("Recruiter Readability", review.recruiterReadabilityScore)}\n`;
   out += `${scoreLine("Formatting", review.formattingScore)}\n`;
 
+  out += blockingFailuresSection(review);
   out += section("Blocking Issues", review.blockingIssues);
   out += section("Missing Required Skills", review.missingRequiredSkills);
   out += section("Incorrect Technology Usage", review.incorrectTechnologyUsage);

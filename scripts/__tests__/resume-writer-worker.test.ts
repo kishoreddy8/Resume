@@ -164,6 +164,10 @@ function masterFileHashes(candId: number): string {
 }
 
 before(async () => {
+  // Stage 26 — belt-and-braces: every invocation in this file already injects a fixture command, and
+  // this makes a future one that forgets fail loudly instead of billing a real generation.
+  process.env.CAREER_OPS_DISABLE_REAL_CLAUDE_CLI = "1";
+
   tmpDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-worker-db-"));
   tmpCandidatesDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-worker-cand-"));
   tmpGeneratedDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-worker-gen-"));

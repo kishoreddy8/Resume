@@ -397,6 +397,10 @@ export interface ResumeWriterInput {
   latestReview?: StructuredResumeReview;
   requiredCorrections?: RequiredCorrection[];
   blockingIssues?: string[];
+  /** Stage 26 — the reviewer's hard blocking failures, which are what actually withhold READY
+   *  (qualityGate.ts condition 7). Carried separately from `blockingIssues`, which can legitimately be
+   *  empty while these are not; without them a writer can be rejected for a reason it never saw. */
+  blockingFailures?: BlockingFailure[];
   dedupeKey?: string;
   iterationNumber?: number;
   masterProfile?: CandidateProfile;

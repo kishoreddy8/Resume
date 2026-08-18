@@ -92,12 +92,69 @@ interface QualityWorkflowResponse {
     hasHumanReviewCoverLetter: boolean;
   };
   waitingFor: "EXTERNAL_WRITER" | "HUMAN_REVIEW" | "COMPLETED" | "NOT_WAITING";
+  /** Stage 26 — writer/scheduler health, present only while the writer owns the next step. Never
+   *  derived from workflow.status: an approved job waiting to be written says nothing about whether
+   *  anything is currently writing it. */
+  writer: {
+    state:
+      | "PROCESSING"
+      | "WAITING_FOR_NEXT_ATTEMPT"
+      | "IDLE"
+      | "UNAVAILABLE_SCHEDULER_DISABLED"
+      | "WAITING_OUTSIDE_WINDOW"
+      | "UNAVAILABLE_NOT_RUNNING"
+      | "TECHNICAL_FAILURE";
+    detail: string;
+    schedulerEnabled: boolean;
+    withinWindow: boolean;
+    intervalMinutes: number;
+    batchSize: number;
+    pendingWorkflowCount: number;
+    lastTickAt: string | null;
+    lastPassStartedAt: string | null;
+    lastPassCompletedAt: string | null;
+    lastPassDurationMs: number | null;
+    lastPassOutcome: string | null;
+    lastPassError: string | null;
+    nextAttemptAt: string | null;
+    processingSince: string | null;
+    workflowOutcome: { outcome: string; iterationNumber?: number; error?: string } | null;
+  } | null;
+  iterationBudget: {
+    current: number;
+    max: number;
+    writerAttemptsUsed: number;
+    writerAttemptsRemaining: number;
+    targetIteration: number | null;
+  } | null;
+  /** Phase 9A publication outcome for a READY workflow, read from the record written beside the
+   *  approved artifacts. "UNKNOWN" means the workflow was approved before this was recorded — it is
+   *  never a stand-in for "published". */
+  publication: {
+    status: "PUBLISHED" | "FAILED" | "UNKNOWN";
+    directory: string | null;
+    recordedAt: string | null;
+    error: string | null;
+  } | null;
 }
+
+/** Stage 26 — one short label per writer state, for the pipeline status chip. */
+const WRITER_STATE_LABEL: Record<string, string> = {
+  PROCESSING: "Writer processing",
+  WAITING_FOR_NEXT_ATTEMPT: "Waiting for writer",
+  IDLE: "Writer idle",
+  UNAVAILABLE_SCHEDULER_DISABLED: "Writer unavailable",
+  WAITING_OUTSIDE_WINDOW: "Waiting for automation window",
+  UNAVAILABLE_NOT_RUNNING: "Writer not running",
+  TECHNICAL_FAILURE: "Writer technical failure",
+};
 
 function getStepIndex(status: string): number {
   switch (status) {
+    // Stage 26 — an approved workflow now waits in CREATED for the scheduled writer to produce
+    // iteration 1, so it belongs on the Writer step rather than a "nothing has happened yet" step.
     case "CREATED":
-      return 0;
+      return 1;
     case "WRITER_RUNNING":
     case "WRITER_COMPLETED":
       return 1;
@@ -216,6 +273,20 @@ export function ResumeQualityPipeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidateId, jobId]);
 
+  // Stage 26 — while the scheduled writer owns the next step, this page is the only place the user
+  // watches progress, and the transitions it reports (writer picks the job up, review runs, gate
+  // passes, artifacts publish) now happen without any further click. Polls ONLY in that state, so a
+  // READY/FAILED/unstarted page makes no repeat requests.
+  const isAwaitingWriter = data?.waitingFor === "EXTERNAL_WRITER";
+  useEffect(() => {
+    if (!isAwaitingWriter) return;
+    const timer = setInterval(() => {
+      loadData();
+    }, 30_000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAwaitingWriter, candidateId, jobId]);
+
   async function handleStartTailoring(approvalType?: "READY_DIRECT" | "NEEDS_REVIEW_OVERRIDE") {
     setActionBusy(true);
     setActionMessage(null);
@@ -246,7 +317,12 @@ export function ResumeQualityPipeline({
         throw new Error(body.error ?? "Failed to start tailoring workflow");
       }
 
-      setActionMessage({ type: "success", text: "Quality workflow initialized and evaluated successfully." });
+      setActionMessage({
+        type: "success",
+        text: body.awaitingWriter
+          ? "Approved. The resume writer will pick this up automatically on its next scheduled pass — nothing else to run."
+          : "Quality workflow initialized successfully.",
+      });
       await loadData();
     } catch (err: unknown) {
       setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Error starting tailoring" });
@@ -338,7 +414,7 @@ export function ResumeQualityPipeline({
     return null;
   }
 
-  const { workflow, authorization, applicationId, tailoringRun, iterations, bestAttempt, availableArtifacts } = data;
+  const { workflow, authorization, applicationId, tailoringRun, iterations, bestAttempt, availableArtifacts, writer, iterationBudget, publication } = data;
 
   // Selected iteration data for historical view
   const activeIterNum = selectedIterationNumber ?? workflow?.current_iteration ?? 1;
@@ -370,12 +446,14 @@ export function ResumeQualityPipeline({
                     ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
                     : workflow.status === "FAILED"
                     ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
-                    : workflow.status === "IMPROVEMENT_RUNNING"
+                    : workflow.status === "IMPROVEMENT_RUNNING" || workflow.status === "CREATED"
                     ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
                     : "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
                 }`}
               >
-                {workflow.status.replace(/_/g, " ")}
+                {/* Stage 26 — CREATED now means "approved, waiting for the writer's first draft", not
+                    "nothing has happened"; the raw enum name would read as the latter. */}
+                {workflow.status === "CREATED" ? "AWAITING WRITER" : workflow.status.replace(/_/g, " ")}
               </span>
             )}
           </div>
@@ -545,6 +623,55 @@ export function ResumeQualityPipeline({
               )}
             </div>
           </div>
+
+          {/* Stage 26 — where the approved application actually landed on disk (Phase 9A). Shown as a
+              repo-relative path with a copy action, never as a link: a browser cannot open a local
+              directory, and a link that silently does nothing would be worse than plain text. */}
+          {publication?.status === "PUBLISHED" && publication.directory && (
+            <div className="mt-3 border-t border-emerald-200/70 pt-3 dark:border-emerald-900/40">
+              <p className="text-xs font-medium text-emerald-900 dark:text-emerald-200">Published application folder</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <code className="rounded bg-emerald-100/70 px-2 py-1 text-[11px] text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200">
+                  {publication.directory}
+                </code>
+                <button
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(publication.directory ?? "");
+                    setActionMessage({ type: "success", text: "Published folder path copied." });
+                  }}
+                  className="rounded border border-emerald-600 px-2 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100 dark:text-emerald-200 dark:hover:bg-emerald-900/40"
+                >
+                  Copy path
+                </button>
+              </div>
+              <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+                Contains the resume, cover letter, review feedback, and a manifest — the same bytes the download
+                buttons above serve.
+              </p>
+            </div>
+          )}
+
+          {/* A publication failure never unwinds a genuine approval, so it is reported HERE, beside a
+              banner that still correctly says the resume is ready — not by pretending the workflow
+              failed, and not by staying silent. */}
+          {publication?.status === "FAILED" && (
+            <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+              <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                Resume approved, but not copied to the applications folder
+              </p>
+              <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-300">
+                {publication.error ?? "Publication did not complete."} The approved documents are still available from the
+                download buttons above.
+              </p>
+            </div>
+          )}
+
+          {publication?.status === "UNKNOWN" && (
+            <p className="mt-3 text-[11px] text-emerald-700 dark:text-emerald-300">
+              Publication status for this approval was not recorded, so the applications-folder copy cannot be confirmed
+              from here. The approved documents above are authoritative.
+            </p>
+          )}
         </div>
       )}
 
@@ -637,14 +764,108 @@ export function ResumeQualityPipeline({
         </div>
       )}
 
-      {/* 4. External Writer Handoff Controls (when IMPROVEMENT_RUNNING) */}
-      {workflow?.status === "IMPROVEMENT_RUNNING" && (
+      {/* 3b. Stage 26 — Autonomous writer status. Shown whenever the writer owns the next step
+              (CREATED = iteration 1 not written yet, IMPROVEMENT_RUNNING = corrections required).
+              Every line here comes from the scheduler/lease/last-pass record, never from the
+              workflow status alone. */}
+      {data.waitingFor === "EXTERNAL_WRITER" && writer && (
+        <div
+          className={`rounded-lg border p-4 space-y-2 ${
+            writer.state === "PROCESSING"
+              ? "border-blue-200 bg-blue-50/70 dark:border-blue-900/50 dark:bg-blue-950/20"
+              : writer.state === "TECHNICAL_FAILURE"
+              ? "border-red-200 bg-red-50/70 dark:border-red-900/50 dark:bg-red-950/20"
+              : writer.state === "UNAVAILABLE_SCHEDULER_DISABLED" || writer.state === "UNAVAILABLE_NOT_RUNNING"
+              ? "border-zinc-300 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800/40"
+              : "border-amber-200 bg-amber-50/70 dark:border-amber-900/50 dark:bg-amber-950/20"
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                {workflow?.status === "CREATED" ? "Approved — awaiting first resume draft" : "Corrections required — awaiting next draft"}
+              </h3>
+              <p className="mt-0.5 text-xs text-zinc-700 dark:text-zinc-300">
+                {WRITER_STATE_LABEL[writer.state] ?? writer.state}: {writer.detail}
+              </p>
+            </div>
+            {iterationBudget && (
+              <div className="text-right">
+                <div className="text-[11px] text-zinc-500">Writer attempt</div>
+                <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                  {iterationBudget.targetIteration} of {iterationBudget.max}
+                </div>
+                <div className="text-[11px] text-zinc-500">
+                  {iterationBudget.writerAttemptsRemaining} remaining
+                </div>
+              </div>
+            )}
+          </div>
+
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-zinc-600 dark:text-zinc-400 sm:grid-cols-4">
+            {writer.state === "PROCESSING" && writer.processingSince && (
+              <div>
+                <dt>Started</dt>
+                <dd className="font-medium text-zinc-800 dark:text-zinc-200">{new Date(writer.processingSince).toLocaleString()}</dd>
+              </div>
+            )}
+            {writer.state !== "PROCESSING" && writer.nextAttemptAt && (
+              <div>
+                <dt>Next attempt</dt>
+                <dd className="font-medium text-zinc-800 dark:text-zinc-200">{new Date(writer.nextAttemptAt).toLocaleString()}</dd>
+              </div>
+            )}
+            {writer.lastPassCompletedAt && (
+              <div>
+                <dt>Last writer pass</dt>
+                <dd className="font-medium text-zinc-800 dark:text-zinc-200">{new Date(writer.lastPassCompletedAt).toLocaleString()}</dd>
+              </div>
+            )}
+            <div>
+              <dt>Queue</dt>
+              <dd className="font-medium text-zinc-800 dark:text-zinc-200">
+                {writer.pendingWorkflowCount} awaiting · {writer.batchSize} per pass
+              </dd>
+            </div>
+            <div>
+              <dt>Cadence</dt>
+              <dd className="font-medium text-zinc-800 dark:text-zinc-200">every {writer.intervalMinutes} min</dd>
+            </div>
+          </dl>
+
+          {writer.workflowOutcome && (
+            <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
+              Last outcome for this job: <strong>{writer.workflowOutcome.outcome.replace(/_/g, " ")}</strong>
+              {writer.workflowOutcome.error ? ` — ${writer.workflowOutcome.error}` : ""}
+            </p>
+          )}
+
+          {writer.state === "UNAVAILABLE_SCHEDULER_DISABLED" && (
+            <p className="text-xs font-medium text-amber-800 dark:text-amber-400">
+              This job is approved and queued, but nothing will write it until background automation is enabled in
+              Settings. You can also use the manual writer handoff below.
+            </p>
+          )}
+          {writer.state === "TECHNICAL_FAILURE" && (
+            <p className="text-xs font-medium text-red-800 dark:text-red-400">
+              No resume was produced and no quality iteration was consumed. The writer retries on its own schedule,
+              within a bounded number of attempts.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* 4. Manual writer handoff — the human fallback, no longer the normal path. Since Stage 26 the
+              scheduled writer does this automatically; these controls remain for running a draft by
+              hand (a different agent, outside the automation window, or after repeated failures). */}
+      {data.waitingFor === "EXTERNAL_WRITER" && (
         <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900/50 dark:bg-amber-950/20 space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">Needs Resume Improvement</h3>
+              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">Manual Writer Handoff (optional)</h3>
               <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">
-                Target Iteration: {workflow.current_iteration + 1} of {workflow.max_iterations}
+                Target Iteration: {(workflow?.current_iteration ?? 0) + 1} of {workflow?.max_iterations ?? 0} — only needed if
+                you want to write this draft yourself instead of waiting for the scheduled writer.
               </p>
             </div>
             <button

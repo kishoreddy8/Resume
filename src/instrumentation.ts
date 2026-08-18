@@ -1,7 +1,7 @@
 /**
  * Next.js instrumentation entry point (Phase 4 Stage 1; Stage 23 added the production-cycle tick;
- * Stage 24A added the job-evaluation tick below). `register()` is called once when a new Next.js
- * server instance initializes, before it starts handling requests — stable since v15.0.0 (v13.2.0 as
+ * Stage 24A added the job-evaluation tick; Stage 26 added the resume-writer tick below).
+ * `register()` is called once when a new Next.js server instance initializes, before it starts handling requests — stable since v15.0.0 (v13.2.0 as
  * an experimental feature), confirmed via node_modules/next/dist/docs/.../instrumentation.md. This
  * is the Next.js-blessed place to start in-process interval timers; there is no custom server in
  * this project (next.config.ts is default/minimal) and none is being introduced here.
@@ -47,6 +47,7 @@ export async function register() {
   const { runSchedulerTick } = await import("@/lib/scheduler/tick");
   const { runProductionCycleTick } = await import("@/lib/production/tick");
   const { runJobEvaluationTick } = await import("@/lib/match/tick");
+  const { runResumeWriterTick } = await import("@/lib/resumeQuality/writers/tick");
   const { closeDbConnection } = await import("@/db");
   const { handleDbFailure } = await import("@/db/health");
 
@@ -93,6 +94,18 @@ export async function register() {
     });
   };
 
+  const resumeWriterTick = () => {
+    // Stage 26 — the fourth tick on this same timer. Same never-throw contract as the other three.
+    // Its own mutual exclusion is a machine-wide DB lease (src/lib/resumeQuality/writers/writerState.ts),
+    // independent of the scan lock and the production-cycle lease, and shared with the standalone
+    // `npm run resume-writer-worker-continuous` entrypoint — so neither can invoke Claude while the
+    // other is mid-pass, and a Mac that sleeps mid-pass leaves a lease that goes stale and is
+    // reclaimed rather than a duplicate run.
+    runResumeWriterTick().catch((err) => {
+      onTickError("resume-writer", err);
+    });
+  };
+
   // Run once immediately (restart safety: if a scan/cycle/evaluation was already due before this
   // server instance started — e.g. the Mac was asleep past the scheduled window — don't make it
   // wait up to TICK_CHECK_INTERVAL_MS to be noticed, and don't require more than this ONE immediate
@@ -101,7 +114,9 @@ export async function register() {
   tick();
   productionCycleTick();
   jobEvaluationTick();
+  resumeWriterTick();
   setInterval(tick, TICK_CHECK_INTERVAL_MS);
   setInterval(productionCycleTick, TICK_CHECK_INTERVAL_MS);
   setInterval(jobEvaluationTick, TICK_CHECK_INTERVAL_MS);
+  setInterval(resumeWriterTick, TICK_CHECK_INTERVAL_MS);
 }
