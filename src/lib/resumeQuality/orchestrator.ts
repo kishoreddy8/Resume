@@ -22,6 +22,7 @@ import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
 import { getTailoringArtifactDirectory } from "@/lib/tailoringArtifacts";
 import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "./canonicalInstructions";
 import { generateColdFollowUpEmail } from "./coldFollowUpEmail";
+import { publishFinalApplicationArtifacts, type PublishedApplication } from "./finalPublication";
 import { generateHumanReviewPackage } from "./humanReviewPackage";
 import { evaluateQualityGate, type QualityGateOutcome } from "./qualityGate";
 import { renderReviewFeedbackMarkdown } from "./reviewFeedback";
@@ -132,6 +133,14 @@ export interface ResumeQualityOrchestrationResult {
   /** Populated only on the terminal NEEDS_HUMAN_REVIEW/FAILED path — see humanReviewPackage.ts. Never
    *  set on READY (final/ remains the sole approved-artifact directory) or on any non-terminal status. */
   humanReviewPackage?: { iterationNumber: number; directory: string };
+  /** Phase 9A — the durable, human-readable copy of the approved artifacts under
+   *  data/generated/applications/<company>/<position>-<jobId>/. Only ever set on READY. Absent when
+   *  the job/company could not be resolved, when no approved resume DOCX was rendered, or when
+   *  publication itself failed (in which case publicationError explains why). */
+  publishedApplication?: PublishedApplication;
+  /** Why the Phase 9A publication did not happen, when it was attempted and failed. Never affects
+   *  the workflow's own status — final/ stays authoritative and the approval stands. */
+  publicationError?: string;
 }
 
 export interface StartAndExecuteResumeQualityWorkflowInput {
@@ -607,6 +616,46 @@ export async function executeResumeQualityIteration(
       });
       fs.writeFileSync(path.join(finalDir, "cold_follow_up_email.md"), coldFollowUpEmail, "utf-8");
 
+      // Phase 9A — mirror the just-approved artifacts into the durable, human-readable applications
+      // tree (data/generated/applications/<company-slug>/<position-slug>-<jobId>/). Strictly
+      // derivative: it copies bytes that final/ already holds, and it is reachable only from here —
+      // inside the READY branch, after evaluateQualityGate has already approved this iteration — so
+      // no non-READY workflow has any path to it. Failing to publish never unwinds an approval that
+      // genuinely happened: final/ remains the authoritative approved-artifact directory and the
+      // workflow stays READY, so the failure is reported on the result instead of thrown.
+      let publishedApplication: PublishedApplication | undefined;
+      let publicationError: string | undefined;
+      if (finalResumePath && coldEmailJob && coldEmailCompany) {
+        try {
+          publishedApplication = publishFinalApplicationArtifacts({
+            candidateId,
+            candidateFirstName: firstName,
+            candidateDisplayName: candidate.display_name,
+            companyId: coldEmailCompany.id,
+            companyName: coldEmailCompany.name,
+            jobId: coldEmailJob.id,
+            jobTitle: coldEmailJob.title,
+            dedupeKey: workflow.dedupe_key,
+            applicationId: workflow.application_id,
+            tailoringRunId: workflow.tailoring_run_id,
+            workflowId: workflow.id,
+            workflowStatus: updatedWorkflow.status,
+            iterationNumber,
+            qualityGateOutcome: gateOutcome,
+            overallScore: review.overallScore,
+            instructionVersion: INSTRUCTION_VERSION,
+            instructionHash: INSTRUCTION_HASH,
+            sourceFinalDirectory: finalDir,
+            sourceResumePath: finalResumePath,
+            sourceCoverLetterPath: finalCoverPath,
+            sourceReviewFeedbackPath: finalFeedbackPath,
+            publishedAt: new Date().toISOString(),
+          });
+        } catch (error) {
+          publicationError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
       // Informational workflow-status snapshot (see WorkflowStatusFile) — READY/COMPLETED, nothing
       // further to wait on.
       const workflowStatusFile: WorkflowStatusFile = {
@@ -642,6 +691,8 @@ export async function executeResumeQualityIteration(
           coverLetterPath: finalCoverPath,
           reviewFeedbackPath: finalFeedbackPath,
         },
+        publishedApplication,
+        publicationError,
         requiredCorrections: review.requiredCorrections,
         failureReason: null,
       };
