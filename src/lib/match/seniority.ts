@@ -58,9 +58,52 @@ const SENIORITY_ORDINAL: Record<Seniority, number> = {
   Unknown: -1,
 };
 
+/**
+ * Stage 24C — JD levels that are categorically incompatible with an already-professional candidate,
+ * with the minimum EVIDENCED tenure that establishes that incompatibility and the alignment score
+ * the mismatch earns.
+ *
+ * WHY THIS EXISTS. Candidate 1's most recent title is "Data Engineer", which carries no seniority
+ * keyword, so estimateCandidateSeniority correctly reports Unknown and seniorityAlignmentScore
+ * returned null — inapplicable — for EVERY job level. Measured directly: a "Data Engineer Intern"
+ * posting scored identically to a "Senior Data Engineer" posting (role alignment 1.00 in both cases,
+ * because "Intern" is a level word the role-identity parser strips by design), with no seniority
+ * signal to separate them. An internship requisition was therefore fully eligible to reach
+ * READY_FOR_TAILORING for a candidate with years of continuous professional employment.
+ *
+ * This rule NEVER claims a candidate seniority level and never touches candidate titles. It fires
+ * only when the JOB's own seniority is explicit (Intern/Entry) and CareerOps already holds
+ * independent evidence the candidate is past that level — either a candidate title that itself
+ * states a higher level, or total years of professional experience derived deterministically from
+ * the Master Resume's own dated employment history (experienceDuration.ts's interval-union math,
+ * which returns null rather than guessing). With neither kind of evidence available the behaviour is
+ * unchanged: the dimension stays inapplicable rather than inventing a penalty.
+ */
+export const JOB_LEVEL_INCOMPATIBILITY: { level: Seniority; minYearsEvidenced: number; score: number }[] = [
+  { level: "Intern", minYearsEvidenced: 1, score: 0 },
+  { level: "Entry", minYearsEvidenced: 3, score: 0.2 },
+];
+
 /** null = inapplicable (either side Unknown) — never guessed as a neutral middle score; see
- *  scoring.ts's weight-redistribution rule for how a null dimension is handled. */
-export function seniorityAlignmentScore(jobLevel: Seniority, candidateLevel: Seniority): number | null {
+ *  scoring.ts's weight-redistribution rule for how a null dimension is handled.
+ *
+ *  `candidateYearsExperience` is the deterministic interval-union total from
+ *  experienceDuration.ts (null = not computable from the stated dates, never a guess). It is used
+ *  ONLY by the Stage 24C Intern/Entry incompatibility rule above — it can never raise a score. */
+export function seniorityAlignmentScore(
+  jobLevel: Seniority,
+  candidateLevel: Seniority,
+  candidateYearsExperience: number | null = null
+): number | null {
+  const incompatible = JOB_LEVEL_INCOMPATIBILITY.find((rule) => rule.level === jobLevel);
+  if (incompatible) {
+    const evidencedByTenure =
+      candidateYearsExperience !== null && candidateYearsExperience >= incompatible.minYearsEvidenced;
+    const evidencedByTitle =
+      candidateLevel !== "Unknown" && SENIORITY_ORDINAL[candidateLevel] > SENIORITY_ORDINAL[incompatible.level];
+    if (evidencedByTenure || evidencedByTitle) return incompatible.score;
+  }
+
   if (jobLevel === "Unknown" || candidateLevel === "Unknown") return null;
   const jobOrdinal = SENIORITY_ORDINAL[jobLevel];
   const candidateOrdinal = SENIORITY_ORDINAL[candidateLevel];

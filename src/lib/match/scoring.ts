@@ -27,8 +27,16 @@ import type { DimensionScores, RequirementCriticality, RequirementMatch } from "
  *       its doc comment. 1,255 jobs scored >= 80 with NO skill dimension applicable at all, purely
  *       because a JD stating nothing but "3+ years experience" left `experience` as the single
  *       applicable dimension and weight redistribution handed it 100% of the weight.
+ *
+ * v4 (Stage 24C, bumped after an independent second audit pass over the same engine): ONE
+ * algorithmic change — seniorityAlignmentScore now recognises an explicit Intern/Entry JD level as a
+ * JOB-level incompatibility when CareerOps already evidences the candidate is past that level (see
+ * seniority.ts's JOB_LEVEL_INCOMPATIBILITY). Before this, candidate 1's keyword-free "Data Engineer"
+ * title left candidate seniority Unknown, so the dimension was inapplicable for every job level and a
+ * "Data Engineer Intern" posting scored identically to a "Senior Data Engineer" one. No candidate
+ * seniority is claimed or inferred anywhere by that rule.
  */
-export const MATCH_ENGINE_VERSION = 3;
+export const MATCH_ENGINE_VERSION = 4;
 
 /**
  * Stage 24B weights. `roleAlignment` is deliberately the second-heaviest term: Phase 4's requirement

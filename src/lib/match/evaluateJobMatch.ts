@@ -105,11 +105,13 @@ export function evaluateJobMatch(
   const preferredMatches = allMatches.filter((m) => m.requirement.requirementLevel === "Preferred");
 
   const seniorityEstimate = estimateCandidateSeniority(profile.experience);
-  const seniorityScore = seniorityAlignmentScore(input.jobSeniority, seniorityEstimate.level);
   // Derived deterministically from experience[].startDate/endDate via interval-union math — never
   // trusts a raw profile.totalYearsExperience value even if build-candidate-profile populated one,
   // per that skill's own instructions (it's told to leave this null and let the app compute it).
+  // Computed BEFORE the seniority score because Stage 24C's Intern/Entry job-level incompatibility
+  // rule is evidenced by this tenure figure (see seniority.ts's JOB_LEVEL_INCOMPATIBILITY).
   const totalYearsExperience = computeTotalYearsExperience(profile.experience);
+  const seniorityScore = seniorityAlignmentScore(input.jobSeniority, seniorityEstimate.level, totalYearsExperience);
   const experienceScore =
     input.experienceMinYears === null || totalYearsExperience === null
       ? null

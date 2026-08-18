@@ -39,29 +39,58 @@ function findMatchesInLine(line: string): LineMatch[] {
   return matches.sort((a, b) => a.start - b.start);
 }
 
-const ALTERNATION_CONNECTOR = /^\s*(?:,?\s*(?:or|\/)\s*)\s*$/i;
+const ALTERNATION_CONNECTOR = /^\s*,?\s*(?:or|\/)\s*$/i;
 
-/** Groups adjacent matches on one line joined only by "or"/"/" (optionally with a comma for
- *  3+ item lists, e.g. "AWS, Azure, or GCP") so "AWS or Azure" becomes one alternative-group
- *  requirement instead of two independent required skills. */
+/** A bare comma between two skills. On its own this is ambiguous — "Python, SQL" is a plain AND
+ *  list — so it joins an alternation only when a later connector in the SAME run supplies an
+ *  explicit "or"/"/". See groupAlternatives. */
+const LIST_COMMA_CONNECTOR = /^\s*,\s*$/;
+
+type ConnectorKind = "ALTERNATION" | "LIST_COMMA" | "BREAK";
+
+/**
+ * Groups adjacent matches on one line into OR-alternative groups, so "AWS or Azure" becomes one
+ * alternative-group requirement instead of two independent required skills.
+ *
+ * STAGE 24C — WHY THIS IS RUN-BASED RATHER THAN PAIRWISE. The previous implementation extended a
+ * group only while each ADJACENT connector itself contained "or"/"/". In an English 3+ item
+ * alternative list the "or" appears exactly once, before the LAST item, so every earlier item was
+ * split off as an independent requirement: "Databricks, Snowflake, or Redshift" produced a
+ * standalone Required "Databricks" PLUS a "Snowflake OR Redshift" group — i.e. the candidate had to
+ * possess Databricks AND one of the other two. That breaks the "required alternatives must remain
+ * alternatives" rule on the single most common way a job description writes one, and it failed on
+ * this function's own previously-documented example, "AWS, Azure, or GCP".
+ *
+ * THE RULE NOW: a maximal RUN of matches joined only by alternation connectors and bare list commas
+ * collapses into ONE alternative group — but only if at least one connector inside that run is an
+ * explicit "or"/"/". A run joined by commas alone stays a set of INDEPENDENT requirements (a plain
+ * "Python, SQL, Spark" list is an AND list, not an alternation), and any other connector — notably
+ * ", and " — ends the run outright. Conservative in both directions: no alternation is ever invented
+ * without an explicit "or"/"/", and none is split apart once one is present.
+ */
 function groupAlternatives(matches: LineMatch[], line: string): LineMatch[][] {
-  const groups: LineMatch[][] = [];
-  let current: LineMatch[] = [];
-  for (let i = 0; i < matches.length; i++) {
-    if (current.length === 0) {
-      current.push(matches[i]);
-      continue;
-    }
-    const prev = current[current.length - 1];
-    const connector = line.slice(prev.end, matches[i].start);
-    if (ALTERNATION_CONNECTOR.test(connector)) {
-      current.push(matches[i]);
-    } else {
-      groups.push(current);
-      current = [matches[i]];
-    }
+  if (matches.length === 0) return [];
+
+  // connectors[i] is the text between matches[i] and matches[i + 1].
+  const connectors: ConnectorKind[] = [];
+  for (let i = 1; i < matches.length; i++) {
+    const text = line.slice(matches[i - 1].end, matches[i].start);
+    connectors.push(
+      ALTERNATION_CONNECTOR.test(text) ? "ALTERNATION" : LIST_COMMA_CONNECTOR.test(text) ? "LIST_COMMA" : "BREAK"
+    );
   }
-  if (current.length > 0) groups.push(current);
+
+  const groups: LineMatch[][] = [];
+  let runStart = 0;
+  for (let i = 0; i < matches.length; i++) {
+    if (i !== matches.length - 1 && connectors[i] !== "BREAK") continue;
+    const run = matches.slice(runStart, i + 1);
+    // connectors.slice(runStart, i) is exactly the connectors strictly INSIDE this run.
+    const isAlternation = run.length > 1 && connectors.slice(runStart, i).some((c) => c === "ALTERNATION");
+    if (isAlternation) groups.push(run);
+    else for (const m of run) groups.push([m]);
+    runStart = i + 1;
+  }
   return groups;
 }
 

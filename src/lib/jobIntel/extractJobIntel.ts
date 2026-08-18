@@ -14,8 +14,17 @@ import { extractDomain } from "./domain";
 import { toExtractedSections } from "./sections";
 
 /** Bumped whenever extraction logic changes in a way that should trigger re-extraction of already-
- *  processed jobs (scripts/extract-job-intel.ts can compare this against jobs.structured_extraction_version). */
-export const EXTRACTION_VERSION = 1;
+ *  processed jobs (scripts/extract-job-intel.ts can compare this against jobs.structured_extraction_version).
+ *
+ *  Also folded into src/lib/match/matchKnowledgeHash.ts, so bumping it invalidates every cached
+ *  job_match_results row too — see that module for why extraction output is part of the match cache
+ *  identity even though it never appears in jdContentHash.
+ *
+ *  v2 (Stage 24C): skills.ts's groupAlternatives now collapses 3+ item OR lists ("Databricks,
+ *  Snowflake, or Redshift") into a single alternative group instead of splitting every item before
+ *  the final "or" into an independent Required skill. Already-extracted jobs carry the old, wrong
+ *  grouping in job_skills.alternative_group_id until re-extracted with `npm run extract-job-intel`. */
+export const EXTRACTION_VERSION = 2;
 
 /**
  * Orchestrates every extractor over one job's already-stored data. Pure function — no DB access,
