@@ -15,6 +15,7 @@ import { listTailoringRuns } from "@/db/queries/tailoringRuns";
 import { loadCandidateProfile } from "@/lib/match/candidateProfile";
 import { matchesCurrentInstructions } from "@/lib/resumeQuality/canonicalInstructions";
 import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
+import { evaluateApplicationReadiness, type ApplicationReadinessResult } from "@/lib/resumeQuality/applicationReadiness";
 import { startTailoringRun, type TailoringRunAuthorizationError } from "@/lib/tailoringExecution";
 import { executeResumeQualityIteration } from "@/lib/resumeQuality/orchestrator";
 import { DeterministicResumeReviewer } from "@/lib/resumeQuality/reviewers/deterministicReviewer";
@@ -92,6 +93,11 @@ export async function GET(
       architecturePass: boolean;
       blockingIssuesPass: boolean;
       instructionCompliancePass: boolean;
+      // Stage 25: the gate enforces these two as well (qualityGate.ts conditions 7 and 8), but the
+      // route reported only five of the eight, so a human could see "gate failed" with no way to tell
+      // a truthfulness failure apart from a positioning weakness.
+      blockingFailuresPass: boolean;
+      recruiterQualityPass: boolean;
     };
     instructionCompliance: {
       instructionVersion: string;
@@ -100,6 +106,9 @@ export async function GET(
       failingChecks: string[];
     } | null;
   } | null = null;
+
+  /** Stage 25 — the single canonical "can a human send this?" verdict (applicationReadiness.ts). */
+  let applicationReadiness: ApplicationReadinessResult | null = null;
 
   let bestAttempt: {
     iterationNumber: number;
@@ -140,6 +149,11 @@ export async function GET(
               .filter(([, status]) => status !== "PASS")
               .map(([name]) => name)
           : [];
+        applicationReadiness = evaluateApplicationReadiness(
+          latestReview,
+          latestIter.iteration_number,
+          workflow.max_iterations
+        );
         qualityGate = {
           passed: outcome === "READY",
           outcome,
@@ -149,6 +163,10 @@ export async function GET(
             architecturePass: latestReview.architectureConsistencyScore === 100,
             blockingIssuesPass: latestReview.blockingIssues.length === 0,
             instructionCompliancePass: compliance !== undefined && isCurrent && failingChecks.length === 0,
+            blockingFailuresPass: latestReview.blockingFailures !== undefined && latestReview.blockingFailures.length === 0,
+            recruiterQualityPass:
+              latestReview.recruiterQualityAssessment !== undefined &&
+              latestReview.recruiterQualityAssessment.status === "PASS",
           },
           instructionCompliance: compliance
             ? {
@@ -290,6 +308,7 @@ export async function GET(
     iterations,
     latestReview,
     qualityGate,
+    applicationReadiness,
     bestAttempt,
     availableArtifacts,
     waitingFor,
