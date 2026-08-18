@@ -21,6 +21,8 @@ import { loadCandidateProfile } from "@/lib/match/candidateProfile";
 import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
 import { getTailoringArtifactDirectory } from "@/lib/tailoringArtifacts";
 import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "./canonicalInstructions";
+import { resolveCandidateContact } from "./candidateContact";
+import { gateBlockingComplianceCorrections } from "./instructionCompliance";
 import { generateColdFollowUpEmail } from "./coldFollowUpEmail";
 import { publishFinalApplicationArtifacts, type PublishedApplication } from "./finalPublication";
 import { generateHumanReviewPackage } from "./humanReviewPackage";
@@ -903,6 +905,7 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
   let requiredCorrections: RequiredCorrection[] | undefined;
   let blockingIssues: string[] | undefined;
   let blockingFailures: BlockingFailure[] | undefined;
+  let complianceCorrections: RequiredCorrection[] | undefined;
 
   if (workflow.current_iteration > 0) {
     const priorIterNum = workflow.current_iteration;
@@ -941,6 +944,12 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
         // Stage 26 — without this the writer never learns why it was actually rejected; see
         // blockingFailuresSection in reviewFeedback.ts.
         blockingFailures = latestReview.blockingFailures;
+        // Stage 26B — the same completeness problem for compliance: gate condition 6 requires ALL 22
+        // checks to PASS, but only hard-gate ones ever became corrections, so a blocking soft-gate
+        // REVIEW reached the writer as "None identified".
+        complianceCorrections = latestReview.instructionCompliance
+          ? gateBlockingComplianceCorrections(latestReview.instructionCompliance)
+          : undefined;
       } catch {
         // Fall back to undefined if unparseable
       }
@@ -991,6 +1000,10 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
     requiredCorrections,
     blockingIssues,
     blockingFailures,
+    complianceCorrections,
+    // Stage 26B — the canonical contact source, never the previous resume (which, for a workflow
+    // predating this, holds the fabricated placeholder values) and never a guess.
+    candidateContact: resolveCandidateContact(candidateId).contact,
     dedupeKey: workflow.dedupe_key,
     iterationNumber: workflow.current_iteration + 1,
     masterProfile,

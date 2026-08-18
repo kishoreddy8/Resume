@@ -4,6 +4,20 @@ import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import type { MatchAffectingCandidateSettings, CandidateRankingPreferences } from "@/db/queries/candidateSettings";
 
+/** Stage 26B — the contact form's own shape: plain strings so an empty input round-trips as "" rather
+ *  than null, converted back to null on save so a cleared field reads as "not configured". */
+interface ContactForm {
+  email: string;
+  phone: string;
+  location: string;
+  linkedin: string;
+}
+
+interface ContactProblem {
+  field: string;
+  message: string;
+}
+
 /**
  * Per-candidate preferences UI — see CAREER_OPS_PHASE_2_5_CHECKPOINT.md §5/§6 stage 2.
  * candidateSettings.ts's two-bucket type boundary is surfaced directly: "Ranking Preferences"
@@ -28,6 +42,10 @@ export default function CandidateSettingsPage({ params }: { params: Promise<{ ca
 
   const [matchAffecting, setMatchAffecting] = useState<MatchAffectingCandidateSettings | null>(null);
   const [preferences, setPreferences] = useState<CandidateRankingPreferences | null>(null);
+  // Stage 26B — the candidate's real contact details. Tailoring cannot render a resume without them,
+  // and they are never guessed or defaulted, so this is the one place they can be entered.
+  const [contact, setContact] = useState<ContactForm | null>(null);
+  const [contactProblems, setContactProblems] = useState<ContactProblem[]>([]);
   const [secondaryRolesText, setSecondaryRolesText] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -45,6 +63,13 @@ export default function CandidateSettingsPage({ params }: { params: Promise<{ ca
       }
       setMatchAffecting(data.matchAffecting);
       setPreferences(data.preferences);
+      setContact({
+        email: data.contact?.email ?? "",
+        phone: data.contact?.phone ?? "",
+        location: data.contact?.location ?? "",
+        linkedin: data.contact?.linkedin ?? "",
+      });
+      setContactProblems(data.contactStatus?.problems ?? []);
       setSecondaryRolesText((data.preferences?.secondaryTargetRoles ?? []).join(", "));
     } finally {
       setLoading(false);
@@ -69,6 +94,14 @@ export default function CandidateSettingsPage({ params }: { params: Promise<{ ca
         body: JSON.stringify({
           matchAffecting,
           preferences: { ...preferences, secondaryTargetRoles: parseCommaList(secondaryRolesText) },
+          contact: contact
+            ? {
+                email: contact.email.trim() || null,
+                phone: contact.phone.trim() || null,
+                location: contact.location.trim() || null,
+                linkedin: contact.linkedin.trim() || null,
+              }
+            : undefined,
         }),
       });
       const data = await res.json();
@@ -97,7 +130,7 @@ export default function CandidateSettingsPage({ params }: { params: Promise<{ ca
     setSavedAt(null);
   }
 
-  if (loading || !matchAffecting || !preferences) {
+  if (loading || !matchAffecting || !preferences || !contact) {
     return <p className="text-sm text-zinc-500">{error ?? "Loading…"}</p>;
   }
 
@@ -120,6 +153,72 @@ export default function CandidateSettingsPage({ params }: { params: Promise<{ ca
 
       {error && <p className="text-sm text-red-600">{error}</p>}
       {savedAt && !error && <p className="text-xs text-emerald-700 dark:text-emerald-400">Saved.</p>}
+
+      <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div>
+          <h2 className="text-sm font-semibold">Contact Details</h2>
+          <p className="text-xs text-zinc-500">
+            Used verbatim in the header of every tailored resume and cover letter. CareerOps never
+            invents these — tailoring is held until they are filled in, and placeholder values
+            (example.com addresses, 555-01xx numbers) are rejected. They do not affect matching or
+            ranking.
+          </p>
+        </div>
+
+        {contactProblems.length > 0 && (
+          <div className="rounded border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+            <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+              Tailoring is blocked until these are provided:
+            </p>
+            <ul className="mt-1 list-disc pl-4 text-xs text-amber-800 dark:text-amber-300">
+              {contactProblems.map((p) => (
+                <li key={`${p.field}-${p.message}`}>{p.message}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">Email</span>
+            <input
+              type="email"
+              className="rounded border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              value={contact.email}
+              placeholder="you@yourdomain.com"
+              onChange={(e) => setContact({ ...contact, email: e.target.value })}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">Phone</span>
+            <input
+              type="tel"
+              className="rounded border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              value={contact.phone}
+              placeholder="(214) 555-0123"
+              onChange={(e) => setContact({ ...contact, phone: e.target.value })}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">Location</span>
+            <input
+              className="rounded border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              value={contact.location}
+              placeholder="Dallas, TX"
+              onChange={(e) => setContact({ ...contact, location: e.target.value })}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">LinkedIn (optional)</span>
+            <input
+              className="rounded border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              value={contact.linkedin}
+              placeholder="linkedin.com/in/your-profile"
+              onChange={(e) => setContact({ ...contact, linkedin: e.target.value })}
+            />
+          </label>
+        </div>
+      </section>
 
       <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
         <div>

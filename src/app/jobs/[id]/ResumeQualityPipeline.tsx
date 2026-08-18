@@ -103,7 +103,8 @@ interface QualityWorkflowResponse {
       | "UNAVAILABLE_SCHEDULER_DISABLED"
       | "WAITING_OUTSIDE_WINDOW"
       | "UNAVAILABLE_NOT_RUNNING"
-      | "TECHNICAL_FAILURE";
+      | "TECHNICAL_FAILURE"
+      | "CANDIDATE_CONTACT_REQUIRED";
     detail: string;
     schedulerEnabled: boolean;
     withinWindow: boolean;
@@ -147,6 +148,7 @@ const WRITER_STATE_LABEL: Record<string, string> = {
   WAITING_OUTSIDE_WINDOW: "Waiting for automation window",
   UNAVAILABLE_NOT_RUNNING: "Writer not running",
   TECHNICAL_FAILURE: "Writer technical failure",
+  CANDIDATE_CONTACT_REQUIRED: "Contact details required",
 };
 
 function getStepIndex(status: string): number {
@@ -775,6 +777,8 @@ export function ResumeQualityPipeline({
               ? "border-blue-200 bg-blue-50/70 dark:border-blue-900/50 dark:bg-blue-950/20"
               : writer.state === "TECHNICAL_FAILURE"
               ? "border-red-200 bg-red-50/70 dark:border-red-900/50 dark:bg-red-950/20"
+              : writer.state === "CANDIDATE_CONTACT_REQUIRED"
+              ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30"
               : writer.state === "UNAVAILABLE_SCHEDULER_DISABLED" || writer.state === "UNAVAILABLE_NOT_RUNNING"
               ? "border-zinc-300 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800/40"
               : "border-amber-200 bg-amber-50/70 dark:border-amber-900/50 dark:bg-amber-950/20"
@@ -844,6 +848,15 @@ export function ResumeQualityPipeline({
             <p className="text-xs font-medium text-amber-800 dark:text-amber-400">
               This job is approved and queued, but nothing will write it until background automation is enabled in
               Settings. You can also use the manual writer handoff below.
+            </p>
+          )}
+          {writer.state === "CANDIDATE_CONTACT_REQUIRED" && (
+            <p className="text-xs font-medium text-amber-900 dark:text-amber-300">
+              This is a configuration issue, not a resume problem — no quality iteration was used.{" "}
+              <a href={`/candidates/${candidateId}/settings`} className="underline">
+                Add your contact details in Candidate Settings
+              </a>{" "}
+              and this job resumes automatically on the next scheduled pass.
             </p>
           )}
           {writer.state === "TECHNICAL_FAILURE" && (

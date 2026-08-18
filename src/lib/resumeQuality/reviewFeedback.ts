@@ -1,4 +1,5 @@
 import { matchesCurrentInstructions } from "./canonicalInstructions";
+import { gateBlockingComplianceCorrections } from "./instructionCompliance";
 import {
   CORRECTION_PRIORITIES,
   INSTRUCTION_COMPLIANCE_CHECK_NAMES,
@@ -92,6 +93,23 @@ function blockingFailuresSection(review: StructuredResumeReview): string {
   return out;
 }
 
+/**
+ * Stage 26B — every compliance check that is not PASS, with the reviewer's own recorded reason.
+ *
+ * The per-check status table below (complianceSection) already listed these, but as a 22-row ✓/✗/⚠
+ * roll-call in which a single blocking REVIEW is easy to miss and carries no reason next to it. This
+ * states only the ones that actually block approval, each with its concrete cause.
+ */
+function gateBlockingComplianceSection(review: StructuredResumeReview): string {
+  const compliance = review.instructionCompliance;
+  if (!compliance) return "";
+  const corrections = gateBlockingComplianceCorrections(compliance);
+  if (corrections.length === 0) return "";
+  let out = "\n## Compliance Checks Blocking Approval\n\n";
+  for (const c of corrections) out += `- **[${c.priority}]** ${c.description}\n`;
+  return out;
+}
+
 export function renderReviewFeedbackMarkdown(review: StructuredResumeReview): string {
   let out = "# Resume Review Feedback\n\n";
   out += "## Scores\n\n";
@@ -112,6 +130,7 @@ export function renderReviewFeedbackMarkdown(review: StructuredResumeReview): st
   out += section("Summary Issues", review.summaryIssues);
   out += section("Skills Ordering Issues", review.skillsOrderingIssues);
   out += section("Truthfulness Issues", review.truthfulnessIssues);
+  out += gateBlockingComplianceSection(review);
   out += complianceSection(review);
   out += correctionsSection(review);
 

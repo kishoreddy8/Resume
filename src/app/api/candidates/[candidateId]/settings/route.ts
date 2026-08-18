@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import {
+  getCandidateContact,
   getMatchAffectingSettings,
   getRankingPreferences,
+  updateCandidateContact,
   updateCandidateSettings,
 } from "@/db/queries/candidateSettings";
+import { resolveCandidateContact } from "@/lib/resumeQuality/candidateContact";
 import { computeCandidateSettingsHash } from "@/lib/match/candidateSettingsHash";
 import { rematchCandidateJobsPage, type RematchCandidatePageResult } from "@/lib/match/rematchCandidate";
 
@@ -39,10 +42,28 @@ const preferencesSchema = z
   .partial()
   .strict();
 
+/**
+ * Stage 26B — the candidate's real contact details, as a THIRD bucket alongside matchAffecting and
+ * preferences, keeping this route's existing "never one flat object" boundary intact. Contact details
+ * influence neither matching nor ranking, so a contact-only PATCH never invalidates a match cache.
+ * Values are nullable so a field can be cleared; they are validated for placeholders below rather
+ * than here, so the caller gets the same specific messages the tailoring pipeline would give.
+ */
+const contactSchema = z
+  .object({
+    email: z.string().trim().max(320).nullable(),
+    phone: z.string().trim().max(50).nullable(),
+    location: z.string().trim().max(200).nullable(),
+    linkedin: z.string().trim().max(300).nullable(),
+  })
+  .partial()
+  .strict();
+
 const patchSchema = z
   .object({
     matchAffecting: matchAffectingSchema.optional(),
     preferences: preferencesSchema.optional(),
+    contact: contactSchema.optional(),
   })
   .strict();
 
@@ -52,9 +73,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ can
   if (!Number.isInteger(candidateId)) return NextResponse.json({ error: "Invalid candidateId" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
 
+  const contactValidation = resolveCandidateContact(candidateId);
   return NextResponse.json({
     matchAffecting: getMatchAffectingSettings(candidateId),
     preferences: getRankingPreferences(candidateId),
+    contact: getCandidateContact(candidateId),
+    // Reported alongside the stored values so the settings page can show exactly what still blocks
+    // tailoring, using the same rules the writer pipeline enforces — never a second set.
+    contactStatus: {
+      isComplete: contactValidation.isComplete,
+      problems: contactValidation.problems,
+    },
   });
 }
 
@@ -76,6 +105,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ca
   // re-saving identical values must not trigger any rematch work at all.
   const hashBefore = computeCandidateSettingsHash(getMatchAffectingSettings(candidateId));
   updateCandidateSettings(candidateId, parsed.data);
+  // Stage 26B — written through its own function, which touches only the contact columns. Contact
+  // details are not part of computeCandidateSettingsHash, so saving them never triggers a rematch.
+  if (parsed.data.contact) updateCandidateContact(candidateId, parsed.data.contact);
   const hashAfter = computeCandidateSettingsHash(getMatchAffectingSettings(candidateId));
 
   // Exactly ONE bounded page (~2 s at the measured ~20 ms/job) — never a full walk, which would be
@@ -92,9 +124,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ca
     }
   }
 
+  const contactValidation = resolveCandidateContact(candidateId);
   return NextResponse.json({
     matchAffecting: getMatchAffectingSettings(candidateId),
     preferences: getRankingPreferences(candidateId),
+    contact: getCandidateContact(candidateId),
+    contactStatus: {
+      isComplete: contactValidation.isComplete,
+      problems: contactValidation.problems,
+    },
     rematch,
   });
 }

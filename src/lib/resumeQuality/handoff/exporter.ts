@@ -15,6 +15,7 @@ import { getIterationDirectory, getHandoffDirectory, type QualityWorkflowLocatio
 import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orchestrator";
 import type {
   ExternalHandoffExportResult,
+  RequiredCorrection,
   ResumeWriterInput,
   StructuredResumeReview,
   WorkflowStatusFile,
@@ -47,6 +48,11 @@ export function buildExternalWriterPrompt(input: {
    *  (qualityGate.ts condition 7) and can be non-empty while blockingIssues is empty, so a prompt that
    *  showed only the latter told the writer nothing about why it was rejected. */
   blockingFailures?: ResumeWriterInput["blockingFailures"];
+  /** Stage 26B — every non-PASS compliance check that blocks READY, hard-gate and soft-gate alike,
+   *  each carrying the reviewer's own reason. */
+  complianceCorrections?: RequiredCorrection[];
+  /** Stage 26B — verified real contact details, stated to the writer as immutable facts. */
+  candidateContact?: ResumeWriterInput["candidateContact"];
   /** Stage 21 (Evidence-Grounded Resume Quality V2) — the computed JD Priority Matrix/positioning/
    *  skill-order/ATS-coverage data the writer should actually USE, not just prose guidance about it.
    *  All optional: absent only when neither jobRequirements nor a target role title were available
@@ -57,13 +63,37 @@ export function buildExternalWriterPrompt(input: {
   atsCoverageReportText?: string;
 }): string {
   const { candidateName, iterationNumber, selectedTrack, latestReview, requiredCorrections, blockingIssues, blockingFailures } = input;
+  const complianceCorrections = input.complianceCorrections ?? [];
+
+  // Stated as hard facts, in the same breath as the truthfulness guardrail, because that is exactly
+  // what they are: the writer may format them but must never substitute or invent one. Before this
+  // block existed the handoff exposed no contact details at all, so a writer correctly refusing to
+  // fabricate produced an empty header and the DOCX renderer rejected the document outright.
+  const contactBlock = input.candidateContact
+    ? [
+        `- Full name: ${input.candidateContact.name}`,
+        `- Email: ${input.candidateContact.email}`,
+        `- Phone: ${input.candidateContact.phone}`,
+        `- Location: ${input.candidateContact.location}`,
+        ...(input.candidateContact.linkedin ? [`- LinkedIn: ${input.candidateContact.linkedin}`] : []),
+      ].join("\n")
+    : "NOT PROVIDED — do not invent any contact value; CareerOps stops a workflow before this point when contact details are missing.";
+
+  // The reviewer already emits a boilerplate "Canonical instruction compliance — <check>: <status>"
+  // correction for each failing HARD gate. Those same checks now appear in the dedicated compliance
+  // block below, with their reasons attached, so they are filtered out here rather than stated twice.
+  const complianceBoilerplate = /^Canonical instruction compliance — /;
+  const otherCorrections = (requiredCorrections ?? []).filter((c) => !complianceBoilerplate.test(c.description));
 
   const correctionsBlock =
-    requiredCorrections && requiredCorrections.length > 0
-      ? requiredCorrections
-          .map((c) => `- **[${c.priority}]**: ${c.description}`)
-          .join("\n")
-      : "None identified.";
+    otherCorrections.length > 0 ? otherCorrections.map((c) => `- **[${c.priority}]**: ${c.description}`).join("\n") : "None identified.";
+
+  // Never "None identified." while the gate is actually blocking on a compliance check — that exact
+  // contradiction is what made a real writer rewrite blind and regress.
+  const complianceBlock =
+    complianceCorrections.length > 0
+      ? complianceCorrections.map((c) => `- **[${c.priority}]**: ${c.description}`).join("\n")
+      : "None — every named compliance check passes.";
 
   const blockingBlock =
     blockingIssues && blockingIssues.length > 0
@@ -103,6 +133,14 @@ Target Role Track: **${selectedTrack ?? "General Engineering Track"}**
 ## THE CANONICAL STANDARD IS MANDATORY
 
 \`resume_tailoring_instructions.md\` in this package (instruction version **${INSTRUCTION_VERSION}**, hash \`${INSTRUCTION_HASH}\`) is the full, authoritative Resume Tailoring System Instructions — not a summary. You must follow it in its entirety, not just the highlights below. CareerOps will independently re-review your output against this exact same text; nothing you self-report can substitute for actually satisfying it.
+
+## CANDIDATE CONTACT DETAILS — VERIFIED HARD FACTS, REPRODUCE EXACTLY
+${contactBlock}
+
+Copy these into \`resume\` (name/email/phone/location, and linkedin when given) and into the cover
+letter header verbatim. They are hard facts in the sense of guardrail 1 below: you may not alter,
+abbreviate, re-format into a different value, or substitute a placeholder for any of them, and you
+must never invent one that is missing. The resume and the cover letter must carry identical values.
 
 ## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
@@ -169,6 +207,9 @@ ${scoresBlock}
 
 ### Hard Blocking Failures — these alone prevent approval, resolve every one
 ${blockingFailuresBlock}
+
+### Compliance Checks Blocking Approval — every one of these must reach PASS
+${complianceBlock}
 
 ### Blocking Issues to Resolve
 ${blockingBlock}
@@ -432,6 +473,8 @@ export function exportExternalWriterPackage(
         requiredCorrections: writerInput.requiredCorrections ?? [],
         blockingIssues: writerInput.blockingIssues ?? [],
         blockingFailures: writerInput.blockingFailures ?? [],
+        complianceCorrections: writerInput.complianceCorrections ?? [],
+        candidateContact: writerInput.candidateContact,
         currentResume: writerInput.currentResume,
         currentCoverLetter: writerInput.currentCoverLetter,
         latestReview: writerInput.latestReview,
@@ -472,6 +515,8 @@ export function exportExternalWriterPackage(
     requiredCorrections: writerInput.requiredCorrections,
     blockingIssues: writerInput.blockingIssues,
     blockingFailures: writerInput.blockingFailures,
+    complianceCorrections: writerInput.complianceCorrections,
+    candidateContact: writerInput.candidateContact,
     jdPriorityMatrix: exportJdPriorityMatrix,
     positioningRecommendation: exportPositioningRecommendation,
     recommendedSkillOrder: exportSkillOrder,

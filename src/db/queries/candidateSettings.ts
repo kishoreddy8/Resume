@@ -40,6 +40,10 @@ interface CandidateSettingsRow {
   location_preference: string | null;
   workplace_preference: string | null;
   employment_type_preference: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  contact_location: string | null;
+  contact_linkedin: string | null;
 }
 
 function getRow(candidateId: number): CandidateSettingsRow | undefined {
@@ -74,6 +78,58 @@ export function getRankingPreferences(candidateId: number): CandidateRankingPref
     workplacePreference: row.workplace_preference ? JSON.parse(row.workplace_preference) : [],
     employmentTypePreference: row.employment_type_preference,
   };
+}
+
+/**
+ * Stage 26B — the candidate's real contact details. A THIRD bucket, deliberately separate from
+ * matchAffecting and preferences and following that same enforced-boundary discipline: contact
+ * details are read by neither getMatchAffectingSettings nor getRankingPreferences, so changing them
+ * can never invalidate a match cache or alter ranking. Every field is nullable — "not configured yet"
+ * must be representable, and is never silently replaced with a plausible default.
+ */
+export interface CandidateContact {
+  email: string | null;
+  phone: string | null;
+  location: string | null;
+  linkedin: string | null;
+}
+
+export function getCandidateContact(candidateId: number): CandidateContact {
+  const row = getRow(candidateId);
+  if (!row) return { email: null, phone: null, location: null, linkedin: null };
+  return {
+    email: row.contact_email ?? null,
+    phone: row.contact_phone ?? null,
+    location: row.contact_location ?? null,
+    linkedin: row.contact_linkedin ?? null,
+  };
+}
+
+/** Writes only the contact columns, leaving every match-affecting and ranking field untouched. */
+export function updateCandidateContact(candidateId: number, input: Partial<CandidateContact>): void {
+  const current = { ...getCandidateContact(candidateId), ...input };
+  const trim = (v: string | null) => {
+    const t = (v ?? "").trim();
+    return t.length > 0 ? t : null;
+  };
+  getDb()
+    .prepare(
+      `INSERT INTO candidate_settings (candidate_id, contact_email, contact_phone, contact_location, contact_linkedin, updated_at)
+       VALUES (@candidateId, @email, @phone, @location, @linkedin, datetime('now'))
+       ON CONFLICT(candidate_id) DO UPDATE SET
+         contact_email = excluded.contact_email,
+         contact_phone = excluded.contact_phone,
+         contact_location = excluded.contact_location,
+         contact_linkedin = excluded.contact_linkedin,
+         updated_at = excluded.updated_at`
+    )
+    .run({
+      candidateId,
+      email: trim(current.email),
+      phone: trim(current.phone),
+      location: trim(current.location),
+      linkedin: trim(current.linkedin),
+    });
 }
 
 export interface UpdateCandidateSettingsInput {

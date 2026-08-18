@@ -873,6 +873,18 @@ CREATE TABLE IF NOT EXISTS candidate_settings (
   location_preference TEXT,
   workplace_preference TEXT, -- JSON array of strings, e.g. '["remote","hybrid"]'
   employment_type_preference TEXT,
+  -- Stage 26B — the candidate's real contact details, the single canonical source the resume/cover
+  -- letter renderer and the external writer both read. Deliberately here rather than in a new table:
+  -- this is already THE candidate-specific configuration row, and these columns are read by neither
+  -- getMatchAffectingSettings nor getRankingPreferences, so they can never influence matching or
+  -- ranking. Nullable with no default on purpose — an unconfigured candidate must read as "not yet
+  -- provided" and block tailoring with CANDIDATE_CONTACT_REQUIRED, never be silently populated with a
+  -- plausible-looking default. Before this existed the only contact values in the system were the
+  -- fabricated "candidate@example.com"/"555-0100" that the old placeholder seed injected.
+  contact_email TEXT,
+  contact_phone TEXT,
+  contact_location TEXT,
+  contact_linkedin TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -223,6 +223,12 @@ export interface InstructionComplianceResult {
   /** Human-readable detail per failed/review-flagged check — parallel diagnostic detail, not a
    *  replacement for requiredCorrections (which stays the single actionable-corrections list). */
   notes: string[];
+  /** Stage 26B — the SAME note strings as `notes`, additionally attributed to the check that produced
+   *  them. `notes` remains the flat, order-preserving list it always was; this only records which
+   *  check each line came from, so a correction can carry its own concrete reason instead of a bare
+   *  "<check>: REVIEW". A check with no recorded note simply has no entry — nothing is invented to
+   *  fill the gap. Optional so a legacy persisted review without it still parses. */
+  checkNotes?: Partial<Record<keyof InstructionComplianceChecks, string[]>>;
 }
 
 const complianceStatusSchema = z.enum(COMPLIANCE_STATUSES);
@@ -242,6 +248,7 @@ const instructionComplianceResultSchema = z
     instructionHash: z.string().min(1),
     checks: instructionComplianceChecksSchema,
     notes: z.array(z.string()),
+    checkNotes: z.record(z.string(), z.array(z.string())).optional(),
   })
   .strict();
 
@@ -401,6 +408,16 @@ export interface ResumeWriterInput {
    *  (qualityGate.ts condition 7). Carried separately from `blockingIssues`, which can legitimately be
    *  empty while these are not; without them a writer can be rejected for a reason it never saw. */
   blockingFailures?: BlockingFailure[];
+  /** Stage 26B — every non-PASS canonical compliance check (gate condition 6 requires all 22 to PASS,
+   *  soft-gate ones included), each with the reviewer's own reason. Derived from the prior review's
+   *  own instructionCompliance; never a second judgement. */
+  complianceCorrections?: RequiredCorrection[];
+  /** Stage 26B — the candidate's verified real contact details. HARD FACTS: the writer may format
+   *  them but must never alter, substitute, or invent them, exactly like employer names and dates.
+   *  Always present by the time a writer runs — a workflow with no valid contact configuration is
+   *  stopped before any writer attempt (CANDIDATE_CONTACT_REQUIRED), so the writer is never asked to
+   *  produce a resume it cannot legitimately fill a header for. */
+  candidateContact?: { name: string; email: string; phone: string; location: string; linkedin?: string };
   dedupeKey?: string;
   iterationNumber?: number;
   masterProfile?: CandidateProfile;

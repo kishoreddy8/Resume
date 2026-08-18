@@ -7,6 +7,7 @@ import {
   notifyResumeReady,
   notifyWriterFailure,
 } from "@/lib/notifications/resumePipelineNotifications";
+import { describeContactProblems, resolveCandidateContact } from "../candidateContact";
 import { evaluateTailoringAuthorization } from "../tailoringAuthorization";
 import { exportExternalWriterPackage } from "../handoff/exporter";
 import { importExternalWriterResult } from "../handoff/importer";
@@ -60,6 +61,11 @@ export type WorkflowOutcome =
    *  agrees with the job's current match decision. Never a failure: nothing is written, nothing is
    *  spent, and the workflow is left exactly as it was for a human to re-approve or abandon. */
   | "SKIPPED_UNAUTHORIZED"
+  /** Stage 26B — the candidate has no valid contact configuration, so no renderable resume could be
+   *  produced no matter how good the writing is. A configuration problem, never a quality verdict:
+   *  no Claude call is made, no iteration is consumed, and the workflow waits unchanged until the
+   *  human fills the details in. */
+  | "CANDIDATE_CONTACT_REQUIRED"
   | "ERROR";
 
 export interface PassOutcome {
@@ -123,6 +129,22 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
       outcome: "SKIPPED_UNAUTHORIZED",
       iterationNumber: targetIteration,
       error: authorization.blockingReason ?? "Tailoring is not authorized for this job.",
+    };
+  }
+
+  // Stage 26B — checked BEFORE the claim and before any spend, because missing contact details are an
+  // input problem that no amount of rewriting can fix. The renderer hard-requires a real email
+  // (tools/tailoring-engine/generate.ts), so without one every attempt would produce a resume that
+  // cannot be turned into a document — burning a genuine quality iteration on a foregone conclusion,
+  // and previously doing so invisibly, since the render error was swallowed.
+  const contact = resolveCandidateContact(candidateId);
+  if (!contact.isComplete) {
+    return {
+      workflowId,
+      candidateId,
+      outcome: "CANDIDATE_CONTACT_REQUIRED",
+      iterationNumber: targetIteration,
+      error: `Candidate contact details are required before tailoring can run. ${describeContactProblems(contact)}`,
     };
   }
 

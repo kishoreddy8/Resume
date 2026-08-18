@@ -1,6 +1,7 @@
 import { currentInstructionIdentity } from "./canonicalInstructions";
 import type { LaundryListFinding } from "./reviewers/onePrimaryTechnologyCheck";
 import type { TechnologyGroupingFinding } from "./reviewers/technologyGroupingCheck";
+import { INSTRUCTION_COMPLIANCE_CHECK_NAMES } from "./types";
 import type { ComplianceStatus, InstructionComplianceChecks, InstructionComplianceResult, MetricProvenanceResult, RequiredCorrection } from "./types";
 
 /**
@@ -139,14 +140,28 @@ function statusFromCounts(blockingCount: number, softCount: number): ComplianceS
 
 export function evaluateInstructionCompliance(input: EvaluateInstructionComplianceInput): InstructionComplianceResult {
   const notes: string[] = [];
+  const checkNotes: Partial<Record<keyof InstructionComplianceChecks, string[]>> = {};
   const checks = {} as InstructionComplianceChecks;
+
+  /**
+   * Stage 26B — records a note against BOTH the flat list (unchanged, same strings in the same order
+   * as before) and the check that produced it. Attribution is what lets a correction carry its own
+   * concrete reason; before this, every note was an unkeyed line and a soft-gate failure could only
+   * be reported as a bare status.
+   */
+  const note = (check: keyof InstructionComplianceChecks, ...lines: string[]): void => {
+    for (const line of lines) {
+      notes.push(line);
+      if (line.length > 0) (checkNotes[check] ??= []).push(line);
+    }
+  };
 
   // A. Hard career facts
   checks.hardCareerFacts = !input.hasMasterProfile
     ? "REVIEW"
     : statusFromCounts(input.employmentOrEducationBlockingIssues.length, input.employmentOrEducationSoftIssues.length);
-  if (!input.hasMasterProfile) notes.push("No Master Resume profile supplied — hard career facts could not be verified.");
-  notes.push(...input.employmentOrEducationBlockingIssues, ...input.employmentOrEducationSoftIssues);
+  if (!input.hasMasterProfile) note("hardCareerFacts", "No Master Resume profile supplied — hard career facts could not be verified.");
+  note("hardCareerFacts", ...input.employmentOrEducationBlockingIssues, ...input.employmentOrEducationSoftIssues);
 
   // B. MSI compliance
   checks.masterSkillsInventoryCompliance = !input.hasMasterProfile
@@ -155,7 +170,7 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
       ? "FAIL"
       : "PASS";
   if (input.ungroundedTechnologies.length > 0) {
-    notes.push(`Technologies with no grounding in the Master Resume/Skills Inventory: ${input.ungroundedTechnologies.join(", ")}`);
+    note("masterSkillsInventoryCompliance", `Technologies with no grounding in the Master Resume/Skills Inventory: ${input.ungroundedTechnologies.join(", ")}`);
   }
 
   // C. Deep rewrite
@@ -165,27 +180,27 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
   // noContradictingTechnologies per the canonical text's own explicit "scan resume AND cover letter"
   // scope for that specific guardrail).
   checks.architectureIntegrity = input.architectureContradictions.length > 0 ? "FAIL" : "PASS";
-  notes.push(...input.architectureContradictions);
+  note("architectureIntegrity", ...input.architectureContradictions);
 
   // E. Technology grouping
   checks.technologyGrouping = input.technologyGroupingFindings.length > 0 ? "REVIEW" : "PASS";
   for (const f of input.technologyGroupingFindings) {
-    notes.push(`Technical Skills group "${f.groupLabel}" mixes ${f.providersFound.join("/")} without a migration/integration framing.`);
+    note("technologyGrouping", `Technical Skills group "${f.groupLabel}" mixes ${f.providersFound.join("/")} without a migration/integration framing.`);
   }
 
   // F. One primary technology per responsibility
   checks.onePrimaryTechnologyPerResponsibility = input.laundryListFindings.length > 0 ? "FAIL" : "PASS";
   for (const f of input.laundryListFindings) {
-    notes.push(`${f.role}: laundry-list bullet names ${f.technologiesFound.length} distinct major technologies with no single clear primary responsibility: "${f.bullet}"`);
+    note("onePrimaryTechnologyPerResponsibility", `${f.role}: laundry-list bullet names ${f.technologiesFound.length} distinct major technologies with no single clear primary responsibility: "${f.bullet}"`);
   }
 
   // H. Metric inference policy
   checks.metricInferencePolicy =
     input.metricProvenance.unsupportedCount > 0 || input.suspiciousRepeatedMetrics.length > 0 ? "FAIL" : "PASS";
   for (const e of input.metricProvenance.entries) {
-    if (e.category === "UNSUPPORTED") notes.push(`Unsupported metric category: "${e.bullet}" — ${e.reason}`);
+    if (e.category === "UNSUPPORTED") note("metricInferencePolicy", `Unsupported metric category: "${e.bullet}" — ${e.reason}`);
   }
-  notes.push(...input.suspiciousRepeatedMetrics);
+  note("metricInferencePolicy", ...input.suspiciousRepeatedMetrics);
 
   // I. Keyword optimization
   checks.keywordOptimization = input.insufficientRequirementData
@@ -208,7 +223,7 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
   // scope for this specific guardrail.
   checks.noContradictingTechnologies =
     input.architectureContradictions.length > 0 || input.coverLetterContradictions.length > 0 ? "FAIL" : "PASS";
-  notes.push(...input.coverLetterContradictions);
+  note("noContradictingTechnologies", ...input.coverLetterContradictions);
 
   // M. Bullet writing
   checks.bulletWriting = input.genericBulletsCount > 0 || input.bannedLanguageInBulletsCount > 0 ? "FAIL" : "PASS";
@@ -218,7 +233,7 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
 
   // O. Cross-document consistency
   checks.crossDocumentConsistency = input.crossDocumentStatus;
-  notes.push(...input.crossDocumentContradictions);
+  note("crossDocumentConsistency", ...input.crossDocumentContradictions);
 
   // P. Banned AI language (bullets + summary, combined)
   const bannedTotal = input.bannedLanguageInBulletsCount + input.bannedLanguageInSummaryCount;
@@ -233,12 +248,12 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
     : input.yearsInflationIssues.length > 0 || input.educationHidden
       ? "FAIL"
       : "PASS";
-  notes.push(...input.yearsInflationIssues);
-  if (input.educationHidden) notes.push("Master Resume records education that is missing entirely from the tailored resume.");
+  note("yearsExperienceEducationHonesty", ...input.yearsInflationIssues);
+  if (input.educationHidden) note("yearsExperienceEducationHonesty", "Master Resume records education that is missing entirely from the tailored resume.");
 
   // S. Employment-type handling
   checks.employmentTypeHandling = input.employmentTypeStatus;
-  notes.push(...input.employmentTypeFlags);
+  note("employmentTypeHandling", ...input.employmentTypeFlags);
 
   // T. Resume length / bullet caps (verb tense is its own named check, U, below — the canonical
   // standard lists them as two separate guardrails even though one module computes both).
@@ -259,7 +274,7 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
   const structuralFail = input.structuralBlockingIssues.length > 0 || input.formattingScore < 70;
   const docxViolations = [...(input.docxValidation?.resume?.violations ?? []), ...(input.docxValidation?.coverLetter?.violations ?? [])];
   checks.atsFormatting = structuralFail || docxViolations.length > 0 ? "FAIL" : "PASS";
-  notes.push(...input.structuralBlockingIssues, ...docxViolations);
+  note("atsFormatting", ...input.structuralBlockingIssues, ...docxViolations);
 
   // W. Final validation — meta-check: every OTHER hard-gate check must PASS, plus no blocking issues
   // anywhere in the review. This is never independently "found" — it is the synthesis itself.
@@ -268,7 +283,51 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
   checks.finalValidation = input.anyBlockingIssues || anyHardGateNotPass ? "FAIL" : "PASS";
 
   const identity = currentInstructionIdentity();
-  return { instructionVersion: identity.instructionVersion, instructionHash: identity.instructionHash, checks, notes: notes.filter((n) => n.length > 0) };
+  return {
+    instructionVersion: identity.instructionVersion,
+    instructionHash: identity.instructionHash,
+    checks,
+    notes: notes.filter((n) => n.length > 0),
+    checkNotes,
+  };
+}
+
+/**
+ * Stage 26B — EVERY gate-relevant check that is not PASS, as an actionable correction.
+ *
+ * evaluateQualityGate condition 6 requires all 22 named checks to be exactly PASS, hard and soft
+ * alike, so a soft-gate REVIEW blocks READY just as firmly as a hard-gate FAIL. Only the hard-gate
+ * subset was ever turned into corrections (see hardGateFailureCorrections below), which produced this
+ * observed failure on the real corpus: an iteration scoring 100/100/100/100 with zero blocking
+ * failures and PASS recruiter quality was correctly refused for `technologyGrouping: REVIEW`, and the
+ * next writer package said "Required Corrections: None identified". The writer rewrote blind and the
+ * following iteration regressed badly. Nothing was wrong with the gate — the writer was simply never
+ * told what it had to fix.
+ *
+ * Priority reflects the gate's own structure, not a new severity judgement: hard-gate checks stay
+ * CRITICAL exactly as before, and the soft-gate checks that nonetheless block READY are HIGH — high
+ * enough to be acted on, distinct enough that a hard blocker still reads as a hard blocker.
+ *
+ * Reasons are the reviewer's own recorded notes (see checkNotes), verbatim. A check with no recorded
+ * note gets the plain status statement — never an invented explanation.
+ */
+export function gateBlockingComplianceCorrections(compliance: InstructionComplianceResult): RequiredCorrection[] {
+  const corrections: RequiredCorrection[] = [];
+  for (const name of INSTRUCTION_COMPLIANCE_CHECK_NAMES) {
+    const status = compliance.checks[name];
+    if (status === "PASS") continue;
+    const isHardGate = HARD_GATE_CHECKS.includes(name);
+    const reasons = compliance.checkNotes?.[name] ?? [];
+    const detail = reasons.length > 0 ? ` Reason: ${reasons.join(" | ")}` : "";
+    corrections.push({
+      priority: isHardGate ? "CRITICAL" : "HIGH",
+      description:
+        `Canonical instruction compliance — ${name}: ${status}. ` +
+        `${isHardGate ? "This is a hard-gate check and must PASS" : "Every named compliance check, including this one, must PASS"} ` +
+        `before this resume can be marked READY.${detail}`,
+    });
+  }
+  return corrections;
 }
 
 /** Every hard-gate check that is not PASS, formatted as a CRITICAL requiredCorrection — this is what

@@ -60,6 +60,15 @@ let finalResumeFilename: typeof import("../../workspace").finalResumeFilename;
 let getPublishedApplicationsRoot: typeof import("../../finalPublication").getPublishedApplicationsRoot;
 let publishedCompanySlug: typeof import("../../finalPublication").publishedCompanySlug;
 
+let updateCandidateContact: typeof import("@/db/queries/candidateSettings").updateCandidateContact;
+
+const ALICE_CONTACT = {
+  email: "alice.smith@gmail.com",
+  phone: "(214) 987-6543",
+  location: "Dallas, TX",
+  linkedin: "linkedin.com/in/alicesmith",
+};
+
 let candidateAliceId: number;
 let candidateBobId: number;
 let companyId: number;
@@ -331,6 +340,18 @@ before(async () => {
   }
   seedCandidateMasterFiles(candidateAliceId);
   seedCandidateMasterFiles(candidateBobId);
+
+  // Stage 26B — the writer path requires real contact details before it will spend an attempt, so
+  // every fixture candidate that is meant to reach the writer must have them. (The one test that
+  // asserts the block clears them deliberately and restores them afterwards.)
+  ({ updateCandidateContact } = await import("@/db/queries/candidateSettings"));
+  updateCandidateContact(candidateAliceId, ALICE_CONTACT);
+  updateCandidateContact(candidateBobId, {
+    email: "bob.jones@gmail.com",
+    phone: "(469) 987-1234",
+    location: "Austin, TX",
+    linkedin: null,
+  });
 
   companyId = createCompany({ name: "Stage26 Test Co", source_type: "greenhouse", ats_board_token: "stage26" }).id;
 
@@ -1205,4 +1226,77 @@ test("S26-81 buildResumeWriterInput carries blockingFailures forward for the nex
   // empty case, which must be an empty array or undefined rather than silently dropped.
   const prior = input.latestReview?.blockingFailures ?? [];
   assert.deepEqual(input.blockingFailures ?? [], prior, "the writer input must mirror the prior review's blocking failures");
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// Stage 26B — candidate contact is required before any writer attempt, and flows to the writer
+// ---------------------------------------------------------------------------------------------
+
+test("S26B-40 a workflow with no candidate contact is blocked BEFORE the writer, consuming no iteration", async () => {
+  const job = jobs[3];
+  const wf = getLatestResumeQualityWorkflowForJob(candidateAliceId, job.dedupe_key)!;
+
+  // Clear the contact for the duration of this test only — restored in the finally below.
+  updateCandidateContact(candidateAliceId, { email: null, phone: null, location: null, linkedin: null });
+  const { resolveCandidateContact } = await import("../../candidateContact");
+  assert.equal(resolveCandidateContact(candidateAliceId).isComplete, false, "premise: contact cleared");
+  try {
+
+  const before = getResumeQualityWorkflow(candidateAliceId, wf.id)!;
+  const itersBefore = listResumeQualityIterations(candidateAliceId, wf.id).length;
+  const outcome = await processOneWorkflow(before, { cliOptions: cliSuccess(perfectResume("Alice Smith", "alice@gmail.com")) });
+
+  assert.equal(outcome.outcome, "CANDIDATE_CONTACT_REQUIRED");
+  assert.match(outcome.error ?? "", /contact details are required/i);
+  assert.match(outcome.error ?? "", /Email address is required/i);
+
+  const after = getResumeQualityWorkflow(candidateAliceId, wf.id)!;
+  assert.equal(after.status, before.status, "the workflow must be left exactly as it was");
+  assert.equal(after.current_iteration, before.current_iteration, "no iteration may be advanced");
+  assert.equal(listResumeQualityIterations(candidateAliceId, wf.id).length, itersBefore, "no quality iteration may be consumed");
+  // Nothing was even claimed on disk, so no Claude invocation could have happened.
+  assert.equal(
+    fs.existsSync(path.join(getHandoffDirectory({ candidateId: candidateAliceId, dedupeKey: job.dedupe_key, runId: wf.tailoring_run_id, workflowId: wf.id }, before.current_iteration + 1), "writer_input.json")),
+    false,
+    "no handoff package may be exported for a contact-blocked workflow"
+  );
+  } finally {
+    updateCandidateContact(candidateAliceId, ALICE_CONTACT);
+  }
+  assert.equal((await import("../../candidateContact")).resolveCandidateContact(candidateAliceId).isComplete, true, "contact restored");
+});
+
+test("S26B-41 once real contact is saved, it reaches the writer package as hard facts", async () => {
+  const { buildResumeWriterInput } = await import("../../orchestrator");
+  const { exportExternalWriterPackage } = await import("../../handoff/exporter");
+
+  updateCandidateContact(candidateAliceId, ALICE_CONTACT);
+
+  const job = jobs[1];
+  const wf = getLatestResumeQualityWorkflowForJob(candidateAliceId, job.dedupe_key)!;
+  const input = buildResumeWriterInput(candidateAliceId, wf.id);
+  assert.ok(input.candidateContact, "the writer input must carry the verified contact");
+  assert.equal(input.candidateContact!.email, "alice.smith@gmail.com");
+  assert.equal(input.candidateContact!.phone, "(214) 987-6543");
+  assert.equal(input.candidateContact!.location, "Dallas, TX");
+  assert.equal(input.candidateContact!.name, "Alice Smith");
+
+  const result = exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, overwriteExisting: true });
+  const prompt = fs.readFileSync(path.join(result.handoffDirectory, "writer_prompt.md"), "utf-8");
+  assert.match(prompt, /CANDIDATE CONTACT DETAILS — VERIFIED HARD FACTS/);
+  assert.match(prompt, /alice\.smith@gmail\.com/);
+  assert.match(prompt, /\(214\) 987-6543/);
+  assert.match(prompt, /Dallas, TX/);
+  assert.match(prompt, /never invent one that is missing/);
+  assert.doesNotMatch(prompt, /candidate@example\.com/);
+  assert.doesNotMatch(prompt, /555-0100/);
+});
+
+test("S26B-42 with valid contact the writer runs normally again — the block is not sticky", async () => {
+  const job = jobs[3];
+  const wf = getResumeQualityWorkflow(candidateAliceId, getLatestResumeQualityWorkflowForJob(candidateAliceId, job.dedupe_key)!.id)!;
+  if (wf.status === "READY" || wf.status === "FAILED") return; // already terminal in this fixture run
+  const outcome = await processOneWorkflow(wf, { cliOptions: cliSuccess(perfectResume("Alice Smith", "alice.smith@gmail.com")) });
+  assert.notEqual(outcome.outcome, "CANDIDATE_CONTACT_REQUIRED", "a configured candidate must no longer be blocked");
 });

@@ -251,6 +251,23 @@ before(async () => {
   seedCandidateMasterFiles(candidateAliceId);
   seedCandidateMasterFiles(candidateBobId);
 
+  // Stage 26B — the writer refuses to spend an attempt for a candidate with no real contact details
+  // (the renderer hard-requires an email), so every fixture candidate that reaches the writer needs
+  // them. Real-shaped values, never the placeholder forms the validator rejects.
+  const { updateCandidateContact } = await import("@/db/queries/candidateSettings");
+  updateCandidateContact(candidateAliceId, {
+    email: "alice.smith@gmail.com",
+    phone: "(214) 987-6543",
+    location: "Dallas, TX",
+    linkedin: null,
+  });
+  updateCandidateContact(candidateBobId, {
+    email: "bob.jones@gmail.com",
+    phone: "(469) 987-1234",
+    location: "Austin, TX",
+    linkedin: null,
+  });
+
   const dedupeKey = dedupeKeyForAts("greenhouse", companyId, "job-worker-1");
   upsertJob({
     companyId,
@@ -510,6 +527,11 @@ test("6. final allowed quality-iteration failure reaches FAILED/HUMAN_REVIEW_REQ
     path.join(tmpCandidatesDir, String(candId), "master", "manifest.json"),
     JSON.stringify({ resume: { filename: "resume.docx", uploadedAt: "2026-01-01T00:00:00Z", sizeBytes: 1, sha256: `r-${candId}` }, skills: { filename: "skills.docx", uploadedAt: "2026-01-01T00:00:00Z", sizeBytes: 1, sha256: `s-${candId}` } })
   );
+
+  // Stage 26B — this candidate is created inline, so it needs its own real contact details before
+  // the writer will spend an attempt on it.
+  const { updateCandidateContact: setContact } = await import("@/db/queries/candidateSettings");
+  setContact(candId, { email: "carol.diaz@gmail.com", phone: "(512) 987-4455", location: "Houston, TX", linkedin: null });
 
   const wf = await authorizeAndCreateFlawedWorkflow(candId);
 

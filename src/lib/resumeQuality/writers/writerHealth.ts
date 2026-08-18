@@ -33,7 +33,10 @@ export type ResumeWriterHealthState =
   | "UNAVAILABLE_NOT_RUNNING"
   /** The last pass could not produce a resume for technical reasons (CLI failure/timeout/malformed
    *  output, or a handoff that exhausted its bounded technical retries). Never a quality verdict. */
-  | "TECHNICAL_FAILURE";
+  | "TECHNICAL_FAILURE"
+  /** Stage 26B — approved work is queued but the candidate's contact details are missing, so nothing
+   *  can be rendered. A configuration state, not a failure and not a quality verdict. */
+  | "CANDIDATE_CONTACT_REQUIRED";
 
 /** How long without a tick evaluation before the writer scheduler is reported as not running. The
  *  tick is evaluated every TICK_CHECK_INTERVAL_MS (60s) by src/instrumentation.ts, so 5 minutes is
@@ -119,6 +122,16 @@ export function getResumeWriterHealth(now: Date = new Date(), workflowId?: numbe
 
   if (lease.held) {
     return { ...base, state: "PROCESSING", detail: "A resume writer pass is running now." };
+  }
+  // Reported ahead of every other non-running state: it is the one condition the user can fix
+  // immediately, and until they do, no amount of waiting or retrying will produce a resume.
+  const contactBlocked = (runtime.lastSummary?.outcomes ?? []).find((o) => o.outcome === "CANDIDATE_CONTACT_REQUIRED");
+  if (contactBlocked && pendingWorkflowCount > 0) {
+    return {
+      ...base,
+      state: "CANDIDATE_CONTACT_REQUIRED",
+      detail: `${contactBlocked.error ?? "Candidate contact details are required before tailoring can run."} No quality iteration was used — add them in Candidate Settings and the queued work resumes on the next scheduled pass.`,
+    };
   }
   if (!tickIsLive) {
     return {

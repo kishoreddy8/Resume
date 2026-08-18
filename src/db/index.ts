@@ -579,6 +579,35 @@ const SCAN_RUNS_WARNING_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
 // "old shape" scan_runs table — these are the first scan_runs columns that live only in this
 // migration function rather than schema.sql's CREATE TABLE, so unlike every other scan_runs column
 // (including description_failures, its closest sibling), this exact path had no prior test coverage.
+// --- Stage 26B: candidate contact details ------------------------------------------------------
+//
+// The renderer requires a real email (tools/tailoring-engine/generate.ts validates resume.email), and
+// a resume needs a phone/location a recruiter can actually use. CareerOps stored none of these
+// anywhere — the only contact values that ever reached a rendered document were the fabricated
+// "candidate@example.com" / "555-0100" the pre-Stage-26 placeholder seed injected, which is why
+// removing that fabrication made DOCX rendering start failing with "resume.email is required".
+//
+// Added to candidate_settings because that IS the candidate-specific configuration row. Nullable with
+// no default, following this file's own non-backfill philosophy: an unconfigured candidate reads as
+// "not provided" and blocks tailoring, and is never silently given a plausible-looking value.
+const CANDIDATE_CONTACT_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
+  { name: "contact_email", ddl: "ALTER TABLE candidate_settings ADD COLUMN contact_email TEXT" },
+  { name: "contact_phone", ddl: "ALTER TABLE candidate_settings ADD COLUMN contact_phone TEXT" },
+  { name: "contact_location", ddl: "ALTER TABLE candidate_settings ADD COLUMN contact_location TEXT" },
+  { name: "contact_linkedin", ddl: "ALTER TABLE candidate_settings ADD COLUMN contact_linkedin TEXT" },
+];
+
+export function runCandidateContactMigrations(db: Database.Database) {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(candidate_settings)").all() as { name: string }[]).map((c) => c.name)
+  );
+  for (const column of CANDIDATE_CONTACT_ADDITIVE_COLUMNS) {
+    if (!existingColumns.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+}
+
 export function runScanRunsWarningMigrations(db: Database.Database) {
   const existingColumns = new Set(
     (db.prepare("PRAGMA table_info(scan_runs)").all() as { name: string }[]).map((c) => c.name)
@@ -818,6 +847,7 @@ function createConnection(): Database.Database {
   runScanHealthMigrations(db);
   runReliabilityMigrations(db);
   runScanRunsWarningMigrations(db);
+  runCandidateContactMigrations(db);
   migrateAiEnrichmentsEntityKey(db, schema);
   runCompaniesDiscoveryMigrations(db);
   ensureCandidateOne(db);
