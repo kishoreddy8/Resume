@@ -30,7 +30,7 @@
  *     npx tsx tools/acceptance/stage24c-acceptance.ts            # Phase 5 items 1-14, Phase 6 A-D
  *     npx tsx tools/acceptance/stage24c-acceptance.ts --top20    # also item 15 (needs `npm run dev`)
  *
- * Expected versions at commit aff3b3f: MATCH_ENGINE_VERSION 4, EXTRACTION_VERSION 2.
+ * Expected versions after Stage 25A: MATCH_ENGINE_VERSION 4, EXTRACTION_VERSION 3.
  */
 import { getDb, getDbPath } from "../../src/db";
 import { MATCH_ENGINE_VERSION } from "../../src/lib/match/scoring";
@@ -39,20 +39,36 @@ import { countJobsNeedingEvaluation } from "../../src/lib/match/autoEvaluate";
 
 const CANDIDATE_ID = 1;
 const EXPECTED_MATCH_ENGINE_VERSION = 4;
-const EXPECTED_EXTRACTION_VERSION = 2;
+const EXPECTED_EXTRACTION_VERSION = 3;
 
 const db = getDb();
 const one = <T>(sql: string, ...params: unknown[]): T => db.prepare(sql).get(...params) as T;
 const all = <T>(sql: string, ...params: unknown[]): T[] => db.prepare(sql).all(...params) as T[];
 const count = (sql: string, ...params: unknown[]): number => one<{ c: number }>(sql, ...params).c;
 
-/** Latest active result per dedupe_key for this candidate — exactly the row the UI reads. */
+/**
+ * Latest active result per dedupe_key for this candidate, restricted to the LIVE corpus — exactly
+ * the rows the UI reads.
+ *
+ * STAGE 25A — WHY THE `EXISTS` CLAUSE. Without it this view also returned results for dedupe_keys
+ * that no longer belong to any job at all (10 orphaned rows on the real database, left behind by
+ * jobs deleted by the age-based lifecycle sweep — job_match_results deliberately has no FK, see
+ * ai_enrichments' "orphaned but harmless" note) and for ARCHIVED jobs (1,600 rows), neither of which
+ * any view can display. That inflated "latest active results" to 19,677 against an 18,065-job live
+ * corpus and made "results by engine version" read permanently MIXED. Worse, an orphaned row's
+ * job_id column still points at whatever id it had when written — job_id is debug metadata and
+ * dedupe_key is authoritative (schema.sql says so explicitly) — so any join through job_id
+ * attributes a stale result to an unrelated live job.
+ */
 const LATEST = `
   SELECT r.* FROM job_match_results r
   JOIN (
     SELECT dedupe_key, MAX(id) AS id FROM job_match_results
     WHERE candidate_id = ? AND status = 'active' GROUP BY dedupe_key
-  ) m ON m.id = r.id`;
+  ) m ON m.id = r.id
+  WHERE EXISTS (
+    SELECT 1 FROM jobs j WHERE j.dedupe_key = r.dedupe_key AND j.is_active = 1 AND j.is_archived = 0
+  )`;
 
 const rule = () => console.log("=".repeat(96));
 
@@ -62,11 +78,11 @@ rule();
 console.log("db path                  :", getDbPath());
 console.log(
   "MATCH_ENGINE_VERSION     :", MATCH_ENGINE_VERSION,
-  MATCH_ENGINE_VERSION === EXPECTED_MATCH_ENGINE_VERSION ? "OK" : `MISMATCH — expected ${EXPECTED_MATCH_ENGINE_VERSION}; is this checkout aff3b3f?`
+  MATCH_ENGINE_VERSION === EXPECTED_MATCH_ENGINE_VERSION ? "OK" : `MISMATCH — expected ${EXPECTED_MATCH_ENGINE_VERSION}`
 );
 console.log(
   "EXTRACTION_VERSION       :", EXTRACTION_VERSION,
-  EXTRACTION_VERSION === EXPECTED_EXTRACTION_VERSION ? "OK" : `MISMATCH — expected ${EXPECTED_EXTRACTION_VERSION}; is this checkout aff3b3f?`
+  EXTRACTION_VERSION === EXPECTED_EXTRACTION_VERSION ? "OK" : `MISMATCH — expected ${EXPECTED_EXTRACTION_VERSION}`
 );
 
 // --- 1. corpus + the re-extraction guard -------------------------------------------------------
@@ -74,7 +90,8 @@ const totalJobs = count("SELECT COUNT(*) c FROM jobs");
 const activeJobs = count("SELECT COUNT(*) c FROM jobs WHERE is_active = 1 AND is_archived = 0");
 const notReExtracted = count(
   `SELECT COUNT(*) c FROM jobs
-    WHERE is_active = 1 AND (structured_extraction_version IS NULL OR structured_extraction_version < ?)`,
+    WHERE is_active = 1 AND is_archived = 0
+      AND (structured_extraction_version IS NULL OR structured_extraction_version < ?)`,
   EXTRACTION_VERSION
 );
 console.log("\n-- 1. corpus ---------------------------------------------------------------------------");
@@ -189,7 +206,7 @@ for (const g of orGroups) console.log(`   job ${String(g.job_id).padStart(6)} [$
 console.log("\n-- Phase 6 D — Intern/Entry postings ----------------------------------------------------");
 const juniorPostings = all<{ title: string; seniority: string; overall_score: number; decision: string; dimension_scores: string }>(
   `SELECT j.title, COALESCE(j.seniority, 'Unknown') seniority, r.overall_score, r.decision, r.dimension_scores
-     FROM (${LATEST}) r JOIN jobs j ON j.id = r.job_id
+     FROM (${LATEST}) r JOIN jobs j ON j.dedupe_key = r.dedupe_key
     WHERE j.seniority IN ('Intern', 'Entry') ORDER BY r.overall_score DESC LIMIT 10`,
   CANDIDATE_ID
 );
@@ -209,7 +226,7 @@ for (const p of juniorPostings) {
   );
 }
 const juniorReady = count(
-  `SELECT COUNT(*) c FROM (${LATEST}) r JOIN jobs j ON j.id = r.job_id
+  `SELECT COUNT(*) c FROM (${LATEST}) r JOIN jobs j ON j.dedupe_key = r.dedupe_key
     WHERE j.seniority IN ('Intern', 'Entry') AND r.decision = 'READY_FOR_TAILORING'`,
   CANDIDATE_ID
 );
@@ -227,9 +244,29 @@ interface ForYouApiMatch {
 interface ForYouApiJob {
   title?: string;
   source_type?: string;
+  company_name?: string;
   company?: { name?: string };
   match?: ForYouApiMatch;
   ranking?: { ageDays?: number };
+}
+
+/**
+ * STAGE 25A — the response shape this reader expects. GET /api/candidates/[id]/for-you returns
+ * `{ candidateId, preferences, bucketCounts, entries: [{ job, ranking }] }`. This block used to read
+ * `body.jobs` and `job.match`, neither of which the route has ever returned, so item 15 silently
+ * printed "(empty feed)" on a perfectly healthy server — a diagnostic that could only ever report
+ * success-looking emptiness. Match facts live on `ranking` (decision/overallScore/
+ * insufficientJdSignal), which is where the route puts them.
+ */
+interface ForYouApiEntry {
+  job?: ForYouApiJob & { location?: string };
+  ranking?: {
+    decision?: string | null;
+    overallScore?: number | null;
+    insufficientJdSignal?: boolean | null;
+    freshnessTier?: string;
+    roleFamilyTier?: string;
+  };
 }
 
 async function reportTop20(): Promise<void> {
@@ -242,26 +279,21 @@ async function reportTop20(): Promise<void> {
   try {
     const response = await fetch(`http://127.0.0.1:3000/api/candidates/${CANDIDATE_ID}/for-you`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const body = (await response.json()) as { jobs?: ForYouApiJob[] };
-    const top = (body.jobs ?? []).slice(0, 20);
-    console.log("rk | score | roleAl | reqCov | prefCov | eligib  | decision            | age | source     | company — title");
-    top.forEach((job, index) => {
-      const match = job.match ?? {};
-      const dims = match.dimensionScores ?? {};
-      const pct = (value: number | null | undefined): string =>
-        value == null ? "  -  " : String(Math.round(value * 100)).padStart(5);
-      const dim = (value: number | null | undefined, width: number): string =>
-        String(value == null ? "-" : Math.round(value)).padStart(width);
-      const score = match.insufficientJdSignal
+    const body = (await response.json()) as { entries?: ForYouApiEntry[] };
+    const top = (body.entries ?? []).slice(0, 20);
+    console.log("rk | score | decision            | freshness | roleFam   | source     | company — title");
+    top.forEach((entry, index) => {
+      const job = entry.job ?? {};
+      const ranking = entry.ranking ?? {};
+      const score = ranking.insufficientJdSignal
         ? "insuf"
-        : match.overallScore == null
-          ? "  -  "
-          : String(Math.round(match.overallScore)).padStart(5);
+        : ranking.overallScore == null
+          ? " n/e "
+          : String(Math.round(ranking.overallScore)).padStart(5);
       console.log(
-        `${String(index + 1).padStart(2)} | ${score} | ${dim(dims.roleAlignment, 6)} | ${pct(match.requirementCoverage)}  | ` +
-        `${dim(dims.preferred, 7)} | ${String(match.eligibilityStatus ?? "-").padEnd(7)} | ` +
-        `${String(match.decision ?? "NOT_EVALUATED").padEnd(19)} | ${String(job.ranking?.ageDays ?? "-").padStart(3)} | ` +
-        `${String(job.source_type ?? "-").padEnd(10)} | ${job.company?.name ?? "?"} — ${job.title ?? "?"}`
+        `${String(index + 1).padStart(2)} | ${score} | ${String(ranking.decision ?? "NOT_EVALUATED").padEnd(19)} | ` +
+        `${String(ranking.freshnessTier ?? "-").padEnd(9)} | ${String(ranking.roleFamilyTier ?? "-").padEnd(9)} | ` +
+        `${String(job.source_type ?? "-").padEnd(10)} | ${job.company_name ?? job.company?.name ?? "?"} — ${job.title ?? "?"}`
       );
     });
     if (top.length === 0) console.log("(empty feed)");

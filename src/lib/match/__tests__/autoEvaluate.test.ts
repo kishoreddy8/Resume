@@ -198,3 +198,29 @@ test("an unusable candidate profile never produces a match result and never thro
     fs.writeFileSync(profilePath, saved);
   }
 });
+
+test("STAGE 25A: an ARCHIVED job is not counted as backlog and is not selected for evaluation", () => {
+  // Found on the real corpus: rematch-candidate reported 17,996 pairs processed, 0 failures, and a
+  // second run created nothing — yet countJobsNeedingEvaluation still reported 1,669 outstanding, of
+  // which 1,600 were archived rows that no view (jobs list, For You feed, rematch page query) can
+  // ever show. The backlog metric was therefore permanently non-zero with no command able to drain
+  // it, and the bounded tick spent budget re-scoring invisible rows.
+  runAutomaticJobEvaluation(1, 500);
+  assert.equal(countJobsNeedingEvaluation(1), 0, "precondition: the corpus starts converged");
+
+  const company = createCompany({ name: `Archived Co ${seq}`, source_type: "greenhouse", ats_board_token: `tok-${seq}` });
+  const job = seedJob(company.id);
+  assert.equal(countJobsNeedingEvaluation(1), 1, "a fresh unarchived job is outstanding");
+
+  getDb()
+    .prepare("UPDATE jobs SET is_archived = 1, archived_at = datetime('now'), archived_reason = 'test' WHERE id = ?")
+    .run(job.id);
+
+  assert.equal(countJobsNeedingEvaluation(1), 0, "archiving it removes it from the backlog");
+  assert.equal(runAutomaticJobEvaluation(1, 500).candidatesFound, 0, "and the tick does not select it");
+
+  // Un-archiving must put it straight back — nothing is permanently skipped.
+  getDb().prepare("UPDATE jobs SET is_archived = 0, archived_at = NULL, archived_reason = NULL WHERE id = ?").run(job.id);
+  assert.equal(countJobsNeedingEvaluation(1), 1, "un-archiving re-opens it for evaluation");
+  runAutomaticJobEvaluation(1, 500);
+});

@@ -45,6 +45,16 @@ export interface AutomaticEvaluationResult {
  * matching because the fresh row's created_at is newer than the job's updated_at. A job whose JD
  * genuinely never clears MIN_REQUIREMENT_UNITS is evaluated once and then left alone — it is NOT
  * re-selected every tick.
+ *
+ * STAGE 25A — WHY `is_archived = 0` IS PART OF THE PREDICATE. It used to filter on is_active alone,
+ * which counted ARCHIVED jobs as outstanding work. Measured after a full, clean pass on the real
+ * corpus: rematch-candidate reported 17,996 pairs processed and 0 failures, a second run reused all
+ * 17,996 and created nothing — yet countJobsNeedingEvaluation still reported a backlog of 1,669, of
+ * which 1,600 were archived rows. Every archived job is excluded from the jobs list, the For You
+ * feed and listCandidateRematchJobPage, so no view could ever show their scores; the operator-facing
+ * backlog metric was therefore permanently non-zero with no command able to drain it, and the
+ * bounded evaluation tick spent part of its per-run budget re-scoring rows nothing can display.
+ * Un-archiving a job puts it straight back into this predicate, so nothing is permanently skipped.
  */
 function listJobIdsNeedingEvaluation(candidateId: number, identity: CandidateMatchIdentity, limit: number): number[] {
   const rows = getDb()
@@ -58,6 +68,7 @@ function listJobIdsNeedingEvaluation(candidateId: number, identity: CandidateMat
          WHERE candidate_id = @candidateId
        ) latest ON latest.dedupe_key = j.dedupe_key AND latest.rn = 1
        WHERE j.is_active = 1
+         AND j.is_archived = 0
          AND (
            latest.dedupe_key IS NULL
            OR latest.match_engine_version <> @matchEngineVersion

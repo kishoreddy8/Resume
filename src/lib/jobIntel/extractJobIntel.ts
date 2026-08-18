@@ -23,8 +23,15 @@ import { toExtractedSections } from "./sections";
  *  v2 (Stage 24C): skills.ts's groupAlternatives now collapses 3+ item OR lists ("Databricks,
  *  Snowflake, or Redshift") into a single alternative group instead of splitting every item before
  *  the final "or" into an independent Required skill. Already-extracted jobs carry the old, wrong
- *  grouping in job_skills.alternative_group_id until re-extracted with `npm run extract-job-intel`. */
-export const EXTRACTION_VERSION = 2;
+ *  grouping in job_skills.alternative_group_id until re-extracted with `npm run extract-job-intel`.
+ *
+ *  v3 (Stage 25A): src/lib/parseSections.ts's SECTION_RULES fixes two section-routing defects found
+ *  by auditing the real 18,065-job corpus — "Preferred Qualifications" headings were routed to the
+ *  REQUIRED bucket (2,452 jobs), and "Required …" headings matched no rule at all so their content
+ *  was discarded (+1,211 jobs). Both change which requirement_level a skill is stored under and
+ *  whether it is stored at all, so every already-extracted job carries the old classification in
+ *  job_skills until re-extracted with `npm run extract-job-intel`. */
+export const EXTRACTION_VERSION = 3;
 
 /**
  * Orchestrates every extractor over one job's already-stored data. Pure function — no DB access,

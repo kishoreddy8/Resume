@@ -10,6 +10,15 @@ const NEGATIVE_PATTERNS = [
   // and the original pattern only matched the latter (found via real-data testing).
   /(?:do(?:es)?\s+not|don['’]?t|doesn['’]?t)\s+(offer|provide)\s+(visa\s+)?sponsorship/i,
   /not\s+able\s+to\s+provide\s+(visa\s+)?sponsorship/i,
+  // STAGE 25A: the VERB form. Every pattern above keys off the noun "sponsorship"/"sponsor" as part
+  // of a fixed phrase, so real postings phrased "<Employer> does not sponsor <object>" were scored
+  // polarity 'none' and reached the candidate as eligibility UNKNOWN. Found on the live corpus:
+  // "Ericsson Inc. does not sponsor U.S work authorizations for this job position", "Mars does not
+  // sponsor visas for this role", "PCG does not sponsor newly hired foreign national workers for
+  // work authorization, including H-1B sponsorship", "Workday ... does not sponsor employment visas".
+  // Scoped to an explicit negation immediately before the verb, so "we sponsor" and "will sponsor"
+  // (POSITIVE_PATTERNS) are untouched.
+  /(?:do(?:es)?\s+not|don['’]?t|doesn['’]?t|will\s+not|won['’]?t|cannot|can\s?not|can['’]?t|is\s+not\s+able\s+to|unable\s+to)\s+sponsor\b/i,
   /must\s+be\s+authorized\s+to\s+work.*without\s+(the\s+need\s+for\s+)?sponsorship/i,
   // "No visa support" / "no immigration support" / "does not provide visa support" — real DOL-data
   // testing surfaced postings that say "support" rather than "sponsorship"; scoped to "visa" or

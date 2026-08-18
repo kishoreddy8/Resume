@@ -29,17 +29,38 @@ interface SectionRule {
 
 // Keyword-contains rather than exact-line match, so "Core Responsibilities" / "What We Require"
 // style real-world phrasing matches, not just the exact canonical phrase.
+//
+// RULE ORDER IS LOAD-BEARING — matchKnownHeading returns the FIRST rule that matches, so a heading
+// naming BOTH a preference and a qualification must be resolved by whichever rule sits earlier.
+//
+// STAGE 25A DEFECT (2,452 active jobs, measured on the real corpus). `niceToHave` used to sit AFTER
+// `qualifications`, and `/qualif/` matches "Preferred Qualifications" — by far the most common way a
+// JD labels its optional section ("Preferred Qualifications" 1,007 jobs, "Preferred Qualifications:"
+// 631, "Preferred Qualifications (Desired Skills/Experience):" 460, ...). Every skill under such a
+// heading was therefore stored with requirement_level 'Required' (see src/lib/jobIntel/skills.ts,
+// which classifies purely by which section bucket a line landed in), inflating the Required
+// requirement pool with genuinely optional asks and depressing required-coverage, criticality and
+// readiness for one job in six. `niceToHave` now wins: an explicit preference cue in the heading is
+// the more specific signal, and misrouting a requirement to Preferred is the conservative failure
+// direction — it can never manufacture a Required requirement the posting did not state.
 const SECTION_RULES: SectionRule[] = [
   {
     key: "responsibilities",
     keywords: /responsibilit|what you.?ll do|what you will do|the role|role overview|day.to.day|duties/i,
   },
+  { key: "niceToHave", keywords: /nice to have|preferred|bonus|good to have/i },
   {
+    // STAGE 25A DEFECT (+1,211 active jobs). `requirement` does not match the word "Required", so
+    // real headings spelled "Required", "Required Education", "Required Work Experience" (506
+    // occurrences across just the 4,349 jobs that ended up with no qualifications section at all)
+    // matched NO rule — and an unmatched heading-shaped line RESETS the current section (see
+    // parseDescriptionSections), so everything under them was silently discarded rather than
+    // captured. "What you need" is the same class of miss: only the "what you'll need" contraction
+    // was covered.
     key: "qualifications",
     keywords:
-      /qualif|requirement|what we.?re looking for|what you.?ll need|who you are|what we require|must have|basic (?:requirements|qualifications)/i,
+      /qualif|require(?:d|ment|ments)\b|what we.?re looking for|what you.?ll need|what you need|who you are|what we require|must have|basic (?:requirements|qualifications)/i,
   },
-  { key: "niceToHave", keywords: /nice to have|preferred|bonus|good to have/i },
   { key: "skills", keywords: /\bskills\b|tech stack|technolog(?:y|ies)|competenc/i },
   { key: "benefits", keywords: /benefit|perks|what we offer|why join/i },
 ];

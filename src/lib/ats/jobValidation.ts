@@ -127,6 +127,45 @@ const NEGATIVE_NAV_PHRASES = new Set(
     "french",
     "español",
     "spanish",
+    // STAGE 25A — skip-navigation link text. Unambiguous at BOTH levels: no real posting link is
+    // ever labelled "Skip to content", so this can safely reject a candidate link outright.
+    // Observed active in the live corpus: "Skip to content" 35, "Skip to main content" 17,
+    // "Skip to Content" 10. Exact-match only.
+    "skip to content",
+    "skip to main content",
+    "skip to navigation",
+    "skip navigation",
+    "skip to primary content",
+  ].map((s) => s.toLowerCase())
+);
+
+/**
+ * STAGE 25A — phrases that are never a JOB TITLE, but MAY legitimately be the anchor text of a real
+ * posting link ("Learn More" pointing at /careers/jobs/software-engineer-482913). They are therefore
+ * checked only by validateNormalizedJob, where the string is being asserted as the posting's title —
+ * validateJobCandidate's link-level contract (a requisition-shaped URL outweighs generic link text,
+ * see its own tests) is deliberately left untouched.
+ *
+ * Observed active in the live corpus at audit time: "Learn more" 11, "View & Apply" 6,
+ * "Get directions" 5, "View Case Study" 4, "Explore opportunities" 3, "Take me there" 3,
+ * "READ MORE" 1 — every one of them stored as a job title. Exact-match only, so a real title that
+ * merely CONTAINS one of these words ("Read More Media Buyer") is unaffected.
+ */
+const NON_TITLE_PHRASES = new Set(
+  [
+    "read more",
+    "learn more",
+    "explore opportunities",
+    "explore opportunity",
+    "get directions",
+    "take me there",
+    "view & apply",
+    "view and apply",
+    "view all",
+    "view case study",
+    "view details",
+    "view job",
+    "view posting",
   ].map((s) => s.toLowerCase())
 );
 
@@ -174,17 +213,37 @@ function hasApplyActionSignal(text: string): boolean {
   return APPLY_ACTION_PATTERN.test(text);
 }
 
+/**
+ * STAGE 25A DEFECT. A bare `#fragment` used to count as posting identity, because the guard was
+ * `!url.search && !url.hash` — i.e. a root URL was only "without posting identity" when it had
+ * NEITHER a query NOR a hash. A same-page anchor is the exact opposite of posting identity, and on
+ * the real corpus that let the generic career-page scraper ingest skip-navigation links as jobs:
+ * 72 active career_link rows had fragment-only URLs, including 62 titled "Skip to content" /
+ * "Skip to main content" (e.g. https://aws.amazon.com/#aws-page-content-main), plus "READ MORE",
+ * "Explore opportunities" and "Get directions". Each passed validateNormalizedJob with
+ * specific_job_title + valid_job_url and nothing to reject it.
+ *
+ * Hash-ROUTED postings are still honoured: some boards address a requisition entirely in the
+ * fragment (".../careers#/job/R12345"). The distinguisher is whether the fragment itself carries a
+ * requisition-shaped identifier, tested with the same REQUISITION_ID_PATTERNS used everywhere else
+ * in this module — never a new heuristic, and never a blanket "hashes are bad" rule.
+ */
+function fragmentCarriesPostingIdentity(url: URL): boolean {
+  if (!url.hash || url.hash === "#") return false;
+  return REQUISITION_ID_PATTERNS.some((pattern) => pattern.test(url.hash));
+}
+
 function isCareersRootUrlWithoutPostingId(urlStr: string): boolean {
   try {
     const url = new URL(urlStr);
     const path = url.pathname.replace(/\/+$/, "").toLowerCase();
     // Bare domain or root path
     if (!path || path === "") {
-      return !url.search && !url.hash;
+      return !url.search && !fragmentCarriesPostingIdentity(url);
     }
     // Generic top-level careers directory with no ID/slug or query
     if (/^\/(?:careers?|jobs?|positions?|openings?)$/i.test(path)) {
-      return !url.search && !url.hash;
+      return !url.search && !fragmentCarriesPostingIdentity(url);
     }
     return false;
   } catch {
@@ -261,6 +320,12 @@ export function validateNormalizedJob(job: NormalizedJob): JobValidationResult {
     const pseudoMatch = matchesPseudoJobTitle(trimmedTitle);
     if (pseudoMatch) {
       negativeSignals.push(`pseudo_job_title:${pseudoMatch}`);
+    } else if (NEGATIVE_NAV_PHRASES.has(trimmedTitle.toLowerCase()) || NON_TITLE_PHRASES.has(trimmedTitle.toLowerCase())) {
+      // STAGE 25A: the two validators disagreed. validateJobCandidate has always rejected an exact
+      // navigation phrase (via looksLikeTitleShaped -> isNegativeNavText), but this record-level
+      // validator only consulted PSEUDO_JOB_TITLE_PATTERNS, so the same text arriving as a
+      // NormalizedJob.title was accepted as a "specific_job_title".
+      negativeSignals.push("pseudo_job_title:navigation_phrase");
     } else {
       positiveSignals.push("specific_job_title");
     }

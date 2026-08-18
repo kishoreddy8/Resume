@@ -9,8 +9,14 @@ const CLEARANCE_REQUIRED_PATTERN =
   /\b(security clearance required|must (?:have|hold|possess|obtain) (?:an?\s+)?(?:active\s+)?(?:security\s+)?clearance|active clearance required|clearance is required)\b/i;
 const CLEARANCE_LEVEL_PATTERN = /\b(top secret\/?sci|ts\/sci|top secret|secret clearance|confidential clearance|public trust)\b/i;
 
+// STAGE 25A: the "only <X> citizens" WORD ORDER. Every alternative below except this one requires
+// "only" to FOLLOW the noun ("US citizens only"), so the equally common leading form was missed —
+// found verbatim on four active Data Platform postings scoring 100/100 with eligibility UNKNOWN:
+// "Due to Federal requirements, only US citizens, US naturalized citizens or US Permanent Residents,
+// holding a green card, will be considered." Requires the literal word "citizen" after "only",
+// optionally preceded by a nationality qualifier, so it never fires on a generic "only" sentence.
 const CITIZENSHIP_REQUIRED_PATTERN =
-  /\b(u\.?s\.?\s*citizen(?:ship)?\s*(?:is\s*)?required|must be a\s+u\.?s\.?\s*citizen|us citizens only|citizens only)\b/i;
+  /\b(u\.?s\.?\s*citizen(?:ship)?\s*(?:is\s*)?required|must be a\s+u\.?s\.?\s*citizen|us citizens only|citizens only|only\s+(?:u\.?s\.?\s*|united states\s+)?citizens)\b/i;
 
 const WORK_AUTH_REQUIRED_PATTERN =
   /\b(must be authorized to work|authorized to work in the (?:us|u\.s\.|united states)|legally authorized to work)\b/i;

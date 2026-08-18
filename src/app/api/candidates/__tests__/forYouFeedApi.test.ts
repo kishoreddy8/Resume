@@ -518,3 +518,45 @@ test("22. Primary feed query avoids obvious N+1 behavior", async () => {
   assert.ok(data.entries.length >= 15);
   assert.ok(elapsed < 200, `Feed execution took ${elapsed}ms, expected fast batch execution (<200ms)`);
 });
+
+test("STAGE 25A: a REAL-decision high scorer reaches the Top Matches tab and count", async () => {
+  // Test 2 above reaches TOP_MATCH only by passing a decision literal ("UNKNOWN") that the engine
+  // can never emit — Decision is exactly BLOCKED | NEEDS_REVIEW | READY_FOR_TAILORING, and
+  // classifyCandidateJobBucket ranks both non-blocked values ABOVE TOP_MATCH. On the real corpus that
+  // made the tab permanently read 0 while 8 active jobs scored >= 90 on trusted evaluations. The tab
+  // is now badge-sourced, so a genuine NEEDS_REVIEW 94 appears in BOTH its decision bucket and here.
+  const company = createCompany({ name: "Real Top Co", source_type: "greenhouse", ats_board_token: "real-top-co" });
+  const candidate = createCandidate({ firstName: "RealTop", lastName: "Candidate" });
+  const dedupeKey = createTestJob(company.id, { postedAt: FIVE_DAYS_AGO });
+  const jobId = getJobIdByDedupeKey(dedupeKey)!;
+
+  insertJobMatchResult(fakeMatch({ candidateId: candidate.id, dedupeKey, jobId, decision: "NEEDS_REVIEW", overallScore: 94 }));
+
+  const all = await fetchForYou(candidate.id);
+  assert.equal(all.bucketCounts.topMatches, 1, "the Top Matches count must not be structurally zero");
+  assert.equal(all.bucketCounts.needsReview, 1, "and its decision bucket is unchanged");
+
+  const entry = all.entries.find((e: ForYouResponseEntry) => e.job.dedupe_key === dedupeKey);
+  assert.ok(entry);
+  assert.equal(entry.ranking.primaryBucket, "NEEDS_REVIEW", "primary bucket precedence is unchanged");
+  assert.equal(entry.ranking.badges.isTopMatch, true);
+
+  const topTab = await fetchForYou(candidate.id, "bucket=top-matches");
+  assert.equal(topTab.entries.length, 1, "the Top Matches tab must return it");
+  assert.equal(topTab.entries[0].job.dedupe_key, dedupeKey);
+});
+
+test("STAGE 25A: an insufficient-signal high score never reaches Top Matches", async () => {
+  const company = createCompany({ name: "Insuf Top Co", source_type: "greenhouse", ats_board_token: "insuf-top-co" });
+  const candidate = createCandidate({ firstName: "InsufTop", lastName: "Candidate" });
+  const dedupeKey = createTestJob(company.id, { postedAt: FIVE_DAYS_AGO });
+  const jobId = getJobIdByDedupeKey(dedupeKey)!;
+
+  const match = fakeMatch({ candidateId: candidate.id, dedupeKey, jobId, decision: "NEEDS_REVIEW", overallScore: 100 });
+  insertJobMatchResult({ ...match, insufficientJdSignal: true });
+
+  const data = await fetchForYou(candidate.id);
+  assert.equal(data.bucketCounts.topMatches, 0, "an untrustworthy 100 is not a top match");
+  const topTab = await fetchForYou(candidate.id, "bucket=top-matches");
+  assert.equal(topTab.entries.length, 0);
+});

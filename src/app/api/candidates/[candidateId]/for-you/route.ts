@@ -217,12 +217,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
     if (bucket) {
       jobsByBucket[bucket].push(job);
       if (bucket === "NEW_TODAY") bucketCounts.newToday++;
-      else if (bucket === "TOP_MATCH") bucketCounts.topMatches++;
       else if (bucket === "READY_FOR_TAILORING") bucketCounts.readyForTailoring++;
       else if (bucket === "NEEDS_REVIEW") bucketCounts.needsReview++;
       else if (bucket === "READY_TO_APPLY") bucketCounts.readyToApply++;
       else if (bucket === "APPLIED") bucketCounts.applied++;
       else if (bucket === "INTERVIEWING") bucketCounts.interviewing++;
+    }
+
+    // STAGE 25A — "Top Matches" is a BADGE tab, not a primary-bucket tab. classifyCandidateJobBucket
+    // ranks TOP_MATCH below READY_FOR_TAILORING and NEEDS_REVIEW, and Decision has exactly three
+    // values (BLOCKED / NEEDS_REVIEW / READY_FOR_TAILORING) — of which TOP_MATCH itself excludes
+    // BLOCKED. Every evaluated job therefore returns one of the two higher buckets, so TOP_MATCH was
+    // unreachable and the tab read a permanent 0 even with 8 active jobs scoring >= 90 on trusted,
+    // fully-evidenced evaluations. computeCandidateJobBadges already computes exactly the intended
+    // condition independently of bucket precedence, so the tab is sourced from the badge. No other
+    // bucket's membership or count changes — a Top Match job still belongs to its decision bucket too.
+    const topMatchBadge = computeCandidateJobBadges(input).isTopMatch;
+    if (topMatchBadge) {
+      bucketCounts.topMatches++;
+      if (bucket !== "TOP_MATCH") jobsByBucket.TOP_MATCH.push(job);
     }
   }
 
@@ -357,7 +370,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
   let filtered = allEnriched.filter((item) => !item.forYouInput.notInterested);
 
   if (normalizedBucket && normalizedBucket !== "ALL") {
-    filtered = filtered.filter((item) => item.primaryBucket === normalizedBucket);
+    // TOP_MATCH is badge-sourced (see the bucket-counting loop above); every other tab is its
+    // primary bucket, unchanged.
+    filtered =
+      normalizedBucket === "TOP_MATCH"
+        ? filtered.filter((item) => item.badges.isTopMatch)
+        : filtered.filter((item) => item.primaryBucket === normalizedBucket);
   }
 
   if (minScore !== null) {

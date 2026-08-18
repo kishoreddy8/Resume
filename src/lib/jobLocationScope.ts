@@ -117,6 +117,18 @@ const INDIAN_SLASH_CITY_RE = new RegExp(
   "i"
 );
 
+// STAGE 25A — the ISO country code as a leading, SPACE-separated prefix: "IN Pune", "IN Bengaluru",
+// "IN Sector 142, Noida", "IN Tamil Nadu (Chennai) - Office". None of the shapes above fire (there
+// is no comma between the code and the place, and no trailing country code), so US_STATE_CODE_RE's
+// `^IN ` branch claimed them as Indiana and they entered the U.S.-only corpus — two of them reached
+// the ranked For You feed. Deliberately narrow: the prefix alone proves nothing (Indiana is a real
+// state, and "IN - Indianapolis" is a genuine U.S. address), so this fires ONLY when the remainder
+// also names a place from the curated Indian city/state lists above. No new vocabulary, no guessing.
+const INDIA_COUNTRY_PREFIX_RE = new RegExp(
+  `^\\s*(?:IN|IND)\\s*[-–—]?\\s+(?:.*\\b)?(?:${[...INDIAN_CITY_NAMES, ...INDIAN_STATE_NAMES].join("|")})\\b`,
+  "i"
+);
+
 /** Classifies only explicit evidence. Bare "Remote", blank strings, regions, and ambiguous city
  * names remain UNKNOWN. A multi-location value is US when any location explicitly includes the US. */
 export function classifyJobLocation(location: string | null | undefined): JobLocationScope {
@@ -133,6 +145,7 @@ export function classifyJobLocation(location: string | null | undefined): JobLoc
   if (INDIAN_STATE_NAME_RE.test(value)) return "NON_US";
   if (INDIAN_CITY_RE.test(value)) return "NON_US";
   if (INDIAN_SLASH_CITY_RE.test(value)) return "NON_US";
+  if (INDIA_COUNTRY_PREFIX_RE.test(value)) return "NON_US";
 
   // 3. U.S. state codes/names — only after country-level evidence is exhausted
   if (US_STATE_CODE_RE.test(value) || US_STATE_NAME_RE.test(value)) return "US";
