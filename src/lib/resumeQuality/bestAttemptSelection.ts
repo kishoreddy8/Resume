@@ -1,4 +1,5 @@
 import { HARD_GATE_CHECKS } from "./instructionCompliance";
+import { evaluateQualityGate } from "./qualityGate";
 import { INSTRUCTION_COMPLIANCE_CHECK_NAMES, type StructuredResumeReview } from "./types";
 
 /**
@@ -23,6 +24,13 @@ export interface BestAttemptSelection {
   selectionReason: string;
   hardGateFailureCount: number;
   totalComplianceFailCount: number;
+  /** Stage 26A — typed hard safety/truthfulness findings on the winner (qualityGate condition 7's
+   *  own field). `null` means the winning review predates the typed reviewer, so its safety was never
+   *  actually established — never that it was found clean. */
+  blockingFailureCount: number | null;
+  /** True when the winner would pass the unchanged quality gate. Only ever true if a gate-passing
+   *  attempt was among the candidates; it never makes one passable. */
+  passesQualityGate: boolean;
 }
 
 /** Count of HARD_GATE_CHECKS entries that are not PASS (FAIL or REVIEW both count — "not proven
@@ -42,6 +50,37 @@ function totalComplianceFailCount(review: StructuredResumeReview): number {
   const checks = review.instructionCompliance?.checks;
   if (!checks) return INSTRUCTION_COMPLIANCE_CHECK_NAMES.length;
   return Object.values(checks).filter((status) => status === "FAIL").length;
+}
+
+/**
+ * Stage 26A — would this review pass the UNCHANGED quality gate? Delegates to evaluateQualityGate so
+ * there is exactly one definition of "approvable" in the codebase; this module never re-implements or
+ * relaxes any of its eight conditions. READY is iteration-independent inside that function (the
+ * iteration/maxIterations arguments only choose between IMPROVEMENT_NEEDED and NEEDS_HUMAN_REVIEW when
+ * the gate has already failed), so the values passed here cannot influence the only answer we use.
+ */
+function passesQualityGate(review: StructuredResumeReview): boolean {
+  return evaluateQualityGate(review, 1, 1) === "READY";
+}
+
+/**
+ * Stage 26A — how unsafe an attempt is, in terms of the reviewer's own typed blocking failures
+ * (PLACEHOLDER_CONTACT, UNSUPPORTED_CLAIM, CROSS_ARTIFACT_CONTRADICTION, ...). This is the exact field
+ * qualityGate.ts condition 7 enforces, and before Stage 26A the comparator never looked at it.
+ *
+ *   0         — present and empty: the typed reviewer ran and found nothing.
+ *   count     — present and non-empty.
+ *   +Infinity — ABSENT: a legacy/pre-hardening review whose safety was never established. Treated as
+ *               the worst possible value for exactly the reason hardGateFailureCount() already treats
+ *               missing instructionCompliance as failing every gate — absence is never a free pass.
+ *               Observed for real: the pre-Stage-26 seed iteration carries "candidate@example.com" in
+ *               its resume yet has no blockingFailures field at all, because the typed reviewer did not
+ *               exist when it was written. Ranking it as "clean" would promote that document.
+ */
+function blockingFailureSeverity(review: StructuredResumeReview): number {
+  const failures = review.blockingFailures;
+  if (failures === undefined) return Number.POSITIVE_INFINITY;
+  return failures.length;
 }
 
 /**
@@ -69,7 +108,18 @@ function totalComplianceFailCount(review: StructuredResumeReview): number {
  * "technically flagged nothing" baseline); raw hard-gate-failure-count and total-FAIL-count remain as
  * later tiebreakers, still fully able to separate two attempts that tie on every score above.
  *
+ * Stage 26A prepends two safety criteria ahead of every criterion below, and changes nothing beneath
+ * them. The order below was tuned against the real Ostium data and remains intact: both new criteria
+ * TIE for that workflow (none of its iterations has a blockingFailures field at all), so iteration 2
+ * still wins there exactly as before. What they fix is the case the tuning never covered — two
+ * attempts identical on every score, separated only by hard safety findings the comparator could not
+ * see. Real example: iteration 2 (four PLACEHOLDER_CONTACT failures) outranked iteration 3 (those
+ * placeholders removed) purely because it had one fewer hard-gate CHECK failure, and the human-review
+ * package therefore handed a human a resume reading "candidate@example.com".
+ *
  * Order:
+ *   0. an attempt that passes the unchanged quality gate outranks one that does not
+ *   0b. lower blockingFailureSeverity (proven-clean < fewer failures < more failures < never checked)
  *   1. fewer blocking issues
  *   2. higher truthfulnessScore
  *   3. higher architectureConsistencyScore
@@ -80,6 +130,19 @@ function totalComplianceFailCount(review: StructuredResumeReview): number {
  *   8. later iteration wins the final tie
  */
 function compareAttempts(a: ResumeQualityAttemptSummary, b: ResumeQualityAttemptSummary): number {
+  // A genuinely approvable attempt always outranks one that is not. In practice no attempt in a
+  // terminal-FAILED workflow passes the gate (the workflow would have been READY instead), so this is
+  // a defensive invariant rather than a behaviour change — and it can never make a failing attempt
+  // passable, only order two attempts whose gate results genuinely differ.
+  const gateDiff = Number(passesQualityGate(b.review)) - Number(passesQualityGate(a.review));
+  if (gateDiff !== 0) return gateDiff;
+
+  // A hard safety/truthfulness failure can never be outweighed by a higher numeric score, because
+  // this is decided before any score is consulted.
+  const severityA = blockingFailureSeverity(a.review);
+  const severityB = blockingFailureSeverity(b.review);
+  if (severityA !== severityB) return severityA < severityB ? -1 : 1;
+
   const blockingDiff = a.review.blockingIssues.length - b.review.blockingIssues.length;
   if (blockingDiff !== 0) return blockingDiff;
 
@@ -111,8 +174,17 @@ function describeSelection(winner: ResumeQualityAttemptSummary, all: ResumeQuali
   if (all.length === 1) {
     return `Only iteration available (iteration ${winner.iterationNumber}).`;
   }
+  // The safety finding is stated FIRST and never omitted: it is now the criterion that outranks every
+  // score, so a reason that mentioned only scores would misdescribe how the winner was chosen.
+  const failures = winner.review.blockingFailures;
+  const safetyPhrase =
+    failures === undefined
+      ? "no typed blocking-failure review available (safety never established)"
+      : failures.length === 0
+      ? "0 blocking failure(s)"
+      : `${failures.length} blocking failure(s) (${[...new Set(failures.map((f) => f.type))].sort().join(", ")})`;
   return (
-    `Iteration ${winner.iterationNumber} selected: ${hgFails} hard-gate failure(s), ` +
+    `Iteration ${winner.iterationNumber} selected: ${safetyPhrase}, ${hgFails} hard-gate failure(s), ` +
     `${totalFails} total compliance FAIL(s), ${winner.review.blockingIssues.length} blocking issue(s), ` +
     `architecture ${winner.review.architectureConsistencyScore}, truthfulness ${winner.review.truthfulnessScore}, ` +
     `overall ${winner.review.overallScore}, ATS ${winner.review.atsScore} — the safest attempt among ${all.length} evaluated.`
@@ -137,5 +209,7 @@ export function selectBestResumeQualityAttempt(
     selectionReason: describeSelection(winner, iterations),
     hardGateFailureCount: hardGateFailureCount(winner.review),
     totalComplianceFailCount: totalComplianceFailCount(winner.review),
+    blockingFailureCount: winner.review.blockingFailures?.length ?? null,
+    passesQualityGate: passesQualityGate(winner.review),
   };
 }
