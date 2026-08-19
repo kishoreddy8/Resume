@@ -107,10 +107,16 @@ validate):
 
 **Fetch the exact current `sourceHashes` from `data/candidates/<candidate_id>/master/manifest.json`**
 (written by the `/master-files` upload route for that candidate) — do not compute or guess a hash
-yourself. `totalYearsExperience` may
-be left `null`; the app computes it deterministically from `experience[].startDate/endDate` via
-interval-union math (never a naive sum of overlapping roles) — do not attempt this calculation
-yourself, and never estimate a total if the dates in the Master Resume are incomplete or ambiguous.
+yourself. `totalYearsExperience` should
+be left `null` — do not calculate, infer, or estimate it, and never sum or subtract employment
+dates yourself.
+
+You do not need to carry a years figure at all: `loadCandidateProfile()` reads it back out of the
+candidate's own Master Resume on every load (see `src/lib/match/statedYearsExperience.ts`), so an
+explicitly STATED total such as "Data Engineer with 6 years designing…" survives every rebuild of
+this file even though this file records `null`. A Master Resume that states no figure leaves the
+value `null`, which means "CareerOps has no authoritative total" — and nothing downstream may then
+claim one.
 
 ## Failure behavior
 

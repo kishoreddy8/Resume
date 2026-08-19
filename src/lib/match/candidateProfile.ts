@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { readStatedYearsExperience } from "./statedYearsExperience";
 import type { CandidateProfile } from "./types";
 
 /**
@@ -145,7 +146,18 @@ export function loadCandidateProfile(candidateId: number): CandidateProfileLoadR
     return { status: "stale" };
   }
 
-  return { status: "ok", profile: parsed.data as CandidateProfile };
+  // The Master Resume is the sole factual authority (see this module's header). Where it STATES a
+  // total years figure, that statement outranks whatever the derived index happens to hold — which
+  // is how the figure survives a rebuild: build-candidate-profile writes null by design, and this
+  // reads the fact back out of the evidence every time rather than depending on the index to carry
+  // it. Nothing is inferred from employment dates here; a resume that states no figure leaves this
+  // null, and null still means "no authoritative total, so none may be claimed".
+  const statedYears = readStatedYearsExperience(masterDir(candidateId));
+  const profile = (
+    statedYears !== null ? { ...parsed.data, totalYearsExperience: statedYears } : parsed.data
+  ) as CandidateProfile;
+
+  return { status: "ok", profile };
 }
 
 /** Stable hash identity for cache-key purposes — the two source file hashes combined, not the
