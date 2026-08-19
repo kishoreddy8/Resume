@@ -834,7 +834,8 @@ test("S26-32 repeated technical failures stop auto-retrying at the bounded cap i
   for (let i = 0; i < MAX_TECHNICAL_PASSES + 2; i++) {
     last = (await processOneWorkflow(wf, { cliOptions: { command: failScript, retryBackoffMs: 1 } })).outcome;
   }
-  assert.equal(last, "SKIPPED_MAX_ATTEMPTS");
+  // Stage 27 renamed this outcome: "skipped" wrongly implied the writer would come back to it.
+  assert.equal(last, "BLOCKED_MAX_ATTEMPTS");
   assert.notEqual(getResumeQualityWorkflow(candidateAliceId, wf.id)!.status, "READY");
 });
 

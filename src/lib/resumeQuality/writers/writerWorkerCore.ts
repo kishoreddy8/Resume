@@ -1,6 +1,11 @@
 import path from "node:path";
 import { getJob, getJobByDedupeKey } from "@/db/queries/jobs";
-import { listWorkflowsAwaitingWriter, type ResumeQualityWorkflowRow } from "@/db/queries/resumeQualityWorkflows";
+import {
+  getResumeQualityWorkflow,
+  listWorkflowsAwaitingWriter,
+  recordResumeQualityWorkflowProviders,
+  type ResumeQualityWorkflowRow,
+} from "@/db/queries/resumeQualityWorkflows";
 import {
   notifyHumanReviewRequired,
   notifyQualityFailure,
@@ -15,18 +20,29 @@ import { executeResumeImprovementIteration, ResumeQualityOrchestrationError } fr
 import { DeterministicResumeReviewer } from "../reviewers/deterministicReviewer";
 import type { ResumeWriterAgent, ResumeWriterOutput } from "../types";
 import { getHandoffDirectory, type QualityWorkflowLocation } from "../workspace";
-import { ClaudeCliTechnicalFailure, invokeClaudeWriter, type ClaudeCliInvokeOptions } from "./claudeCliInvoker";
+import {
+  CLAUDE_CLI_PROVIDER,
+  ClaudeCliTechnicalFailure,
+  invokeClaudeWriter,
+  OPERATOR_ACTIONABLE_FAILURE_CLASSES,
+  type ClaudeCliInvokeOptions,
+  type WriterFailureClass,
+} from "./claudeCliInvoker";
 import {
   claimHandoff,
   clearTechnicalFailures,
   getTechnicalFailureCount,
   MAX_TECHNICAL_PASSES,
+  recordNonCountingFailure,
   recordTechnicalFailure,
   releaseHandoffClaim,
 } from "./handoffClaim";
 import {
   acquireResumeWriterLease,
+  clearWriterOperationalBlock,
+  getWriterOperationalBlock,
   heartbeatResumeWriterLease,
+  recordWriterOperationalBlock,
   recordResumeWriterPassCompleted,
   recordResumeWriterPassFailed,
   recordResumeWriterPassStarted,
@@ -50,13 +66,35 @@ import {
  * pattern) — zero changes to the orchestrator, exporter, importer, state machine, or quality gate.
  */
 
+/**
+ * Stage 27 — the Stage 21 reviewer is CareerOps' own deterministic code (DeterministicResumeReviewer),
+ * not a model and not an external provider. These values say exactly that. They are truthful because
+ * they describe what this build actually runs, and they are the only reviewer values ever written —
+ * nothing here implies an LLM reviewed anything.
+ */
+export const DETERMINISTIC_REVIEWER_PROVIDER = "careerops-deterministic";
+export const DETERMINISTIC_REVIEWER_MODEL = "stage21-deterministic";
+
 export type WorkflowOutcome =
   | "READY"
   | "IMPROVEMENT_RUNNING"
   | "FAILED"
   | "TECHNICAL_FAILURE"
   | "SKIPPED_CLAIMED"
-  | "SKIPPED_MAX_ATTEMPTS"
+  /** Stage 27 — the bounded technical-retry budget for this handoff is exhausted. TERMINAL for
+   *  automatic processing: no further Claude invocation is made for this iteration until an operator
+   *  explicitly resets it. Renamed from SKIPPED_MAX_ATTEMPTS because "skipped" implied the writer
+   *  would come back to it on the next pass, which was never true and which the UI repeated as
+   *  "retries on its own schedule". No content iteration was consumed reaching this state. */
+  | "BLOCKED_MAX_ATTEMPTS"
+  /** Stage 27 — the user's Claude subscription usage limit is exhausted. Not a failure of this
+   *  workflow, and no content iteration is consumed. The writer waits out a cooldown rather than
+   *  re-invoking Claude every pass; CareerOps cannot know the true reset time (print mode reports
+   *  none), so it never claims one. */
+  | "SUBSCRIPTION_LIMIT_REACHED"
+  /** Stage 27 — the Claude CLI is logged out or its credentials expired. Only the operator can fix
+   *  it, so nothing is retried automatically and no content iteration is consumed. */
+  | "AUTH_REQUIRED"
   /** Stage 26 — the workflow row exists but the human approval behind it is missing or no longer
    *  agrees with the job's current match decision. Never a failure: nothing is written, nothing is
    *  spent, and the workflow is left exactly as it was for a human to re-approve or abandon. */
@@ -79,6 +117,9 @@ export interface PassOutcome {
    *  temporarily unavailable, this will be retried" instead of being left to wonder whether their
    *  resume or CareerOps is at fault. Observed on the real corpus as HTTP 529 Overloaded. */
   providerUnavailable?: boolean;
+  /** Stage 27 — the CLI's classified reason, when one was established. Diagnostic/reporting only:
+   *  it never affects the quality gate, the iteration budget, or approval. */
+  failureClass?: WriterFailureClass;
 }
 
 export interface ProcessWorkflowOptions {
@@ -148,6 +189,21 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
     };
   }
 
+  // Stage 27 — a machine-wide operational block (exhausted subscription / logged-out CLI) applies to
+  // every workflow at once, so it is checked before the claim, exactly like authorization and contact:
+  // nothing is spent, nothing is written to disk, and no content iteration is touched.
+  const block = getWriterOperationalBlock();
+  if (block.blocked && !block.expired) {
+    return {
+      workflowId,
+      candidateId,
+      outcome: block.blockClass === "AUTH_REQUIRED" ? "AUTH_REQUIRED" : "SUBSCRIPTION_LIMIT_REACHED",
+      iterationNumber: targetIteration,
+      error: block.detail ?? undefined,
+      failureClass: block.blockClass ?? undefined,
+    };
+  }
+
   const claim = claimHandoff(handoffDir);
   if (!claim) {
     return { workflowId, candidateId, outcome: "SKIPPED_CLAIMED", iterationNumber: targetIteration };
@@ -156,16 +212,47 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
   try {
     const priorAttempts = getTechnicalFailureCount(handoffDir);
     if (priorAttempts >= MAX_TECHNICAL_PASSES) {
-      return { workflowId, candidateId, outcome: "SKIPPED_MAX_ATTEMPTS", iterationNumber: targetIteration };
+      // Terminal for automatic processing — deliberately NOT retried on the next pass. An operator
+      // must reset the technical bookkeeping (resetWriterTechnicalFailures) after looking at why it
+      // kept failing. No Claude call is made, and no content iteration has been consumed.
+      return {
+        workflowId,
+        candidateId,
+        outcome: "BLOCKED_MAX_ATTEMPTS",
+        iterationNumber: targetIteration,
+        error: `The writer failed ${priorAttempts} times in a row for technical reasons and has stopped retrying automatically. No quality iteration was used.`,
+      };
     }
 
+    let cliMetadata: Awaited<ReturnType<typeof invokeClaudeWriter>>["metadata"] = null;
     try {
       exportExternalWriterPackage({ candidateId, workflowId, targetIterationNumber: targetIteration, overwriteExisting: true });
-      await invokeClaudeWriter({ handoffDir, ...options.cliOptions });
+      const invocation = await invokeClaudeWriter({ handoffDir, ...options.cliOptions });
+      cliMetadata = invocation.metadata;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
+      const failureClass: WriterFailureClass =
+        err instanceof ClaudeCliTechnicalFailure ? err.failureClass : "TRANSIENT_TECHNICAL_FAILURE";
       const providerUnavailable = err instanceof ClaudeCliTechnicalFailure && err.providerUnavailable;
-      const passCount = recordTechnicalFailure(handoffDir, reason);
+
+      // Stage 27 — an exhausted subscription or a logged-out CLI is not evidence that THIS handoff is
+      // broken, so it must not spend the bounded technical budget that, once exhausted, stops the
+      // workflow being processed at all. It is recorded machine-wide instead, because it is equally
+      // true for every other queued workflow.
+      if (OPERATOR_ACTIONABLE_FAILURE_CLASSES.includes(failureClass)) {
+        recordNonCountingFailure(handoffDir, reason, failureClass);
+        recordWriterOperationalBlock(failureClass, reason);
+        return {
+          workflowId,
+          candidateId,
+          outcome: failureClass === "AUTH_REQUIRED" ? "AUTH_REQUIRED" : "SUBSCRIPTION_LIMIT_REACHED",
+          iterationNumber: targetIteration,
+          error: reason,
+          failureClass,
+        };
+      }
+
+      const passCount = recordTechnicalFailure(handoffDir, reason, failureClass);
       if (passCount >= MAX_TECHNICAL_PASSES) {
         notifyWriterFailure({ ...notifyCtx, technicalRetry: passCount });
       }
@@ -176,6 +263,7 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
         iterationNumber: targetIteration,
         error: reason,
         providerUnavailable,
+        failureClass,
       };
     }
 
@@ -198,6 +286,19 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
     });
 
     clearTechnicalFailures(handoffDir);
+    // Stage 27 — the CLI ran successfully, so whatever block was recorded earlier is demonstrably
+    // over. Cleared here rather than on a timer: a real success is the only proof that matters.
+    clearWriterOperationalBlock();
+
+    // Stage 27 — truthful runtime provenance only. writer_model stays NULL when the CLI reported no
+    // model; the reviewer is CareerOps' own deterministic Stage 21 logic, which is a fact about this
+    // build rather than a runtime observation, so it is stated plainly and never as an LLM.
+    recordResumeQualityWorkflowProviders(candidateId, workflowId, {
+      writerProvider: CLAUDE_CLI_PROVIDER,
+      writerModel: cliMetadata?.model ?? null,
+      reviewerProvider: DETERMINISTIC_REVIEWER_PROVIDER,
+      reviewerModel: DETERMINISTIC_REVIEWER_MODEL,
+    });
 
     if (improvementResult.status === "READY") {
       notifyResumeReady(notifyCtx);
@@ -232,6 +333,74 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
   } finally {
     releaseHandoffClaim(handoffDir);
   }
+}
+
+export type WriterRetryRefusal =
+  | "WORKFLOW_NOT_FOUND"
+  | "WORKFLOW_TERMINAL"
+  | "NOT_AUTHORIZED";
+
+export interface WriterRetryResult {
+  ok: boolean;
+  refusal?: WriterRetryRefusal;
+  message: string;
+  /** The handoff directory whose technical bookkeeping was reset, when one was. */
+  handoffDir?: string;
+}
+
+/**
+ * Stage 27 — the operator's explicit "Retry writer" action for one workflow.
+ *
+ * Deliberately the narrowest possible operation. It clears the technical-failure bookkeeping for the
+ * NEXT iteration's handoff directory and lifts any machine-wide operational block, so the normal
+ * scheduled writer picks the workflow up again on its own. That is all it does.
+ *
+ * What it explicitly does NOT do, and structurally cannot do — none of these are represented in the
+ * files/keys it touches:
+ *   - reset, rewind, or add a Stage 21 content iteration (current_iteration is never written)
+ *   - alter candidate master evidence, a review, or a score
+ *   - approve, re-approve, or un-approve a job (approval lives on candidate_job_state)
+ *   - alter a match score or decision
+ *   - submit an application
+ *
+ * It refuses on a terminal workflow (READY/FAILED — there is nothing for the writer to do) and on a
+ * workflow whose human approval is missing or stale, re-using the SAME authorization evaluation the
+ * writer itself re-asserts before spending anything.
+ */
+export function resetWriterTechnicalFailures(candidateId: number, workflowId: number): WriterRetryResult {
+  const workflow = getResumeQualityWorkflow(candidateId, workflowId);
+  if (!workflow) {
+    return { ok: false, refusal: "WORKFLOW_NOT_FOUND", message: `Workflow ${workflowId} was not found for this candidate.` };
+  }
+  if (workflow.status !== "CREATED" && workflow.status !== "IMPROVEMENT_RUNNING") {
+    return {
+      ok: false,
+      refusal: "WORKFLOW_TERMINAL",
+      message: `Workflow ${workflowId} is ${workflow.status}; there is no pending writer work to retry.`,
+    };
+  }
+
+  const authorization = evaluateTailoringAuthorization(candidateId, workflow.dedupe_key);
+  if (!authorization.isAuthorized) {
+    return {
+      ok: false,
+      refusal: "NOT_AUTHORIZED",
+      message: authorization.blockingReason ?? "Tailoring is not authorized for this job.",
+    };
+  }
+
+  const handoffDir = getHandoffDirectory(
+    { candidateId, dedupeKey: workflow.dedupe_key, runId: workflow.tailoring_run_id, workflowId },
+    workflow.current_iteration + 1
+  );
+  clearTechnicalFailures(handoffDir);
+  clearWriterOperationalBlock();
+
+  return {
+    ok: true,
+    handoffDir,
+    message: "Technical retry bookkeeping was cleared. The writer will pick this workflow up on its next scheduled pass. No quality iteration was changed.",
+  };
 }
 
 export interface RunWorkerPassOptions extends ProcessWorkflowOptions {

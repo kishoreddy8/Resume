@@ -3,6 +3,59 @@ import path from "node:path";
 import { DB_PATH, getDb } from "./index";
 
 const BACKUP_RETENTION = 20;
+
+/**
+ * Stage 27 — refuse to create a snapshot that would leave the volume dangerously full.
+ *
+ * Why this is a real risk rather than a theoretical one: app.db is a multi-gigabyte file and the
+ * retention policy above keeps BACKUP_RETENTION *sets* of it. On the machine this runs on, free space
+ * is already a small multiple of the database's own size, so a run of migrations can consume the
+ * remaining disk — and a full disk while SQLite is writing is a far worse failure than any migration
+ * this backup exists to protect against.
+ *
+ * The floor is what must remain free AFTER the copy. Deliberately checked before any bytes are
+ * written, so the outcome is a clean refusal rather than a half-written snapshot beside a full disk.
+ * The existing CAREER_OPS_ALLOW_MIGRATION_WITHOUT_BACKUP escape hatch still applies, unchanged.
+ */
+const MIN_FREE_BYTES_AFTER_BACKUP = 5 * 1024 * 1024 * 1024; // 5 GiB
+
+export class InsufficientDiskSpaceForBackupError extends Error {
+  constructor(requiredBytes: number, freeBytes: number) {
+    const gib = (n: number) => `${(n / 1024 ** 3).toFixed(1)} GiB`;
+    super(
+      `Refusing to write a pre-migration backup: it needs ${gib(requiredBytes)} and only ${gib(freeBytes)} is free, ` +
+        `which would leave less than ${gib(MIN_FREE_BYTES_AFTER_BACKUP)} on the volume. ` +
+        `Free up space (data/backups/ is the usual culprit) and retry.`
+    );
+    this.name = "InsufficientDiskSpaceForBackupError";
+  }
+}
+
+/** Total bytes the snapshot about to be written will occupy (db + whichever sidecars exist). */
+function plannedBackupBytes(suffixes: readonly string[]): number {
+  let total = 0;
+  for (const suffix of suffixes) {
+    const source = `${DB_PATH}${suffix}`;
+    if (!fs.existsSync(source)) continue;
+    total += fs.statSync(source).size;
+  }
+  return total;
+}
+
+/**
+ * Free bytes on the volume holding the backups directory, or null when the platform/runtime cannot
+ * report it. A null result deliberately SKIPS the check rather than blocking the migration: refusing
+ * to migrate because we could not measure free space would be a worse default than proceeding, and
+ * the copy itself still fails closed if the disk really is full.
+ */
+function freeBytesOn(dir: string): number | null {
+  try {
+    const stats = fs.statfsSync(dir);
+    return Number(stats.bavail) * Number(stats.bsize);
+  } catch {
+    return null;
+  }
+}
 /** Explicit, non-default escape hatch — see backupBeforeMigration's doc comment. Never set this in
  *  normal use; it exists only for a genuine "I understand the risk and need to proceed anyway" case
  *  (e.g. disk truly full and the migration itself is more urgent than the safety net). */
@@ -45,6 +98,13 @@ export function backupBeforeMigration(): void {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const baseName = path.basename(DB_PATH); // "app.db"
     const suffixes = ["", "-wal", "-shm"];
+
+    // Stage 27 — preflight before a single byte is copied.
+    const required = plannedBackupBytes(suffixes);
+    const free = freeBytesOn(backupsDir);
+    if (free !== null && free - required < MIN_FREE_BYTES_AFTER_BACKUP) {
+      throw new InsufficientDiskSpaceForBackupError(required, free);
+    }
 
     for (const suffix of suffixes) {
       const source = `${DB_PATH}${suffix}`;

@@ -590,9 +590,11 @@ test("7. technical failure never consumes a quality iteration, and WRITER_FAILUR
     }
   }
 
-  // Calling again past the cap must not re-notify (dedup) and must not attempt the CLI again (SKIPPED_MAX_ATTEMPTS).
+  // Calling again past the cap must not re-notify (dedup) and must not attempt the CLI again.
+  // Stage 27 renamed this outcome to BLOCKED_MAX_ATTEMPTS: it is terminal for automatic processing
+  // and needs an explicit operator reset, which "SKIPPED" wrongly implied would happen on its own.
   const pastCap = await processOneWorkflow(wf, { cliOptions: { command: alwaysFailScript, retryBackoffMs: 5 } });
-  assert.equal(pastCap.outcome, "SKIPPED_MAX_ATTEMPTS");
+  assert.equal(pastCap.outcome, "BLOCKED_MAX_ATTEMPTS");
   const notificationsAfter = listNotificationsForCandidate(candidateAliceId);
   const finalCount = notificationsAfter.filter((n) => n.dedupe_key === jobOne.dedupe_key && n.type === WRITER_FAILURE_NOTIFICATION_TYPE).length;
   assert.equal(finalCount, 1, "no duplicate WRITER_FAILURE notification after the cap");

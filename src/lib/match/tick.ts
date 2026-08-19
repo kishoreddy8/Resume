@@ -59,7 +59,8 @@ export type JobEvaluationTickOutcome =
  */
 export async function runJobEvaluationTick(now: Date = new Date()): Promise<JobEvaluationTickOutcome> {
   const settings = getAppSettings();
-  if (!isEnabled(settings.scheduler)) {
+  // Stage 27 — master kill switch, then this tick's own switch (see settings.ts schedulerSchema).
+  if (!isEnabled(settings.scheduler) || !settings.scheduler.evaluationEnabled) {
     return { outcome: "SKIPPED_DISABLED" };
   }
   if (!isWithinWindow(now, settings.scheduler)) {

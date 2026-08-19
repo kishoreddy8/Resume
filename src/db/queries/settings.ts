@@ -29,6 +29,10 @@ const STORAGE_KEYS = {
   workAuthorizedUS: "candidate.work_authorized_us",
   clearanceLevel: "candidate.clearance_level",
   schedulerEnabled: "scheduler.enabled",
+  schedulerScanEnabled: "scheduler.scan_enabled",
+  schedulerProductionEnabled: "scheduler.production_enabled",
+  schedulerEvaluationEnabled: "scheduler.evaluation_enabled",
+  schedulerWriterEnabled: "scheduler.writer_enabled",
   schedulerIntervalMinutes: "scheduler.interval_minutes",
   schedulerWindowStartHour: "scheduler.window_start_hour",
   schedulerWindowEndHour: "scheduler.window_end_hour",
@@ -84,6 +88,10 @@ function rowsToSettings(rows: SettingsRow[]): AppSettings {
     },
     scheduler: {
       enabled: bool(STORAGE_KEYS.schedulerEnabled, DEFAULT_SETTINGS.scheduler.enabled),
+      scanEnabled: bool(STORAGE_KEYS.schedulerScanEnabled, DEFAULT_SETTINGS.scheduler.scanEnabled),
+      productionEnabled: bool(STORAGE_KEYS.schedulerProductionEnabled, DEFAULT_SETTINGS.scheduler.productionEnabled),
+      evaluationEnabled: bool(STORAGE_KEYS.schedulerEvaluationEnabled, DEFAULT_SETTINGS.scheduler.evaluationEnabled),
+      writerEnabled: bool(STORAGE_KEYS.schedulerWriterEnabled, DEFAULT_SETTINGS.scheduler.writerEnabled),
       intervalMinutes: num(STORAGE_KEYS.schedulerIntervalMinutes, DEFAULT_SETTINGS.scheduler.intervalMinutes),
       windowStartHour: num(STORAGE_KEYS.schedulerWindowStartHour, DEFAULT_SETTINGS.scheduler.windowStartHour),
       windowEndHour: num(STORAGE_KEYS.schedulerWindowEndHour, DEFAULT_SETTINGS.scheduler.windowEndHour),
@@ -168,6 +176,10 @@ export function updateAppSettings(patch: unknown): UpdateSettingsResult {
     upsert.run({ key: STORAGE_KEYS.workAuthorizedUS, value: String(settings.candidate.workAuthorizedUS) });
     upsert.run({ key: STORAGE_KEYS.clearanceLevel, value: settings.candidate.clearanceLevel });
     upsert.run({ key: STORAGE_KEYS.schedulerEnabled, value: String(settings.scheduler.enabled) });
+    upsert.run({ key: STORAGE_KEYS.schedulerScanEnabled, value: String(settings.scheduler.scanEnabled) });
+    upsert.run({ key: STORAGE_KEYS.schedulerProductionEnabled, value: String(settings.scheduler.productionEnabled) });
+    upsert.run({ key: STORAGE_KEYS.schedulerEvaluationEnabled, value: String(settings.scheduler.evaluationEnabled) });
+    upsert.run({ key: STORAGE_KEYS.schedulerWriterEnabled, value: String(settings.scheduler.writerEnabled) });
     upsert.run({ key: STORAGE_KEYS.schedulerIntervalMinutes, value: String(settings.scheduler.intervalMinutes) });
     upsert.run({ key: STORAGE_KEYS.schedulerWindowStartHour, value: String(settings.scheduler.windowStartHour) });
     upsert.run({ key: STORAGE_KEYS.schedulerWindowEndHour, value: String(settings.scheduler.windowEndHour) });

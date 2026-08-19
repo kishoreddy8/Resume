@@ -258,7 +258,12 @@ async function main(): Promise<void> {
   info("iteration", `${target.current_iteration} -> ${after.current_iteration}`);
   info("iterations recorded", `${iterationsBefore.length} -> ${iterationsAfter.length}`);
 
-  const technical = outcome?.outcome === "TECHNICAL_FAILURE" || outcome?.outcome === "ERROR" || outcome?.outcome === "SKIPPED_MAX_ATTEMPTS";
+  const technical =
+    outcome?.outcome === "TECHNICAL_FAILURE" ||
+    outcome?.outcome === "ERROR" ||
+    outcome?.outcome === "BLOCKED_MAX_ATTEMPTS" ||
+    outcome?.outcome === "SUBSCRIPTION_LIMIT_REACHED" ||
+    outcome?.outcome === "AUTH_REQUIRED";
   if (technical) {
     check(after.status !== "READY", "a technical writer failure never marks the workflow READY", `status=${after.status}`);
     check(

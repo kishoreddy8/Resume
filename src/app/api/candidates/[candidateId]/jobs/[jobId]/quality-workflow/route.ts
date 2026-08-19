@@ -14,6 +14,7 @@ import { listTailoringRuns } from "@/db/queries/tailoringRuns";
 import { loadCandidateProfile } from "@/lib/match/candidateProfile";
 import { matchesCurrentInstructions } from "@/lib/resumeQuality/canonicalInstructions";
 import { evaluateTailoringAuthorization } from "@/lib/resumeQuality/tailoringAuthorization";
+import { evaluateWorkflowRetry } from "@/lib/resumeQuality/workflowRetry";
 import { getResumeWriterHealth, type ResumeWriterHealth } from "@/lib/resumeQuality/writers/writerHealth";
 import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
 import { evaluateApplicationReadiness, type ApplicationReadinessResult } from "@/lib/resumeQuality/applicationReadiness";
@@ -403,7 +404,26 @@ export async function POST(
   // Check if a workflow already exists. A non-terminal workflow — including a CREATED one that is
   // already queued for its first writer pass — is returned as-is: pressing the button twice must
   // never create a second workflow for the same approval, and must never re-run anything.
-  let workflow = getLatestResumeQualityWorkflowForJob(candidateId, job.dedupe_key);
+  //
+  // Stage 27 — a FAILED workflow may now be retried behind a FRESH human approval, which previously
+  // was impossible: the lookup below has no status filter, so a dead workflow blocked its job
+  // permanently. The decision is made by evaluateWorkflowRetry (pure, unit-tested) and the failed
+  // workflow itself is never reopened or mutated — a retry creates a new workflow beside it.
+  const existingWorkflow = getLatestResumeQualityWorkflowForJob(candidateId, job.dedupe_key);
+  const retryAuthorization = evaluateTailoringAuthorization(candidateId, job.dedupe_key);
+  const retryDecision = evaluateWorkflowRetry({
+    existingWorkflow: existingWorkflow
+      ? { id: existingWorkflow.id, status: existingWorkflow.status, created_at: existingWorkflow.created_at }
+      : null,
+    tailoringMarkedAt: state.tailoring_marked_at ?? null,
+    authorization: retryAuthorization,
+  });
+
+  if (retryDecision.action === "REFUSE") {
+    return NextResponse.json({ error: retryDecision.reason, code: retryDecision.code }, { status: 409 });
+  }
+
+  let workflow = retryDecision.action === "REUSE_EXISTING" ? existingWorkflow : undefined;
 
   if (!workflow) {
     // 1. Ensure tailoring run exists
@@ -516,5 +536,14 @@ export async function POST(
   // next step — no manual export/import, and no npm script to start by hand.
   const awaitingWriter = workflow ? workflow.status === "CREATED" || workflow.status === "IMPROVEMENT_RUNNING" : false;
 
-  return NextResponse.json({ ok: true, workflow: safeWf, awaitingWriter });
+  return NextResponse.json({
+    ok: true,
+    workflow: safeWf,
+    awaitingWriter,
+    // Stage 27 — so the UI can say "retried" rather than silently showing a different workflow id,
+    // and can name the previous FAILED workflow that is being preserved as history.
+    action: retryDecision.action,
+    actionReason: retryDecision.reason,
+    previousWorkflowId: retryDecision.action === "CREATE_RETRY" ? (existingWorkflow?.id ?? null) : null,
+  });
 }

@@ -221,12 +221,22 @@ async function main(): Promise<void> {
     const after = getResumeQualityWorkflow(CANDIDATE_ID, current.id)!;
     const iterAfter = listResumeQualityIterations(CANDIDATE_ID, current.id);
 
-    if (outcome.outcome === "TECHNICAL_FAILURE" || outcome.outcome === "ERROR" || outcome.outcome === "SKIPPED_MAX_ATTEMPTS") {
+    if (
+      outcome.outcome === "TECHNICAL_FAILURE" ||
+      outcome.outcome === "ERROR" ||
+      outcome.outcome === "BLOCKED_MAX_ATTEMPTS" ||
+      outcome.outcome === "SUBSCRIPTION_LIMIT_REACHED" ||
+      outcome.outcome === "AUTH_REQUIRED"
+    ) {
       check(after.status !== "READY", "a technical failure never marks the workflow READY");
       check(iterAfter.length === iterBefore, "a technical failure never consumes a quality iteration", `${iterBefore} -> ${iterAfter.length}`);
       if (outcome.providerUnavailable) info("provider", "the Claude service was unavailable — reported as such, not as a resume problem");
       passNo -= 1; // a technical failure is not a content attempt
-      if (outcome.outcome === "SKIPPED_MAX_ATTEMPTS") { fail("technical retries exhausted before any content attempt completed"); break; }
+      if (outcome.outcome === "BLOCKED_MAX_ATTEMPTS") { fail("technical retries exhausted before any content attempt completed"); break; }
+      if (outcome.outcome === "SUBSCRIPTION_LIMIT_REACHED" || outcome.outcome === "AUTH_REQUIRED") {
+        fail(`writer is blocked on an operator-actionable condition (${outcome.outcome}) — no content attempt was possible`);
+        break;
+      }
       current = after;
       continue;
     }

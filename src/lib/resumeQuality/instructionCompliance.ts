@@ -156,6 +156,25 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
     }
   };
 
+  /**
+   * Stage 27 — attributes EXISTING evidence to an additional check without adding it to the flat
+   * `notes` list again.
+   *
+   * Some checks are derived from evidence another check already recorded (see technologyAdaptation
+   * and migrationIntegrity below, both computed from the same contradiction findings as
+   * architectureIntegrity/noContradictingTechnologies). Those checks could FAIL while carrying no
+   * reason at all, so the writer was told a check must reach PASS without being told what was wrong
+   * with it. Using `note` here would have been the obvious fix and the wrong one: it would repeat the
+   * same sentences in `notes`, which is persisted in review_json and rendered in the UI, turning one
+   * finding into four identical lines. This records the attribution only — `notes` is byte-for-byte
+   * what it was before Stage 27.
+   */
+  const attributeOnly = (check: keyof InstructionComplianceChecks, ...lines: string[]): void => {
+    for (const line of lines) {
+      if (line.length > 0) (checkNotes[check] ??= []).push(line);
+    }
+  };
+
   // A. Hard career facts
   checks.hardCareerFacts = !input.hasMasterProfile
     ? "REVIEW"
@@ -218,6 +237,13 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
   const hasAnyContradiction = input.architectureContradictions.length > 0 || input.coverLetterContradictions.length > 0;
   checks.technologyAdaptation = hasAnyContradiction ? "FAIL" : "PASS";
   checks.migrationIntegrity = hasAnyContradiction ? "FAIL" : "PASS";
+  // Stage 27 — both statuses are derived from exactly these findings, which are already in hand right
+  // here. Attributing them (without re-listing them in `notes`) is what lets Stage 26B's correction
+  // pipeline tell the writer WHY these two checks failed instead of naming them with no reason.
+  if (hasAnyContradiction) {
+    attributeOnly("technologyAdaptation", ...input.architectureContradictions, ...input.coverLetterContradictions);
+    attributeOnly("migrationIntegrity", ...input.architectureContradictions, ...input.coverLetterContradictions);
+  }
 
   // L. No contradicting technologies — resume AND cover letter, per the canonical text's explicit
   // scope for this specific guardrail.

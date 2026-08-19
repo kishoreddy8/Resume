@@ -12,6 +12,10 @@ import {
 function scheduler(overrides: Partial<SchedulerSettings> = {}): SchedulerSettings {
   return {
     enabled: true,
+    scanEnabled: true,
+    productionEnabled: true,
+    evaluationEnabled: true,
+    writerEnabled: true,
     intervalMinutes: 60,
     windowStartHour: 0,
     windowEndHour: 24,

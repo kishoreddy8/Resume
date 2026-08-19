@@ -137,10 +137,15 @@ Target Role Track: **${selectedTrack ?? "General Engineering Track"}**
 ## CANDIDATE CONTACT DETAILS — VERIFIED HARD FACTS, REPRODUCE EXACTLY
 ${contactBlock}
 
-Copy these into \`resume\` (name/email/phone/location, and linkedin when given) and into the cover
-letter header verbatim. They are hard facts in the sense of guardrail 1 below: you may not alter,
-abbreviate, re-format into a different value, or substitute a placeholder for any of them, and you
-must never invent one that is missing. The resume and the cover letter must carry identical values.
+These are hard facts in the sense of guardrail 1 below: you may not alter, abbreviate, re-format
+into a different value, or substitute a placeholder for any of them, and you
+must never invent one that is missing.
+
+Where each value goes:
+- **Full name, email, phone, location** — reproduce verbatim in BOTH the resume and the cover letter
+  header. These four must be character-for-character identical in the two documents.
+- **LinkedIn** — resume only, and only when given above. The cover letter header does not carry it.
+  Omitting it from the cover letter is correct and is not an inconsistency between the documents.
 
 ## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 

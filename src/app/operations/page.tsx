@@ -29,12 +29,36 @@ interface OperationsResponse {
     lastSuccessfulScheduledScan: string | null;
   };
   scheduler: {
-    settings: { enabled: boolean; intervalMinutes: number; windowStartHour: number; windowEndHour: number; timezone: string };
+    settings: {
+      enabled: boolean;
+      scanEnabled: boolean;
+      productionEnabled: boolean;
+      evaluationEnabled: boolean;
+      writerEnabled: boolean;
+      intervalMinutes: number;
+      windowStartHour: number;
+      windowEndHour: number;
+      timezone: string;
+    };
     runtime: { lastStartedAt: string | null; lastCompletedAt: string | null; lastSuccessfulAt: string | null; lastFailedAt: string | null; lastError: string | null };
     lock: { held: boolean; acquiredAt: string | null; stale: boolean };
     nextEligibleRunAt: string | null;
     health: HealthStatus;
   };
+  resumeWriter: {
+    state: string;
+    detail: string;
+    schedulerEnabled: boolean;
+    withinWindow: boolean;
+    intervalMinutes: number;
+    batchSize: number;
+    pendingWorkflowCount: number;
+    lastTickAt: string | null;
+    lastPassCompletedAt: string | null;
+    lastPassOutcome: string | null;
+    lastPassError: string | null;
+    nextAttemptAt: string | null;
+  } | null;
   scanning: {
     window: {
       runs: number; successCount: number; partialCount: number; failedCount: number; companiesScanned: number;
@@ -234,6 +258,28 @@ export default function OperationsPage() {
           </SectionCard>
 
           <SectionCard title="Scheduler" right={<HealthBadge status={data.scheduler.health} />}>
+            {/* Stage 27 — the master switch and the four per-tick switches together. A tick runs only
+                when BOTH are on, so showing them separately is what makes "automation is on but the
+                writer is deliberately off" legible instead of looking like a fault. */}
+            <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-5">
+              <Metric label="Automation (master)" value={data.scheduler.settings.enabled ? "On" : "Off"} />
+              <Metric
+                label="Scan"
+                value={!data.scheduler.settings.enabled ? "Off (master)" : data.scheduler.settings.scanEnabled ? "On" : "Off"}
+              />
+              <Metric
+                label="Ingestion"
+                value={!data.scheduler.settings.enabled ? "Off (master)" : data.scheduler.settings.productionEnabled ? "On" : "Off"}
+              />
+              <Metric
+                label="Evaluation"
+                value={!data.scheduler.settings.enabled ? "Off (master)" : data.scheduler.settings.evaluationEnabled ? "On" : "Off"}
+              />
+              <Metric
+                label="Resume writer"
+                value={!data.scheduler.settings.enabled ? "Off (master)" : data.scheduler.settings.writerEnabled ? "On" : "Off"}
+              />
+            </div>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <Metric label="Enabled" value={data.scheduler.settings.enabled ? "Yes" : "No"} />
               <Metric label="Interval" value={`${data.scheduler.settings.intervalMinutes} min`} />
@@ -255,6 +301,30 @@ export default function OperationsPage() {
               </div>
             )}
           </SectionCard>
+
+          {/* Stage 27 — one place that answers "is approved tailoring actually moving, and if not,
+              why?". Every value is read from the writer's own lease/tick/last-pass record, never
+              inferred from a workflow status. */}
+          {data.resumeWriter && (
+            <SectionCard title="Resume writer">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <Metric label="State" value={data.resumeWriter.state.replace(/_/g, " ")} />
+                <Metric label="Approved & queued" value={String(data.resumeWriter.pendingWorkflowCount)} />
+                <Metric label="Cadence" value={`every ${data.resumeWriter.intervalMinutes} min · ${data.resumeWriter.batchSize} per pass`} />
+                <Metric label="Within window" value={data.resumeWriter.withinWindow ? "Yes" : "No"} />
+                <Metric label="Last scheduler tick" value={formatTimestamp(data.resumeWriter.lastTickAt)} />
+                <Metric label="Last pass completed" value={formatTimestamp(data.resumeWriter.lastPassCompletedAt)} />
+                <Metric label="Last pass outcome" value={data.resumeWriter.lastPassOutcome ?? "—"} />
+                <Metric label="Next attempt" value={formatTimestamp(data.resumeWriter.nextAttemptAt)} />
+              </div>
+              <p className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">{data.resumeWriter.detail}</p>
+              {data.resumeWriter.lastPassError && (
+                <div className="mt-2 rounded bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-400">
+                  Last writer error: {data.resumeWriter.lastPassError}
+                </div>
+              )}
+            </SectionCard>
+          )}
 
           <div className="grid gap-4 md:grid-cols-2">
             <SectionCard title={`Scanning (${data.window})`} right={<HealthBadge status={data.scanning.health} />}>

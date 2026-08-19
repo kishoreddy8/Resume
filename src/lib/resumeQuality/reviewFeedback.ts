@@ -110,6 +110,39 @@ function gateBlockingComplianceSection(review: StructuredResumeReview): string {
   return out;
 }
 
+/**
+ * Stage 27 — recruiter quality, stated so the number cannot be mistaken for a threshold.
+ *
+ * The confusion this removes, observed on the real corpus: a workflow reached READY with
+ * `recruiterQualityAssessment: { status: "PASS", score: 30 }`, which reads like a contradiction. It
+ * is not. The gate consults `status` and ONLY `status` (qualityGate.ts condition 8); `score` is a
+ * diagnostic aggregate that every advisory finding deflates, and seven advisory findings — all of
+ * them the same "consider reordering these bullets" dimension — take 100 down to 30 without any of
+ * them being a defect that should block a resume.
+ *
+ * Presentation only: no threshold, no severity, and no scoring rule is changed here.
+ */
+function recruiterQualitySection(review: StructuredResumeReview): string {
+  const assessment = review.recruiterQualityAssessment;
+  if (!assessment) return "";
+  const blocking = assessment.issues.filter((i) => i.severity === "BLOCKING");
+  const advisory = assessment.issues.filter((i) => i.severity === "ADVISORY");
+
+  let out = "\n## Recruiter Quality\n\n";
+  out += `- **Gate result: ${assessment.status}** — this is what decides approval.\n`;
+  out += `- Diagnostic score: ${assessment.score}/100 (advisory only — not a pass threshold, and never consulted by the quality gate).\n`;
+  out += `- Findings: ${blocking.length} blocking, ${advisory.length} advisory.\n`;
+  if (blocking.length > 0) {
+    out += "\n**Blocking:**\n";
+    for (const issue of blocking) out += `- ${issue.dimension}: ${issue.description}\n`;
+  }
+  if (advisory.length > 0) {
+    out += "\n**Advisory — suggestions, none of these block approval:**\n";
+    for (const issue of advisory) out += `- ${issue.dimension}: ${issue.description}\n`;
+  }
+  return out;
+}
+
 export function renderReviewFeedbackMarkdown(review: StructuredResumeReview): string {
   let out = "# Resume Review Feedback\n\n";
   out += "## Scores\n\n";
@@ -131,6 +164,7 @@ export function renderReviewFeedbackMarkdown(review: StructuredResumeReview): st
   out += section("Skills Ordering Issues", review.skillsOrderingIssues);
   out += section("Truthfulness Issues", review.truthfulnessIssues);
   out += gateBlockingComplianceSection(review);
+  out += recruiterQualitySection(review);
   out += complianceSection(review);
   out += correctionsSection(review);
 

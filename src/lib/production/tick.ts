@@ -51,7 +51,8 @@ export type ProductionCycleTickOutcome =
  */
 export async function runProductionCycleTick(now: Date = new Date()): Promise<ProductionCycleTickOutcome> {
   const settings = getAppSettings();
-  if (!isEnabled(settings.scheduler)) {
+  // Stage 27 — master kill switch, then this tick's own switch (see settings.ts schedulerSchema).
+  if (!isEnabled(settings.scheduler) || !settings.scheduler.productionEnabled) {
     return { outcome: "SKIPPED_DISABLED" };
   }
   if (!isWithinWindow(now, settings.scheduler)) {

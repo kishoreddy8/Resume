@@ -2,7 +2,12 @@ import { getAppSettings } from "@/db/queries/settings";
 import { listWorkflowsAwaitingWriter } from "@/db/queries/resumeQualityWorkflows";
 import { isWithinWindow, nextEligibleRunAt } from "@/lib/scheduler/window";
 import { RESUME_WRITER_BATCH_SIZE, RESUME_WRITER_INTERVAL_MINUTES } from "./tick";
-import { getResumeWriterLeaseStatus, getResumeWriterRuntimeState, type PassOutcomeSummary } from "./writerState";
+import {
+  getResumeWriterLeaseStatus,
+  getResumeWriterRuntimeState,
+  getWriterOperationalBlock,
+  type PassOutcomeSummary,
+} from "./writerState";
 
 /**
  * Stage 26 — the writer's health, derived ONLY from evidence that already exists: the machine-wide
@@ -36,7 +41,20 @@ export type ResumeWriterHealthState =
   | "TECHNICAL_FAILURE"
   /** Stage 26B — approved work is queued but the candidate's contact details are missing, so nothing
    *  can be rendered. A configuration state, not a failure and not a quality verdict. */
-  | "CANDIDATE_CONTACT_REQUIRED";
+  | "CANDIDATE_CONTACT_REQUIRED"
+  /** Stage 27 — the bounded technical-retry budget is exhausted for the queued handoff. Terminal for
+   *  automatic processing: the writer will NOT try again on its own. Previously this was reported as
+   *  TECHNICAL_FAILURE, whose text promised the writer "retries on its own schedule" — which was
+   *  false in exactly this state and left the workflow silently wedged. */
+  | "BLOCKED_MAX_ATTEMPTS"
+  /** Stage 27 — the Claude subscription usage limit is exhausted. No content iteration consumed. */
+  | "SUBSCRIPTION_LIMIT_REACHED"
+  /** Stage 27 — the Claude CLI is logged out / its credentials expired. Operator action required. */
+  | "AUTH_REQUIRED"
+  /** Stage 27 — approved work exists but its human approval no longer matches the job's current
+   *  match decision, so the writer refuses it every pass. Previously indistinguishable from ordinary
+   *  waiting, leaving the user with no idea re-approval was needed. */
+  | "UNAUTHORIZED_APPROVAL_STALE";
 
 /** How long without a tick evaluation before the writer scheduler is reported as not running. The
  *  tick is evaluated every TICK_CHECK_INTERVAL_MS (60s) by src/instrumentation.ts, so 5 minutes is
@@ -44,7 +62,7 @@ export type ResumeWriterHealthState =
  *  tell the truth when the app is being served without instrumentation having started the timers. */
 export const RESUME_WRITER_TICK_LIVENESS_TIMEOUT_MINUTES = 5;
 
-const TECHNICAL_OUTCOMES = new Set(["TECHNICAL_FAILURE", "ERROR", "SKIPPED_MAX_ATTEMPTS"]);
+const TECHNICAL_OUTCOMES = new Set(["TECHNICAL_FAILURE", "ERROR"]);
 
 export interface ResumeWriterHealth {
   state: ResumeWriterHealthState;
@@ -72,6 +90,14 @@ export interface ResumeWriterHealth {
   workflowOutcome: PassOutcomeSummary | null;
 }
 
+function blockedMaxAttemptsDetail(outcome: PassOutcomeSummary): string {
+  return `${outcome.error ?? "The writer failed repeatedly for technical reasons and has stopped retrying automatically."} It will NOT try again on its own — use Retry writer once the cause is understood. No quality iteration was used.`;
+}
+
+function staleApprovalDetail(outcome: PassOutcomeSummary): string {
+  return `${outcome.error ?? "The recorded tailoring approval is no longer valid for this job's current match decision."} Review the job and approve it again if you still want it tailored. Nothing was written and no quality iteration was used.`;
+}
+
 export function getResumeWriterHealth(now: Date = new Date(), workflowId?: number): ResumeWriterHealth {
   const settings = getAppSettings();
   const runtime = getResumeWriterRuntimeState();
@@ -83,6 +109,20 @@ export function getResumeWriterHealth(now: Date = new Date(), workflowId?: numbe
     typeof workflowId === "number"
       ? (runtime.lastSummary?.outcomes.find((o) => o.workflowId === workflowId) ?? null)
       : null;
+
+  /**
+   * Stage 27 — BLOCKED_MAX_ATTEMPTS and SKIPPED_UNAUTHORIZED are PER-WORKFLOW conditions, unlike the
+   * lease, the operational block, or a provider outage. So when a caller asked about one specific
+   * workflow (the job page), only THAT workflow's outcome may produce these states; when nobody asked
+   * about a particular workflow (the operations panel), any workflow in the last pass may, but only
+   * after the machine-wide signals have had their say — one wedged workflow must never hide the fact
+   * that the provider was down for the whole pass.
+   */
+  const outcomesInScope: PassOutcomeSummary[] =
+    typeof workflowId === "number" ? (workflowOutcome ? [workflowOutcome] : []) : (runtime.lastSummary?.outcomes ?? []);
+  const scopedBlockedMaxAttempts = outcomesInScope.find((o) => o.outcome === "BLOCKED_MAX_ATTEMPTS");
+  const scopedStaleApproval = outcomesInScope.find((o) => o.outcome === "SKIPPED_UNAUTHORIZED");
+  const scopedIsWorkflowSpecific = typeof workflowId === "number";
 
   const tickIsLive =
     runtime.lastTickAt !== null &&
@@ -133,6 +173,38 @@ export function getResumeWriterHealth(now: Date = new Date(), workflowId?: numbe
       detail: `${contactBlocked.error ?? "Candidate contact details are required before tailoring can run."} No quality iteration was used — add them in Candidate Settings and the queued work resumes on the next scheduled pass.`,
     };
   }
+  // Stage 27 — machine-wide operator-actionable blocks come next: they are true for every queued
+  // workflow at once, and nothing else the panel could say would be more useful.
+  const operationalBlock = getWriterOperationalBlock(now);
+  if (operationalBlock.blocked && !operationalBlock.expired) {
+    if (operationalBlock.blockClass === "AUTH_REQUIRED") {
+      return {
+        ...base,
+        state: "AUTH_REQUIRED",
+        detail:
+          "The Claude CLI is not signed in, so no resume can be written. Run `claude login` in a terminal on this Mac, then use Retry writer. " +
+          "Nothing is being retried automatically until then, and no quality iteration has been used.",
+      };
+    }
+    return {
+      ...base,
+      state: "SUBSCRIPTION_LIMIT_REACHED",
+      detail:
+        "Your Claude subscription usage limit is currently exhausted, so the writer is waiting instead of retrying. " +
+        `It will try again after ${operationalBlock.until ?? "the cooldown"}. CareerOps is not told when your usage window actually resets, so that is a check-back time, not a reset time. ` +
+        "No quality iteration has been used.",
+    };
+  }
+
+  // Asked about one workflow, and that workflow is the one in trouble — its own state is
+  // authoritative and must not be masked by whatever else happened in the same pass.
+  if (scopedIsWorkflowSpecific && scopedBlockedMaxAttempts) {
+    return { ...base, state: "BLOCKED_MAX_ATTEMPTS", detail: blockedMaxAttemptsDetail(scopedBlockedMaxAttempts) };
+  }
+  if (scopedIsWorkflowSpecific && scopedStaleApproval) {
+    return { ...base, state: "UNAUTHORIZED_APPROVAL_STALE", detail: staleApprovalDetail(scopedStaleApproval) };
+  }
+
   if (!tickIsLive) {
     return {
       ...base,
@@ -164,6 +236,14 @@ export function getResumeWriterHealth(now: Date = new Date(), workflowId?: numbe
         : `The last writer pass failed for technical reasons${runtime.lastError ? `: ${runtime.lastError}` : "."} This is not a quality verdict — no resume was produced and no quality iteration was used.`,
     };
   }
+  // Machine-wide view: report a wedged or unauthorized workflow once nothing more urgent applies.
+  if (scopedBlockedMaxAttempts && pendingWorkflowCount > 0) {
+    return { ...base, state: "BLOCKED_MAX_ATTEMPTS", detail: blockedMaxAttemptsDetail(scopedBlockedMaxAttempts) };
+  }
+  if (scopedStaleApproval && pendingWorkflowCount > 0) {
+    return { ...base, state: "UNAUTHORIZED_APPROVAL_STALE", detail: staleApprovalDetail(scopedStaleApproval) };
+  }
+
   if (!withinWindow) {
     return {
       ...base,

@@ -96,7 +96,9 @@ export type SchedulerTickOutcome =
 export async function runSchedulerTick(now: Date = new Date()): Promise<SchedulerTickOutcome> {
   const settings = getAppSettings();
 
-  if (!isEnabled(settings.scheduler)) {
+  // Stage 27 — master kill switch first, then this tick's own switch. A false per-tick flag is
+  // reported as the same SKIPPED_DISABLED outcome, so nothing downstream has to learn a new state.
+  if (!isEnabled(settings.scheduler) || !settings.scheduler.scanEnabled) {
     return { outcome: "SKIPPED_DISABLED" };
   }
   if (!isWithinWindow(now, settings.scheduler)) {

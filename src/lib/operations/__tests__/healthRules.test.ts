@@ -12,7 +12,18 @@ import type { SchedulerRuntimeState } from "@/lib/scheduler/state";
 import type { SchedulerSettings } from "@/lib/scheduler/window";
 
 function scheduler(overrides: Partial<SchedulerSettings> = {}): SchedulerSettings {
-  return { enabled: true, intervalMinutes: 60, windowStartHour: 0, windowEndHour: 24, timezone: "UTC", ...overrides };
+  return {
+    enabled: true,
+    scanEnabled: true,
+    productionEnabled: true,
+    evaluationEnabled: true,
+    writerEnabled: true,
+    intervalMinutes: 60,
+    windowStartHour: 0,
+    windowEndHour: 24,
+    timezone: "UTC",
+    ...overrides,
+  };
 }
 
 function runtime(overrides: Partial<SchedulerRuntimeState> = {}): SchedulerRuntimeState {

@@ -365,6 +365,44 @@ export function listResumeQualityIterations(candidateId: number, workflowId: num
  * approved, non-terminal, waiting for the writer. READY/FAILED are terminal and never returned, so a
  * completed workflow can never be replayed.
  */
+/**
+ * Stage 27 — records WHO actually produced this workflow's content, from real runtime evidence only.
+ *
+ * Every field is optional and a field that is passed `null`/omitted is left exactly as it was, so a
+ * run whose CLI reported no model leaves writer_model NULL rather than acquiring a plausible-looking
+ * guess. Never touches status, iteration counts, scores, or approval — this is metadata only.
+ */
+export function recordResumeQualityWorkflowProviders(
+  candidateId: number,
+  workflowId: number,
+  input: {
+    writerProvider?: string | null;
+    writerModel?: string | null;
+    reviewerProvider?: string | null;
+    reviewerModel?: string | null;
+  }
+): void {
+  const sets: string[] = [];
+  const params: Record<string, string> = {};
+  const add = (column: string, key: string, value: string | null | undefined) => {
+    if (typeof value !== "string" || value.trim().length === 0) return;
+    sets.push(`${column} = @${key}`);
+    params[key] = value.trim();
+  };
+  add("writer_provider", "writerProvider", input.writerProvider);
+  add("writer_model", "writerModel", input.writerModel);
+  add("reviewer_provider", "reviewerProvider", input.reviewerProvider);
+  add("reviewer_model", "reviewerModel", input.reviewerModel);
+  if (sets.length === 0) return;
+
+  getDb()
+    .prepare(
+      `UPDATE resume_quality_workflows SET ${sets.join(", ")}, updated_at = datetime('now')
+       WHERE id = @workflowId AND candidate_id = @candidateId`
+    )
+    .run({ ...params, workflowId: String(workflowId), candidateId: String(candidateId) });
+}
+
 export function listWorkflowsAwaitingWriter(): ResumeQualityWorkflowRow[] {
   return getDb()
     .prepare(

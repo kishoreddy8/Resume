@@ -67,7 +67,10 @@ export async function runResumeWriterTick(
   recordResumeWriterTick(now);
 
   const settings = getAppSettings();
-  if (!isEnabled(settings.scheduler)) {
+  // Stage 27 — master kill switch, then the writer's own switch. This is the tick that spends the
+  // user's Claude subscription, so it is the one an operator is most likely to want off while the
+  // free, local discovery/evaluation ticks keep running.
+  if (!isEnabled(settings.scheduler) || !settings.scheduler.writerEnabled) {
     return { outcome: "SKIPPED_DISABLED" };
   }
   if (!isWithinWindow(now, settings.scheduler)) {

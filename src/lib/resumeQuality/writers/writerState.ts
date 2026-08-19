@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { getDb } from "@/db";
+import type { WriterFailureClass } from "./claudeCliInvoker";
 import type { PassOutcome } from "./writerWorkerCore";
 
 /** Re-exported so the health model can describe one workflow's last recorded outcome without
@@ -48,6 +49,44 @@ const RUNTIME_KEYS = {
   lastSummaryJson: "resume_writer.last_summary_json",
   lastDurationMs: "resume_writer.last_duration_ms",
 } as const;
+
+/**
+ * Stage 27 — the machine-wide "the writer cannot make progress until X" record.
+ *
+ * Separate from the lease (which means "a pass is running now") and from the per-handoff technical
+ * budget (which means "this one iteration keeps failing"). This covers the two conditions that are
+ * true for EVERY workflow at once and that no amount of retrying fixes: the Claude subscription is
+ * exhausted, or the CLI is logged out.
+ *
+ * blockedUntil is a COOLDOWN, never a claimed reset time. The print-mode probe against CLI 2.1.235
+ * proved that `claude -p --output-format json` does not emit any `rate_limits`/`resets_at` data, so
+ * CareerOps genuinely does not know when a usage window reopens and must not pretend to. An empty
+ * blockedUntil means "no automatic retry at all until the operator acts", which is the correct
+ * behaviour for a logged-out CLI.
+ */
+const BLOCK_KEYS = {
+  blockClass: "resume_writer.block_class",
+  blockSince: "resume_writer.block_since",
+  blockUntil: "resume_writer.block_until",
+  blockDetail: "resume_writer.block_detail",
+} as const;
+
+/** How long to wait before re-testing an exhausted subscription. Claude subscription windows are
+ *  measured in hours and the CLI tells us nothing about when this one opened, so this is an honest
+ *  "check again later" cadence — long enough to stop hammering, short enough that a recovered
+ *  subscription resumes on its own without the operator having to do anything. */
+export const SUBSCRIPTION_LIMIT_COOLDOWN_MINUTES = 60;
+
+export interface WriterOperationalBlock {
+  blocked: boolean;
+  blockClass: WriterFailureClass | null;
+  since: string | null;
+  /** Null when the block can only be cleared by the operator (AUTH_REQUIRED). */
+  until: string | null;
+  detail: string | null;
+  /** True when a `until` deadline exists and has passed — the next pass may try again. */
+  expired: boolean;
+}
 
 export interface WriterLeaseAcquireResult {
   acquired: boolean;
@@ -231,10 +270,53 @@ export function getResumeWriterRuntimeState(): WriterRuntimeState {
   };
 }
 
+/**
+ * Records an operator-actionable block. AUTH_REQUIRED gets no deadline at all: only the operator can
+ * log the CLI back in, so an automatic retry would be guaranteed noise. SUBSCRIPTION_LIMIT_REACHED
+ * gets a cooldown so a recovered subscription resumes unattended.
+ */
+export function recordWriterOperationalBlock(
+  blockClass: WriterFailureClass,
+  detail: string,
+  now: Date = new Date()
+): void {
+  setValue(BLOCK_KEYS.blockClass, blockClass);
+  setValue(BLOCK_KEYS.blockSince, now.toISOString());
+  setValue(BLOCK_KEYS.blockDetail, detail);
+  setValue(
+    BLOCK_KEYS.blockUntil,
+    blockClass === "SUBSCRIPTION_LIMIT_REACHED"
+      ? new Date(now.getTime() + SUBSCRIPTION_LIMIT_COOLDOWN_MINUTES * 60_000).toISOString()
+      : null
+  );
+}
+
+/** Cleared by any successful writer pass and by the operator's explicit retry. */
+export function clearWriterOperationalBlock(): void {
+  for (const key of Object.values(BLOCK_KEYS)) setValue(key, null);
+}
+
+export function getWriterOperationalBlock(now: Date = new Date()): WriterOperationalBlock {
+  const blockClass = getValue(BLOCK_KEYS.blockClass) as WriterFailureClass | null;
+  if (!blockClass) {
+    return { blocked: false, blockClass: null, since: null, until: null, detail: null, expired: false };
+  }
+  const until = getValue(BLOCK_KEYS.blockUntil);
+  const expired = until !== null && new Date(until).getTime() <= now.getTime();
+  return {
+    blocked: true,
+    blockClass,
+    since: getValue(BLOCK_KEYS.blockSince),
+    until,
+    detail: getValue(BLOCK_KEYS.blockDetail),
+    expired,
+  };
+}
+
 export function resetResumeWriterStateForTests(): void {
   const db = getDb();
   forceReleaseResumeWriterLease();
-  for (const key of Object.values(RUNTIME_KEYS)) {
+  for (const key of [...Object.values(RUNTIME_KEYS), ...Object.values(BLOCK_KEYS)]) {
     db.prepare("DELETE FROM settings WHERE key = ?").run(key);
   }
 }

@@ -104,7 +104,13 @@ interface QualityWorkflowResponse {
       | "WAITING_OUTSIDE_WINDOW"
       | "UNAVAILABLE_NOT_RUNNING"
       | "TECHNICAL_FAILURE"
-      | "CANDIDATE_CONTACT_REQUIRED";
+      | "CANDIDATE_CONTACT_REQUIRED"
+      // Stage 27 — operationally distinct states that used to be reported as ordinary waiting or as
+      // a technical failure that "retries on its own schedule".
+      | "BLOCKED_MAX_ATTEMPTS"
+      | "SUBSCRIPTION_LIMIT_REACHED"
+      | "AUTH_REQUIRED"
+      | "UNAUTHORIZED_APPROVAL_STALE";
     detail: string;
     schedulerEnabled: boolean;
     withinWindow: boolean;
@@ -149,7 +155,20 @@ const WRITER_STATE_LABEL: Record<string, string> = {
   UNAVAILABLE_NOT_RUNNING: "Writer not running",
   TECHNICAL_FAILURE: "Writer technical failure",
   CANDIDATE_CONTACT_REQUIRED: "Contact details required",
+  BLOCKED_MAX_ATTEMPTS: "Writer stopped — action needed",
+  SUBSCRIPTION_LIMIT_REACHED: "Claude usage limit reached",
+  AUTH_REQUIRED: "Claude sign-in required",
+  UNAUTHORIZED_APPROVAL_STALE: "Approval no longer valid",
 };
+
+/** Stage 27 — the states an operator (not time) has to resolve. They share the "needs you" styling
+ *  and are the ones that offer the Retry writer control. */
+const WRITER_OPERATOR_ACTION_STATES = new Set([
+  "BLOCKED_MAX_ATTEMPTS",
+  "SUBSCRIPTION_LIMIT_REACHED",
+  "AUTH_REQUIRED",
+  "UNAUTHORIZED_APPROVAL_STALE",
+]);
 
 function getStepIndex(status: string): number {
   switch (status) {
@@ -328,6 +347,29 @@ export function ResumeQualityPipeline({
       await loadData();
     } catch (err: unknown) {
       setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Error starting tailoring" });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  /**
+   * Stage 27 — the operator's "Retry writer" action. Clears only technical-retry bookkeeping so the
+   * normal scheduled writer can pick this workflow up again; it writes nothing itself and cannot
+   * change an approval, a score, an iteration, or an application.
+   */
+  async function handleRetryWriter() {
+    setActionBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/retry-writer`, {
+        method: "POST",
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to reset the writer retry state");
+      setActionMessage({ type: "success", text: body.message ?? "Writer retry state cleared." });
+      await loadData();
+    } catch (err: unknown) {
+      setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Error resetting writer retry state" });
     } finally {
       setActionBusy(false);
     }
@@ -775,8 +817,10 @@ export function ResumeQualityPipeline({
           className={`rounded-lg border p-4 space-y-2 ${
             writer.state === "PROCESSING"
               ? "border-blue-200 bg-blue-50/70 dark:border-blue-900/50 dark:bg-blue-950/20"
-              : writer.state === "TECHNICAL_FAILURE"
+              : writer.state === "TECHNICAL_FAILURE" || writer.state === "BLOCKED_MAX_ATTEMPTS"
               ? "border-red-200 bg-red-50/70 dark:border-red-900/50 dark:bg-red-950/20"
+              : WRITER_OPERATOR_ACTION_STATES.has(writer.state)
+              ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30"
               : writer.state === "CANDIDATE_CONTACT_REQUIRED"
               ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30"
               : writer.state === "UNAVAILABLE_SCHEDULER_DISABLED" || writer.state === "UNAVAILABLE_NOT_RUNNING"
@@ -864,6 +908,47 @@ export function ResumeQualityPipeline({
               No resume was produced and no quality iteration was consumed. The writer retries on its own schedule,
               within a bounded number of attempts.
             </p>
+          )}
+          {/* Stage 27 — this state is terminal for automatic processing. Saying anything about the
+              writer "retrying on its own schedule" here would be false, which is exactly what the
+              previous single TECHNICAL_FAILURE branch did. */}
+          {writer.state === "BLOCKED_MAX_ATTEMPTS" && (
+            <p className="text-xs font-medium text-red-800 dark:text-red-400">
+              The writer has stopped retrying this job automatically after repeated technical failures. No resume was
+              produced and no quality iteration was consumed. Use <strong>Retry writer</strong> below once you know why
+              it was failing.
+            </p>
+          )}
+          {writer.state === "SUBSCRIPTION_LIMIT_REACHED" && (
+            <p className="text-xs font-medium text-amber-900 dark:text-amber-300">
+              Your Claude subscription usage limit is exhausted, so the writer is waiting rather than retrying. No
+              quality iteration was consumed. CareerOps is not told when your usage window resets, so it re-checks
+              periodically — you can also use <strong>Retry writer</strong> once you know it has reset.
+            </p>
+          )}
+          {writer.state === "AUTH_REQUIRED" && (
+            <p className="text-xs font-medium text-amber-900 dark:text-amber-300">
+              The Claude CLI is not signed in on this Mac, so nothing can be written. Run <code>claude login</code> in a
+              terminal, then use <strong>Retry writer</strong>. Nothing is retried automatically until then, and no
+              quality iteration was consumed.
+            </p>
+          )}
+          {writer.state === "UNAUTHORIZED_APPROVAL_STALE" && (
+            <p className="text-xs font-medium text-amber-900 dark:text-amber-300">
+              The tailoring approval recorded for this job no longer matches its current match decision, so the writer
+              declines it on every pass. Review the job and approve it again if you still want it tailored. Nothing was
+              written and no quality iteration was consumed.
+            </p>
+          )}
+          {WRITER_OPERATOR_ACTION_STATES.has(writer.state) && writer.state !== "UNAUTHORIZED_APPROVAL_STALE" && (
+            <button
+              type="button"
+              onClick={handleRetryWriter}
+              disabled={actionBusy}
+              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+            >
+              {actionBusy ? "Retrying…" : "Retry writer"}
+            </button>
           )}
         </div>
       )}

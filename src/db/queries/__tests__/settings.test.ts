@@ -479,6 +479,12 @@ test("49. updateAppSettings persists a scheduler patch and getAppSettings reads 
   const reloaded = getAppSettings();
   assert.deepEqual(reloaded.scheduler, {
     enabled: true,
+    // Stage 27 — per-tick switches read back as enabled when the patch does not mention them, which
+    // is what keeps an existing installation behaving exactly as it did before they existed.
+    scanEnabled: true,
+    productionEnabled: true,
+    evaluationEnabled: true,
+    writerEnabled: true,
     intervalMinutes: 90,
     windowStartHour: 8,
     windowEndHour: 18,

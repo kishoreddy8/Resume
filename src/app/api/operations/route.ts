@@ -20,6 +20,7 @@ import {
 import { getScanLockStatus } from "@/lib/scheduler/lock";
 import { getSchedulerRuntimeState } from "@/lib/scheduler/state";
 import { nextEligibleRunAt } from "@/lib/scheduler/window";
+import { getResumeWriterHealth } from "@/lib/resumeQuality/writers/writerHealth";
 import { getAppSettings } from "@/db/queries/settings";
 import {
   classifyConnectorHealth,
@@ -133,6 +134,11 @@ export async function GET(req: NextRequest) {
       nextEligibleRunAt: nextEligibleRunAt(schedulerSettings, schedulerRuntime.lastStartedAt),
       health: schedulerHealth,
     },
+    // Stage 27 — the resume writer's own operational state, so an operator can see in one place
+    // whether approved work is actually moving and, if it is not, exactly what is holding it up
+    // (usage limit, sign-in, exhausted technical retries, stale approval, window, or simply nothing
+    // queued). Read-only: this endpoint never starts, stops, or resets anything.
+    resumeWriter: getResumeWriterHealth(),
     scanning: {
       window: scanningWindow,
       latest: latestScan,

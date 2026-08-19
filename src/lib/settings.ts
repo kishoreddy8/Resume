@@ -112,6 +112,22 @@ function isValidIanaTimezone(tz: string): boolean {
  */
 const schedulerSchema = z.object({
   enabled: z.boolean(),
+  /**
+   * Stage 27 — per-tick automation switches, additive to (never a replacement for) `enabled`.
+   *
+   * `enabled` remains the single top-level kill switch: when it is false NOTHING runs, exactly as
+   * before. These four only narrow what runs when it is true, so an operator can turn on job
+   * discovery and evaluation while deliberately leaving the resume writer off — the writer is the one
+   * tick that spends the user's Claude subscription, so it deserves its own deliberate opt-in.
+   *
+   * All four default to TRUE precisely so an existing installation is unchanged by this migration:
+   * a database with none of these keys set behaves exactly as it did when `enabled` alone gated all
+   * four ticks. Nothing is silently enabled — with `enabled` still false, all four remain inert.
+   */
+  scanEnabled: z.boolean(),
+  productionEnabled: z.boolean(),
+  evaluationEnabled: z.boolean(),
+  writerEnabled: z.boolean(),
   intervalMinutes: z
     .number()
     .int()
@@ -218,6 +234,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // location) so that once enabled, only intervalMinutes actually constrains scheduling out of the box.
   scheduler: {
     enabled: false,
+    // See schedulerSchema: true by default so absent keys reproduce pre-Stage-27 behaviour exactly.
+    // They can only ever narrow what the master switch already allows.
+    scanEnabled: true,
+    productionEnabled: true,
+    evaluationEnabled: true,
+    writerEnabled: true,
     intervalMinutes: 60,
     windowStartHour: 0,
     windowEndHour: 24,
