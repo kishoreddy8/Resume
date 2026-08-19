@@ -1,14 +1,9 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { FreshnessBadge } from "@/components/FreshnessBadge";
-import { H1bBadge } from "@/components/H1bBadge";
-import { MatchDecisionBadge } from "@/components/MatchDecisionBadge";
-import { NotInterestedToggle } from "@/components/NotInterestedToggle";
-import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
-import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
-import { computeFreshnessTier } from "@/lib/rank/forYou";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { JobRow } from "./JobRow";
+import type { LifecycleThresholds } from "@/lib/jobLifecycle";
 import {
   compareJobsBestFirst,
   matchesDecisionFilter,
@@ -69,89 +64,27 @@ function useMatchDecisions(jobs: JobWithCompany[], candidateId: number): Record<
   return decisions;
 }
 
-function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-}
-
-/** Fresh is the age-based lifecycle policy's "highlight as high priority" band — computed live from
- *  posted_at/first_seen_at, never persisted. `thresholds` comes from Settings > Lifecycle (see
- *  useLifecycleThresholds) so this always agrees with what the automated sweep will actually do. */
-function FreshBadge({ job, thresholds }: { job: JobWithCompany; thresholds: LifecycleThresholds }) {
-  const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at });
-  if (getJobAgeBand(ageDays, thresholds) !== "fresh") return null;
-  return (
-    <span
-      className="ml-1.5 inline-flex items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
-      title={`Posted ${ageDays} day${ageDays === 1 ? "" : "s"} ago — high priority`}
-    >
-      Fresh
-    </span>
-  );
-}
-
-function TailoringCheckbox({ jobId, initial, candidateId }: { jobId: number; initial: boolean; candidateId: number }) {
-  const [checked, setChecked] = useState(initial);
-  const [saving, setSaving] = useState(false);
-
-  async function toggle() {
-    const next = !checked;
-    setChecked(next);
-    setSaving(true);
-    try {
-      await fetch(`/api/jobs/${jobId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidateId, markedForTailoring: next }),
-      });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <input
-      type="checkbox"
-      checked={checked}
-      disabled={saving}
-      onChange={toggle}
-      title="Mark for resume tailoring"
-      className="h-4 w-4"
-    />
-  );
-}
-
-/** Stage 24B — same three-state contract as the For You feed's cell (not evaluated / insufficient
- *  data / evaluated). Kept local to this component rather than shared, because the two lists read
- *  from different response shapes; the SEMANTICS are what must agree, and they do. */
-function MatchFitCell({ summary }: { summary: ListMatchSummary | undefined }) {
-  if (!summary) return <span className="text-xs text-zinc-400">Not evaluated</span>;
-  if (summary.insufficientJdSignal) {
-    return (
-      <span
-        className="inline-flex items-center rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
-        title="This posting did not yield enough structured requirements to score reliably."
-      >
-        Insufficient data
-      </span>
-    );
-  }
-  return (
-    <div className="flex flex-col gap-0.5">
-      <MatchDecisionBadge decision={summary.decision} />
-      <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">{Math.round(summary.overallScore)}/100</span>
-    </div>
-  );
-}
-
 /** Ordering and the decision filter both come from @/lib/rank/jobsList — see that module for the
  *  contract and why it lives there rather than inline. */
-export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; thresholds: LifecycleThresholds }) {
+export function JobList({
+  jobs,
+  thresholds,
+  selectedJobId,
+  onSelect,
+}: {
+  jobs: JobWithCompany[];
+  thresholds: LifecycleThresholds;
+  selectedJobId: number | null;
+  onSelect: (id: number) => void;
+}) {
   const candidateId = useActiveCandidateId();
   const decisions = useMatchDecisions(jobs, candidateId);
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>("All");
+  const router = useRouter();
+  const listRef = useRef<HTMLDivElement>(null);
+  // Shared-layout travel is allowed for pointer selection and suppressed for keyboard selection:
+  // Arrow-key traversal is the app's highest-frequency action and must stay instant.
+  const [sharedLayout, setSharedLayout] = useState(true);
 
   const visibleJobs = useMemo(
     () =>
@@ -182,14 +115,60 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
   const renderedJobs = visibleJobs.slice(0, renderLimit);
   const hiddenCount = visibleJobs.length - renderedJobs.length;
 
+  // Keep the selection inside the rendered window. This is re-checked whenever the selection stops
+  // being visible — which matters on first paint, because the match decisions arrive after the jobs
+  // do and the best-first order changes when they land. Selecting purely on mount would strand the
+  // selection on a job that the re-ranked list no longer renders.
+  const selectionVisible =
+    selectedJobId !== null && renderedJobs.some((j) => j.id === selectedJobId);
+  useEffect(() => {
+    if (renderedJobs.length === 0 || selectionVisible) return;
+    onSelect(renderedJobs[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionVisible, renderedJobs.length]);
+
+  /**
+   * Arrow-key traversal. Deliberately narrow:
+   *  - only acts when the event target is the list itself or a row, so selects, inputs, textareas
+   *    and buttons inside the pane keep their own arrow behaviour;
+   *  - moves selection only — it never triggers an action, never tailors, never mutates;
+   *  - suppresses the shared-layout travel, because this is the highest-frequency interaction.
+   */
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Enter") return;
+    const target = e.target as HTMLElement;
+    if (target.closest("input, select, textarea, button, a, [contenteditable]")) return;
+    if (renderedJobs.length === 0) return;
+
+    if (e.key === "Enter") {
+      if (selectedJobId !== null) router.push(`/jobs/${selectedJobId}`);
+      return;
+    }
+
+    e.preventDefault();
+    setSharedLayout(false);
+    const i = renderedJobs.findIndex((j) => j.id === selectedJobId);
+    const next =
+      e.key === "ArrowDown"
+        ? Math.min(i + 1, renderedJobs.length - 1)
+        : Math.max(i - 1, 0);
+    const nextJob = renderedJobs[next < 0 ? 0 : next];
+    if (nextJob) {
+      onSelect(nextJob.id);
+      listRef.current
+        ?.querySelector(`[data-job-row="${nextJob.id}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    }
+  }
+
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-zinc-500">Match decision:</span>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b border-[var(--separator)] px-4 py-2 text-xs">
+        <span className="text-tertiary">Match decision:</span>
         <select
           value={decisionFilter}
           onChange={(e) => setDecisionFilter(e.target.value as DecisionFilter)}
-          className="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950"
+          className="rounded-md border border-[var(--border)] bg-surface px-2 py-1 text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)]"
         >
           {DECISION_FILTERS.map((f) => (
             <option key={f} value={f}>
@@ -198,94 +177,50 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
           ))}
         </select>
         {visibleJobs.length > 0 && (
-          <span className="ml-auto text-zinc-500">
-            Showing {renderedJobs.length.toLocaleString()} of {visibleJobs.length.toLocaleString()}
+          <span className="ml-auto tabular-nums text-tertiary">
+            {renderedJobs.length.toLocaleString()} / {visibleJobs.length.toLocaleString()}
           </span>
         )}
       </div>
 
       {visibleJobs.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+        <div className="m-4 rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] p-10 text-center text-[13px] text-tertiary">
           No jobs match these filters. Add companies and run a scan, or widen your filters.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-zinc-100 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-              <tr>
-                <th className="px-3 py-2 font-medium">Title / Company</th>
-                <th className="px-3 py-2 font-medium">Location</th>
-                <th className="px-3 py-2 font-medium">Posted</th>
-                <th className="px-3 py-2 font-medium">H1B</th>
-                <th className="px-3 py-2 font-medium">Match</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium text-center">Tailor</th>
-                <th className="px-3 py-2 font-medium"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {renderedJobs.map((job) => (
-            <tr key={job.id} className={job.is_active ? "" : "opacity-50"}>
-              <td className="px-3 py-2">
-                <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">
-                  {job.title}
-                </Link>
-                <FreshBadge job={job} thresholds={thresholds} />
-                <div className="text-xs text-zinc-500">
-                  {job.company_name} · {job.source_type}
-                  {!job.is_active && " · closed"}
-                </div>
-              </td>
-              <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{job.location ?? "—"}</td>
-              <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">
-                <div>{formatDate(job.posted_at)}</div>
-                <FreshnessBadge tier={computeFreshnessTier(job.posted_at)} />
-              </td>
-              <td className="px-3 py-2">
-                <H1bBadge confidence={job.h1b_combined_confidence} />
-              </td>
-              <td className="px-3 py-2">
-                <MatchFitCell summary={decisions[job.dedupe_key]} />
-              </td>
-              <td className="px-3 py-2">
-                <PipelineStatusSelect jobId={job.id} value={job.pipeline_status} candidateId={candidateId} />
-              </td>
-              <td className="px-3 py-2 text-center">
-                <TailoringCheckbox jobId={job.id} initial={job.marked_for_tailoring === 1} candidateId={candidateId} />
-              </td>
-              <td className="px-3 py-2 text-right">
-                <div className="flex flex-col items-end gap-1">
-                  <a
-                    href={job.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
-                  >
-                    View ↗
-                  </a>
-                  <NotInterestedToggle
-                    jobId={job.id}
-                    jobTitle={job.title}
-                    candidateId={candidateId}
-                    initialNotInterested={job.not_interested === 1}
-                  />
-                </div>
-              </td>
-            </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {hiddenCount > 0 && (
-        <button
-          type="button"
-          onClick={() => setRenderState((prev) => ({ key: resetKey, limit: prev.limit + RENDER_LIMIT_STEP }))}
-          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+        <div
+          ref={listRef}
+          role="listbox"
+          aria-label="Jobs"
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
+          onPointerDown={() => setSharedLayout(true)}
+          // scroll-padding keeps a keyboard-focused row clear of the sticky filter bar
+          // (WCAG 2.2 "Focus Not Obscured").
+          className="min-h-0 flex-1 overflow-y-auto [scroll-padding-block:3rem]"
         >
-          Show {Math.min(RENDER_LIMIT_STEP, hiddenCount).toLocaleString()} more ({hiddenCount.toLocaleString()} remaining)
-        </button>
+          {renderedJobs.map((job) => (
+            <JobRow
+              key={job.id}
+              job={job}
+              thresholds={thresholds}
+              summary={decisions[job.dedupe_key]}
+              selected={job.id === selectedJobId}
+              onSelect={onSelect}
+              sharedLayout={sharedLayout}
+            />
+          ))}
+
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setRenderState((prev) => ({ key: resetKey, limit: prev.limit + RENDER_LIMIT_STEP }))}
+              className="w-full px-4 py-3 text-[13px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)]"
+            >
+              Show {Math.min(RENDER_LIMIT_STEP, hiddenCount).toLocaleString()} more ({hiddenCount.toLocaleString()} remaining)
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

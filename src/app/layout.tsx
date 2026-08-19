@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppSidebar } from "@/components/AppSidebar";
 import { NotificationBell } from "@/components/NotificationBell";
+import { APP_TOOLBAR_SLOT_ID } from "@/components/AppToolbarSlot";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -39,9 +40,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <AppSidebar />
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* Toolbar. Deliberately quiet: it carries session-level affordances
-           *  only, so the page's own heading stays the loudest thing on screen. */}
-          <header className="relative z-30 flex h-12 shrink-0 items-center justify-end gap-3 border-b border-[var(--separator)] bg-surface px-4 lg:h-14 lg:px-6">
+          {/* Toolbar. Pages portal their title and primary actions into the slot (see
+           *  AppToolbarSlot); the bell stays pinned right. A page that renders nothing into the
+           *  slot simply leaves it empty, exactly as before. */}
+          <header className="relative z-30 flex h-12 shrink-0 items-center gap-3 border-b border-[var(--separator)] bg-surface px-4 lg:h-14 lg:px-6">
+            <div id={APP_TOOLBAR_SLOT_ID} className="flex min-w-0 flex-1 items-center gap-3" />
             <NotificationBell />
           </header>
 

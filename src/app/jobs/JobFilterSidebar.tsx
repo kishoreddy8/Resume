@@ -124,16 +124,7 @@ export function JobFilterSidebar({
 
   return (
     <aside className="w-full shrink-0 space-y-5 rounded-lg border border-zinc-200 bg-white p-4 text-sm dark:border-zinc-800 dark:bg-zinc-900 lg:w-64">
-      <div>
-        <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">Search</label>
-        <input
-          type="text"
-          value={filters.search}
-          onChange={(e) => update("search", e.target.value)}
-          placeholder="Title, company, description…"
-          className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        />
-      </div>
+
 
       <div>
         <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">

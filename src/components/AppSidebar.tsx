@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { CandidateSelector } from "@/components/CandidateSelector";
 
 /**
@@ -74,18 +76,56 @@ export function isNavItemActive(item: NavItem, pathname: string): boolean {
   return item.matchPrefix ? item.matchPrefix.test(pathname) : false;
 }
 
+/** True only where the rail is a left column. Below this the rail is a full-width top strip and
+ *  must not receive an animated pixel width, so collapsing is a desktop-only affordance. */
+function useDesktopRail() {
+  const [desktop, setDesktop] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setDesktop(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+  return desktop;
+}
+
 export function AppSidebar() {
   const pathname = usePathname();
+  const reduced = useReducedMotion() ?? false;
+  // Collapsing the rail hands its width to the workspace. Collapsed keeps a visible strip with the
+  // re-open control, so navigation is never hidden behind a gesture or a guess.
+  const [open, setOpen] = useState(true);
+  const desktop = useDesktopRail();
+  const collapsed = desktop && !open;
 
   return (
-    <aside className="flex w-full shrink-0 flex-col border-b border-[var(--separator)] bg-surface-sidebar lg:h-full lg:w-[216px] lg:border-b-0 lg:border-r">
-      <div className="flex h-12 shrink-0 items-center px-4 lg:h-14 lg:px-5">
-        <Link href="/jobs" className="text-[13px] font-semibold tracking-tight text-primary">
-          career-ops
-        </Link>
+    <motion.aside
+      initial={false}
+      animate={desktop ? { width: open ? 216 : 48 } : {}}
+      transition={reduced ? { duration: 0 } : { type: "spring", duration: 0.28, bounce: 0 }}
+      className="flex w-full shrink-0 flex-col overflow-hidden border-b border-[var(--separator)] bg-surface-sidebar lg:h-full lg:border-b-0 lg:border-r"
+    >
+      <div className="flex h-12 shrink-0 items-center gap-1 px-4 lg:h-14 lg:px-3">
+        {!collapsed && (
+          <Link href="/jobs" className="truncate px-2 text-[13px] font-semibold tracking-tight text-primary">
+            career-ops
+          </Link>
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-label={open ? "Collapse navigation" : "Expand navigation"}
+          title={open ? "Collapse navigation" : "Expand navigation"}
+          className="ml-auto hidden shrink-0 rounded-md px-1.5 py-1 text-[11px] text-tertiary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98] lg:block"
+        >
+          <span aria-hidden="true">{open ? "\u25C0" : "\u25B6"}</span>
+        </button>
       </div>
 
       <nav
+        hidden={collapsed}
         aria-label="Primary"
         className="flex gap-1 overflow-x-auto px-3 pb-2 lg:flex-1 lg:flex-col lg:gap-0 lg:overflow-x-visible lg:overflow-y-auto lg:pb-4"
       >
@@ -121,12 +161,12 @@ export function AppSidebar() {
 
       {/* Account area — the active candidate is persistent context, not a page
        *  action, so it sits at the foot of the shell rather than in the toolbar. */}
-      <div className="shrink-0 border-t border-[var(--separator)] px-3 py-2.5 lg:py-3">
+      <div hidden={collapsed} className="shrink-0 border-t border-[var(--separator)] px-3 py-2.5 lg:py-3">
         <h2 className="mb-1.5 hidden px-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-tertiary lg:block">
           Candidate
         </h2>
         <CandidateSelector />
       </div>
-    </aside>
+    </motion.aside>
   );
 }

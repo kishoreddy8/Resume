@@ -54,13 +54,24 @@ export function JobDecisionHeader({
   match,
   thresholds,
   actions,
+  showBackLink = true,
+  onClose,
+  headingLevel = "h1",
 }: {
   job: JobWithCompany;
   match: JobMatch;
   thresholds: LifecycleThresholds;
   /** The page's existing tailoring controls. Rendered, never invoked from here. */
   actions: ReactNode;
+  /** Hidden in the Workbench pane, where the list beside it already is the way back. */
+  showBackLink?: boolean;
+  /** Close affordance for the narrow-screen sheet. Keyboard reachable; never the only way out. */
+  onClose?: () => void;
+  /** The standalone route owns the page's h1. Inside the Workbench pane the toolbar does, so the
+   *  job title steps down to h2 rather than giving the document two competing top-level headings. */
+  headingLevel?: "h1" | "h2";
 }) {
+  const Heading = headingLevel;
   const { result, state } = match;
   const ageDays = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at });
   const ageBand = getJobAgeBand(ageDays, thresholds);
@@ -76,16 +87,27 @@ export function JobDecisionHeader({
   return (
     <header className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface">
       <div className="border-b border-[var(--separator)] px-5 py-4">
-        <Link
-          href="/jobs"
-          className="text-[12px] text-tertiary transition-colors duration-150 ease-out hover:text-primary"
-        >
-          ← Back to jobs
-        </Link>
+        {showBackLink && (
+          <Link
+            href="/jobs"
+            className="text-[12px] text-tertiary transition-colors duration-150 ease-out hover:text-primary"
+          >
+            ← Back to jobs
+          </Link>
+        )}
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-[12px] text-tertiary transition-colors duration-150 ease-out hover:text-primary active:scale-[0.98]"
+          >
+            ✕ Close
+          </button>
+        )}
 
         <div className="mt-2 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
           <div className="min-w-0">
-            <h1 className="page-title">{job.title}</h1>
+            <Heading className="page-title">{job.title}</Heading>
             <p className="mt-1 text-[13px] text-secondary">
               {job.company_name} · {job.source_type}
               {job.is_archived === 1 ? " · archived" : !job.is_active && " · closed"}

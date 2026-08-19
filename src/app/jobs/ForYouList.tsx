@@ -1,14 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { FreshnessBadge } from "@/components/FreshnessBadge";
-import { H1bBadge } from "@/components/H1bBadge";
-import { MatchDecisionBadge, type MatchDecision } from "@/components/MatchDecisionBadge";
-import { NotInterestedToggle } from "@/components/NotInterestedToggle";
-import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { JobRow } from "./JobRow";
 import type { RoleFamilyTier } from "@/lib/rank/forYou";
 import type { CandidateJobBucket } from "@/lib/rank/candidateJobBucket";
+import type { LifecycleThresholds } from "@/lib/jobLifecycle";
+import type { ListMatchSummary } from "@/lib/rank/jobsList";
 import type { CandidateRankingPreferences } from "@/db/queries/candidateSettings";
 import type { ForYouResponseEntry, ForYouBucketCounts } from "@/app/api/candidates/[candidateId]/for-you/route";
 
@@ -23,6 +21,19 @@ import type { ForYouResponseEntry, ForYouBucketCounts } from "@/app/api/candidat
  * - Clear "Resume Ready" indicator for READY_TO_APPLY jobs with direct navigation to the
  *   existing resume quality workflow to inspect and download approved resumes.
  * - Full candidate isolation and zero N+1 database queries.
+ *
+ * WORKBENCH PHASE 2 — presentation only. This is now a Workbench master list rather than a
+ * standalone table: it renders the same JobRow as All Jobs, hands selection up to the same
+ * persistent review pane, and inherits that pane's motion, sheet and request behaviour. The feed's
+ * ranking, buckets, inclusion rules, scores and API contract are untouched — every field below is
+ * still whatever `/api/candidates/{id}/for-you` returned, in the order it returned it.
+ *
+ * Two things moved for consistency rather than preference:
+ *  - search is now the toolbar's, passed in as a prop, because two search boxes for one view is a
+ *    worse answer than one; it is also debounced there, where this component used to refetch the
+ *    whole feed on every keystroke.
+ *  - the per-row action buttons and pipeline control moved into the review pane, which is where
+ *    All Jobs already puts them and where every one of them still works unchanged.
  */
 
 type FeedTab =
@@ -52,74 +63,59 @@ const TABS: TabConfig[] = [
   { id: "interviewing", label: "Interviewing", countKey: "interviewing" },
 ];
 
-function RoleFamilyBadge({ tier }: { tier: RoleFamilyTier }) {
-  if (tier === "NONE") return null;
-  const label = tier === "PRIMARY" ? "Primary role match" : "Secondary role match";
-  const style =
-    tier === "PRIMARY"
-      ? "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
-      : "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300";
+/** Bucket label + dot. Same values and wording the feed already used; one chip shape instead of
+ *  seven saturated fills, so the bucket reads as context beside the decision rather than against it. */
+const BUCKET: Record<CandidateJobBucket, { label: string; dot: string }> = {
+  READY_TO_APPLY: { label: "Resume Ready", dot: "bg-emerald-600 dark:bg-emerald-400" },
+  READY_FOR_TAILORING: { label: "Ready for Tailoring", dot: "bg-purple-600 dark:bg-purple-400" },
+  NEEDS_REVIEW: { label: "Needs Review", dot: "bg-amber-500 dark:bg-amber-400" },
+  TOP_MATCH: { label: "Top Match", dot: "bg-indigo-600 dark:bg-indigo-400" },
+  NEW_TODAY: { label: "New Today", dot: "bg-teal-600 dark:bg-teal-400" },
+  APPLIED: { label: "Applied", dot: "bg-zinc-500 dark:bg-zinc-400" },
+  INTERVIEWING: { label: "Interviewing", dot: "bg-blue-600 dark:bg-blue-400" },
+};
+
+const ROLE_FAMILY_LABEL: Record<Exclude<RoleFamilyTier, "NONE">, string> = {
+  PRIMARY: "Primary role",
+  SECONDARY: "Secondary role",
+};
+
+/**
+ * True when the bucket chip would only restate the decision badge sitting a few pixels away.
+ *
+ * Most of the feed lands in READY_FOR_TAILORING or NEEDS_REVIEW, and for those the bucket name and
+ * the decision name are the same word — 99% of rows were printing their verdict twice, in two
+ * different visual languages, in the densest part of the UI. Suppressing the echo is presentation
+ * only: the bucket value is untouched, and every bucket that carries workflow context the decision
+ * cannot express (Resume Ready, Top Match, New Today, Applied, Interviewing) still renders.
+ *
+ * The `insufficientJdSignal` guard matters. When the engine distrusts the score the row shows
+ * "Insufficient data" instead of the decision label, so the bucket is no longer a duplicate — it is
+ * the only place the workflow state appears, and it stays.
+ */
+function bucketEchoesDecision(ranking: ForYouResponseEntry["ranking"]): boolean {
+  if (ranking.insufficientJdSignal) return false;
+  if (!ranking.decision || !ranking.primaryBucket) return false;
+  return ranking.primaryBucket === ranking.decision;
+}
+
+/** The recommendation-specific context that All Jobs has no equivalent for. */
+function RecommendationMeta({ ranking }: { ranking: ForYouResponseEntry["ranking"] }) {
+  const bucket =
+    ranking.primaryBucket && !bucketEchoesDecision(ranking) ? BUCKET[ranking.primaryBucket] : null;
+  const family = ranking.roleFamilyTier !== "NONE" ? ROLE_FAMILY_LABEL[ranking.roleFamilyTier] : null;
+  if (!bucket && !family) return null;
   return (
-    <span className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${style}`}>
-      {label}
+    <span className="ml-auto flex shrink-0 items-center gap-2">
+      {family && <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--accent)]">{family}</span>}
+      {bucket && (
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium text-secondary">
+          <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${bucket.dot}`} />
+          {bucket.label}
+        </span>
+      )}
     </span>
   );
-}
-
-function PrimaryBucketBadge({ bucket }: { bucket: CandidateJobBucket | null }) {
-  if (!bucket) return null;
-  switch (bucket) {
-    case "READY_TO_APPLY":
-      return (
-        <span className="inline-flex items-center gap-1 rounded bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400" />
-          Resume Ready
-        </span>
-      );
-    case "READY_FOR_TAILORING":
-      return (
-        <span className="inline-flex items-center gap-1 rounded bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-800 dark:bg-purple-950/60 dark:text-purple-300">
-          Ready for Tailoring
-        </span>
-      );
-    case "NEEDS_REVIEW":
-      return (
-        <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-          Needs Review
-        </span>
-      );
-    case "TOP_MATCH":
-      return (
-        <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300">
-          Top Match
-        </span>
-      );
-    case "NEW_TODAY":
-      return (
-        <span className="inline-flex items-center gap-1 rounded bg-teal-100 px-2 py-0.5 text-xs font-semibold text-teal-800 dark:bg-teal-950/60 dark:text-teal-300">
-          New Today
-        </span>
-      );
-    case "APPLIED":
-      return (
-        <span className="inline-flex items-center gap-1 rounded bg-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
-          Applied
-        </span>
-      );
-    case "INTERVIEWING":
-      return (
-        <span className="inline-flex items-center gap-1 rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800 dark:bg-blue-950/60 dark:text-blue-300">
-          Interviewing
-        </span>
-      );
-  }
-}
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
 /**
@@ -129,41 +125,20 @@ function formatDate(iso: string | null): string {
  *   NOT EVALUATED      — no job_match_results row for this candidate yet. No number is invented.
  *   INSUFFICIENT DATA  — evaluated, but the engine could not extract enough structured requirements
  *                        to trust the number (scoring.ts's MIN_REQUIREMENT_UNITS floor). The score is
- *                        deliberately NOT shown as a percentage: showing "100%" for a posting whose
- *                        only applicable dimension was a years-of-experience minimum, or "0%" for one
- *                        whose description never parsed, is exactly the fake-confidence problem this
- *                        stage exists to remove.
+ *                        deliberately NOT shown as a percentage.
  *   EVALUATED          — decision badge plus the real score.
+ *
+ * WORKBENCH — the same three states are now expressed by the shared row's MatchFit, so All Jobs and
+ * For You cannot drift. This only narrows the feed's `ranking` to the shape that row expects; it
+ * decides nothing and rewrites nothing.
  */
-function MatchFitCell({ ranking }: { ranking: ForYouResponseEntry["ranking"] }) {
-  if (!ranking.decision) {
-    return <span className="text-xs text-zinc-400">Not evaluated</span>;
-  }
-
-  if (ranking.insufficientJdSignal) {
-    return (
-      <div className="flex flex-col gap-0.5">
-        <span
-          className="inline-flex w-fit items-center rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
-          title="This posting did not yield enough structured requirements to score reliably — the underlying number is not a confident match or non-match."
-        >
-          Insufficient data
-        </span>
-        <span className="text-[11px] text-zinc-400">score not reliable</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-0.5">
-      <MatchDecisionBadge decision={ranking.decision as MatchDecision} />
-      {ranking.overallScore !== null && (
-        <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
-          Score: {Math.round(ranking.overallScore)}/100
-        </span>
-      )}
-    </div>
-  );
+function toSummary(ranking: ForYouResponseEntry["ranking"]): ListMatchSummary | undefined {
+  if (!ranking.decision) return undefined;
+  return {
+    decision: ranking.decision as ListMatchSummary["decision"],
+    overallScore: ranking.overallScore ?? 0,
+    insufficientJdSignal: Boolean(ranking.insufficientJdSignal),
+  };
 }
 
 interface ForYouApiResponse {
@@ -173,13 +148,27 @@ interface ForYouApiResponse {
   entries: ForYouResponseEntry[];
 }
 
-export function ForYouList({ candidateId }: { candidateId: number }) {
+export function ForYouList({
+  candidateId,
+  thresholds,
+  search,
+  selectedJobId,
+  onSelect,
+}: {
+  candidateId: number;
+  thresholds: LifecycleThresholds;
+  /** Committed (already debounced) search text from the application toolbar. */
+  search: string;
+  selectedJobId: number | null;
+  onSelect: (id: number) => void;
+}) {
   const [data, setData] = useState<ForYouApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<FeedTab>("all");
   const [includeStale, setIncludeStale] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const [minScore, setMinScore] = useState<string>("");
+  const listRef = useRef<HTMLDivElement>(null);
+  const [sharedLayout, setSharedLayout] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -187,7 +176,7 @@ export function ForYouList({ candidateId }: { candidateId: number }) {
       const params = new URLSearchParams();
       if (includeStale) params.set("includeStale", "true");
       if (activeTab !== "all") params.set("bucket", activeTab);
-      if (searchQuery.trim()) params.set("search", searchQuery.trim());
+      if (search.trim()) params.set("search", search.trim());
       if (minScore) params.set("minScore", minScore);
 
       const res = await fetch(`/api/candidates/${candidateId}/for-you?${params.toString()}`);
@@ -196,7 +185,7 @@ export function ForYouList({ candidateId }: { candidateId: number }) {
     } finally {
       setLoading(false);
     }
-  }, [candidateId, includeStale, activeTab, searchQuery, minScore]);
+  }, [candidateId, includeStale, activeTab, search, minScore]);
 
   useEffect(() => {
     // Intentional: fetch-on-mount/filter-change with loading flag, not a render loop
@@ -204,71 +193,81 @@ export function ForYouList({ candidateId }: { candidateId: number }) {
     load();
   }, [load]);
 
-  function removeEntry(jobId: number) {
-    setData((prev) => (prev ? { ...prev, entries: prev.entries.filter((e) => e.job.id !== jobId) } : prev));
+  const entries = data?.entries ?? [];
+
+  // Same contract as the All Jobs list: keep the selection on something the feed actually renders.
+  const selectionVisible = selectedJobId !== null && entries.some((e) => e.job.id === selectedJobId);
+  useEffect(() => {
+    if (entries.length === 0 || selectionVisible) return;
+    onSelect(entries[0].job.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionVisible, entries.length]);
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const target = e.target as HTMLElement;
+    if (target.closest("input, select, textarea, button, a, [contenteditable]")) return;
+    if (entries.length === 0) return;
+    e.preventDefault();
+    setSharedLayout(false);
+    const i = entries.findIndex((entry) => entry.job.id === selectedJobId);
+    const next = e.key === "ArrowDown" ? Math.min(i + 1, entries.length - 1) : Math.max(i - 1, 0);
+    const nextEntry = entries[next < 0 ? 0 : next];
+    if (nextEntry) {
+      onSelect(nextEntry.job.id);
+      listRef.current
+        ?.querySelector(`[data-job-row="${nextEntry.job.id}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    }
   }
 
   const hasPreferences =
     Boolean(data?.preferences.primaryTargetRole) || (data?.preferences.secondaryTargetRoles.length ?? 0) > 0;
 
   return (
-    <div className="space-y-4">
-      {!hasPreferences && (
-        <div className="rounded-lg border border-dashed border-zinc-300 p-3 text-xs text-zinc-500 dark:border-zinc-700">
-          No target role set yet — jobs are ranked by fit/freshness only.{" "}
-          <Link href={`/candidates/${candidateId}/settings`} className="underline">
-            Set your target roles
-          </Link>{" "}
-          to prioritize matching jobs first.
-        </div>
-      )}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-[var(--separator)]">
+        {!hasPreferences && (
+          <div className="border-b border-[var(--separator)] px-4 py-2 text-[11px] text-tertiary">
+            No target role set yet — jobs are ranked by fit/freshness only.{" "}
+            <Link href={`/candidates/${candidateId}/settings`} className="underline">
+              Set your target roles
+            </Link>
+          </div>
+        )}
 
-      {/* Actionable Bucket Tabs */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-zinc-200 pb-2 dark:border-zinc-800">
-        {TABS.map((tab) => {
-          const count = data?.bucketCounts?.[tab.countKey] ?? 0;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                isActive
-                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
-              }`}
-            >
-              <span>{tab.label}</span>
-              <span
-                className={`rounded-full px-1.5 py-0.2 text-[10px] font-semibold ${
+        {/* Bucket tabs. Horizontally scrollable so the list column never dictates how many fit. */}
+        <div className="flex gap-1 overflow-x-auto px-3 py-2">
+          {TABS.map((tab) => {
+            const count = data?.bucketCounts?.[tab.countKey] ?? 0;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                aria-pressed={isActive}
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors duration-150 ease-out active:scale-[0.98] ${
                   isActive
-                    ? "bg-zinc-800 text-zinc-200 dark:bg-zinc-200 dark:text-zinc-800"
-                    : "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300"
+                    ? "bg-[var(--accent)] text-[var(--accent-fg)]"
+                    : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary"
                 }`}
               >
-                {count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                <span>{tab.label}</span>
+                <span className={`tabular-nums text-[10px] ${isActive ? "opacity-80" : "text-tertiary"}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
-      {/* Search and Secondary Filter Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex flex-wrap items-center gap-3">
-          <input
-            type="text"
-            placeholder="Filter title, company, skills…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-56 rounded border border-zinc-300 px-2.5 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-          />
-
+        <div className="flex items-center gap-3 px-4 pb-2 text-[11px]">
           <select
             value={minScore}
             onChange={(e) => setMinScore(e.target.value)}
-            className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+            aria-label="Minimum match score"
+            className="rounded-md border border-[var(--border)] bg-surface px-2 py-1 text-[11px] text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)]"
           >
             <option value="">Any Score</option>
             <option value="90">90+ Score</option>
@@ -276,123 +275,42 @@ export function ForYouList({ candidateId }: { candidateId: number }) {
             <option value="80">80+ Score</option>
             <option value="70">70+ Score</option>
           </select>
-
-          <label className="flex items-center gap-1.5 text-zinc-500">
-            <input
-              type="checkbox"
-              checked={includeStale}
-              onChange={(e) => setIncludeStale(e.target.checked)}
-            />
-            Include stale postings (&gt;20 days)
+          <label className="flex items-center gap-1.5 text-secondary">
+            <input type="checkbox" checked={includeStale} onChange={(e) => setIncludeStale(e.target.checked)} />
+            Include stale (&gt;20d)
           </label>
-        </div>
-
-        <div className="text-zinc-400">
-          Showing {data?.entries.length ?? 0} jobs
+          <span className="ml-auto tabular-nums text-tertiary">{entries.length}</span>
         </div>
       </div>
 
       {loading ? (
-        <p className="text-sm text-zinc-500">Loading…</p>
-      ) : !data || data.entries.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+        <p className="p-4 text-[13px] text-tertiary">Loading…</p>
+      ) : entries.length === 0 ? (
+        <div className="m-4 rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] p-10 text-center text-[13px] text-tertiary">
           No jobs found in this view.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-zinc-100 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-              <tr>
-                <th className="px-3 py-2 font-medium">Title / Company</th>
-                <th className="px-3 py-2 font-medium">Bucket / Stage</th>
-                <th className="px-3 py-2 font-medium">Location</th>
-                <th className="px-3 py-2 font-medium">Posted</th>
-                <th className="px-3 py-2 font-medium">H1B</th>
-                <th className="px-3 py-2 font-medium">Match Fit</th>
-                <th className="px-3 py-2 font-medium">Pipeline Status</th>
-                <th className="px-3 py-2 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {data.entries.map(({ job, ranking }) => (
-                <tr key={job.id} className={job.is_active ? "" : "opacity-50"}>
-                  <td className="px-3 py-2">
-                    <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">
-                      {job.title}
-                    </Link>
-                    <RoleFamilyBadge tier={ranking.roleFamilyTier} />
-                    <div className="mt-0.5 text-xs text-zinc-500">
-                      {job.company_name} · {job.source_type}
-                      {!job.is_active && " · closed"}
-                    </div>
-                  </td>
-
-                  <td className="px-3 py-2">
-                    <PrimaryBucketBadge bucket={ranking.primaryBucket} />
-                  </td>
-
-                  <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{job.location ?? "—"}</td>
-
-                  <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">
-                    <div>{formatDate(job.posted_at)}</div>
-                    <FreshnessBadge tier={ranking.freshnessTier} />
-                  </td>
-
-                  <td className="px-3 py-2">
-                    <H1bBadge confidence={job.h1b_combined_confidence} />
-                  </td>
-
-                  <td className="px-3 py-2">
-                    <MatchFitCell ranking={ranking} />
-                  </td>
-
-                  <td className="px-3 py-2">
-                    <PipelineStatusSelect jobId={job.id} value={job.pipeline_status} candidateId={candidateId} />
-                  </td>
-
-                  <td className="px-3 py-2 text-right">
-                    <div className="flex flex-col items-end gap-1.5">
-                      {ranking.primaryBucket === "READY_TO_APPLY" && (
-                        <Link
-                          href={`/jobs/${job.id}`}
-                          className="rounded bg-emerald-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
-                        >
-                          Inspect Resume →
-                        </Link>
-                      )}
-
-                      {ranking.primaryBucket === "READY_FOR_TAILORING" && (
-                        <Link
-                          href={`/jobs/${job.id}`}
-                          className="rounded bg-purple-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-600"
-                        >
-                          Tailor Resume →
-                        </Link>
-                      )}
-
-                      <div className="flex items-center gap-2">
-                        <a
-                          href={job.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
-                        >
-                          View ↗
-                        </a>
-                        <NotInterestedToggle
-                          jobId={job.id}
-                          jobTitle={job.title}
-                          candidateId={candidateId}
-                          initialNotInterested={false}
-                          onChanged={(notInterested) => notInterested && removeEntry(job.id)}
-                        />
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div
+          ref={listRef}
+          role="listbox"
+          aria-label="Recommended jobs"
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
+          onPointerDown={() => setSharedLayout(true)}
+          className="min-h-0 flex-1 overflow-y-auto [scroll-padding-block:3rem]"
+        >
+          {entries.map(({ job, ranking }) => (
+            <JobRow
+              key={job.id}
+              job={job}
+              thresholds={thresholds}
+              summary={toSummary(ranking)}
+              selected={job.id === selectedJobId}
+              onSelect={onSelect}
+              sharedLayout={sharedLayout}
+              meta={<RecommendationMeta ranking={ranking} />}
+            />
+          ))}
         </div>
       )}
     </div>
