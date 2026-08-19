@@ -90,7 +90,7 @@ export default function JobsPage() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Jobs</h1>
+        <h1 className="page-title">Jobs</h1>
         <div className="flex items-center gap-3">
           {scanResult && (
             <span className="text-xs text-zinc-500">

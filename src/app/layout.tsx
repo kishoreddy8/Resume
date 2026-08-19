@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Link from "next/link";
-import { CandidateSelector } from "@/components/CandidateSelector";
+import { AppSidebar } from "@/components/AppSidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import "./globals.css";
 
@@ -20,48 +19,38 @@ export const metadata: Metadata = {
   description: "Personal job-search pipeline",
 };
 
-const NAV_LINKS = [
-  { href: "/jobs", label: "Jobs" },
-  { href: "/companies", label: "Companies" },
-  { href: "/ats-coverage", label: "ATS Coverage" },
-  { href: "/pipeline", label: "Pipeline" },
-  { href: "/jobs/archived", label: "Archived" },
-  { href: "/master-files", label: "Master Files" },
-  { href: "/scanner", label: "Scanner" },
-  { href: "/operations", label: "Operations" },
-  { href: "/settings", label: "Settings" },
-];
-
+/**
+ * CareerOps UI Stage 1 — the application shell.
+ *
+ * A fixed-height two-column desktop layout: a persistent sidebar that never
+ * scrolls away, and a content column that owns its own scrolling. The toolbar
+ * therefore sits above the scroll container rather than floating over it, which
+ * is why nothing here uses a translucent blurred bar — there is no content
+ * passing underneath for a material to reveal, and a blur behind dense job
+ * tables would cost legibility for no gain.
+ */
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
-        <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="mx-auto flex max-w-7xl items-center gap-8 px-6 py-3">
-            <Link href="/jobs" className="text-sm font-semibold tracking-tight">
-              career-ops
-            </Link>
-            <nav className="flex gap-5 text-sm">
-              {NAV_LINKS.map((link) => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-                >
-                  {link.label}
-                </Link>
-              ))}
-            </nav>
-            <div className="ml-auto flex items-center gap-3">
-              <NotificationBell />
-              <CandidateSelector />
+      <body className="flex h-full flex-col overflow-hidden bg-app-bg text-primary lg:flex-row">
+        <AppSidebar />
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* Toolbar. Deliberately quiet: it carries session-level affordances
+           *  only, so the page's own heading stays the loudest thing on screen. */}
+          <header className="relative z-30 flex h-12 shrink-0 items-center justify-end gap-3 border-b border-[var(--separator)] bg-surface px-4 lg:h-14 lg:px-6">
+            <NotificationBell />
+          </header>
+
+          <main className="flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-[1600px] px-6 py-6 lg:px-8 lg:py-7">
+              {children}
             </div>
-          </div>
-        </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-6">{children}</main>
+          </main>
+        </div>
       </body>
     </html>
   );

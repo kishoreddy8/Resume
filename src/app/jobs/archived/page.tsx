@@ -61,7 +61,7 @@ export default function ArchivedJobsPage() {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-lg font-semibold">Archived jobs</h1>
+        <h1 className="page-title">Archived jobs</h1>
         <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
           Jobs auto-archive after going unseen across several consecutive scans of a live ATS board
           (never while marked Applied or Interview), or can be archived manually from a job&apos;s

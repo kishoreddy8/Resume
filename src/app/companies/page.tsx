@@ -542,7 +542,7 @@ export default function CompaniesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-lg font-semibold">Companies &amp; career links</h1>
+      <h1 className="page-title">Companies &amp; career links</h1>
 
       <div className="space-y-2">
         <AddCompanyForm onAdded={load} />

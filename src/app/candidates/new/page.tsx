@@ -50,7 +50,7 @@ export default function NewCandidatePage() {
 
   return (
     <div className="max-w-md">
-      <h1 className="text-lg font-semibold">Add a candidate</h1>
+      <h1 className="page-title">Add a candidate</h1>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
         Companies/jobs stay shared — everything else (resume, skills, match results, pipeline,
         preferences) is isolated per candidate. After this, you&apos;ll upload their Master Resume

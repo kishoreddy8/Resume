@@ -371,7 +371,7 @@ export default function SettingsPage() {
     <div className="flex max-w-3xl flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold">Settings</h1>
+          <h1 className="page-title">Settings</h1>
           <p className="text-xs text-zinc-500">
             Configure Lifecycle, Suppression, and Scanner behavior. Defaults reproduce today&apos;s
             existing behavior — changes here take effect on the next scan or sweep.

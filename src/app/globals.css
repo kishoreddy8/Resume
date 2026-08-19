@@ -1,26 +1,233 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ============================================================================
+ * CareerOps UI Stage 1 — visual design foundation.
+ *
+ * A deliberately small token set for a dense desktop triage tool: layered
+ * neutral surfaces, one accent, semantic status colours, a modest radius scale
+ * and two very restrained elevations. Values are aligned to the zinc palette
+ * the feature pages already use, so the new shell and the not-yet-restyled
+ * pages inside it read as one application rather than two.
+ *
+ * Dark mode stays on `prefers-color-scheme`, matching the `dark:` variants
+ * already used throughout the app. No theme toggle is introduced.
+ * ========================================================================= */
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+:root {
+  /* Surfaces, back to front */
+  --app-bg: #f4f4f5;
+  --surface-sidebar: #fafafa;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-hover: rgba(0, 0, 0, 0.04);
+  --surface-active: rgba(0, 0, 0, 0.07);
+  --surface-selected: rgba(0, 0, 0, 0.06);
+
+  /* Text, by rank */
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-tertiary: #71717a;
+
+  /* Lines. Separator divides content; border encloses it. */
+  --separator: rgba(0, 0, 0, 0.07);
+  --border: rgba(0, 0, 0, 0.12);
+
+  /* One accent, matching the blue the app already uses for links. */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+  --focus-ring: #2563eb;
+
+  /* Semantic status */
+  --success: #047857;
+  --warning: #b45309;
+  --error: #b91c1c;
+  --info: #1d4ed8;
+
+  /* Radius scale — modest, desktop-appropriate. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+
+  /* Elevation — used sparingly, for genuinely floating layers only. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.09), 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --app-bg: #09090b;
+    --surface-sidebar: #101012;
+    --surface: #18181b;
+    --surface-elevated: #1f1f23;
+    --surface-hover: rgba(255, 255, 255, 0.05);
+    --surface-active: rgba(255, 255, 255, 0.09);
+    --surface-selected: rgba(255, 255, 255, 0.08);
+
+    --text-primary: #f4f4f5;
+    --text-secondary: #a1a1aa;
+    --text-tertiary: #71717a;
+
+    --separator: rgba(255, 255, 255, 0.08);
+    --border: rgba(255, 255, 255, 0.14);
+
+    --accent: #3b82f6;
+    --accent-hover: #60a5fa;
+    --accent-fg: #ffffff;
+    --accent-soft: rgba(59, 130, 246, 0.16);
+    --focus-ring: #60a5fa;
+
+    --success: #34d399;
+    --warning: #fbbf24;
+    --error: #f87171;
+    --info: #60a5fa;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.4);
   }
 }
 
+/* Expose the tokens as Tailwind utilities (bg-surface, text-secondary, …) so
+ * components stay in the existing Tailwind architecture instead of growing a
+ * parallel stylesheet. */
+@theme inline {
+  --color-app-bg: var(--app-bg);
+  --color-surface: var(--surface);
+  --color-surface-sidebar: var(--surface-sidebar);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-primary: var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-tertiary: var(--text-tertiary);
+  --color-separator: var(--separator);
+  --color-hairline: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-info: var(--info);
+
+  --radius-card: var(--radius-lg);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ---------------------------------------------------------------------------
+ * Typography.
+ *
+ * Geist is loaded by next/font in layout.tsx and exposed as --font-geist-sans.
+ * This rule previously read `Arial, Helvetica, sans-serif`, which silently beat
+ * the loaded face (nothing applied the `font-sans` utility), so the whole app
+ * rendered in Helvetica. Pointing body at the variable makes the existing font
+ * pipeline actually take effect; the stack after it is a fallback for the paint
+ * before the font resolves, not an added font.
+ * ------------------------------------------------------------------------ */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--app-bg);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI",
+    system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tracking is size-specific: large text tightens, small text does not. A single
+ * letter-spacing value would be wrong at one end of the ramp or the other. */
+.page-title {
+  font-size: 1.625rem; /* 26px */
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.021em;
+  color: var(--text-primary);
+}
+
+.section-title {
+  font-size: 1.125rem; /* 18px */
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.011em;
+  color: var(--text-primary);
+}
+
+.page-subtitle {
+  font-size: 0.8125rem; /* 13px */
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* Numeric columns only line up if the digits share an advance width. Scoped to
+ * tables so every existing data view gets it without touching a component;
+ * digits change metrics, surrounding prose does not. */
+table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+ * Focus. One visible, consistent ring for keyboard users on every focusable
+ * element, without the always-on outline that a plain :focus would paint.
+ * ------------------------------------------------------------------------ */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---------------------------------------------------------------------------
+ * Accessibility fallbacks.
+ * ------------------------------------------------------------------------ */
+
+/* Reduced motion means a gentler equivalent, not the loss of feedback: state
+ * changes still happen, they just arrive instantly instead of easing. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* The shell uses no backdrop blur, so this only needs to make the one tinted
+ * structural surface fully opaque. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --surface-sidebar: #f4f4f5;
+    --surface-hover: #e4e4e7;
+    --surface-active: #d4d4d8;
+    --surface-selected: #e4e4e7;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-sidebar: #131316;
+      --surface-hover: #27272a;
+      --surface-active: #3f3f46;
+      --surface-selected: #27272a;
+    }
+  }
+}
+
+/* Higher contrast: define the lines properly rather than hinting at them. */
+@media (prefers-contrast: more) {
+  :root {
+    --separator: rgba(0, 0, 0, 0.24);
+    --border: rgba(0, 0, 0, 0.42);
+    --text-secondary: #3f3f46;
+    --text-tertiary: #52525b;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --separator: rgba(255, 255, 255, 0.28);
+      --border: rgba(255, 255, 255, 0.45);
+      --text-secondary: #d4d4d8;
+      --text-tertiary: #a1a1aa;
+    }
+  }
 }

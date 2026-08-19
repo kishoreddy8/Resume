@@ -205,7 +205,7 @@ export default function OperationsPage() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold">CareerOps Operations</h1>
+          <h1 className="page-title">CareerOps Operations</h1>
           <div className="text-xs text-zinc-500">Last refreshed: {lastRefreshed ? lastRefreshed.toLocaleTimeString() : "—"}</div>
         </div>
         <div className="flex items-center gap-2">

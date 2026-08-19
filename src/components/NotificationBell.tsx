@@ -66,8 +66,10 @@ export function NotificationBell() {
       <button
         type="button"
         onClick={handleOpen}
-        className="relative rounded border border-zinc-300 px-2 py-1 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        className="relative rounded-md border border-[var(--border)] px-2 py-1 text-sm transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)]"
         title="Notifications"
+        aria-label="Notifications"
+        aria-expanded={open}
       >
         🔔
         {unreadCount > 0 && (
@@ -78,7 +80,7 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 z-20 mt-2 w-80 rounded border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+        <div className="absolute right-0 z-20 mt-2 w-80 rounded-lg border border-[var(--border)] bg-surface-elevated shadow-[var(--shadow-md)]">
           <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
             <span className="text-sm font-semibold">Notifications</span>
             {unreadCount > 0 && (

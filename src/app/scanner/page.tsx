@@ -95,7 +95,7 @@ export default function ScannerPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Scanner</h1>
+        <h1 className="page-title">Scanner</h1>
         <button
           onClick={load}
           className="rounded border border-zinc-300 px-2.5 py-1 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"

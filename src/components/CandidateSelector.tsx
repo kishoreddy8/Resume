@@ -56,12 +56,15 @@ export function CandidateSelector() {
 
   if (loading) return null;
 
+  // Stage 1 restyle only: this lives in the shell's sidebar account area now, so
+  // the control stacks instead of sitting in a header row. Every value, handler
+  // and destination below is unchanged.
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-row items-center gap-2 lg:flex-col lg:items-stretch lg:gap-1.5">
       <select
         value={activeId ?? ""}
         onChange={(e) => handleChange(e.target.value)}
-        className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        className="min-w-0 flex-1 rounded-md border border-[var(--border)] bg-surface px-2 py-1.5 text-[13px] text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] lg:w-full lg:flex-none"
         title="Current candidate — switching does not rescan shared jobs/companies"
       >
         {candidates.map((c) => (
@@ -75,7 +78,7 @@ export function CandidateSelector() {
         <Link
           href={`/candidates/${activeId}/settings`}
           title="Preferences (target roles, eligibility)"
-          className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          className="shrink-0 rounded-md px-2.5 py-1 text-[12px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:bg-[var(--surface-active)]"
         >
           Preferences
         </Link>

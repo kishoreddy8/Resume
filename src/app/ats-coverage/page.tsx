@@ -402,7 +402,7 @@ export default function AtsCoveragePage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-lg font-semibold">ATS coverage &amp; source health</h1>
+        <h1 className="page-title">ATS coverage &amp; source health</h1>
         <p className="text-sm text-zinc-500">
           What&apos;s blocking job discovery, and what to improve next — derived from the {data.totals.companies}{" "}
           companies currently in the registry. See the{" "}

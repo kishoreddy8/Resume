@@ -43,7 +43,7 @@ export default function PipelinePage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-lg font-semibold">Pipeline</h1>
+      <h1 className="page-title">Pipeline</h1>
       <div className="grid grid-cols-1 gap-4 overflow-x-auto md:grid-cols-3 xl:grid-cols-6">
         {COLUMNS.map((status) => {
           const columnJobs = jobs.filter((j) => j.pipeline_status === status);
