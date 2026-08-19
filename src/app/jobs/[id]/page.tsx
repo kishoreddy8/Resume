@@ -1,14 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { use } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { AiInsightsCard } from "./AiInsightsCard";
+import { Disclosure } from "./Disclosure";
+import { JobDecisionHeader } from "./JobDecisionHeader";
 import { MatchCard } from "./MatchCard";
 import { ResumeQualityPipeline } from "./ResumeQualityPipeline";
+import { useJobMatch } from "./useJobMatch";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
@@ -136,7 +138,7 @@ function CopyPromptButton({ job, candidateId }: { job: JobWithCompany; candidate
   return (
     <button
       onClick={copy}
-      className="rounded border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+      className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)]"
     >
       {copied ? "Copied!" : "Copy Claude Code prompt"}
     </button>
@@ -222,8 +224,8 @@ function LifecycleCard({
   const ageBand = getJobAgeBand(ageDays, thresholds);
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 className="mb-2 text-sm font-semibold">Lifecycle</h2>
+    <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+      <h2 className="mb-2 text-[13px] font-semibold text-primary">Lifecycle</h2>
       <div className="mb-2 flex flex-wrap items-center gap-1.5 text-sm">
         <span
           className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -243,7 +245,7 @@ function LifecycleCard({
           </span>
         )}
       </div>
-      <ul className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+      <ul className="space-y-1 text-xs text-secondary">
         {job.closed_at && <li>Closed: {formatDateTime(job.closed_at)}</li>}
         {job.is_archived === 1 && (
           <>
@@ -270,7 +272,7 @@ function LifecycleCard({
           <button
             disabled={busy}
             onClick={restore}
-            className="rounded border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)] disabled:opacity-50"
           >
             {busy ? "Restoring…" : "Restore job"}
           </button>
@@ -278,7 +280,7 @@ function LifecycleCard({
           <button
             disabled={busy}
             onClick={archive}
-            className="rounded border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)] disabled:opacity-50"
           >
             {busy ? "Archiving…" : "Archive job"}
           </button>
@@ -286,7 +288,7 @@ function LifecycleCard({
         <button
           disabled={busy}
           onClick={togglePinned}
-          className="rounded border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)] disabled:opacity-50"
         >
           {job.pinned === 1 ? "Unpin" : "Pin (never auto-archive/delete)"}
         </button>
@@ -330,7 +332,7 @@ function NotInterestedButton({ job, candidateId }: { job: JobWithCompany; candid
 
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/40 dark:bg-red-950/20">
-      <h2 className="mb-1 text-sm font-semibold text-red-800 dark:text-red-300">Not interested</h2>
+      <h2 className="mb-1 text-[13px] font-semibold text-[var(--error)]">Not interested</h2>
       <p className="mb-3 text-xs text-red-700/80 dark:text-red-400/80">
         Hides this job from your own Jobs list. The job itself is untouched and stays visible to
         any other candidate profile — this never deletes anything.
@@ -375,26 +377,26 @@ function NotesTagsCard({ job, candidateId, onChanged }: { job: JobWithCompany; c
   }
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 className="mb-2 text-sm font-semibold">Notes &amp; tags</h2>
+    <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+      <h2 className="mb-2 text-[13px] font-semibold text-primary">Notes &amp; tags</h2>
       <textarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
         rows={3}
         placeholder="Private notes about this job…"
-        className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        className="w-full rounded-md border border-[var(--border)] bg-surface px-2 py-1.5 text-[13px] text-primary"
       />
       <input
         value={tagsInput}
         onChange={(e) => setTagsInput(e.target.value)}
         placeholder="Tags, comma-separated (e.g. remote, referral)"
-        className="mt-2 w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        className="mt-2 w-full rounded-md border border-[var(--border)] bg-surface px-2 py-1.5 text-[13px] text-primary"
       />
       <div className="mt-2 flex items-center gap-2">
         <button
           disabled={saving}
           onClick={save}
-          className="rounded bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-[var(--accent-fg)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save"}
         </button>
@@ -430,23 +432,28 @@ function HistoryCard({ jobId, refreshKey }: { jobId: number; refreshKey: number 
   }, [jobId, refreshKey]);
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 className="mb-2 text-sm font-semibold">History</h2>
-      {history === null ? (
-        <p className="text-xs text-zinc-500">Loading…</p>
-      ) : history.length === 0 ? (
-        <p className="text-xs text-zinc-500">No status changes recorded yet.</p>
-      ) : (
-        <ul className="space-y-2 text-xs">
-          {history.map((entry) => (
-            <li key={entry.id} className="border-l-2 border-zinc-200 pl-2 dark:border-zinc-800">
-              <div className="text-zinc-700 dark:text-zinc-300">{describeHistoryEntry(entry)}</div>
-              <div className="text-zinc-400">{formatDateTime(entry.changed_at)}</div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+      {/* Audit trail — read occasionally, never a blocker, so it folds away by default. */}
+      <Disclosure
+        title="History"
+        hint={history === null ? undefined : history.length === 0 ? "none" : `${history.length}`}
+      >
+        {history === null ? (
+          <p className="text-xs text-tertiary">Loading…</p>
+        ) : history.length === 0 ? (
+          <p className="text-xs text-tertiary">No status changes recorded yet.</p>
+        ) : (
+          <ul className="space-y-2 text-xs">
+            {history.map((entry) => (
+              <li key={entry.id} className="border-l-2 border-[var(--separator)] pl-2">
+                <div className="text-secondary">{describeHistoryEntry(entry)}</div>
+                <div className="text-tertiary">{formatDateTime(entry.changed_at)}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Disclosure>
+    </section>
   );
 }
 
@@ -461,58 +468,64 @@ function H1bIntelligenceCard({ job }: { job: JobWithCompany }) {
   const { overridden, reason } = combineH1bConfidence(job.company_h1b_confidence, job.sponsorship_polarity);
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 className="mb-2 text-sm font-semibold">H1B sponsor intelligence</h2>
+    <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+      <h2 className="mb-2 text-[13px] font-semibold text-primary">H1B sponsor intelligence</h2>
 
+      {/* The outcome and this posting's own words stay visible. Only the provenance behind them —
+       *  company history, whether the JD overrode it, and the combining reason — folds away. */}
       <div className="mb-3">
-        <div className="mb-1 text-xs font-medium text-zinc-500">Confidence</div>
+        <div className="mb-1 text-[11px] font-medium text-tertiary">Confidence</div>
         <H1bBadge confidence={job.h1b_combined_confidence} />
       </div>
 
       {job.sponsorship_snippet && (
         <div className="mb-3">
-          <div className="mb-1 text-xs font-medium text-zinc-500">Evidence (from this posting)</div>
-          <blockquote className="rounded border-l-2 border-zinc-300 bg-zinc-50 px-2 py-1.5 text-xs italic text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400">
+          <div className="mb-1 text-[11px] font-medium text-tertiary">Evidence (from this posting)</div>
+          <blockquote className="rounded-md border-l-2 border-[var(--border)] bg-app-bg px-2 py-1.5 text-xs italic text-secondary">
             &ldquo;{job.sponsorship_snippet}&rdquo;
           </blockquote>
         </div>
       )}
 
-      <div className="mb-3">
-        <div className="mb-1 text-xs font-medium text-zinc-500">Historical sponsor (company)</div>
-        <div className="mb-1 flex items-center gap-2">
-          <H1bBadge confidence={job.company_h1b_confidence} />
-          {job.company_h1b_match_tier && (
-            <span className="text-xs text-zinc-500">{job.company_h1b_match_tier} match</span>
-          )}
+      <Disclosure title="How this was determined">
+        <div className="space-y-3">
+          <div>
+            <div className="mb-1 text-[11px] font-medium text-tertiary">Historical sponsor (company)</div>
+            <div className="mb-1 flex items-center gap-2">
+              <H1bBadge confidence={job.company_h1b_confidence} />
+              {job.company_h1b_match_tier && (
+                <span className="text-xs text-tertiary">{job.company_h1b_match_tier} match</span>
+              )}
+            </div>
+            {job.company_h1b_confidence_evidence ? (
+              <p className="text-xs text-secondary">{job.company_h1b_confidence_evidence}</p>
+            ) : (
+              <p className="text-xs text-tertiary">
+                No DOL H1B/LCA history imported or matched for this company yet.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-1 text-[11px] font-medium text-tertiary">JD override</div>
+            <p className="text-xs text-secondary">
+              {overridden ? (
+                <span className="font-medium text-[var(--warning)]">
+                  Yes — this posting&apos;s language changed the outcome from the company&apos;s historical confidence.
+                </span>
+              ) : (
+                "No — showing the company's historical confidence as-is."
+              )}
+            </p>
+          </div>
+
+          <div>
+            <div className="mb-1 text-[11px] font-medium text-tertiary">Reason</div>
+            <p className="text-xs text-secondary">{reason}</p>
+          </div>
         </div>
-        {job.company_h1b_confidence_evidence ? (
-          <p className="text-xs text-zinc-600 dark:text-zinc-400">{job.company_h1b_confidence_evidence}</p>
-        ) : (
-          <p className="text-xs text-zinc-500">
-            No DOL H1B/LCA history imported or matched for this company yet.
-          </p>
-        )}
-      </div>
-
-      <div className="mb-1">
-        <div className="mb-1 text-xs font-medium text-zinc-500">JD override</div>
-        <p className="text-xs text-zinc-600 dark:text-zinc-400">
-          {overridden ? (
-            <span className="font-medium text-amber-700 dark:text-amber-500">
-              Yes — this posting&apos;s language changed the outcome from the company&apos;s historical confidence.
-            </span>
-          ) : (
-            "No — showing the company's historical confidence as-is."
-          )}
-        </p>
-      </div>
-
-      <div>
-        <div className="mb-1 text-xs font-medium text-zinc-500">Reason</div>
-        <p className="text-xs text-zinc-600 dark:text-zinc-400">{reason}</p>
-      </div>
-    </div>
+      </Disclosure>
+    </section>
   );
 }
 
@@ -580,8 +593,8 @@ function formatClearance(job: JobWithCompany): string | null {
 function Fact({ label, value, title }: { label: string; value: string | null; title?: string }) {
   return (
     <div>
-      <div className="text-xs font-medium text-zinc-500">{label}</div>
-      <div className="text-sm text-zinc-800 dark:text-zinc-200" title={title}>
+      <div className="text-[11px] font-medium text-tertiary">{label}</div>
+      <div className="text-[13px] text-primary" title={title}>
         {value ?? "Unknown"}
       </div>
     </div>
@@ -624,14 +637,14 @@ function groupSkillsForDisplay(skills: JobSkill[], level: "Required" | "Preferre
 }
 
 function SkillPillList({ groups }: { groups: SkillGroup[] }) {
-  if (groups.length === 0) return <p className="text-xs text-zinc-500">None extracted.</p>;
+  if (groups.length === 0) return <p className="text-xs text-tertiary">None extracted.</p>;
   return (
     <div className="flex flex-wrap gap-1.5">
       {groups.map((g, i) => (
         <span
           key={i}
           title={`${g.category}${g.evidence ? ` — "${g.evidence}"` : ""}`}
-          className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+          className="rounded-md bg-app-bg px-2 py-0.5 text-xs text-secondary"
         >
           {g.label}
         </span>
@@ -645,7 +658,7 @@ function CertificationList({ certifications, level }: { certifications: JobCerti
   if (filtered.length === 0) return null;
   return (
     <div>
-      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-tertiary">
         {level} Certifications
       </h3>
       <SkillPillList groups={filtered.map((c) => ({ label: c.name, category: "Certification", evidence: c.evidence_snippet }))} />
@@ -679,9 +692,9 @@ function AtAGlanceCard({
   );
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 className="mb-1 text-sm font-semibold">At a Glance</h2>
-      <p className="mb-3 text-xs text-zinc-500">
+    <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-5">
+      <h2 className="section-title">At a Glance</h2>
+      <p className="mb-3 text-xs text-tertiary">
         Deterministic, rule-based extraction from the full description below — always verify
         against it. Fields left as &ldquo;Unknown&rdquo; had no reliable evidence in this posting.
       </p>
@@ -699,7 +712,7 @@ function AtAGlanceCard({
         <Fact label="Experience" value={formatExperience(job)} title={job.experience_evidence ?? undefined} />
         <Fact label="Education" value={formatEducation(job)} title={job.education_evidence ?? undefined} />
         <div>
-          <div className="text-xs font-medium text-zinc-500">Sponsorship</div>
+          <div className="text-[11px] font-medium text-tertiary">Sponsorship</div>
           <div className="mt-0.5">
             <H1bBadge confidence={job.h1b_combined_confidence} />
           </div>
@@ -709,11 +722,11 @@ function AtAGlanceCard({
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2">
         <div>
-          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Required Skills</h3>
+          <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-tertiary">Required Skills</h3>
           <SkillPillList groups={requiredSkills} />
         </div>
         <div>
-          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Preferred Skills</h3>
+          <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-tertiary">Preferred Skills</h3>
           <SkillPillList groups={preferredSkills} />
         </div>
       </div>
@@ -726,21 +739,33 @@ function AtAGlanceCard({
       )}
 
       {sectionKeys.length > 0 && (
-        <div className="space-y-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+        <div className="space-y-3 border-t border-[var(--separator)] pt-3">
           {sectionKeys.map((key) => (
             <div key={key}>
-              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-tertiary">
                 {SECTION_LABELS[key]}
               </h3>
-              <p className="whitespace-pre-line text-sm text-zinc-700 dark:text-zinc-300">{sections?.[key]}</p>
+              <p className="whitespace-pre-line text-[13px] text-secondary">{sections?.[key]}</p>
             </div>
           ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
+/**
+ * STAGE 2 — the job detail page, reordered around the decision.
+ *
+ * The page previously opened with a title and a link and put the verdict third down a narrow rail,
+ * below Pipeline and the resume pipeline, while the wide column carried only static text. The order
+ * now follows what the reader needs: verdict and its reasons, the evidence behind them, the job's
+ * own facts, the posting itself, and finally the resume workflow — with operational controls moved
+ * to a secondary rail beside them.
+ *
+ * Structural only. No section was deleted, no action was removed, every reason string is the
+ * engine's own, and the single match request is the one MatchCard already made (see useJobMatch).
+ */
 export default function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const candidateId = useActiveCandidateId();
@@ -749,6 +774,9 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
   const [notFound, setNotFound] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
   const { thresholds, loaded: thresholdsLoaded } = useLifecycleThresholds();
+  // Called unconditionally, above the early returns, so hook order is stable across renders. This
+  // is the same single GET MatchCard used to issue on mount — lifted, not added.
+  const match = useJobMatch(Number(id), candidateId);
 
   async function load() {
     setLoading(true);
@@ -774,153 +802,122 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, candidateId]);
 
-  if (loading || !thresholdsLoaded) return <p className="text-sm text-zinc-500">Loading…</p>;
-  if (notFound || !data) return <p className="text-sm text-zinc-500">Job not found.</p>;
+  if (loading || !thresholdsLoaded) return <p className="text-[13px] text-tertiary">Loading…</p>;
+  if (notFound || !data) return <p className="text-[13px] text-tertiary">Job not found.</p>;
 
   const { job, generatedFiles, skills, certifications } = data;
   const sections = parseSections(job.description_sections);
-  const facts = [
-    job.location,
-    job.employment_type,
-    job.workplace_type,
-    job.salary_text,
-  ].filter(Boolean);
 
   return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <Link href="/jobs" className="text-xs text-zinc-500 hover:underline">
-          ← Back to jobs
-        </Link>
-        <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold">{job.title}</h1>
-              {job.is_archived === 0 && <AgeBadge job={job} thresholds={thresholds} />}
-            </div>
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              {job.company_name} · {job.source_type}
-              {job.is_archived === 1 ? " · archived" : !job.is_active && " · closed"}
-            </p>
-            {facts.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {facts.map((fact, i) => (
-                  <span
-                    key={i}
-                    className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
-                  >
-                    {fact}
-                  </span>
-                ))}
+    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+      {/* ---- Primary column: decision, evidence, the job, the posting, the resume workflow ---- */}
+      <div className="min-w-0 space-y-5">
+        <JobDecisionHeader
+          job={job}
+          match={match}
+          thresholds={thresholds}
+          actions={
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                <TailoringToggle
+                  jobId={job.id}
+                  initial={job.marked_for_tailoring === 1}
+                  candidateId={candidateId}
+                />
+                <CopyPromptButton job={job} candidateId={candidateId} />
               </div>
-            )}
-          </div>
-          <a
-            href={job.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-          >
-            View posting ↗
-          </a>
-        </div>
-      </div>
+              <p className="text-[12px] text-tertiary">
+                Tailoring runs in Claude Code, not this app. Mark this job, then run the copied skill
+                prompt in a Claude Code session in this project — nothing is written or submitted from
+                here.
+              </p>
+            </div>
+          }
+        />
 
-      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-        <div className="space-y-4">
-          <AtAGlanceCard job={job} sections={sections} skills={skills} certifications={certifications} />
+        <MatchCard match={match} />
 
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <h2 className="mb-2 text-sm font-semibold">Full description</h2>
+        <AtAGlanceCard job={job} sections={sections} skills={skills} certifications={certifications} />
+
+        <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-5">
+          {/* Open by default: the posting is primary content, and the disclosure exists only so a
+           *  very long description can be folded away once read — never to truncate it. */}
+          <Disclosure title="Full description" defaultOpen>
             {job.description_html ? (
               <div
-                className="prose prose-sm dark:prose-invert max-w-none text-sm"
+                className="prose prose-sm dark:prose-invert mt-1 max-w-none text-[13px]"
                 dangerouslySetInnerHTML={{ __html: sanitizeJobHtml(job.description_html) }}
               />
             ) : job.description_text ? (
-              <p className="whitespace-pre-line text-sm text-zinc-700 dark:text-zinc-300">
-                {job.description_text}
-              </p>
+              <p className="mt-1 whitespace-pre-line text-[13px] text-secondary">{job.description_text}</p>
             ) : (
-              <p className="text-sm text-zinc-500">
+              <p className="mt-1 text-[13px] text-tertiary">
                 No description text captured for this posting (common for career-link scrapes, since
                 that scraper only extracts links/titles). View the original posting for details, or
                 add this company as a proper Greenhouse/Ashby/Lever entry on the Companies page if
                 available — see the note there if one was auto-detected.
               </p>
             )}
-          </div>
-        </div>
+          </Disclosure>
+        </section>
 
-        <div className="space-y-4">
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <h2 className="mb-3 text-sm font-semibold">Pipeline</h2>
-            <div className="space-y-3">
-              <div>
-                <div className="mb-1 text-xs text-zinc-500">Status</div>
-                <PipelineStatusSelect
-                  jobId={job.id}
-                  value={job.pipeline_status}
-                  candidateId={candidateId}
-                  onChanged={() => {
-                    load();
-                    setHistoryKey((k) => k + 1);
-                  }}
-                />
-              </div>
-              <TailoringToggle jobId={job.id} initial={job.marked_for_tailoring === 1} candidateId={candidateId} />
-            </div>
-          </div>
+        {/* Moved out of the 1fr rail: this component lays itself out in up to five columns and was
+         *  being compressed into a third of the page. Its behaviour is untouched. */}
+        <ResumeQualityPipeline jobId={job.id} jobTitle={job.title} companyName={job.company_name} />
+      </div>
 
-          <ResumeQualityPipeline jobId={job.id} jobTitle={job.title} companyName={job.company_name} />
-
-          <MatchCard jobId={job.id} />
-
-          <LifecycleCard
-            job={job}
-            thresholds={thresholds}
+      {/* ---- Secondary rail: operational state. Nothing here gates a review decision. ---- */}
+      <div className="min-w-0 space-y-5">
+        <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+          <h2 className="mb-2 text-[13px] font-semibold text-primary">Pipeline</h2>
+          <div className="mb-1 text-[11px] text-tertiary">Status</div>
+          <PipelineStatusSelect
+            jobId={job.id}
+            value={job.pipeline_status}
             candidateId={candidateId}
             onChanged={() => {
               load();
               setHistoryKey((k) => k + 1);
             }}
           />
+        </section>
 
-          <NotesTagsCard job={job} candidateId={candidateId} onChanged={load} />
+        <H1bIntelligenceCard job={job} />
 
-          <H1bIntelligenceCard job={job} />
+        <LifecycleCard
+          job={job}
+          thresholds={thresholds}
+          candidateId={candidateId}
+          onChanged={() => {
+            load();
+            setHistoryKey((k) => k + 1);
+          }}
+        />
 
-          <AiInsightsCard jobId={job.id} />
+        <NotesTagsCard job={job} candidateId={candidateId} onChanged={load} />
 
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <h2 className="mb-2 text-sm font-semibold">Resume tailoring</h2>
-            <p className="mb-3 text-xs text-zinc-500">
-              Tailoring runs in Claude Code, not this app. Mark this job for tailoring, then in a
-              Claude Code session in this project run the skill below.
-            </p>
-            <CopyPromptButton job={job} candidateId={candidateId} />
-            <div className="mt-3">
-              <div className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                Generated files ({generatedFiles.length})
-              </div>
-              {generatedFiles.length === 0 ? (
-                <p className="text-xs text-zinc-500">None yet.</p>
-              ) : (
-                <ul className="space-y-0.5 text-xs">
-                  {generatedFiles.map((f) => (
-                    <li key={f} className="font-mono text-zinc-600 dark:text-zinc-400">
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
+        <AiInsightsCard jobId={job.id} />
 
-          <HistoryCard jobId={job.id} refreshKey={historyKey} />
+        <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+          <h2 className="mb-2 text-[13px] font-semibold text-primary">
+            Generated files ({generatedFiles.length})
+          </h2>
+          {generatedFiles.length === 0 ? (
+            <p className="text-xs text-tertiary">None yet.</p>
+          ) : (
+            <ul className="space-y-0.5 text-xs">
+              {generatedFiles.map((f) => (
+                <li key={f} className="font-mono text-secondary">
+                  {f}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
-          <NotInterestedButton job={job} candidateId={candidateId} />
-        </div>
+        <HistoryCard jobId={job.id} refreshKey={historyKey} />
+
+        <NotInterestedButton job={job} candidateId={candidateId} />
       </div>
     </div>
   );
