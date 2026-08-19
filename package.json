@@ -53,6 +53,7 @@
     "csv-parse": "^7.0.2",
     "dompurify": "^3.4.13",
     "fuzzball": "^2.2.6",
+    "motion": "^13.1.0",
     "next": "16.3.0",
     "openai": "^7.4.0",
     "p-limit": "^7.3.1",
