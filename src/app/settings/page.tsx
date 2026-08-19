@@ -158,6 +158,134 @@ function SettingsGroup({
   );
 }
 
+/**
+ * Stage 30.2 — the operator control for the resume writer.
+ *
+ * CareerOps has always stored and honoured `scheduler.writerEnabled`, and Operations has always
+ * displayed it, but there was no way to change it from the UI at all — the only route was a direct
+ * settings API call. This is that control, and nothing more.
+ *
+ * Two deliberate differences from the rest of this page:
+ *   - It writes IMMEDIATELY rather than joining the batch Save, and sends ONLY
+ *     `{ scheduler: { writerEnabled } }`. The settings layer merges a partial patch, so the master
+ *     switch and the scan/ingestion/evaluation flags are provably untouched by this control.
+ *   - Turning it ON takes two clicks. This is the one setting on the page that causes CareerOps to
+ *     spend the user's Claude subscription on work already sitting in the queue, so a single stray
+ *     click should not start it.
+ *
+ * Turning it on grants no new authority: it only lets ALREADY-APPROVED workflows be picked up by the
+ * normal scheduled writer. It approves nothing, creates no workflow, and submits no application.
+ */
+function ResumeWriterControl({
+  enabled,
+  onChanged,
+}: {
+  enabled: boolean;
+  onChanged: (settings: AppSettings) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function setWriterEnabled(next: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      // Only this one field is sent — never the whole settings object.
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduler: { writerEnabled: next } }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Failed to update the resume writer setting");
+        return;
+      }
+      // Reflect what was actually persisted, never the value we optimistically sent.
+      onChanged(data.settings as AppSettings);
+      setConfirming(false);
+    } catch {
+      setError("Failed to update the resume writer setting");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <div>
+        <h2 className="text-sm font-semibold">Resume Writer</h2>
+        <p className="text-xs text-zinc-500">
+          Whether the background worker may automatically write resumes for jobs you have already approved. This is
+          the only setting that spends your Claude subscription. Turning it on approves nothing, creates no new
+          tailoring work, and never submits an application — it only lets already-approved workflows be picked up.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <span
+          data-testid="writer-enabled-state"
+          className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+            enabled
+              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+              : "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
+          }`}
+        >
+          {enabled ? "ON" : "OFF"}
+        </span>
+
+        {enabled ? (
+          <button
+            onClick={() => void setWriterEnabled(false)}
+            disabled={busy}
+            className="rounded border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            {busy ? "Saving…" : "Turn Resume Writer OFF"}
+          </button>
+        ) : confirming ? (
+          <>
+            <button
+              onClick={() => void setWriterEnabled(true)}
+              disabled={busy}
+              className="rounded bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              {busy ? "Saving…" : "Confirm — start writing approved jobs"}
+            </button>
+            <button
+              onClick={() => setConfirming(false)}
+              disabled={busy}
+              className="rounded border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => setConfirming(true)}
+            disabled={busy}
+            className="rounded border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Turn Resume Writer ON
+          </button>
+        )}
+      </div>
+
+      {confirming && !enabled && (
+        <p className="text-xs font-medium text-amber-800 dark:text-amber-400">
+          Any jobs you have already approved will begin being written on the next scheduled pass, using your Claude
+          subscription. You still review and send every application yourself.
+        </p>
+      )}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <p className="text-[11px] text-zinc-500">
+        Background automation must also be enabled for this to take effect. This control changes nothing else — not the
+        automation master switch, and not scan, ingestion, or evaluation.
+      </p>
+    </section>
+  );
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [defaults, setDefaults] = useState<AppSettings | null>(null);
@@ -270,6 +398,13 @@ export default function SettingsPage() {
       {formError && <p className="text-sm text-red-600">{formError}</p>}
       {savedAt && !formError && <p className="text-xs text-emerald-700 dark:text-emerald-400">Saved.</p>}
 
+      <ResumeWriterControl
+        enabled={settings.scheduler.writerEnabled}
+        onChanged={(next) => {
+          setSettings(next);
+          setSavedAt(null);
+        }}
+      />
       <SettingsGroup
         title="Lifecycle"
         description="Age-based archive/delete thresholds. Applied/Interviewing/Offer/Employer Rejected and pinned jobs are never affected, regardless of these values."
