@@ -286,15 +286,81 @@ export interface LatestDecisionSummary {
  *  every other lookup in this file. Jobs never evaluated for this candidate are simply absent from
  *  the returned map — the caller (For You ranking, MatchDecisionBadge) is responsible for treating
  *  "absent" as NOT_EVALUATED, never as a fabricated score. */
-export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys: string[]): Record<string, LatestDecisionSummary> {
+/**
+ * Stage 32 — the job LIST's decision badge/filter/sort inputs, and nothing more.
+ *
+ * Deliberately its own type rather than LatestDecisionSummary: that shape carries the extra fields
+ * the For You ranking layer needs, and widening this endpoint to match it put four 64-character
+ * hashes on the wire for every one of ~15.7k jobs. JobList reads exactly these three.
+ */
+export interface ListDecisionSummary {
+  decision: string;
+  overallScore: number;
+  insufficientJdSignal: boolean;
+}
+
+/**
+ * Stage 32 — above this many requested keys, binding them all costs more than reading the
+ * candidate's whole decision set and filtering in JS.
+ *
+ * The IN-list form must compile a fresh statement with one placeholder per key on every call, and
+ * SQLite cannot cache a statement whose arity changes. On the real corpus the jobs list asks for
+ * ~15.7k keys, and compiling that statement dominated the request at ~3.3s; the same rows come back
+ * from a single one-parameter query in ~0.2s of query time. Below the threshold the IN-list is
+ * still the cheaper of the two, because it reads only the rows asked for.
+ */
+const BULK_DECISION_LOOKUP_THRESHOLD = 1000;
+
+export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys: string[]): Record<string, ListDecisionSummary> {
   if (dedupeKeys.length === 0) return {};
   const db = getDb();
+
+  if (dedupeKeys.length > BULK_DECISION_LOOKUP_THRESHOLD) {
+    // One statement, one parameter, same latest-per-dedupe_key selection. The response is then
+    // narrowed to exactly the requested keys, so the endpoint's contract is byte-for-byte what the
+    // IN-list form returns — this is purely how the rows are fetched, never which rows are exposed.
+    const wanted = new Set(dedupeKeys);
+    // ROW_NUMBER() rather than a MAX(id) self-join. The two select the same row for every
+    // dedupe_key — highest id wins in both — but the self-join has to look each winner up by rowid,
+    // which is a random read into the 1.48 GB table per job and measured 3.2 s for one candidate's
+    // ~22.9k keys. This form's PARTITION/ORDER matches idx_job_match_results_latest_decision exactly,
+    // so SQLite answers it from the index alone: same 22,905 rows, verified identical, in ~75 ms.
+    const allRows = db
+      .prepare(
+        `SELECT dedupe_key, decision, overall_score, insufficient_jd_signal FROM (
+           SELECT dedupe_key, decision, overall_score, insufficient_jd_signal,
+                  ROW_NUMBER() OVER (PARTITION BY dedupe_key ORDER BY id DESC) AS rn
+           FROM job_match_results WHERE candidate_id = ?
+         ) WHERE rn = 1`
+      )
+      .all(candidateId) as {
+      dedupe_key: string;
+      decision: string;
+      overall_score: number;
+      insufficient_jd_signal: 0 | 1;
+    }[];
+
+    const bulk: Record<string, ListDecisionSummary> = {};
+    for (const row of allRows) {
+      if (!wanted.has(row.dedupe_key)) continue;
+      bulk[row.dedupe_key] = {
+        decision: row.decision,
+        overallScore: row.overall_score,
+        insufficientJdSignal: Boolean(row.insufficient_jd_signal),
+      };
+    }
+    return bulk;
+  }
+
   const placeholders = dedupeKeys.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT t.dedupe_key, t.decision, t.overall_score, t.employer_evidenced_share, t.requirement_coverage,
-              t.insufficient_jd_signal, t.status, t.match_engine_version, t.match_knowledge_hash,
-              t.candidate_profile_hash, t.candidate_settings_hash, t.jd_content_hash
+      // Stage 32 — exactly the three fields /api/jobs/match-decisions' only consumer reads
+      // (JobList's ListMatchSummary: decision, overallScore, insufficientJdSignal). The previous
+      // twelve-column projection shipped four 64-character hashes per row, which on the real
+      // corpus is ~4 MB of a 9.5 MB response that nothing reads. Filtering and the latest-row
+      // selection are unchanged.
+      `SELECT t.dedupe_key, t.decision, t.overall_score, t.insufficient_jd_signal
        FROM job_match_results t
        INNER JOIN (
          SELECT dedupe_key, MAX(id) AS max_id FROM job_match_results
@@ -305,31 +371,15 @@ export function listLatestDecisionsForDedupeKeys(candidateId: number, dedupeKeys
     dedupe_key: string;
     decision: string;
     overall_score: number;
-    employer_evidenced_share: number;
-    requirement_coverage: number;
     insufficient_jd_signal: 0 | 1;
-    status: "active" | "superseded";
-    match_engine_version: number;
-    match_knowledge_hash: string;
-    candidate_profile_hash: string;
-    candidate_settings_hash: string;
-    jd_content_hash: string;
   }[];
 
-  const result: Record<string, LatestDecisionSummary> = {};
+  const result: Record<string, ListDecisionSummary> = {};
   for (const row of rows) {
     result[row.dedupe_key] = {
       decision: row.decision,
       overallScore: row.overall_score,
-      employerEvidencedShare: row.employer_evidenced_share,
-      requirementCoverage: row.requirement_coverage,
       insufficientJdSignal: Boolean(row.insufficient_jd_signal),
-      status: row.status,
-      matchEngineVersion: row.match_engine_version,
-      matchKnowledgeHash: row.match_knowledge_hash,
-      candidateProfileHash: row.candidate_profile_hash,
-      candidateSettingsHash: row.candidate_settings_hash,
-      jdContentHash: row.jd_content_hash,
     };
   }
   return result;
@@ -340,14 +390,18 @@ export function listAllLatestDecisionsForCandidate(candidateId: number): Record<
   const db = getDb();
   const rows = db
     .prepare(
-      `SELECT t.dedupe_key, t.decision, t.overall_score, t.employer_evidenced_share, t.requirement_coverage,
-              t.insufficient_jd_signal, t.status, t.match_engine_version, t.match_knowledge_hash,
-              t.candidate_profile_hash, t.candidate_settings_hash, t.jd_content_hash
-       FROM job_match_results t
-       INNER JOIN (
-         SELECT dedupe_key, MAX(id) AS max_id FROM job_match_results
-         WHERE candidate_id = ? GROUP BY dedupe_key
-       ) latest ON latest.max_id = t.id`
+      // Stage 32 — same ROW_NUMBER() form and reasoning as listLatestDecisionsForDedupeKeys: the
+      // MAX(id) self-join needed a random rowid read per job into the 1.48 GB table and measured
+      // ~4.15 s for this candidate's ~22.9k jobs, which was the largest single cost in the For You
+      // feed. The projection drops match_engine_version and the four hash columns, which this
+      // function's only consumer (the feed) never reads, so the whole statement is index-only.
+      `SELECT dedupe_key, decision, overall_score, employer_evidenced_share, requirement_coverage,
+              insufficient_jd_signal, status FROM (
+         SELECT dedupe_key, decision, overall_score, employer_evidenced_share, requirement_coverage,
+                insufficient_jd_signal, status,
+                ROW_NUMBER() OVER (PARTITION BY dedupe_key ORDER BY id DESC) AS rn
+         FROM job_match_results WHERE candidate_id = ?
+       ) WHERE rn = 1`
     )
     .all(candidateId) as {
     dedupe_key: string;
@@ -357,11 +411,6 @@ export function listAllLatestDecisionsForCandidate(candidateId: number): Record<
     requirement_coverage: number;
     insufficient_jd_signal: 0 | 1;
     status: "active" | "superseded";
-    match_engine_version: number;
-    match_knowledge_hash: string;
-    candidate_profile_hash: string;
-    candidate_settings_hash: string;
-    jd_content_hash: string;
   }[];
 
   const result: Record<string, LatestDecisionSummary> = {};
@@ -373,11 +422,6 @@ export function listAllLatestDecisionsForCandidate(candidateId: number): Record<
       requirementCoverage: row.requirement_coverage,
       insufficientJdSignal: Boolean(row.insufficient_jd_signal),
       status: row.status,
-      matchEngineVersion: row.match_engine_version,
-      matchKnowledgeHash: row.match_knowledge_hash,
-      candidateProfileHash: row.candidate_profile_hash,
-      candidateSettingsHash: row.candidate_settings_hash,
-      jdContentHash: row.jd_content_hash,
     };
   }
   return result;

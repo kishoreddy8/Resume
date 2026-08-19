@@ -173,7 +173,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
   for (const r of newTodayRows) candidateKeys.add(r.dedupe_key);
 
   const candidateKeyList = Array.from(candidateKeys);
-  const candidateJobs = listJobsByDedupeKeys(candidateKeyList, candidateId);
+  // Stage 32 — description_text is read only by the search and skills filters below. Fetching it
+  // unconditionally cost ~78 MB of text per request on the real corpus for a field the default view
+  // never looks at.
+  const needsDescriptionText = Boolean(searchFilter || skillsFilter);
+  const candidateJobs = listJobsByDedupeKeys(candidateKeyList, candidateId, {
+    includeDescriptionText: needsDescriptionText,
+  });
   const keyJobMap = new Map<string, JobWithCompanySummary>(candidateJobs.map((j) => [j.dedupe_key, j]));
 
   const jobsByBucket: Record<CandidateJobBucket, JobWithCompanySummary[]> = {

@@ -110,6 +110,40 @@ const JOB_WITH_COMPANY_SELECT = `
   c.h1b_latest_fiscal_year AS company_h1b_latest_fiscal_year
 `;
 
+/**
+ * Stage 32 — the columns the JOBS LIST actually renders, and nothing else.
+ *
+ * listJobs() selects `j.*`. Every job row carries, on average, ~6.1 KB of description_html,
+ * ~8.5 KB of raw_json, ~4.2 KB of description_text and ~1.9 KB of description_sections, and the
+ * list is unbounded: /api/jobs was returning 372 MB of JSON for 15,741 active jobs and taking
+ * 10-11 seconds to do it. None of those four columns is read by JobList, JobFilterSidebar or the
+ * jobs page — they belong to the job DETAIL view, which fetches its own row by id.
+ *
+ * This projection is deliberately derived from what the list renders (title/company/location/url/
+ * dates/status/source), plus the fields the client sorts and filters on (dedupe_key, decisions,
+ * lifecycle). Filtering is unaffected: `search` still matches description_text in the WHERE clause,
+ * because a column may be filtered on without being returned.
+ */
+export const JOB_LIST_SELECT = `
+  j.id, j.company_id, j.source_type, j.external_id, j.title, j.location, j.department,
+  j.url, j.employment_type, j.workplace_type, j.salary_text, j.sponsorship_snippet,
+  j.posted_at, j.first_seen_at, j.last_seen_at, j.is_active, j.dedupe_key,
+  j.sponsorship_mentioned, j.sponsorship_polarity, j.h1b_combined_confidence,
+  j.pipeline_status, j.pipeline_updated_at, j.marked_for_tailoring, j.tailoring_marked_at,
+  j.closed_at, j.missed_scan_count, j.is_archived, j.archived_at, j.archived_reason,
+  j.pinned, j.notes, j.tags, j.created_at, j.updated_at,
+  j.employment_type_normalized, j.workplace_type_normalized, j.seniority,
+  j.salary_min, j.salary_max, j.salary_currency, j.salary_period,
+  j.clearance_required, j.industry_domain,
+  c.name AS company_name,
+  c.h1b_confidence AS company_h1b_confidence,
+  c.h1b_confidence_evidence AS company_h1b_confidence_evidence,
+  c.h1b_match_employer_name AS company_h1b_match_employer_name,
+  c.h1b_match_tier AS company_h1b_match_tier,
+  c.h1b_lca_count AS company_h1b_lca_count,
+  c.h1b_latest_fiscal_year AS company_h1b_latest_fiscal_year
+`;
+
 export const JOB_WITH_COMPANY_SUMMARY_SELECT = `
   j.id, j.company_id, j.source_type, j.external_id, j.title, j.location, j.department,
   j.url, j.description_text,
@@ -131,16 +165,61 @@ export const JOB_WITH_COMPANY_SUMMARY_SELECT = `
   c.h1b_latest_fiscal_year AS company_h1b_latest_fiscal_year
 `;
 
-export function listJobsByDedupeKeys(dedupeKeys: string[], candidateId?: number): JobWithCompanySummary[] {
+/**
+ * Stage 32 — above this many keys, binding them all costs more than reading the whole table and
+ * filtering in JS. Same reasoning as BULK_DECISION_LOOKUP_THRESHOLD in jobMatches.ts: SQLite must
+ * compile a fresh statement for every distinct placeholder count. Measured on the real corpus with
+ * the 22,905 keys the For You feed assembles: 4,557 ms for one giant IN-list, ~2,350 ms chunked,
+ * 1,327 ms reading every job once and filtering against a Set.
+ */
+const BULK_JOB_KEY_LOOKUP_THRESHOLD = 1000;
+
+export interface ListJobsByDedupeKeysOptions {
+  /**
+   * Stage 32 — whether to fetch j.description_text.
+   *
+   * It averages ~4.2 KB per job, so on the For You feed's ~18.5k rows it is ~78 MB of text read and
+   * materialized on every request. The feed only ever READS it when a search or skills filter is
+   * active; with no filter it is fetched and thrown away. Defaults to true so every existing caller
+   * keeps the exact rows it had; a caller may only pass false when it provably does not read the
+   * field, because omitting the column leaves the property undefined at runtime.
+   */
+  includeDescriptionText?: boolean;
+}
+
+export function listJobsByDedupeKeys(
+  dedupeKeys: string[],
+  candidateId?: number,
+  options: ListJobsByDedupeKeysOptions = {}
+): JobWithCompanySummary[] {
   if (dedupeKeys.length === 0) return [];
   const overlay = candidateOverlay(candidateId);
+  const projection =
+    options.includeDescriptionText === false ? JOB_LIST_SELECT : JOB_WITH_COMPANY_SUMMARY_SELECT;
+
+  if (dedupeKeys.length > BULK_JOB_KEY_LOOKUP_THRESHOLD) {
+    // Identical projection, identical ORDER BY, identical candidate overlay — the ordering is still
+    // decided by SQL, so filtering afterwards cannot reorder anything. Only the row-selection
+    // mechanism differs, and the requested keys still decide exactly which rows come back.
+    const wanted = new Set(dedupeKeys);
+    const sql = `
+      SELECT ${projection}${overlay.selectOverride}
+      FROM jobs j
+      JOIN companies c ON c.id = j.company_id
+      ${overlay.join}
+      ORDER BY j.posted_at DESC, j.first_seen_at DESC
+    `;
+    const all = getDb().prepare(sql).all({ ...overlay.params }) as JobWithCompanySummary[];
+    return all.filter((row) => wanted.has(row.dedupe_key));
+  }
+
   const placeholders = dedupeKeys.map((_, i) => `@key${i}`).join(",");
   const params: Record<string, unknown> = { ...overlay.params };
   dedupeKeys.forEach((k, i) => {
     params[`key${i}`] = k;
   });
   const sql = `
-    SELECT ${JOB_WITH_COMPANY_SUMMARY_SELECT}${overlay.selectOverride}
+    SELECT ${projection}${overlay.selectOverride}
     FROM jobs j
     JOIN companies c ON c.id = j.company_id
     ${overlay.join}
@@ -172,7 +251,12 @@ export function countActiveUnarchivedJobs(): number {
   return row.total;
 }
 
-export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
+/**
+ * Stage 32 — the WHERE/ORDER/params half of listJobs, shared by every projection of it. Extracted
+ * so a narrow list query and the full-row query can never disagree about what "the jobs matching
+ * these filters" means: there is exactly one implementation of the filter semantics.
+ */
+function buildJobListQuery(filters: JobFilters): { where: string; order: string; params: Record<string, unknown>; overlay: ReturnType<typeof candidateOverlay> } {
   const clauses: string[] = [];
   const params: Record<string, unknown> = {};
   const overlay = candidateOverlay(filters.candidateId);
@@ -232,15 +316,36 @@ export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
   clauses.push(filters.archived ? "j.is_archived = 1" : "j.is_archived = 0");
 
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  return { where, order: "ORDER BY j.posted_at DESC, j.first_seen_at DESC", params, overlay };
+}
+
+function runJobListQuery(filters: JobFilters, selectClause: string): JobWithCompany[] {
+  const { where, order, params, overlay } = buildJobListQuery(filters);
   const sql = `
-    SELECT ${JOB_WITH_COMPANY_SELECT}${overlay.selectOverride}
+    SELECT ${selectClause}${overlay.selectOverride}
     FROM jobs j
     JOIN companies c ON c.id = j.company_id
     ${overlay.join}
     ${where}
-    ORDER BY j.posted_at DESC, j.first_seen_at DESC
+    ${order}
   `;
   return getDb().prepare(sql).all(params) as JobWithCompany[];
+}
+
+/** Full rows, including the heavy description/raw_json columns. Used by the job-intel backfill and
+ *  by callers that genuinely read a description; NOT by the jobs list — see listJobsForList. */
+export function listJobs(filters: JobFilters = {}): JobWithCompany[] {
+  return runJobListQuery(filters, JOB_WITH_COMPANY_SELECT);
+}
+
+/**
+ * Stage 32 — identical filtering and ordering, projected to the columns the list renders.
+ *
+ * Same rows, same order, fewer columns: a caller that does not read a description must not pay to
+ * transfer and serialize one. See JOB_LIST_SELECT for the measured reason.
+ */
+export function listJobsForList(filters: JobFilters = {}): JobWithCompany[] {
+  return runJobListQuery(filters, JOB_LIST_SELECT);
 }
 
 export interface CandidateRematchJobPageOptions {

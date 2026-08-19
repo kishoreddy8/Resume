@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listJobs } from "@/db/queries/jobs";
+import { listJobsForList } from "@/db/queries/jobs";
 import type {
   EmploymentTypeNormalized,
   H1bJobConfidence,
@@ -88,7 +88,11 @@ export async function GET(req: NextRequest) {
     VALID_H1B.includes(s as H1bJobConfidence)
   );
 
-  const jobs = listJobs({
+  // Stage 32 — the LIST projection, not full rows. The jobs list renders none of
+  // description_html/description_text/raw_json/description_sections; returning them made this
+  // endpoint a 372 MB, 10-second response. Filtering is unchanged (search still matches
+  // description_text in SQL); only the returned columns differ.
+  const jobs = listJobsForList({
     status: (status as PipelineStatus) ?? undefined,
     companyId: companyId ? Number(companyId) : undefined,
     sourceType: (sourceType as SourceType) ?? undefined,

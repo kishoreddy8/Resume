@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { H1bBadge } from "@/components/H1bBadge";
 import { MatchDecisionBadge, type MatchDecision } from "@/components/MatchDecisionBadge";
@@ -21,6 +21,11 @@ const DECISION_FILTER_LABELS: Record<DecisionFilter, string> = {
   BLOCKED: "Blocked",
   "Not Evaluated": "Not Evaluated",
 };
+
+/** Rows materialized on first paint. The full filtered+sorted set is still computed; see the note
+ *  in JobList on why only rendering is bounded. */
+const INITIAL_RENDER_LIMIT = 100;
+const RENDER_LIMIT_STEP = 200;
 
 interface ListMatchSummary {
   decision: MatchDecision;
@@ -184,15 +189,39 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
   const decisions = useMatchDecisions(jobs, candidateId);
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>("All");
 
-  const visibleJobs = jobs
-    .filter((job) => {
-      if (decisionFilter === "All") return true;
-      const entry = decisions[job.dedupe_key];
-      if (decisionFilter === "Not Evaluated") return !entry;
-      return entry?.decision === decisionFilter;
-    })
-    .slice()
-    .sort((a, b) => compareJobsBestFirst(a, b, decisions));
+  const visibleJobs = useMemo(
+    () =>
+      jobs
+        .filter((job) => {
+          if (decisionFilter === "All") return true;
+          const entry = decisions[job.dedupe_key];
+          if (decisionFilter === "Not Evaluated") return !entry;
+          return entry?.decision === decisionFilter;
+        })
+        .slice()
+        .sort((a, b) => compareJobsBestFirst(a, b, decisions)),
+    [jobs, decisions, decisionFilter]
+  );
+
+  // Stage 32 — bound how many rows are MATERIALIZED, never how many are considered.
+  //
+  // Filtering and best-first sorting above still run over the entire result set, so the rows shown
+  // are genuinely the best matches for the current filters; this only stops React from building
+  // ~15.7k <tr> elements (each with links, badges and date formatting) on first paint, which was
+  // the largest remaining cost in the jobs page after the API work. "Show more" reveals the rest in
+  // place, and the header states the true total so the count is never misleading.
+  // Changing the filter, or receiving a different job set, starts the list over at the top. This is
+  // React's "adjust state during render" pattern rather than an effect: an effect would paint the
+  // previous filter's rows once before correcting itself, which is both a visible flash and the
+  // cascading render the lint rule warns about.
+  const resetKey = `${decisionFilter}:${jobs.length}`;
+  const [renderState, setRenderState] = useState({ key: resetKey, limit: INITIAL_RENDER_LIMIT });
+  if (renderState.key !== resetKey) {
+    setRenderState({ key: resetKey, limit: INITIAL_RENDER_LIMIT });
+  }
+  const renderLimit = renderState.key === resetKey ? renderState.limit : INITIAL_RENDER_LIMIT;
+  const renderedJobs = visibleJobs.slice(0, renderLimit);
+  const hiddenCount = visibleJobs.length - renderedJobs.length;
 
   return (
     <div className="space-y-2">
@@ -209,6 +238,11 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
             </option>
           ))}
         </select>
+        {visibleJobs.length > 0 && (
+          <span className="ml-auto text-zinc-500">
+            Showing {renderedJobs.length.toLocaleString()} of {visibleJobs.length.toLocaleString()}
+          </span>
+        )}
       </div>
 
       {visibleJobs.length === 0 ? (
@@ -231,7 +265,7 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {visibleJobs.map((job) => (
+              {renderedJobs.map((job) => (
             <tr key={job.id} className={job.is_active ? "" : "opacity-50"}>
               <td className="px-3 py-2">
                 <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">
@@ -283,6 +317,16 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
             </tbody>
           </table>
         </div>
+      )}
+
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setRenderState((prev) => ({ key: resetKey, limit: prev.limit + RENDER_LIMIT_STEP }))}
+          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+        >
+          Show {Math.min(RENDER_LIMIT_STEP, hiddenCount).toLocaleString()} more ({hiddenCount.toLocaleString()} remaining)
+        </button>
       )}
     </div>
   );

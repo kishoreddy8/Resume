@@ -75,6 +75,37 @@ function ensureJobsIndexes(db: Database.Database) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_pinned ON jobs(pinned)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_active_archived_posted ON jobs(is_archived, is_active, posted_at DESC, first_seen_at DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_company_active ON jobs(company_id, is_active)");
+
+  // Stage 32 — the Operations page's match-decision counts.
+  //
+  // getCandidateMatchDecisionCounts runs
+  //   SELECT decision, COUNT(*) FROM job_match_results WHERE candidate_id=? AND status='active'
+  //   GROUP BY decision
+  // and idx_job_match_results_dedupe covers only candidate_id of that. SQLite therefore seeked the
+  // index and then fetched every one of the candidate's ~152k rows from a 1.48 GB table just to
+  // read two small columns: measured at 14-16 seconds, and it was the entire cost of /api/operations
+  // (the endpoint's own response is 11 KB). Ordering the index (candidate_id, status, decision)
+  // makes the aggregate answerable from the index alone, with no table access at all.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_job_match_results_candidate_status_decision ON job_match_results(candidate_id, status, decision)"
+  );
+
+  // Stage 32 — the latest-decision-per-job lookup behind the jobs list badges and the For You feed.
+  //
+  // listLatestDecisionsForDedupeKeys picks MAX(id) per dedupe_key and then reads three columns from
+  // each winning row. idx_job_match_results_dedupe covers the grouping but not those columns, so the
+  // outer half degenerated into one random rowid fetch per job into the 1.48 GB table: ~4.9 s cold
+  // for a candidate's ~22.9k keys (it measured fast only when the pages happened to still be in the
+  // OS cache from a previous identical request). Carrying id and the three read columns in the index
+  // makes the whole statement index-only.
+  // Superseded within Stage 32 by the wider covering index below, which serves both latest-decision
+  // readers. Dropping it keeps one index rather than two overlapping ones on a 152k-row table.
+  db.exec("DROP INDEX IF EXISTS idx_job_match_results_latest_decision");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_job_match_results_latest_decision_covering " +
+      "ON job_match_results(candidate_id, dedupe_key, id DESC, decision, overall_score, " +
+      "employer_evidenced_share, requirement_coverage, insufficient_jd_signal, status)"
+  );
 }
 
 const COMPANIES_COLUMNS = [
