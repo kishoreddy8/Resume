@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { getJob, getJobByDedupeKey } from "@/db/queries/jobs";
 import {
@@ -72,6 +73,15 @@ import {
  * they describe what this build actually runs, and they are the only reviewer values ever written —
  * nothing here implies an LLM reviewed anything.
  */
+/** Best-effort file size for timing diagnostics — never throws, never affects the workflow. */
+function safeFileSize(filePath: string): number | null {
+  try {
+    return fs.statSync(filePath).size;
+  } catch {
+    return null;
+  }
+}
+
 export const DETERMINISTIC_REVIEWER_PROVIDER = "careerops-deterministic";
 export const DETERMINISTIC_REVIEWER_MODEL = "stage21-deterministic";
 
@@ -120,6 +130,34 @@ export interface PassOutcome {
   /** Stage 27 — the CLI's classified reason, when one was established. Diagnostic/reporting only:
    *  it never affects the quality gate, the iteration budget, or approval. */
   failureClass?: WriterFailureClass;
+  /** Stage 28 — measured wall-clock for each stage of this iteration, in milliseconds. Recorded so
+   *  "tailoring is slow" can be answered with evidence instead of assumption; purely diagnostic. */
+  timings?: IterationTimings;
+}
+
+/**
+ * Stage 28 — where the time actually goes for ONE content iteration.
+ *
+ * Measured on the real corpus before any optimisation: `claudeMs` is 3m15s-4m28s while
+ * `importMs + reviewAndRenderMs` together are 11-17s. The expensive part of tailoring is the model
+ * call, and everything CareerOps does around it is close to free — which is why Stage 28 spends its
+ * effort on making the FIRST attempt succeed and on not waiting between attempts, rather than on
+ * micro-optimising CareerOps' own work.
+ */
+export interface IterationTimings {
+  /** Building the handoff package (evidence snapshot, prompt, requirements). */
+  exportMs: number;
+  /** The Claude CLI invocation itself, including its own bounded internal retries. */
+  claudeMs: number;
+  /** Reading and strictly validating writer_output.json. */
+  importMs: number;
+  /** The deterministic Stage 21 review plus both DOCX renders, and publication when READY. */
+  reviewAndRenderMs: number;
+  /** Sum of the above for this iteration. */
+  totalMs: number;
+  /** Bytes handed to the writer, and returned by it — prompt/output size, for the same evidence. */
+  promptBytes: number | null;
+  outputBytes: number | null;
 }
 
 export interface ProcessWorkflowOptions {
@@ -225,9 +263,19 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
     }
 
     let cliMetadata: Awaited<ReturnType<typeof invokeClaudeWriter>>["metadata"] = null;
+    const startedAtMs = Date.now();
+    let exportMs = 0;
+    let claudeMs = 0;
+    let promptBytes: number | null = null;
+    let outputBytes: number | null = null;
     try {
       exportExternalWriterPackage({ candidateId, workflowId, targetIterationNumber: targetIteration, overwriteExisting: true });
+      exportMs = Date.now() - startedAtMs;
+      promptBytes = safeFileSize(path.join(handoffDir, "writer_prompt.md"));
+      const claudeStartedMs = Date.now();
       const invocation = await invokeClaudeWriter({ handoffDir, ...options.cliOptions });
+      claudeMs = Date.now() - claudeStartedMs;
+      outputBytes = safeFileSize(invocation.outputPath);
       cliMetadata = invocation.metadata;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -267,12 +315,15 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
       };
     }
 
+    const importStartedMs = Date.now();
     const importResult = importExternalWriterResult({
       candidateId,
       workflowId,
       expectedIterationNumber: targetIteration,
       inputPath: path.join(handoffDir, "writer_output.json"),
     });
+    const importMs = Date.now() - importStartedMs;
+    const reviewStartedMs = Date.now();
 
     const staticWriter: ResumeWriterAgent = {
       generate: async (): Promise<ResumeWriterOutput> => importResult.writerOutput,
@@ -284,6 +335,17 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
       writer: staticWriter,
       reviewer: new DeterministicResumeReviewer(),
     });
+
+    const reviewAndRenderMs = Date.now() - reviewStartedMs;
+    const timings: IterationTimings = {
+      exportMs,
+      claudeMs,
+      importMs,
+      reviewAndRenderMs,
+      totalMs: Date.now() - startedAtMs,
+      promptBytes,
+      outputBytes,
+    };
 
     clearTechnicalFailures(handoffDir);
     // Stage 27 — the CLI ran successfully, so whatever block was recorded earlier is demonstrably
@@ -302,7 +364,7 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
 
     if (improvementResult.status === "READY") {
       notifyResumeReady(notifyCtx);
-      return { workflowId, candidateId, outcome: "READY", iterationNumber: improvementResult.iterationNumber };
+      return { workflowId, candidateId, outcome: "READY", iterationNumber: improvementResult.iterationNumber, timings };
     }
 
     if (improvementResult.status === "FAILED") {
@@ -311,7 +373,7 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
         remainingBlockers: improvementResult.review.blockingIssues.length,
         bestAttemptIteration: improvementResult.humanReviewPackage?.iterationNumber,
       });
-      return { workflowId, candidateId, outcome: "FAILED", iterationNumber: improvementResult.iterationNumber };
+      return { workflowId, candidateId, outcome: "FAILED", iterationNumber: improvementResult.iterationNumber, timings };
     }
 
     // IMPROVEMENT_RUNNING — quality gate failed, iterations remain. This is a real, valid resume
@@ -324,7 +386,7 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
       iteration: improvementResult.iterationNumber,
       blockingIssue: improvementResult.review.blockingIssues[0] ?? improvementResult.requiredCorrections[0]?.description ?? null,
     });
-    return { workflowId, candidateId, outcome: "IMPROVEMENT_RUNNING", iterationNumber: improvementResult.iterationNumber };
+    return { workflowId, candidateId, outcome: "IMPROVEMENT_RUNNING", iterationNumber: improvementResult.iterationNumber, timings };
   } catch (err) {
     if (err instanceof ResumeQualityOrchestrationError) {
       return { workflowId, candidateId, outcome: "ERROR", error: `${err.code}: ${err.message}` };
@@ -420,6 +482,49 @@ export interface RunWorkerPassOptions extends ProcessWorkflowOptions {
  *
  *  `attempted` counts what this pass actually processed; `pending` reports how many were waiting, so
  *  a bounded pass can never look like it covered everything when it did not. */
+/**
+ * Stage 28 — drives ONE workflow to a terminal state within a single pass, instead of leaving it for
+ * the next scheduled tick.
+ *
+ * This is the single biggest speed win in Stage 28, and it is a scheduling fix rather than a
+ * pipeline one. Measured on the real corpus: one content iteration costs ~3.5 minutes of Claude plus
+ * ~15 seconds of CareerOps work, but `processOneWorkflow` completed exactly one iteration and
+ * returned, so the next attempt waited for the next 30-minute tick. Workflow 7 therefore took
+ * 64.5 minutes wall-clock for 3 iterations of which roughly 43 minutes was pure queue wait, while
+ * the same pipeline driven by the 60-second-pause standalone worker finished 2 iterations in 9m15s.
+ *
+ * Continuing here removes that wait entirely without weakening any bound:
+ *   - the content-iteration budget is still the workflow's own max_iterations (Stage 28: 2), enforced
+ *     by createResumeQualityIteration, not by this loop;
+ *   - a technical/provider/operator-actionable outcome stops the loop immediately, so a subscription
+ *     limit or outage is never retried in a tight cycle;
+ *   - the machine-wide lease is held for the whole time, so no second writer can start;
+ *   - `iterationCap` is a hard structural backstop against ever looping unbounded.
+ */
+async function driveWorkflowToCompletion(
+  workflow: ResumeQualityWorkflowRow,
+  options: ProcessWorkflowOptions
+): Promise<PassOutcome[]> {
+  const outcomes: PassOutcome[] = [];
+  // Never more attempts than the workflow's own remaining content budget. Purely a backstop: the
+  // iteration layer refuses an out-of-budget iteration on its own.
+  const iterationCap = Math.max(1, workflow.max_iterations - workflow.current_iteration);
+
+  let current: ResumeQualityWorkflowRow | undefined = workflow;
+  for (let attempt = 0; attempt < iterationCap && current; attempt++) {
+    const outcome = await processOneWorkflow(current, options);
+    outcomes.push(outcome);
+    // Anything other than "the gate rejected a real resume and budget remains" ends this workflow's
+    // turn — terminal states, technical failures, and every operator-actionable condition alike.
+    if (outcome.outcome !== "IMPROVEMENT_RUNNING") break;
+    // Re-read: executeResumeImprovementIteration has advanced current_iteration, and the next
+    // iteration's prompt is built from that updated row.
+    current = getResumeQualityWorkflow(workflow.candidate_id, workflow.id);
+    if (!current || (current.status !== "CREATED" && current.status !== "IMPROVEMENT_RUNNING")) break;
+  }
+  return outcomes;
+}
+
 export async function runWorkerPass(
   options: RunWorkerPassOptions = {}
 ): Promise<{ attempted: number; pending: number; outcomes: PassOutcome[] }> {
@@ -427,7 +532,7 @@ export async function runWorkerPass(
   const batch = typeof options.maxWorkflows === "number" ? pending.slice(0, Math.max(0, options.maxWorkflows)) : pending;
   const outcomes: PassOutcome[] = [];
   for (const workflow of batch) {
-    outcomes.push(await processOneWorkflow(workflow, options));
+    outcomes.push(...(await driveWorkflowToCompletion(workflow, options)));
   }
   return { attempted: batch.length, pending: pending.length, outcomes };
 }

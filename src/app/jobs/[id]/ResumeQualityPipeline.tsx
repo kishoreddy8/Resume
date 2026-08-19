@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { presentDisposition } from "@/lib/resumeQuality/dispositionPresentation";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { StructuredResumeReview, RequiredCorrection } from "@/lib/resumeQuality/types";
 
@@ -137,12 +138,35 @@ interface QualityWorkflowResponse {
   /** Phase 9A publication outcome for a READY workflow, read from the record written beside the
    *  approved artifacts. "UNKNOWN" means the workflow was approved before this was recorded — it is
    *  never a stand-in for "published". */
+  /**
+   * Stage 28 — the verdict a human acts on for a finished workflow. Deliberately three distinct
+   * words: READY (the unchanged full quality contract), SAFE_BEST_ATTEMPT (every absolute
+   * truthfulness/safety guardrail passed, optimisation did not) and BLOCKED (a real safety blocker
+   * remains). A safe best attempt must never be shown as READY, and never as a plain failure.
+   */
+  finalDisposition: {
+    disposition: "READY" | "SAFE_BEST_ATTEMPT" | "BLOCKED";
+    selectedIterationNumber: number | null;
+    selectionReason: string | null;
+    safety: { safe: boolean; blockers: string[] };
+    optimizationScore: number | null;
+    optimizationFindings: string[];
+    humanMaySend: boolean;
+  } | null;
+  writerQueue: {
+    concurrency: number;
+    pendingApprovedWorkflows: number | null;
+    processingSince: string | null;
+    schedulerHost: string;
+  } | null;
   publication: {
     status: "PUBLISHED" | "FAILED" | "UNKNOWN";
     directory: string | null;
     recordedAt: string | null;
     error: string | null;
   } | null;
+  /** Stage 28 — where a SAFE_BEST_ATTEMPT package was written, when one was. */
+  safeAttemptPublication?: { directory: string; resume: string; coverLetter: string; reviewFeedback: string | null } | null;
 }
 
 /** Stage 26 — one short label per writer state, for the pipeline status chip. */
@@ -458,7 +482,21 @@ export function ResumeQualityPipeline({
     return null;
   }
 
-  const { workflow, authorization, applicationId, tailoringRun, iterations, bestAttempt, availableArtifacts, writer, iterationBudget, publication } = data;
+  const { workflow, authorization, applicationId, tailoringRun, iterations, bestAttempt, availableArtifacts, writer, iterationBudget, publication, finalDisposition } = data;
+
+  // Stage 28 — a terminal FAILED workflow is NOT automatically a failure to the user. When every
+  // absolute truthfulness guardrail passed, the safest attempt is a usable human-review package and
+  // must be presented as such; only a genuine safety blocker is "do not apply".
+  // The presentation rule itself lives in a pure, tested function (dispositionPresentation.ts) so
+  // "a safe best attempt never reads as FAILED, and never as READY" is provable, not just visual.
+  const presentation = presentDisposition({
+    workflowStatus: workflow?.status ?? "",
+    disposition: finalDisposition?.disposition ?? null,
+  });
+  const isSafeBestAttempt = presentation.tone === "REVIEW" && finalDisposition?.disposition === "SAFE_BEST_ATTEMPT";
+  const isBlockedUnsafe = workflow?.status === "FAILED" && !isSafeBestAttempt;
+  /** The attempt a human should actually download — never simply "the latest". */
+  const safeSelectedIteration = finalDisposition?.selectedIterationNumber ?? null;
 
   // Selected iteration data for historical view
   const activeIterNum = selectedIterationNumber ?? workflow?.current_iteration ?? 1;
@@ -488,6 +526,8 @@ export function ResumeQualityPipeline({
                 className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                   workflow.status === "READY"
                     ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                    : isSafeBestAttempt
+                    ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
                     : workflow.status === "FAILED"
                     ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
                     : workflow.status === "IMPROVEMENT_RUNNING" || workflow.status === "CREATED"
@@ -496,8 +536,11 @@ export function ResumeQualityPipeline({
                 }`}
               >
                 {/* Stage 26 — CREATED now means "approved, waiting for the writer's first draft", not
-                    "nothing has happened"; the raw enum name would read as the latter. */}
-                {workflow.status === "CREATED" ? "AWAITING WRITER" : workflow.status.replace(/_/g, " ")}
+                    "nothing has happened"; the raw enum name would read as the latter.
+                    Stage 28 — a terminal workflow whose safety checks all passed reads as SAFE BEST
+                    ATTEMPT, never as the bare FAILED enum: the documents are genuinely usable, and
+                    the underlying status stays FAILED only because the full gate was not met. */}
+                {presentation.label}
               </span>
             )}
           </div>
@@ -539,7 +582,9 @@ export function ResumeQualityPipeline({
               const isPast = currentStep > idx;
               const isCurrent = currentStep === idx;
               const isReady = workflow.status === "READY" && idx === 4;
-              const isFailed = workflow.status === "FAILED" && idx === 3;
+              // Stage 28 — a safe best attempt reached the end of the pipeline with usable output,
+              // so the final step is not painted as a failure.
+              const isFailed = presentation.renderAsFailedStep && idx === 3;
               return (
                 <div key={stepLabel} className="flex flex-col items-center gap-1.5">
                   <div
@@ -719,8 +764,134 @@ export function ResumeQualityPipeline({
         </div>
       )}
 
-      {/* 3. Human Review / FAILED Banner */}
-      {workflow?.status === "FAILED" && (
+      {/* Stage 28 — SAFE BEST ATTEMPT. A truthful package that did not clear the full optimisation
+             bar. Styled as review/warning, never as success and never as failure: showing this in red
+             "FAILED" styling was the Stage 28 gap, because the documents are genuinely usable. */}
+      {isSafeBestAttempt && finalDisposition && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/30 space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                SAFE BEST ATTEMPT — HUMAN REVIEW REQUIRED
+              </h3>
+              <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+                This package passed every truthfulness and safety check, but did not clear the full quality gate. It is
+                not an approved READY publication. Review it and decide for yourself — CareerOps never submits an
+                application.
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="text-[11px] text-amber-700 dark:text-amber-400">Selected attempt</div>
+              <div className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                Iteration {finalDisposition.selectedIterationNumber} of {workflow?.max_iterations}
+              </div>
+            </div>
+          </div>
+
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+            <div>
+              <dt className="text-amber-700 dark:text-amber-400">Safety / truthfulness</dt>
+              <dd className="font-semibold text-emerald-700 dark:text-emerald-400">
+                {finalDisposition.safety.safe ? "PASS" : "FAIL"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-amber-700 dark:text-amber-400">Optimization</dt>
+              <dd className="font-semibold text-amber-900 dark:text-amber-200">
+                {finalDisposition.optimizationScore ?? "—"}
+                <span className="ml-1 font-normal text-[11px] text-amber-700 dark:text-amber-400">(not a pass threshold)</span>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-amber-700 dark:text-amber-400">Blocking issues</dt>
+              <dd className="font-semibold text-amber-900 dark:text-amber-200">{finalDisposition.safety.blockers.length}</dd>
+            </div>
+            <div>
+              <dt className="text-amber-700 dark:text-amber-400">Human application</dt>
+              <dd className="font-semibold text-amber-900 dark:text-amber-200">
+                {finalDisposition.humanMaySend ? "Allowed after review" : "Not allowed"}
+              </dd>
+            </div>
+          </dl>
+
+          {/* The remaining findings, stated plainly and never hidden — but labelled for what they
+                 are, so a presentation nit is not mistaken for a truthfulness problem. */}
+          {finalDisposition.optimizationFindings.length > 0 && (
+            <div className="rounded border border-amber-300/70 bg-white/70 p-3 dark:border-amber-800/50 dark:bg-amber-950/20">
+              <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                Remaining optimization / presentation findings — none of these is a truthfulness blocker
+              </p>
+              <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-xs text-amber-800 dark:text-amber-300">
+                {finalDisposition.optimizationFindings.map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Downloads resolve to the SELECTED attempt explicitly, never "the latest iteration". */}
+          {safeSelectedIteration !== null && (
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/resume?iteration=${safeSelectedIteration}`}
+                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-100"
+              >
+                Download Resume (iteration {safeSelectedIteration})
+              </a>
+              <a
+                href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/coverLetter?iteration=${safeSelectedIteration}`}
+                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-100"
+              >
+                Download Cover Letter (iteration {safeSelectedIteration})
+              </a>
+              <a
+                href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/feedback?iteration=${safeSelectedIteration}`}
+                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-100"
+              >
+                Review Feedback
+              </a>
+            </div>
+          )}
+
+          {data.safeAttemptPublication?.directory && (
+            <p className="text-[11px] text-amber-800 dark:text-amber-300">
+              Human-review package published to:{" "}
+              <code className="rounded bg-amber-100 px-1 py-0.5 font-mono dark:bg-amber-900/40">
+                {data.safeAttemptPublication.directory}
+              </code>
+            </p>
+          )}
+
+          {finalDisposition.selectionReason && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">Why this attempt: {finalDisposition.selectionReason}</p>
+          )}
+        </div>
+      )}
+
+      {/* Stage 28 — BLOCKED. A real safety/truthfulness blocker remains, so the package must not be
+             sent at all. This is the only case that keeps the hard red "do not apply" styling. */}
+      {isBlockedUnsafe && finalDisposition && (
+        <div className="rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950/40 space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-red-900 dark:text-red-200">BLOCKED / UNSAFE — DO NOT APPLY</h3>
+            <p className="mt-1 text-xs text-red-800 dark:text-red-300">
+              This package has {finalDisposition.safety.blockers.length} unresolved truthfulness/safety blocker
+              {finalDisposition.safety.blockers.length === 1 ? "" : "s"}. It must not be sent, and no application
+              download is offered for it.
+            </p>
+          </div>
+          <ul className="list-disc space-y-0.5 pl-4 text-xs text-red-800 dark:text-red-300">
+            {finalDisposition.safety.blockers.slice(0, 10).map((b, i) => (
+              <li key={i}>{b}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 3. Human Review / FAILED Banner — the legacy detail panel. Retained for the diagnostic
+             best-attempt scores, but no longer the thing that decides how the outcome READS: a safe
+             best attempt is headlined by the amber panel above. */}
+      {workflow?.status === "FAILED" && !isSafeBestAttempt && (
         <div className="rounded-lg border border-red-200 bg-red-50/80 p-4 dark:border-red-900/60 dark:bg-red-950/30 space-y-3">
           <div>
             <h3 className="text-sm font-semibold text-red-900 dark:text-red-200">Human Review Required</h3>

@@ -482,7 +482,7 @@ test("S26-01 approving a job creates a CREATED workflow with zero iterations and
   const wf = body.workflow as { status: string; current_iteration: number; max_iterations: number };
   assert.equal(wf.status, "CREATED");
   assert.equal(wf.current_iteration, 0, "no iteration is consumed at approval time");
-  assert.equal(wf.max_iterations, 3);
+  assert.equal(wf.max_iterations, 2, "Stage 28: two genuine content attempts");
   assert.equal(listResumeQualityIterations(candidateAliceId, (body.workflow as { id: number }).id).length, 0);
 });
 
@@ -524,14 +524,17 @@ test("S26-02 no placeholder contact details or fabricated bullets exist anywhere
   assert.equal(listResumeQualityIterations(candidateAliceId, wf.id).length, 0);
 });
 
-test("S26-03 all three quality iterations remain available as genuine writer attempts", async () => {
+test("S26-03 every quality iteration remains available as a genuine writer attempt", async () => {
   const job = jobs[0];
   const wf = getLatestResumeQualityWorkflowForJob(candidateAliceId, job.dedupe_key)!;
   const { body } = await getViaRoute(candidateAliceId, job.id);
   const budget = body.iterationBudget as unknown as { max: number; writerAttemptsUsed: number; writerAttemptsRemaining: number; targetIteration: number };
   assert.equal(budget.max, wf.max_iterations);
   assert.equal(budget.writerAttemptsUsed, 0);
-  assert.equal(budget.writerAttemptsRemaining, 3, "before Stage 26 iteration 1 was spent on a synthesized resume, leaving 2");
+  // Stage 26's point stands unchanged: iteration 1 is a genuine writer attempt, not a synthesized
+  // baseline. Stage 28 lowered the budget itself from 3 to 2, so the assertion tracks the workflow's
+  // own max rather than a hardcoded number.
+  assert.equal(budget.writerAttemptsRemaining, wf.max_iterations, "every attempt in the budget is a real writer attempt");
   assert.equal(budget.targetIteration, 1, "the writer produces iteration 1 itself");
 });
 

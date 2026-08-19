@@ -71,9 +71,11 @@ test("iteration == maxIterations and the gate still fails -> NEEDS_HUMAN_REVIEW"
   assert.equal(evaluateQualityGate(review, 3, 3), "NEEDS_HUMAN_REVIEW");
 });
 
-test("maxIterations defaults to 3 in practice (documented contract, exercised via DEFAULT_MAX_ITERATIONS)", async () => {
+test("maxIterations defaults to the Stage 28 two-attempt budget (documented contract, exercised via DEFAULT_MAX_ITERATIONS)", async () => {
   const { DEFAULT_MAX_ITERATIONS } = await import("../types");
-  assert.equal(DEFAULT_MAX_ITERATIONS, 3);
+  // Stage 28: two genuine content attempts, then the safest of them goes to a human. A third Claude
+  // generation costs ~4 more minutes and did not reliably convert on the real corpus.
+  assert.equal(DEFAULT_MAX_ITERATIONS, 2);
 });
 
 test("READY is possible on iteration 1 — the gate never forces unnecessary improvement cycles when quality is already perfect", () => {

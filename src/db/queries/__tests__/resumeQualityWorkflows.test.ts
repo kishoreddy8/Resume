@@ -224,11 +224,13 @@ test("application identity is stable across repeated lookups (same candidate+job
   assert.equal(idFirst, idSecond);
 });
 
-test("maxIterations defaults to 3 when not specified", () => {
+test("maxIterations defaults to the Stage 28 two-attempt budget when not specified", () => {
   const { run, applicationId } = startRealRun(candidateAId, jobOne);
   const workflow = createResumeQualityWorkflow({ candidateId: candidateAId, applicationId, tailoringRunId: run.id, dedupeKey: run.dedupe_key });
   assert.equal(workflow.max_iterations, DEFAULT_MAX_ITERATIONS);
-  assert.equal(workflow.max_iterations, 3);
+  // Stage 28 lowered this from 3 to 2: a third Claude content generation costs ~4 more minutes and
+  // did not reliably convert on the real corpus. Technical failures still consume none of it.
+  assert.equal(workflow.max_iterations, 2);
 });
 
 test("createResumeQualityWorkflow starts a workflow in status CREATED with current_iteration 0", () => {

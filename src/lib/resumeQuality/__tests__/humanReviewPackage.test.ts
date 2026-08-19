@@ -1,3 +1,9 @@
+/*
+ * Stage 28 note: these cases build multi-iteration histories to exercise best-attempt SELECTION,
+ * which must be correct at any budget. The production default dropped from 3 to 2, so each
+ * workflow here pins maxIterations: 3 explicitly rather than depending on the shipped default
+ * (asserted separately in stage28FastPipeline S28-01).
+ */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -248,7 +254,7 @@ function seedIteration(
 
 test("1. package generated with the SAME winner bestAttemptSelection would choose (single selection authority)", async () => {
   const { runId, applicationId } = await authorizeJob(candidateId, jobOne);
-  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key });
+  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const location = { candidateId, dedupeKey: jobOne.dedupe_key, runId, workflowId: wf.id };
 
   const iter1 = review({ overallScore: 74, atsScore: 25, checks: { deepRewrite: "FAIL" } });
@@ -287,7 +293,7 @@ test("1. package generated with the SAME winner bestAttemptSelection would choos
 
 test("2. resume, cover letter, and review all correspond to the SAME selected iteration", async () => {
   const { runId, applicationId } = await authorizeJob(candidateId, jobOne);
-  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key });
+  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const location = { candidateId, dedupeKey: jobOne.dedupe_key, runId, workflowId: wf.id };
 
   seedIteration(candidateId, wf.id, location, 1, review({ overallScore: 50, checks: { bulletWriting: "FAIL" } }));
@@ -310,7 +316,7 @@ test("2. resume, cover letter, and review all correspond to the SAME selected it
 
 test("3. best_attempt.json is always approved: false, and it is not caller-controlled", async () => {
   const { runId, applicationId } = await authorizeJob(candidateId, jobOne);
-  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key });
+  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const location = { candidateId, dedupeKey: jobOne.dedupe_key, runId, workflowId: wf.id };
   seedIteration(candidateId, wf.id, location, 1, review({}));
 
@@ -331,7 +337,7 @@ test("3. best_attempt.json is always approved: false, and it is not caller-contr
 
 test("4. nothing is ever written into the READY final/ directory by this module", async () => {
   const { runId, applicationId } = await authorizeJob(candidateId, jobOne);
-  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key });
+  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const location = { candidateId, dedupeKey: jobOne.dedupe_key, runId, workflowId: wf.id };
   seedIteration(candidateId, wf.id, location, 1, review({}));
 
@@ -343,12 +349,12 @@ test("4. nothing is ever written into the READY final/ directory by this module"
 test("5. candidate isolation: candidate B's package generation never touches candidate A's directory", async () => {
   const jobForB = getJobByDedupeKey(jobOne.dedupe_key)!;
   const { runId: runIdA, applicationId: appA } = await authorizeJob(candidateId, jobOne);
-  const wfA = createResumeQualityWorkflow({ candidateId, applicationId: appA, tailoringRunId: runIdA, dedupeKey: jobOne.dedupe_key });
+  const wfA = createResumeQualityWorkflow({ candidateId, applicationId: appA, tailoringRunId: runIdA, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const locationA = { candidateId, dedupeKey: jobOne.dedupe_key, runId: runIdA, workflowId: wfA.id };
   seedIteration(candidateId, wfA.id, locationA, 1, review({}));
 
   const { runId: runIdB, applicationId: appB } = await authorizeJob(candidateBId, { id: jobForB.id, dedupe_key: jobForB.dedupe_key });
-  const wfB = createResumeQualityWorkflow({ candidateId: candidateBId, applicationId: appB, tailoringRunId: runIdB, dedupeKey: jobOne.dedupe_key });
+  const wfB = createResumeQualityWorkflow({ candidateId: candidateBId, applicationId: appB, tailoringRunId: runIdB, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const locationB = { candidateId: candidateBId, dedupeKey: jobOne.dedupe_key, runId: runIdB, workflowId: wfB.id };
   seedIteration(candidateBId, wfB.id, locationB, 1, review({}));
 
@@ -363,7 +369,7 @@ test("5. candidate isolation: candidate B's package generation never touches can
 
 test("6. no orphaned .tmp directory remains after a successful generation (atomic rename)", async () => {
   const { runId, applicationId } = await authorizeJob(candidateId, jobOne);
-  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key });
+  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const location = { candidateId, dedupeKey: jobOne.dedupe_key, runId, workflowId: wf.id };
   seedIteration(candidateId, wf.id, location, 1, review({}));
 
@@ -379,7 +385,7 @@ test("6. no orphaned .tmp directory remains after a successful generation (atomi
 
 test("7. re-running generation for the same workflow overwrites cleanly (no duplicate/partial artifacts)", async () => {
   const { runId, applicationId } = await authorizeJob(candidateId, jobOne);
-  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key });
+  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const location = { candidateId, dedupeKey: jobOne.dedupe_key, runId, workflowId: wf.id };
   seedIteration(candidateId, wf.id, location, 1, review({ overallScore: 60 }));
 
@@ -394,7 +400,7 @@ test("7. re-running generation for the same workflow overwrites cleanly (no dupl
 
 test("8. returns null (writes nothing) for a workflow with zero iterations", async () => {
   const { runId, applicationId } = await authorizeJob(candidateId, jobOne);
-  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key });
+  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const location = { candidateId, dedupeKey: jobOne.dedupe_key, runId, workflowId: wf.id };
 
   const pkg = generateHumanReviewPackage(candidateId, wf.id);
@@ -404,7 +410,7 @@ test("8. returns null (writes nothing) for a workflow with zero iterations", asy
 
 test("9. missing cover letter for an iteration is omitted, not an error", async () => {
   const { runId, applicationId } = await authorizeJob(candidateId, jobOne);
-  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key });
+  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const location = { candidateId, dedupeKey: jobOne.dedupe_key, runId, workflowId: wf.id };
   seedIteration(candidateId, wf.id, location, 1, review({}), { withCoverLetter: false });
 
@@ -418,7 +424,7 @@ test("9. missing cover letter for an iteration is omitted, not an error", async 
 
 test("10. instruction_snapshot.md and workflow_status.json are present and reflect FAILED/HUMAN_REVIEW", async () => {
   const { runId, applicationId } = await authorizeJob(candidateId, jobOne);
-  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key });
+  const wf = createResumeQualityWorkflow({ candidateId, applicationId, tailoringRunId: runId, dedupeKey: jobOne.dedupe_key, maxIterations: 3 });
   const location = { candidateId, dedupeKey: jobOne.dedupe_key, runId, workflowId: wf.id };
   seedIteration(candidateId, wf.id, location, 1, review({}));
 

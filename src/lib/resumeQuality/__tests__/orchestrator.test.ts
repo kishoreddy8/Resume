@@ -355,6 +355,10 @@ test("1. Existing workflow can execute deterministic review", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const result = await executeResumeQualityIteration({
@@ -377,6 +381,10 @@ test("2. Correct candidate isolation (cannot execute review for candidate A with
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   await assert.rejects(
@@ -480,12 +488,20 @@ test("6. Correct workflow isolation (separate workflows maintain independent his
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
   const wf2 = createResumeQualityWorkflow({
     candidateId: candidateAliceId,
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res1 = await executeResumeQualityIteration({
@@ -510,6 +526,10 @@ test("7. CREATED progresses through expected review lifecycle", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
   assert.equal(wf.status, "CREATED");
 
@@ -543,6 +563,10 @@ test("8. Deterministic reviewer is actually invoked", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -563,6 +587,10 @@ test("9. Structured review is persisted in database", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -587,6 +615,10 @@ test("10. review.json is written to disk in iteration directory", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -609,6 +641,10 @@ test("11. review_feedback.md is written to disk in iteration directory", async (
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -633,6 +669,10 @@ test("12. Markdown renderer output matches the structured review", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -655,6 +695,10 @@ test("13. Iteration 1 is immutable", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -686,6 +730,10 @@ test("14. Iteration 2 does not overwrite iteration 1", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res1 = await executeResumeQualityIteration({
@@ -729,6 +777,10 @@ test("15. Sequential iteration enforcement remains intact", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   assert.throws(
@@ -756,6 +808,10 @@ test("16. READY gate transitions workflow to READY", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -777,6 +833,10 @@ test("17. READY creates final artifacts in final/ directory", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   // Real, validator-parseable DOCX files to pass in — validate-docx.ts now runs against every
@@ -819,6 +879,10 @@ test("19. Candidate name is not hardcoded (derived from candidate's first_name)"
     applicationId: appBobJobOneId,
     tailoringRunId: runBobJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const fakeResumeDocx = path.join(tmpDbDir, "bob_temp_resume.docx");
@@ -846,6 +910,10 @@ test("20. Failed quality gate does not create final approved artifacts", async (
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -875,6 +943,10 @@ test("21. Failed quality gate transitions to improvement state (IMPROVEMENT_RUNN
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -896,6 +968,10 @@ test("22. Second failed iteration remains isolated", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res1 = await executeResumeQualityIteration({
@@ -1004,6 +1080,10 @@ test("25. Truthfulness <100 cannot become READY", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const resumeTitleMismatch: ResumeContent = {
@@ -1038,6 +1118,10 @@ test("26. Architecture consistency <100 cannot become READY", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const resumeContradiction: ResumeContent = {
@@ -1070,6 +1154,10 @@ test("27. Blocking issue cannot become READY", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -1116,6 +1204,10 @@ test("28. overallScore <95 cannot become READY", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -1135,6 +1227,10 @@ test("29. Duplicate execution cannot overwrite an existing iteration", async () 
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -1174,6 +1270,10 @@ test("30. Reviewer failure never marks workflow READY (marks FAILED)", async () 
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   await assert.rejects(
@@ -1202,6 +1302,10 @@ test("31. Artifact-write failure never marks workflow READY", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   // Pass an invalid/unreadable path to simulate error during artifact copying
@@ -1228,6 +1332,10 @@ test("32. Previous successful iteration artifacts survive later failure", async 
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   // Iteration 1 succeeds in improvement needed
@@ -1276,6 +1384,10 @@ test("33. No absolute filesystem paths are persisted where relative metadata is 
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -1301,6 +1413,10 @@ test("34. Raw dedupe_key never appears in artifact path", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   const res = await executeResumeQualityIteration({
@@ -1327,6 +1443,10 @@ test("36. No network access is required", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+      // Stage 28 lowered the production default to 2 content attempts. These cases exercise the
+    // iteration machinery, which must behave correctly at any budget, so the budget is pinned
+    // explicitly here; the shipped default is asserted separately (stage28FastPipeline S28-01).
+    maxIterations: 3,
   });
 
   // Entire run executes in-process synchronously with zero network

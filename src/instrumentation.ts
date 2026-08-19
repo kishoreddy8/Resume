@@ -44,6 +44,18 @@ export async function register() {
   if (schedulerTimerStarted) return;
   schedulerTimerStarted = true;
 
+  // Stage 28 — the web process only hosts the scheduler when it is configured to. Default is
+  // unchanged ("web"), so an existing install behaves exactly as before and `npm run dev` alone still
+  // runs everything. With CAREER_OPS_SCHEDULER_HOST=worker the timers below are never armed here and
+  // `npm run background-worker` owns them instead, which is what stops a long ingestion or evaluation
+  // pass from blocking this process's event loop (Stage 27 measured 99.6% CPU and HTTP 000 for ~30
+  // minutes). Exactly one host is possible because both processes read this same single value.
+  const { describeSchedulerHost, webProcessOwnsScheduler } = await import("@/lib/scheduler/host");
+  if (!webProcessOwnsScheduler()) {
+    console.log(`[scheduler] ${describeSchedulerHost()}`);
+    return;
+  }
+
   const { runSchedulerTick } = await import("@/lib/scheduler/tick");
   const { runProductionCycleTick } = await import("@/lib/production/tick");
   const { runJobEvaluationTick } = await import("@/lib/match/tick");

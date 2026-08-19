@@ -12,7 +12,9 @@ import { recommendedPositioningSummary } from "../positioningEngine";
 import { recommendedSkillOrder } from "../skillRanking";
 import { buildWorkspacePackage } from "../workspacePackage";
 import { getIterationDirectory, getHandoffDirectory, type QualityWorkflowLocation } from "../workspace";
+import { buildEmployerEvidenceMap, renderEmployerEvidenceSection } from "../employerEvidence";
 import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orchestrator";
+import { renderRepairPlanSection } from "../repairScope";
 import type {
   ExternalHandoffExportResult,
   RequiredCorrection,
@@ -53,6 +55,11 @@ export function buildExternalWriterPrompt(input: {
   complianceCorrections?: RequiredCorrection[];
   /** Stage 26B — verified real contact details, stated to the writer as immutable facts. */
   candidateContact?: ResumeWriterInput["candidateContact"];
+  /** Stage 28 — per-employer supported/not-evidenced technologies, so cross-employer attribution is
+   *  prevented BEFORE writing rather than caught afterwards. See employerEvidence.ts. */
+  employerEvidenceSection?: string;
+  /** Stage 28 — the targeted-repair brief for a correction attempt. Absent on iteration 1. */
+  repairPlanSection?: string;
   /** Stage 21 (Evidence-Grounded Resume Quality V2) — the computed JD Priority Matrix/positioning/
    *  skill-order/ATS-coverage data the writer should actually USE, not just prose guidance about it.
    *  All optional: absent only when neither jobRequirements nor a target role title were available
@@ -147,7 +154,7 @@ Where each value goes:
 - **LinkedIn** — resume only, and only when given above. The cover letter header does not carry it.
   Omitting it from the cover letter is correct and is not an inconsistency between the documents.
 
-## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
+${input.repairPlanSection ?? ""}${input.employerEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
 1. **Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
    - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
@@ -480,6 +487,16 @@ export function exportExternalWriterPackage(
         blockingFailures: writerInput.blockingFailures ?? [],
         complianceCorrections: writerInput.complianceCorrections ?? [],
         candidateContact: writerInput.candidateContact,
+        // Structured, auditable record of what Stage 28 decided. The human-readable renderings of
+        // both live in writer_prompt.md; duplicating that prose here would double the package size.
+        employerEvidenceEmployers: writerInput.masterProfile
+          ? buildEmployerEvidenceMap(writerInput.masterProfile).employers.map((e) => ({
+              employer: e.employer,
+              supportedCount: e.supported.length,
+              prohibitedCount: e.notEvidencedHere.length,
+            }))
+          : undefined,
+        repairPlan: writerInput.repairPlan,
         currentResume: writerInput.currentResume,
         currentCoverLetter: writerInput.currentCoverLetter,
         latestReview: writerInput.latestReview,
@@ -522,6 +539,10 @@ export function exportExternalWriterPackage(
     blockingFailures: writerInput.blockingFailures,
     complianceCorrections: writerInput.complianceCorrections,
     candidateContact: writerInput.candidateContact,
+    employerEvidenceSection: writerInput.masterProfile
+      ? renderEmployerEvidenceSection(buildEmployerEvidenceMap(writerInput.masterProfile))
+      : undefined,
+    repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
     jdPriorityMatrix: exportJdPriorityMatrix,
     positioningRecommendation: exportPositioningRecommendation,
     recommendedSkillOrder: exportSkillOrder,

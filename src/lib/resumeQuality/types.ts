@@ -53,8 +53,20 @@ export const WORKFLOW_STATUSES: readonly WorkflowStatus[] = [
 
 /** A workflow that hasn't met the quality gate after DEFAULT_MAX_ITERATIONS lands in FAILED with a
  *  failure_reason explaining it needs human review — there is no separate terminal status for that
- *  case; the 8 statuses above are the complete, deliberately-fixed set (see the Stage 7 spec). */
-export const DEFAULT_MAX_ITERATIONS = 3;
+ *  case; the 8 statuses above are the complete, deliberately-fixed set (see the Stage 7 spec).
+ *
+ *  Stage 28 — lowered from 3 to 2. Measured on the real corpus, one Claude content generation costs
+ *  3m15s-4m28s while ALL of CareerOps' own work around it (import, the full deterministic Stage 21
+ *  review, both DOCX renders, publication) costs 11-17s. A third generation therefore buys another
+ *  ~4 minutes of waiting for the marginal case, and the real-corpus evidence is that it does not
+ *  reliably convert: workflow 7's third attempt fixed three compliance checks and simultaneously
+ *  regressed from 1 to 5 employer-attribution failures. Two genuine attempts, followed by the safest
+ *  of them going to a human, is the better trade for daily application volume.
+ *
+ *  This is a budget for CONTENT attempts only. Technical/provider failures never consume one (see
+ *  writerWorkerCore's classified outcomes), so an exhausted subscription or a provider outage still
+ *  costs zero iterations, exactly as before. */
+export const DEFAULT_MAX_ITERATIONS = 2;
 
 // --- Structured review contract (Section 6) --------------------------------------------------------
 
@@ -418,6 +430,10 @@ export interface ResumeWriterInput {
    *  stopped before any writer attempt (CANDIDATE_CONTACT_REQUIRED), so the writer is never asked to
    *  produce a resume it cannot legitimately fill a header for. */
   candidateContact?: { name: string; email: string; phone: string; location: string; linkedin?: string };
+  /** Stage 28 — the deterministic targeted-repair plan for a correction attempt, derived from the
+   *  PRIOR review by CareerOps (see repairScope.ts). Absent on iteration 1, which writes from
+   *  scratch. Narrows what the writer REWRITES; never narrows what CareerOps reviews afterwards. */
+  repairPlan?: import("./repairScope").RepairPlan;
   dedupeKey?: string;
   iterationNumber?: number;
   masterProfile?: CandidateProfile;

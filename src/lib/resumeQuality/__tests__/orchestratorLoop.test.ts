@@ -382,6 +382,12 @@ test("1. iteration-1 READY terminates without writer call", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   const res = await runResumeQualityLoop({
@@ -409,6 +415,12 @@ test("2. iteration-1 fail invokes writer once", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   const countingWriter: ResumeWriterAgent = {
@@ -438,6 +450,12 @@ test("3. writer produces iteration 2", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   // Execute iteration 1
@@ -467,6 +485,12 @@ test("4. iteration 2 is reviewed", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -496,6 +520,12 @@ test("5. iteration-2 READY terminates", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   const res = await runResumeQualityLoop({
@@ -531,6 +561,12 @@ test("6. iteration-2 fail invokes writer again", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   const res = await runResumeQualityLoop({
@@ -566,6 +602,9 @@ test("7. iteration 3 created", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: multiStepWriter,
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert.equal(res.finalIteration, 3);
@@ -592,6 +631,9 @@ test("8. iteration-3 READY terminates", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: multiStepWriter,
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert.equal(res.workflowStatus, "READY");
@@ -615,6 +657,9 @@ test("9. iteration-3 failure results in human-review outcome", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: persistentFailureWriter,
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert.equal(res.workflowStatus, "FAILED");
@@ -639,6 +684,9 @@ test("10. iteration 4 never created", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: persistentFailureWriter,
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   const iters = listResumeQualityIterations(candidateAliceId, res.workflowId);
@@ -695,6 +743,12 @@ test("12. iteration 1 artifacts unchanged after iteration 2", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -746,6 +800,9 @@ test("13. iteration 2 artifacts unchanged after iteration 3", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: multiStepWriter,
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   const loc: QualityWorkflowLocation = {
@@ -774,6 +831,9 @@ test("14. structured resume JSON persisted per iteration", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: new LocalImprovementWriter(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   const loc: QualityWorkflowLocation = {
@@ -806,6 +866,9 @@ test("15. structured cover-letter JSON persisted per iteration", async () => {
     initialCoverLetter: COVER_LETTER,
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   const loc: QualityWorkflowLocation = {
@@ -829,6 +892,9 @@ test("16. review JSON persisted per iteration", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: new LocalImprovementWriter(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   const loc: QualityWorkflowLocation = {
@@ -852,6 +918,9 @@ test("17. review feedback persisted per iteration", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: new LocalImprovementWriter(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   const loc: QualityWorkflowLocation = {
@@ -883,6 +952,9 @@ test("18. writer receives latest review feedback", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: inspectWriter,
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert(capturedFeedbackPath.endsWith("review_feedback.md"));
@@ -907,6 +979,9 @@ test("19. writer receives required corrections", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: inspectWriter,
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert(capturedCorrectionsCount > 0);
@@ -930,6 +1005,9 @@ test("20. writer receives authoritative JD context", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: inspectWriter,
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert(capturedJdPath.includes("job_description.md"));
@@ -953,6 +1031,9 @@ test("21. writer receives Master Resume/profile evidence", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: inspectWriter,
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert(capturedProfile);
@@ -977,6 +1058,9 @@ test("22. writer receives selected track", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: inspectWriter,
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert.equal(receivedWorkflowId, res.workflowId);
@@ -988,6 +1072,12 @@ test("23. candidate isolation", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -1096,6 +1186,9 @@ test("27. workflow isolation", async () => {
     initialResume: PERFECT_RESUME,
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   const res2 = await startAndRunResumeQualityLoop({
@@ -1107,6 +1200,9 @@ test("27. workflow isolation", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: new LocalImprovementWriter(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert.equal(res1.finalIteration, 1);
@@ -1124,6 +1220,12 @@ test("28. writer failure fails safely", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -1163,6 +1265,12 @@ test("29. reviewer failure fails safely", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -1196,6 +1304,12 @@ test("30. artifact failure fails safely", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -1225,6 +1339,12 @@ test("31. prior iterations survive writer failure", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -1260,6 +1380,12 @@ test("32. prior iterations survive reviewer failure", async () => {
     applicationId: appAliceJobOneId,
     tailoringRunId: runAliceJobOneId,
     dedupeKey: jobOne.dedupe_key,
+    // Stage 28 lowered the PRODUCTION default to 2 content attempts. These cases exercise the
+    // iteration LOOP itself — that iteration N+1 is created from N's feedback, that the budget is
+    // respected exactly, and that iteration max+1 is never created — which must hold for any budget.
+    // Pinning 3 here keeps that coverage intact and independent of the shipped default, which is
+    // asserted separately (stage28FastPipeline S28-01, resumeQualityWorkflows defaults test).
+    maxIterations: 3,
   });
 
   await executeResumeQualityIteration({
@@ -1305,6 +1431,9 @@ test("33. READY final artifacts come from correct iteration", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: new LocalImprovementWriter(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert.equal(res.workflowStatus, "READY");
@@ -1332,6 +1461,9 @@ test("34. candidate name is not hardcoded", async () => {
     initialResume: PERFECT_RESUME,
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   assert.equal(res.workflowStatus, "READY");
@@ -1348,6 +1480,9 @@ test("35. no absolute paths persisted", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: new LocalImprovementWriter(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   for (let i = 1; i <= res.finalIteration; i++) {
@@ -1369,6 +1504,9 @@ test("36. no raw dedupe_key exposed", async () => {
     initialResume: PERFECT_RESUME,
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   const loc: QualityWorkflowLocation = {
@@ -1439,6 +1577,9 @@ test("39. no mutation to job_match_results", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: new LocalImprovementWriter(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   const afterCount = db.prepare("SELECT count(*) as cnt FROM job_match_results").get() as { cnt: number };
@@ -1458,6 +1599,9 @@ test("40. no mutation to production tailoring run history", async () => {
     jobRequirements: STRONG_REQUIREMENTS,
     masterResumeProfile: masterProfile(),
     writer: new LocalImprovementWriter(),
+      // Stage 28 lowered the production default to 2. These cases exercise the iteration LOOP
+    // itself, which must hold for any budget, so the budget is pinned explicitly here.
+    maxIterations: 3,
   });
 
   const afterRuns = db.prepare("SELECT count(*) as cnt FROM tailoring_runs").get() as { cnt: number };

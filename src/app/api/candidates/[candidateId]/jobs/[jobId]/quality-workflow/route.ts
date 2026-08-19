@@ -20,6 +20,10 @@ import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
 import { evaluateApplicationReadiness, type ApplicationReadinessResult } from "@/lib/resumeQuality/applicationReadiness";
 import { startTailoringRun, type TailoringRunAuthorizationError } from "@/lib/tailoringExecution";
 import { selectBestResumeQualityAttempt, type ResumeQualityAttemptSummary } from "@/lib/resumeQuality/bestAttemptSelection";
+import { determineFinalDisposition, type FinalDispositionResult } from "@/lib/resumeQuality/finalDisposition";
+import { describeSchedulerHost } from "@/lib/scheduler/host";
+import { resolveSafeAttemptTarget } from "@/lib/resumeQuality/safeAttemptPublication";
+import { getCompany } from "@/db/queries/companies";
 import {
   finalCoverLetterFilename,
   finalResumeFilename,
@@ -98,6 +102,17 @@ export async function GET(
 
   /** Stage 25 — the single canonical "can a human send this?" verdict (applicationReadiness.ts). */
   let applicationReadiness: ApplicationReadinessResult | null = null;
+
+  /**
+   * Stage 28 — the final verdict a human acts on for a FINISHED workflow: READY (every gate passed),
+   * SAFE_BEST_ATTEMPT (every absolute truthfulness guardrail passed, optimisation did not), or
+   * BLOCKED. Computed from the whole iteration history, never from the latest attempt alone, and it
+   * can never manufacture READY — evaluateQualityGate remains the only authority on that.
+   */
+  let finalDisposition: FinalDispositionResult | null = null;
+
+  /** Stage 28 — where the SAFE_BEST_ATTEMPT package was written, read from disk rather than assumed. */
+  let safeAttemptPublication: { directory: string; resume: string; coverLetter: string; reviewFeedback: string | null } | null = null;
 
   let bestAttempt: {
     iterationNumber: number;
@@ -259,6 +274,41 @@ export async function GET(
         };
       }
 
+      // Stage 28 — the verdict the UI actually renders. A terminal FAILED workflow is NOT
+      // automatically "unusable": it is SAFE_BEST_ATTEMPT when every absolute truthfulness guardrail
+      // holds and only optimisation fell short, and BLOCKED when it does not. The word is different
+      // from READY on purpose, and nothing here can produce READY for a workflow the gate refused.
+      finalDisposition = determineFinalDisposition(attempts);
+
+      // Surface the human-review publication only when it genuinely exists on disk — a path the UI
+      // shows must be one the user can actually open.
+      if (finalDisposition.disposition === "SAFE_BEST_ATTEMPT" && candidate) {
+        try {
+          const company = getCompany(job.company_id);
+          if (company) {
+            const target = resolveSafeAttemptTarget({
+              companyId: company.id,
+              companyName: company.name,
+              jobId: job.id,
+              jobTitle: job.title,
+            });
+            const resumeName = finalResumeFilename(candidate.first_name);
+            const coverName = finalCoverLetterFilename(candidate.first_name);
+            if (fs.existsSync(path.join(target.safeAttemptDirectory, resumeName))) {
+              const feedback = path.join(target.safeAttemptDirectory, "resume_review_feedback.md");
+              safeAttemptPublication = {
+                directory: path.relative(process.cwd(), target.safeAttemptDirectory),
+                resume: resumeName,
+                coverLetter: coverName,
+                reviewFeedback: fs.existsSync(feedback) ? "resume_review_feedback.md" : null,
+              };
+            }
+          }
+        } catch {
+          // A missing or unreadable publication degrades to "no path shown", never to a wrong path.
+        }
+      }
+
       const humanReviewDir = getHumanReviewDirectory(location);
       if (candidate) {
         availableArtifacts.hasHumanReviewResume = fs.existsSync(path.join(humanReviewDir, `${candidate.first_name}_Resume_HumanReview.docx`));
@@ -360,6 +410,19 @@ export async function GET(
     writer,
     iterationBudget,
     publication,
+    // Stage 28 — READY / SAFE_BEST_ATTEMPT / BLOCKED, plus the safety verdict, the optimisation
+    // score, and the non-critical findings a human should skim. Null while a workflow is still
+    // running: a disposition is only meaningful once there is a completed attempt to judge.
+    finalDisposition,
+    safeAttemptPublication,
+    // Stage 28 — the writer queue, stated plainly. Concurrency is 1 by construction (the
+    // machine-wide writer lease), and this makes that observable rather than implied.
+    writerQueue: {
+      concurrency: 1,
+      pendingApprovedWorkflows: writer?.pendingWorkflowCount ?? null,
+      processingSince: writer?.processingSince ?? null,
+      schedulerHost: describeSchedulerHost(),
+    },
   });
 }
 

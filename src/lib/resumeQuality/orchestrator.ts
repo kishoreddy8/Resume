@@ -10,6 +10,7 @@ import {
   createResumeQualityWorkflow,
   getResumeQualityIteration,
   getResumeQualityWorkflow,
+  listResumeQualityIterations,
   IterationAlreadyExistsError,
   IterationExceedsMaxError,
   ResumeQualityWorkflowNotFoundError,
@@ -23,9 +24,12 @@ import { getTailoringArtifactDirectory } from "@/lib/tailoringArtifacts";
 import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "./canonicalInstructions";
 import { resolveCandidateContact } from "./candidateContact";
 import { gateBlockingComplianceCorrections } from "./instructionCompliance";
+import { planRepairScope, type RepairPlan } from "./repairScope";
 import { generateColdFollowUpEmail } from "./coldFollowUpEmail";
 import { publishFinalApplicationArtifacts, type PublishedApplication } from "./finalPublication";
 import { generateHumanReviewPackage } from "./humanReviewPackage";
+import { determineFinalDisposition } from "./finalDisposition";
+import { publishSafeBestAttempt } from "./safeAttemptPublication";
 import { evaluateQualityGate, type QualityGateOutcome } from "./qualityGate";
 import { renderReviewFeedbackMarkdown } from "./reviewFeedback";
 import { DeterministicResumeReviewer } from "./reviewers/deterministicReviewer";
@@ -136,6 +140,9 @@ export interface ResumeQualityOrchestrationResult {
   /** Populated only on the terminal NEEDS_HUMAN_REVIEW/FAILED path — see humanReviewPackage.ts. Never
    *  set on READY (final/ remains the sole approved-artifact directory) or on any non-terminal status. */
   humanReviewPackage?: { iterationNumber: number; directory: string };
+  /** Stage 28 — set only when the exhausted workflow was nevertheless truthful and its safest attempt
+   *  was published as an explicitly-labelled human-review package. Never implies READY. */
+  safeBestAttempt?: { directory: string; selectedIterationNumber: number; optimizationScore: number | null };
   /** Phase 9A — the durable, human-readable copy of the approved artifacts under
    *  data/generated/applications/<company>/<position>-<jobId>/. Only ever set on READY. Absent when
    *  the job/company could not be resolved, when no approved resume DOCX was rendered, or when
@@ -792,6 +799,56 @@ export async function executeResumeQualityIteration(
       // authoritative outcome; the human-review package is a convenience, not a requirement.
     }
 
+    // Stage 28 — a workflow that exhausted its two content attempts is not automatically unusable.
+    // When every ABSOLUTE truthfulness/safety guardrail holds and only optimisation fell short, the
+    // safest attempt is published as an explicitly-labelled human-review package. Phase 9A's READY
+    // publication is untouched: this writes to a separate `human-review/` subdirectory and never
+    // claims READY or approved. Best-effort for the same reason the human-review package above is —
+    // the FAILED transition is already authoritative.
+    let safeBestAttempt: ResumeQualityOrchestrationResult["safeBestAttempt"];
+    try {
+      const attempts = listResumeQualityIterations(candidateId, workflowId)
+        .filter((it: ResumeQualityIterationRow) => Boolean(it.review_json))
+        .map((it: ResumeQualityIterationRow) => ({
+          iterationNumber: it.iteration_number,
+          review: JSON.parse(it.review_json as string) as StructuredResumeReview,
+        }));
+      const disposition = determineFinalDisposition(attempts);
+      const safeAttemptJob = getJobByDedupeKey(workflow.dedupe_key);
+      const safeAttemptCompany = safeAttemptJob ? getCompany(safeAttemptJob.company_id) : undefined;
+      if (
+        disposition.disposition === "SAFE_BEST_ATTEMPT" &&
+        disposition.selectedIterationNumber !== null &&
+        safeAttemptJob &&
+        safeAttemptCompany
+      ) {
+        const selectedDir = getIterationDirectory(location, disposition.selectedIterationNumber);
+        const published = publishSafeBestAttempt({
+          disposition,
+          candidateId,
+          candidateName: candidate.display_name,
+          candidateFirstName: candidate.first_name || "Candidate",
+          companyId: safeAttemptCompany.id,
+          companyName: safeAttemptCompany.name,
+          jobId: safeAttemptJob.id,
+          jobTitle: safeAttemptJob.title,
+          workflowId,
+          tailoringRunId: workflow.tailoring_run_id,
+          sourceResumePath: path.join(selectedDir, "Resume.docx"),
+          sourceCoverLetterPath: path.join(selectedDir, "CoverLetter.docx"),
+          sourceReviewFeedbackPath: path.join(selectedDir, "review_feedback.md"),
+        });
+        safeBestAttempt = {
+          directory: published.directory,
+          selectedIterationNumber: disposition.selectedIterationNumber,
+          optimizationScore: disposition.optimizationScore,
+        };
+      }
+    } catch {
+      // Swallowed for the same reason as the human-review package: a convenience publication can
+      // never unwind or alter the authoritative FAILED outcome.
+    }
+
     return {
       workflow: updatedWorkflow,
       iteration: iterationRow,
@@ -804,6 +861,7 @@ export async function executeResumeQualityIteration(
       requiredCorrections: review.requiredCorrections,
       failureReason,
       humanReviewPackage,
+      safeBestAttempt,
     };
   } catch (err) {
     try {
@@ -906,6 +964,8 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
   let blockingIssues: string[] | undefined;
   let blockingFailures: BlockingFailure[] | undefined;
   let complianceCorrections: RequiredCorrection[] | undefined;
+  /** Stage 28 — the deterministic repair scope for this attempt, derived from the PRIOR review. */
+  let repairPlan: RepairPlan | undefined;
 
   if (workflow.current_iteration > 0) {
     const priorIterNum = workflow.current_iteration;
@@ -950,6 +1010,9 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
         complianceCorrections = latestReview.instructionCompliance
           ? gateBlockingComplianceCorrections(latestReview.instructionCompliance)
           : undefined;
+        // Stage 28 — decided here, from CareerOps' own review, never by the writer. A narrow scope
+        // means a narrower REWRITE only; the reconstructed pair is still fully re-reviewed.
+        repairPlan = planRepairScope(latestReview);
       } catch {
         // Fall back to undefined if unparseable
       }
@@ -1001,6 +1064,7 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
     blockingIssues,
     blockingFailures,
     complianceCorrections,
+    repairPlan,
     // Stage 26B — the canonical contact source, never the previous resume (which, for a workflow
     // predating this, holds the fabricated placeholder values) and never a guess.
     candidateContact: resolveCandidateContact(candidateId).contact,

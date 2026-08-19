@@ -47,7 +47,6 @@ let importExternalWriterResult: typeof import("@/lib/resumeQuality/handoff/impor
 let listNotificationsForCandidate: typeof import("@/db/queries/notifications").listNotificationsForCandidate;
 let RESUME_READY_NOTIFICATION_TYPE: string;
 let WRITER_FAILURE_NOTIFICATION_TYPE: string;
-let QUALITY_FAILURE_NOTIFICATION_TYPE: string;
 let HUMAN_REVIEW_REQUIRED_NOTIFICATION_TYPE: string;
 let processOneWorkflow: typeof import("@/lib/resumeQuality/writers/writerWorkerCore").processOneWorkflow;
 let runWorkerPass: typeof import("@/lib/resumeQuality/writers/writerWorkerCore").runWorkerPass;
@@ -203,7 +202,6 @@ before(async () => {
   ({
     RESUME_READY_NOTIFICATION_TYPE,
     WRITER_FAILURE_NOTIFICATION_TYPE,
-    QUALITY_FAILURE_NOTIFICATION_TYPE,
     HUMAN_REVIEW_REQUIRED_NOTIFICATION_TYPE,
   } = await import("@/lib/notifications/resumePipelineNotifications"));
   ({ processOneWorkflow, runWorkerPass } = await import("@/lib/resumeQuality/writers/writerWorkerCore"));
@@ -463,46 +461,35 @@ test("3. successful writer invocation + output validation drives review and reac
 test("4/5. a quality failure creates the next iteration automatically (with prior feedback), returns to the writer queue, and a successful later iteration reaches READY", async () => {
   const wf = await authorizeAndCreateFlawedWorkflow(candidateBobId);
 
-  // Pass 1: iteration 2 is STILL flawed -> IMPROVEMENT_RUNNING again, QUALITY_FAILURE notified.
-  process.env.FAKE_CLAUDE_RESUME_JSON = JSON.stringify(FLAWED_RESUME);
-  const outcome2 = await processOneWorkflow(wf, { cliOptions: { command: successScript, retryBackoffMs: 5 } });
-  assert.equal(outcome2.outcome, "IMPROVEMENT_RUNNING");
-  assert.equal(outcome2.iterationNumber, 2);
+  // Stage 28 — the content budget is 2, so the fixture's flawed iteration 1 leaves exactly ONE
+  // genuine attempt. That attempt is therefore both "the automatically-queued next iteration" and
+  // "the final allowed iteration"; this test covers the first half (feedback carried forward, then a
+  // good attempt reaching READY) and test 6 covers the failing half.
+  assert.equal(wf.max_iterations, 2, "Stage 28 budget");
 
-  const afterIter2 = getResumeQualityWorkflow(candidateBobId, wf.id)!;
-  assert.equal(afterIter2.status, "IMPROVEMENT_RUNNING");
-  assert.equal(afterIter2.current_iteration, 2);
-
-  const notificationsAfter2 = listNotificationsForCandidate(candidateBobId);
-  assert(notificationsAfter2.some((n) => n.dedupe_key === jobOne.dedupe_key && n.type === QUALITY_FAILURE_NOTIFICATION_TYPE));
-
-  // listWorkflowsAwaitingWriter must show it queued again, automatically, with no manual step.
+  // The workflow is queued again automatically, with no manual step.
   assert(listWorkflowsAwaitingWriter().some((w) => w.id === wf.id));
 
-  const iter3HandoffDir = getHandoffDirectory(
+  const iter2HandoffDir = getHandoffDirectory(
     { candidateId: candidateBobId, dedupeKey: jobOne.dedupe_key, runId: wf.tailoring_run_id, workflowId: wf.id },
-    3
+    2
   );
 
-  // Pass 2 (iteration 3, the final allowed iteration) is what actually exports the iteration-3
-  // handoff (export happens at the start of processOneWorkflow) — assert its contents right after,
-  // proving the rewrite loop carried iteration 2's own review/corrections forward automatically.
-  // This IS "how prior CareerOps feedback reaches Claude" (reused exporter behavior, unmodified).
-  // Must pass the FRESH post-pass-1 row — production's runWorkerPass always re-queries fresh per
-  // pass (there's no possibility of a stale row there); reusing the original `wf` here would be a
-  // test-only artifact, not a real bug, so the fixture re-fetches exactly like a real second pass would.
+  // The pass exports the iteration-2 handoff at its start, so asserting its contents right after
+  // proves the loop carried iteration 1's own review/corrections forward automatically. This IS
+  // "how prior CareerOps feedback reaches Claude" (reused exporter behavior, unmodified).
   process.env.FAKE_CLAUDE_RESUME_JSON = JSON.stringify(PERFECT_RESUME);
-  const outcome3 = await processOneWorkflow(afterIter2, { cliOptions: { command: successScript, retryBackoffMs: 5 } });
-  assert.equal(outcome3.outcome, "READY");
-  assert.equal(outcome3.iterationNumber, 3);
+  const outcome2 = await processOneWorkflow(wf, { cliOptions: { command: successScript, retryBackoffMs: 5 } });
+  assert.equal(outcome2.outcome, "READY");
+  assert.equal(outcome2.iterationNumber, 2);
 
-  assert(fs.existsSync(path.join(iter3HandoffDir, "review.json")), "iteration-3 handoff must include iteration 2's review.json");
-  assert(fs.existsSync(path.join(iter3HandoffDir, "review_feedback.md")), "iteration-3 handoff must include iteration 2's review_feedback.md");
-  assert(fs.existsSync(path.join(iter3HandoffDir, "previous_resume_content.json")), "iteration-3 handoff must include iteration 2's resume content");
+  assert(fs.existsSync(path.join(iter2HandoffDir, "review.json")), "iteration-2 handoff must include iteration 1's review.json");
+  assert(fs.existsSync(path.join(iter2HandoffDir, "review_feedback.md")), "iteration-2 handoff must include iteration 1's review_feedback.md");
+  assert(fs.existsSync(path.join(iter2HandoffDir, "previous_resume_content.json")), "iteration-2 handoff must include iteration 1's resume content");
 
   const finalWf = getResumeQualityWorkflow(candidateBobId, wf.id)!;
   assert.equal(finalWf.status, "READY");
-  assert.equal(finalWf.current_iteration, 3);
+  assert.equal(finalWf.current_iteration, 2, "Stage 28: READY on the second and final content attempt");
 });
 
 test("6. final allowed quality-iteration failure reaches FAILED/HUMAN_REVIEW_REQUIRED, and the workflow never loops forever", async () => {
@@ -535,16 +522,13 @@ test("6. final allowed quality-iteration failure reaches FAILED/HUMAN_REVIEW_REQ
 
   const wf = await authorizeAndCreateFlawedWorkflow(candId);
 
+  // Stage 28 — with a 2-attempt budget, the fixture's flawed iteration 1 leaves iteration 2 as the
+  // FINAL allowed content attempt. A second flawed attempt therefore terminates the workflow
+  // immediately; there is no third generation to fall through to.
   process.env.FAKE_CLAUDE_RESUME_JSON = JSON.stringify(FLAWED_RESUME);
   const p2 = await processOneWorkflow(wf, { cliOptions: { command: successScript, retryBackoffMs: 5 } });
-  assert.equal(p2.outcome, "IMPROVEMENT_RUNNING");
-
-  // Refresh from the DB before the next pass — production's runWorkerPass always re-queries fresh per
-  // pass; reusing the original stale `wf` here would be a test-only artifact (see the identical fix
-  // applied to test 4/5 above).
-  const wfAfterP2 = getResumeQualityWorkflow(candId, wf.id)!;
-  const p3 = await processOneWorkflow(wfAfterP2, { cliOptions: { command: successScript, retryBackoffMs: 5 } });
-  assert.equal(p3.outcome, "FAILED", "the final allowed iteration failing quality review must reach the terminal FAILED status");
+  assert.equal(p2.outcome, "FAILED", "the final allowed iteration failing quality review must reach the terminal FAILED status");
+  assert.equal(p2.iterationNumber, 2, "and it must be iteration 2 — never a third");
 
   const finalWf = getResumeQualityWorkflow(candId, wf.id)!;
   assert.equal(finalWf.status, "FAILED");
@@ -561,7 +545,7 @@ test("6. final allowed quality-iteration failure reaches FAILED/HUMAN_REVIEW_REQ
   const bestAttempt = JSON.parse(fs.readFileSync(path.join(humanReviewDir, "best_attempt.json"), "utf-8"));
   assert.equal(bestAttempt.approved, false);
   assert.equal(bestAttempt.qualityGateDecision, "NEEDS_HUMAN_REVIEW");
-  assert(bestAttempt.iterationNumber >= 1 && bestAttempt.iterationNumber <= 3);
+  assert(bestAttempt.iterationNumber >= 1 && bestAttempt.iterationNumber <= 2);
   assert(fs.existsSync(path.join(humanReviewDir, `Carol_Resume_HumanReview.docx`)), "best-attempt resume must be downloadable");
   assert.equal(fs.existsSync(getFinalDirectory({ candidateId: candId, dedupeKey: jobOne.dedupe_key, runId: wf.tailoring_run_id, workflowId: wf.id })), false, "FAILED must never populate the READY final/ directory");
 

@@ -45,7 +45,8 @@
     "profile-ats-adapters-continuous": "tsx scripts/profile-ats-adapters-continuous.ts",
     "check-connector-health": "tsx scripts/check-connector-health.ts",
     "check-connector-health-continuous": "tsx scripts/check-connector-health-continuous.ts",
-    "resume-writer-worker-continuous": "tsx scripts/resume-writer-worker-continuous.ts"
+    "resume-writer-worker-continuous": "tsx scripts/resume-writer-worker-continuous.ts",
+    "background-worker": "tsx scripts/background-worker.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
