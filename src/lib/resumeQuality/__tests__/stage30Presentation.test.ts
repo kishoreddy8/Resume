@@ -140,7 +140,14 @@ test("S30-13 identity derivation is evidence-driven and never fabricated", () =>
 test("S30-14 the writer section states the identity rule and the no-invented-years rule", () => {
   const section = renderProfessionalIdentitySection(deriveProfessionalIdentity(PROFILE), null);
   assert.match(section, /Derived identity: Data Engineer/);
-  assert.match(section, /must LEAD with this professional identity/);
+  // Stage 31.1 replaced "must LEAD with this professional identity" with the stricter rule that the
+  // headline carries evidence-backed ROLE IDENTITIES ONLY. The identity requirement is unchanged —
+  // it is now stated as "each supported by a title the candidate actually held", plus an explicit
+  // prohibition on technologies and on the JD introducing an identity.
+  assert.match(section, /professional ROLE IDENTITIES ONLY/);
+  assert.match(section, /supported by a title the candidate actually held/);
+  assert.match(section, /never put technologies in it/i);
+  assert.match(section, /job's title never replaces the candidate's own/i);
   assert.match(section, /do NOT state one/i, "with no verified total, the writer must be told not to state years");
   assert.match(section, /close to five years/, "the exact failure mode is named so it cannot recur");
 
@@ -182,8 +189,13 @@ test("S30-07 bullets are not chained to each other, so an employer may split acr
   // The defect: `bullet(text, !isLast)` chained every bullet but the last into one unbreakable block.
   assert.ok(!/bullet\(text,\s*!isLast\)/.test(src), "bullets must no longer keepNext-chain to each other");
   assert.ok(/bullet\(text,\s*false\)/.test(src), "bullets must be individually breakable");
-  // The role header still keeps with its first bullet — a heading is never orphaned.
-  assert.ok(/roleHeader\(role\.title, role\.company, role\.dates, true\)/.test(src), "role header keeps with next");
+  // The role header still keeps with its first bullet — a heading is never orphaned. Stage 31 split
+  // that header into a company line and a title line; BOTH must keep with what follows, or the
+  // employer can now be stranded at a page foot in a way Stage 30 had already ruled out.
+  for (const fn of ["function companyLine", "function roleTitleLine"]) {
+    const body = src.slice(src.indexOf(fn), src.indexOf("}", src.indexOf("children:", src.indexOf(fn))));
+    assert.ok(body.includes("keepNext: true"), `${fn} must keep with the line that follows it`);
+  }
   // Each bullet still keeps its own lines together.
   assert.ok(/keepLines: true/.test(src) && /widowControl: true/.test(src), "a single bullet must never split mid-sentence");
 });
@@ -198,7 +210,7 @@ test("S30-08 Stage 30 introduces no bullet-count reduction policy", async () => 
     // The renderer takes bullets verbatim; nothing in Stage 30 filters, truncates, or caps them.
     const src = fs.readFileSync(path.resolve("tools/tailoring-engine/resume-template.ts"), "utf-8");
     assert.ok(!/\.slice\(0,\s*\d+\)/.test(src), "the renderer must not truncate bullet lists");
-    assert.ok(/role\.bullets\.forEach/.test(src), "every bullet is rendered");
+    assert.ok(/for \(const text of role\.bullets\)/.test(src), "every bullet is rendered");
     assert.equal(content.experience[0].bullets.length, 8, "the fixture's bullets are untouched by rendering");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

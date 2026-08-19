@@ -7,7 +7,7 @@ import { selectBestResumeQualityAttempt, type ResumeQualityAttemptSummary } from
 import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "./canonicalInstructions";
 import { HARD_GATE_CHECKS } from "./instructionCompliance";
 import type { StructuredResumeReview, WorkflowStatusFile } from "./types";
-import { getHumanReviewDirectory, getIterationDirectory, type QualityWorkflowLocation } from "./workspace";
+import { getHumanReviewDirectory, getIterationDirectory, sanitizeNameSegment, type QualityWorkflowLocation } from "./workspace";
 
 /**
  * Stage 13 — generates the "best attempt, preserved for human review" package once a workflow reaches
@@ -93,7 +93,9 @@ export function generateHumanReviewPackage(candidateId: number, workflowId: numb
   fs.mkdirSync(tmpDir, { recursive: true });
 
   const files: string[] = [];
-  const firstName = candidate?.first_name || "Candidate";
+  // Stage 31.1 — sanitised exactly as the READY publication does, so a first name with a space
+  // cannot produce a filename with a space in one path and without one in the other.
+  const firstName = sanitizeNameSegment(candidate?.first_name || "Candidate");
 
   try {
     copyIfExists(

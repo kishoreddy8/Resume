@@ -85,7 +85,14 @@ export function getHumanReviewDirectory(location: QualityWorkflowLocation): stri
 /** Strips everything but letters/digits so a candidate's first name is always a safe, single path
  *  segment/filename component — no spaces, punctuation, or path separators can survive. Falls back to
  *  "Candidate" rather than producing an empty/unsafe filename if the name sanitizes to nothing. */
-function sanitizeNameSegment(name: string): string {
+/**
+ * Stage 31.1 — exported so every artifact path derives a candidate's filename segment the same way.
+ * A first name containing a space ("Sai Kishore") must never reach a filename unsanitised: the
+ * READY publication ran it through here while the human-review package did not, so the same
+ * candidate got "SaiKishore_Resume.docx" from one path and "Sai Kishore_Resume_HumanReview.docx"
+ * from the other.
+ */
+export function sanitizeNameSegment(name: string): string {
   const cleaned = name.trim().replace(/[^a-zA-Z0-9]+/g, "");
   return cleaned.length > 0 ? cleaned : "Candidate";
 }

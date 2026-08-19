@@ -70,6 +70,49 @@ export function validateResumeContentStructure(resume: unknown): ResumeContent {
     }
   }
 
+  // Stage 31 — the reference-format fields are all optional, but a present one must be well formed:
+  // a malformed Environment array would otherwise reach the renderer and the attribution reviewer
+  // as junk rather than as a claim either could check.
+  for (const exp of r.experience) {
+    const label = exp.company || "an experience entry";
+    if (exp.location !== undefined && typeof exp.location !== "string") {
+      throw new ResumeQualityOrchestrationError("INVALID_RESUME_CONTENT", `${label}: experience.location must be a string if provided`);
+    }
+    if (exp.projectDescription !== undefined && typeof exp.projectDescription !== "string") {
+      throw new ResumeQualityOrchestrationError("INVALID_RESUME_CONTENT", `${label}: experience.projectDescription must be a string if provided`);
+    }
+    if (exp.environment !== undefined && (!Array.isArray(exp.environment) || exp.environment.some((t) => typeof t !== "string"))) {
+      throw new ResumeQualityOrchestrationError("INVALID_RESUME_CONTENT", `${label}: experience.environment must be an array of strings if provided`);
+    }
+  }
+
+  if (r.keyProjects !== undefined) {
+    if (!Array.isArray(r.keyProjects)) {
+      throw new ResumeQualityOrchestrationError("INVALID_RESUME_CONTENT", "ResumeContent.keyProjects must be an array if provided");
+    }
+    for (const project of r.keyProjects) {
+      if (
+        !project ||
+        typeof project !== "object" ||
+        typeof project.name !== "string" ||
+        project.name.trim().length === 0 ||
+        typeof project.description !== "string" ||
+        project.description.trim().length === 0
+      ) {
+        throw new ResumeQualityOrchestrationError(
+          "INVALID_RESUME_CONTENT",
+          "Each keyProject must have a non-empty string name and description"
+        );
+      }
+      if (project.technologies !== undefined && (!Array.isArray(project.technologies) || project.technologies.some((t) => typeof t !== "string"))) {
+        throw new ResumeQualityOrchestrationError("INVALID_RESUME_CONTENT", `keyProject "${project.name}": technologies must be an array of strings if provided`);
+      }
+      if (project.url !== undefined && typeof project.url !== "string") {
+        throw new ResumeQualityOrchestrationError("INVALID_RESUME_CONTENT", `keyProject "${project.name}": url must be a string if provided`);
+      }
+    }
+  }
+
   if (!Array.isArray(r.education) || r.education.some((e) => typeof e !== "string")) {
     throw new ResumeQualityOrchestrationError("INVALID_RESUME_CONTENT", "ResumeContent.education must be an array of strings");
   }

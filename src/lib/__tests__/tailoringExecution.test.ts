@@ -242,7 +242,7 @@ test("5. RENDERER_VERSION is persisted on the executed run", async () => {
   approve(candidateAId, jobOne);
   const result = await executeTailoringRun({ candidateId: candidateAId, jobId: jobOne.id, resume: VALID_RESUME, coverLetter: VALID_COVER_LETTER });
   assert.equal(result.run.renderer_version, RENDERER_VERSION);
-  assert.equal(RENDERER_VERSION, 1, "sanity check on the constant this test asserts against");
+  assert.equal(RENDERER_VERSION, 2, "sanity check on the constant this test asserts against — bumped by Stage 31's layout change");
 });
 
 test("6/13. output_files contains only safe relative filenames, never absolute paths", async () => {

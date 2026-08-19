@@ -1,4 +1,6 @@
 import type { CandidateProfile } from "@/lib/match/types";
+import { checkPresentationAttribution } from "../presentationStructure";
+import { checkSummaryOpening } from "../professionalIdentity";
 import type { ExperienceEntry, ResumeContent } from "../../../../tools/tailoring-engine/types";
 
 /**
@@ -176,15 +178,39 @@ export function evaluateTruthfulness(resume: ResumeContent, masterResumeProfile:
   const employment = checkEmploymentFacts(resume.experience, masterResumeProfile);
   const eduCerts = checkEducationAndCertifications(resume, masterResumeProfile);
   const metricIssues = checkMetricRealism(resume.experience);
+  // Stage 31 — the reference format's Project:/Environment: lines are employer-scoped claims and
+  // are verified exactly like any other employer attribution, at the same 15-point weight as an
+  // employment-fact issue. They are issues rather than blocking findings for the same reason a
+  // mis-attributed bullet is: the resume is fixable, not fabricated wholesale. The quality gate
+  // requires truthfulnessScore === 100, so a single one of these still prevents READY.
+  const attributionIssues = checkPresentationAttribution(resume, masterResumeProfile).map((i) => i.message);
+
+  // Stage 31 correction — the OWNERSHIP fix.
+  //
+  // Stage 30 built checkSummaryOpening() and then wired it to nothing: outside its own unit tests
+  // it had no caller at all, so a summary reading "Data engineer with nearly five years…" reached a
+  // published resume with a 100/100 truthfulness score. The detector had in fact already computed
+  // UNVERIFIED_YEARS for that exact sentence — nobody was listening.
+  //
+  // A years-of-experience figure CareerOps could not verify is a factual assertion the candidate's
+  // evidence does not support, so it belongs here rather than among presentation findings: the gate
+  // requires truthfulnessScore === 100, which means an unverifiable YOE claim now prevents READY.
+  // The generic-opening half of the same detector is a writing-quality matter and is handled in
+  // structuralChecks.ts instead, where it costs formatting score but cannot block on its own.
+  const summaryOpeningIssues = (resume.summary[0] ? checkSummaryOpening(resume.summary[0], masterResumeProfile.totalYearsExperience ?? null) : [])
+    .filter((i) => i.kind === "UNVERIFIED_YEARS")
+    .map((i) => i.detail);
 
   const blockingIssues = [...employment.blocking, ...eduCerts.blocking];
-  const truthfulnessIssues = [...employment.issues, ...eduCerts.issues, ...metricIssues];
+  const truthfulnessIssues = [...employment.issues, ...eduCerts.issues, ...metricIssues, ...attributionIssues, ...summaryOpeningIssues];
 
   let score = 100;
   score -= blockingIssues.length * 40;
   score -= employment.issues.length * 15;
   score -= eduCerts.issues.length * 15;
   score -= metricIssues.length * 5;
+  score -= attributionIssues.length * 15;
+  score -= summaryOpeningIssues.length * 15;
   score = Math.min(100, Math.max(0, score));
 
   return { truthfulnessScore: score, truthfulnessIssues, missingImpactEvidence, blockingIssues, insufficientProfileData: false };

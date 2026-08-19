@@ -25,9 +25,28 @@ import {
   SIZE_EXPERIENCE_HEADING,
   SIZE_HEADING,
   SIZE_NAME,
+  SIZE_ROLE_TITLE,
   SIZE_TAGLINE,
+  SPACE_AFTER_SECTION_RULE,
+  SPACE_BEFORE_ROLE,
+  SPACE_BEFORE_SECTION,
+  SPACE_BETWEEN_BULLETS,
+  SPACE_BETWEEN_SKILL_LINES,
 } from "./constants";
-import type { ResumeContent } from "./types";
+import type { ExperienceEntry, KeyProject, ResumeContent } from "./types";
+
+/**
+ * Stage 31 — the reference-resume presentation standard.
+ *
+ * The section order, the left-aligned header block, the two-line role header, the `Project:` and
+ * `Environment:` lines, the bulleted certifications and the optional Key Projects section all come
+ * from the reference document the user supplied; the exact type sizes and vertical spacing were
+ * read out of that document's OOXML rather than estimated by eye (see constants.ts).
+ *
+ * What did NOT come from the reference is any of its content. Everything below is a layout
+ * decision applied to whatever the writer produced from THIS candidate's own evidence; sections
+ * the candidate has no evidence for (Key Projects, employer locations) simply do not render.
+ */
 
 const BULLET_REF = "resume-bullets";
 // Compact-but-clear hanging indent: bullet glyph sits at the margin, wrapped lines align under
@@ -49,19 +68,27 @@ function link(displayText: string, url: string, size = SIZE_CONTACT): ExternalHy
   });
 }
 
+/**
+ * Stage 31 — LEFT, not centred. The reference anchors the whole header block to the left margin,
+ * which is also what keeps the name, headline and contact line reading as one unit instead of
+ * three separately-centred fragments of differing width.
+ */
 function nameLine(text: string): Paragraph {
   return new Paragraph({
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 40 },
+    alignment: AlignmentType.LEFT,
+    keepNext: true,
+    spacing: { after: 20 },
     children: [new TextRun({ text, bold: true, size: SIZE_NAME, font: FONT, color: BLACK })],
   });
 }
 
-function taglineLine(text: string): Paragraph {
+/** The headline: bold, not italic, and left-aligned under the name — as the reference sets it. */
+function headlineLine(text: string): Paragraph {
   return new Paragraph({
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 40 },
-    children: [new TextRun({ text, italics: true, size: SIZE_TAGLINE, font: FONT, color: BLACK })],
+    alignment: AlignmentType.LEFT,
+    keepNext: true,
+    spacing: { after: 20 },
+    children: [new TextRun({ text, bold: true, size: SIZE_TAGLINE, font: FONT, color: BLACK })],
   });
 }
 
@@ -84,20 +111,24 @@ function contactLine(params: {
     const url = params.linkedin.startsWith("http") ? params.linkedin : `https://${params.linkedin}`;
     children.push(sep(), link(params.linkedin, url));
   }
-  return new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 200 }, children });
+  return new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 60 }, children });
 }
 
 /**
  * keepNext so a heading never renders as the last line on a page, orphaned from its content.
  * Explicit zero indent so the bottom border always spans the exact same left/right content
  * boundary as every other section, regardless of any inherited style default.
+ *
+ * The reference achieves the same full-width rule by underlining the heading text and a trailing
+ * tab run out to the right margin. A real paragraph border is the more robust of the two — it
+ * cannot drift with the heading's text length — so that is what is kept here.
  */
 function sectionHeading(text: string): Paragraph {
   return new Paragraph({
     heading: HeadingLevel.HEADING_1,
     keepNext: true,
     indent: { left: 0, right: 0 },
-    spacing: { before: 200, after: 80 },
+    spacing: { before: SPACE_BEFORE_SECTION, after: SPACE_AFTER_SECTION_RULE },
     border: { bottom: { style: "single", size: 6, color: HEADING_RULE_COLOR, space: 2 } },
     children: [
       new TextRun({ text: text.toUpperCase(), bold: true, size: SIZE_HEADING, font: FONT, color: BLACK }),
@@ -105,12 +136,13 @@ function sectionHeading(text: string): Paragraph {
   });
 }
 
-function bodyParagraph(text: string): Paragraph {
+function bodyParagraph(text: string, keepWithNext = false): Paragraph {
   return new Paragraph({
     keepLines: true,
     widowControl: true,
+    keepNext: keepWithNext,
     indent: { left: 0, right: 0 },
-    spacing: { after: 100 },
+    spacing: { after: 60 },
     children: [run(text)],
   });
 }
@@ -120,7 +152,7 @@ function skillGroupLine(label: string, items: string[]): Paragraph {
     keepLines: true,
     widowControl: true,
     indent: { left: 0, right: 0 },
-    spacing: { after: 60 },
+    spacing: { before: SPACE_BETWEEN_SKILL_LINES, after: 0 },
     children: [
       new TextRun({ text: `${label}: `, bold: true, size: SIZE_BODY, font: FONT, color: BLACK }),
       run(items.join(", ")),
@@ -129,26 +161,27 @@ function skillGroupLine(label: string, items: string[]): Paragraph {
 }
 
 /**
- * Company left, dates right — a real right-tab-stop element (`Tab`), not a literal "\t" embedded
- * in a text run. A raw tab character inside <w:t> is not a paragraph-tab-stop instruction to most
- * renderers (browsers, some ATS parsers) — it just renders as an ordinary tab-width whitespace
- * glyph, which is why dates previously landed a few characters after the title instead of at the
- * right margin. `Tab` emits the dedicated OOXML <w:tab/> run element real Word requires.
+ * Company (and location, when the Master Resume states one) at the left, dates at the right —
+ * a real right-tab-stop element (`Tab`), not a literal "\t" embedded in a text run. A raw tab
+ * character inside <w:t> is not a paragraph-tab-stop instruction to most renderers (browsers,
+ * some ATS parsers) — it just renders as an ordinary tab-width whitespace glyph, which is why
+ * dates previously landed a few characters after the title instead of at the right margin. `Tab`
+ * emits the dedicated OOXML <w:tab/> run element real Word requires.
+ *
+ * Stage 31 splits what used to be one "Title | Company ....... dates" line into the reference's
+ * two lines: the employer and the tenure on the first, the job title on its own beneath. That is
+ * the change that makes a multi-role history scannable — a reader's eye finds employers down one
+ * column and dates down another, instead of parsing a pipe-separated compound on every role.
  */
-function roleHeader(title: string, company: string, dates: string, keepWithNext: boolean): Paragraph {
+function companyLine(company: string, location: string | undefined, dates: string): Paragraph {
+  const left = location && location.trim().length > 0 ? `${company}, ${location.trim()}` : company;
   return new Paragraph({
-    keepNext: keepWithNext,
+    keepNext: true,
     indent: { left: 0, right: 0 },
-    spacing: { before: 180, after: 60 },
+    spacing: { before: SPACE_BEFORE_ROLE, after: 0 },
     tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_WIDTH }],
     children: [
-      new TextRun({
-        text: `${title} | ${company}`,
-        bold: true,
-        size: SIZE_EXPERIENCE_HEADING,
-        font: FONT,
-        color: BLACK,
-      }),
+      new TextRun({ text: left, bold: true, size: SIZE_EXPERIENCE_HEADING, font: FONT, color: BLACK }),
       new TextRun({
         children: [new Tab(), dates],
         bold: true,
@@ -160,22 +193,182 @@ function roleHeader(title: string, company: string, dates: string, keepWithNext:
   });
 }
 
-/** keepNext chains a bullet to the next paragraph so Word avoids breaking mid-role wherever it can. */
+/** The job title on its own line. Stage 31.1 — bold, no italic (see labelledLine's note). */
+function roleTitleLine(title: string): Paragraph {
+  return new Paragraph({
+    keepNext: true,
+    indent: { left: 0, right: 0 },
+    spacing: { before: 10, after: 0 },
+    children: [
+      new TextRun({ text: title, bold: true, size: SIZE_ROLE_TITLE, font: FONT, color: BLACK }),
+    ],
+  });
+}
+
+/**
+ * `Project:` / `Environment:` — the reference's two labelled context lines around a role's bullets.
+ *
+ * Stage 31.1 — no italics anywhere in the document. The reference sets these lines (and the job
+ * title) in italic, but italic body text is the one style choice here that actively works against
+ * the document's job: it renders thinner on screen, is the first thing to degrade when an ATS
+ * flattens formatting, and buys a distinction that weight and the bold label already carry. The
+ * label stays bold so the line still reads as annotation rather than as another achievement claim.
+ */
+function labelledLine(label: string, value: string, keepWithNext: boolean): Paragraph {
+  return new Paragraph({
+    keepLines: true,
+    widowControl: true,
+    keepNext: keepWithNext,
+    indent: { left: 0, right: 0 },
+    spacing: { before: 30, after: 0 },
+    children: [
+      new TextRun({ text: `${label}: `, bold: true, size: SIZE_BODY, font: FONT, color: BLACK }),
+      new TextRun({ text: value, size: SIZE_BODY, font: FONT, color: BLACK }),
+    ],
+  });
+}
+
 function bullet(text: string, keepWithNext: boolean): Paragraph {
   return new Paragraph({
     numbering: { reference: BULLET_REF, level: 0 },
     keepLines: true,
     widowControl: true,
     keepNext: keepWithNext,
-    spacing: { after: 80 },
+    spacing: { before: SPACE_BETWEEN_BULLETS, after: 0 },
     children: [run(text)],
   });
 }
 
+/** A bulleted line whose leading phrase is emphasised — certifications and Key Projects both use it. */
+function emphasisedBullet(lead: string, rest: string): Paragraph {
+  const children = [
+    new TextRun({ text: lead, bold: true, size: SIZE_BODY, font: FONT, color: BLACK }),
+  ];
+  if (rest.length > 0) children.push(run(rest));
+  return new Paragraph({
+    numbering: { reference: BULLET_REF, level: 0 },
+    keepLines: true,
+    widowControl: true,
+    spacing: { before: SPACE_BETWEEN_BULLETS, after: 0 },
+    children,
+  });
+}
+
+function keyProjectBullet(project: KeyProject): Paragraph {
+  const tech = project.technologies && project.technologies.length > 0 ? ` (${project.technologies.join(", ")})` : "";
+  return emphasisedBullet(project.name, ` — ${project.description}${tech}`);
+}
+
+/**
+ * Lays one education STRING out in the reference's two-line shape without changing a character of
+ * it: degree at the left with the dates right-tabbed, institution beneath.
+ *
+ * The conventional form the writer is asked for is "<Degree>, <Institution> — <Dates>". Anything
+ * this cannot split confidently is returned whole, to be rendered as a single ordinary line: a
+ * line that does not match the convention is a line whose parts this function does not actually
+ * know, and guessing where the institution ends would corrupt a verified fact for the sake of
+ * layout. Nothing is ever dropped or truncated on either path.
+ */
+export function splitEducationLine(line: string): { degree: string; institution?: string; dates?: string } {
+  const text = line.trim();
+  // The dates tail is introduced by a spaced dash, never by the comma that separates degree from
+  // institution and never by the hyphen inside "end-to-end". Stage 31.1 accepts a plain hyphen as
+  // well as the em/en dash: the writer is now told to avoid em/en dashes entirely, and education
+  // lines already stored with one must keep parsing exactly as before.
+  const dashMatch = text.match(/\s+[—–-]\s+(.+)$/);
+  const head = dashMatch ? text.slice(0, dashMatch.index).trim() : text;
+  const dates = dashMatch ? dashMatch[1].trim() : undefined;
+
+  // Institution is the final comma-separated clause of the head, and only when the head really
+  // does have a degree part in front of it.
+  const lastComma = head.lastIndexOf(",");
+  if (lastComma <= 0 || lastComma === head.length - 1) {
+    return dates ? { degree: head, dates } : { degree: head };
+  }
+  const degree = head.slice(0, lastComma).trim();
+  const institution = head.slice(lastComma + 1).trim();
+  if (degree.length === 0 || institution.length === 0) {
+    return dates ? { degree: head, dates } : { degree: head };
+  }
+  return { degree, institution, ...(dates ? { dates } : {}) };
+}
+
+function educationParagraphs(line: string): Paragraph[] {
+  const parsed = splitEducationLine(line);
+  const out: Paragraph[] = [];
+  const degreeChildren = [
+    new TextRun({ text: parsed.degree, bold: true, size: SIZE_BODY, font: FONT, color: BLACK }),
+  ];
+  if (parsed.dates) {
+    degreeChildren.push(
+      new TextRun({
+        children: [new Tab(), parsed.dates],
+        bold: true,
+        size: SIZE_BODY,
+        font: FONT,
+        color: BLACK,
+      })
+    );
+  }
+  out.push(
+    new Paragraph({
+      keepLines: true,
+      widowControl: true,
+      keepNext: Boolean(parsed.institution),
+      indent: { left: 0, right: 0 },
+      spacing: { before: 40, after: 0 },
+      ...(parsed.dates ? { tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_WIDTH }] } : {}),
+      children: degreeChildren,
+    })
+  );
+  if (parsed.institution) {
+    out.push(
+      new Paragraph({
+        keepLines: true,
+        widowControl: true,
+        indent: { left: 0, right: 0 },
+        spacing: { before: 10, after: 0 },
+        children: [run(parsed.institution)],
+      })
+    );
+  }
+  return out;
+}
+
+/** One employer: company/dates, title, optional Project:, bullets, optional Environment:. */
+function experienceParagraphs(role: ExperienceEntry): Paragraph[] {
+  const out: Paragraph[] = [
+    companyLine(role.company, role.location, role.dates),
+    roleTitleLine(role.title),
+  ];
+  if (role.projectDescription && role.projectDescription.trim().length > 0) {
+    // keepNext: the scope line belongs with the bullets it introduces, never stranded at a page foot.
+    out.push(labelledLine("Project", role.projectDescription.trim(), true));
+  }
+  // Stage 30 — bullets are NOT chained to each other.
+  //
+  // Previously every bullet but the last carried keepNext, which chained header -> bullet1 -> ...
+  // -> bulletN into a single unbreakable block. Word then had to move an ENTIRE employer to the
+  // next page whenever it did not fit in the remaining space, which is what produced the large
+  // blank region at the foot of a page on the real corpus.
+  //
+  // Each bullet still keeps its OWN lines together (keepLines) and still has widow control, so a
+  // single bullet is never split mid-sentence across a page boundary; only the boundary BETWEEN
+  // bullets is now a legal break. No bullet is removed or shortened.
+  for (const text of role.bullets) out.push(bullet(text, false));
+
+  if (role.environment && role.environment.length > 0) {
+    out.push(labelledLine("Environment", role.environment.join(", "), false));
+  }
+  return out;
+}
+
 export async function generateResumeDocx(content: ResumeContent, outputPath: string): Promise<void> {
+  // Section order is the reference's, exactly: identity block, then what the candidate can do,
+  // then proof they have done it, then credentials.
   const children: Paragraph[] = [
     nameLine(content.name),
-    taglineLine(content.tagline),
+    headlineLine(content.tagline),
     contactLine({
       location: content.location,
       phone: content.phone,
@@ -184,40 +377,45 @@ export async function generateResumeDocx(content: ResumeContent, outputPath: str
     }),
 
     sectionHeading("Professional Summary"),
-    ...content.summary.map(bodyParagraph),
+    // Stage 31.1 — ONE paragraph, always.
+    //
+    // `summary` stays an array because the content contract, the reviewers and every stored
+    // artifact already speak that shape, but the array is a list of SENTENCE GROUPS, not of
+    // paragraphs. Rendering one paragraph per element is what turned the summary into a stack of
+    // four mini-paragraphs that read as unbulleted bullets. Joining here makes the single-paragraph
+    // rule structural: no writer output, however it is segmented, can produce a fragmented summary.
+    bodyParagraph(content.summary.map((s) => s.trim()).filter((s) => s.length > 0).join(" ")),
 
     sectionHeading("Technical Skills"),
     ...content.skillGroups.map((g) => skillGroupLine(g.label, g.items)),
   ];
 
+  // Certifications are a credential LIST in the reference, bulleted like every other list on the
+  // page — not the run of unmarked body paragraphs they used to render as.
   if (content.certifications && content.certifications.length > 0) {
     children.push(sectionHeading("Certifications"));
-    children.push(...content.certifications.map(bodyParagraph));
+    for (const cert of content.certifications) {
+      children.push(bullet(cert, false));
+    }
   }
 
   children.push(sectionHeading("Professional Experience"));
   for (const role of content.experience) {
-    // The role header keeps-with-next unconditionally (never orphan a heading from its first bullet).
-    children.push(roleHeader(role.title, role.company, role.dates, true));
-    // Stage 30 — bullets are NOT chained to each other.
-    //
-    // Previously every bullet but the last carried keepNext, which chained header -> bullet1 -> ...
-    // -> bulletN into a single unbreakable block. Word then had to move an ENTIRE employer to the
-    // next page whenever it did not fit in the remaining space, which is what produced the large
-    // blank region at the foot of a page on the real corpus (Comerica alone is 8 bullets averaging
-    // ~216 characters — far more than typically fits in a partial page).
-    //
-    // Each bullet still keeps its OWN lines together (keepLines) and still has widow control, so a
-    // single bullet is never split mid-sentence across a page boundary; only the boundary BETWEEN
-    // bullets is now a legal break. An employer may therefore split across pages, which is both
-    // readable and exactly what avoids the wasted space. No bullet is removed or shortened.
-    role.bullets.forEach((text) => {
-      children.push(bullet(text, false));
-    });
+    children.push(...experienceParagraphs(role));
+  }
+
+  // Omitted entirely — not rendered empty — when the candidate has no recorded project evidence.
+  if (content.keyProjects && content.keyProjects.length > 0) {
+    children.push(sectionHeading("Key Projects"));
+    for (const project of content.keyProjects) {
+      children.push(keyProjectBullet(project));
+    }
   }
 
   children.push(sectionHeading("Education"));
-  children.push(...content.education.map(bodyParagraph));
+  for (const line of content.education) {
+    children.push(...educationParagraphs(line));
+  }
 
   const doc = new Document({
     numbering: {

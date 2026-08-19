@@ -16,6 +16,11 @@ import { buildEmployerEvidenceMap, renderEmployerEvidenceSection } from "../empl
 import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orchestrator";
 import { renderRepairPlanSection } from "../repairScope";
 import { deriveProfessionalIdentity, renderProfessionalIdentitySection } from "../professionalIdentity";
+import {
+  collectRoleProjectEvidence,
+  renderPresentationStandardSection,
+  renderRoleProjectEvidenceSection,
+} from "../presentationStructure";
 import type {
   ExternalHandoffExportResult,
   RequiredCorrection,
@@ -64,6 +69,12 @@ export function buildExternalWriterPrompt(input: {
   /** Stage 30 — the candidate's own professional identity, so the headline and summary lead with who
    *  the candidate is rather than with the job's title. */
   professionalIdentitySection?: string;
+  /** Stage 31 — the reference presentation standard: section order, the Project:/Environment: lines
+   *  and the evidence rules that govern them. Structure only — never the reference's content. */
+  presentationStandardSection?: string;
+  /** Stage 31 correction — the per-employer material the Project:/Environment: lines are built from.
+   *  Without it the writer was being asked for a scope line with no evidence in front of it. */
+  roleProjectEvidenceSection?: string;
   /** Stage 21 (Evidence-Grounded Resume Quality V2) — the computed JD Priority Matrix/positioning/
    *  skill-order/ATS-coverage data the writer should actually USE, not just prose guidance about it.
    *  All optional: absent only when neither jobRequirements nor a target role title were available
@@ -158,7 +169,7 @@ Where each value goes:
 - **LinkedIn** — resume only, and only when given above. The cover letter header does not carry it.
   Omitting it from the cover letter is correct and is not an inconsistency between the documents.
 
-${input.repairPlanSection ?? ""}${input.professionalIdentitySection ?? ""}${input.employerEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
+${input.repairPlanSection ?? ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.employerEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
 1. **Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
    - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
@@ -268,14 +279,20 @@ When your improvements are complete, create the file **\`writer_output.json\`** 
       {
         "title": "Title (must match Master Resume)",
         "company": "Company (must match Master Resume)",
+        "location": "City, ST — OMIT this field entirely unless the Master Resume states it",
         "dates": "Dates (must match Master Resume)",
+        "projectDescription": "One sentence naming what this role's work was — restating ONLY scope this same role's bullets already establish. Never a new system, client, domain or metric.",
         "bullets": [
           "Action-oriented bullet with measurable impact and relevant technologies..."
-        ]
+        ],
+        "environment": ["Only technologies THIS employer's evidence supports", "..."]
       }
     ],
+    "keyProjects": [
+      { "name": "Project name", "description": "What it does", "technologies": ["..."], "url": "https://... (only if the Master Resume records one)" }
+    ],
     "education": [
-      "Degree, Major, Institution"
+      "Degree, Institution - Dates"
     ],
     "certifications": [
       "Certification Name"
@@ -553,6 +570,10 @@ export function exportExternalWriterPackage(
           writerInput.masterProfile.totalYearsExperience ?? null
         )
       : undefined,
+    presentationStandardSection: renderPresentationStandardSection(writerInput.masterProfile),
+    roleProjectEvidenceSection: renderRoleProjectEvidenceSection(
+      collectRoleProjectEvidence(writerInput.currentResume, writerInput.masterProfile)
+    ),
     jdPriorityMatrix: exportJdPriorityMatrix,
     positioningRecommendation: exportPositioningRecommendation,
     recommendedSkillOrder: exportSkillOrder,

@@ -50,7 +50,7 @@ const STRONG_RESUME: ResumeContent = {
   phone: "312-555-9821",
   email: "test@gmail.com",
   summary: [
-    "Senior Data Engineer with 5+ years building Azure Data Factory and Databricks pipelines for enterprise analytics platforms, with deep expertise in Azure-native architectures.",
+    "Senior Data Engineer specializing in Azure Data Factory and Databricks pipelines for enterprise analytics platforms. Experienced in Azure-native architectures and governed batch delivery. Skilled in Azure Data Factory orchestration and Databricks performance tuning.",
   ],
   skillGroups: [{ label: "Cloud & Data Platform", items: ["Azure", "Azure Data Factory", "Databricks"] }],
   experience: [

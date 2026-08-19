@@ -17,6 +17,8 @@ import { evaluateOnePrimaryTechnologyPerResponsibility } from "./onePrimaryTechn
 import { evaluatePlaceholderIntegrity } from "./placeholderChecks";
 import { evaluateSkillsOrdering } from "./skillsOrderingChecks";
 import { evaluateStructuralChecks } from "./structuralChecks";
+import { evaluatePresentationContract } from "../presentationContract";
+import { findThirdPersonNarration } from "../professionalIdentity";
 import { evaluateSummaryAlignment } from "./summaryChecks";
 import { findTechnologyContradictions } from "./technologyGroups";
 import { evaluateTechnologyGrouping } from "./technologyGroupingCheck";
@@ -86,7 +88,7 @@ export function reviewResumeDeterministically(
   const { resume, jobRequirements, masterResumeProfile, coverLetter, priorResume, docxValidation, targetRoleTitle } = input;
 
   const ats = evaluateAtsAlignment(resume, jobRequirements);
-  const structural = evaluateStructuralChecks(resume);
+  const structural = evaluateStructuralChecks(resume, masterResumeProfile);
   const bullets = evaluateBulletChecks(resume.experience);
   const truthfulness = evaluateTruthfulness(resume, masterResumeProfile);
   const architecture = evaluateArchitectureConsistency(resume.experience);
@@ -97,7 +99,46 @@ export function reviewResumeDeterministically(
 
   const blockingIssues = [...structural.blockingIssues, ...truthfulness.blockingIssues, ...architecture.blockingIssues];
 
-  const requiredCorrections: RequiredCorrection[] = [...structural.corrections, ...bullets.corrections];
+  // Stage 31.1 — the presentation contract: role-only headline, one-paragraph summary in resume
+  // voice, no em/en dash prose punctuation, Technical Skills that are an ecosystem rather than a
+  // transcription of the posting. Writing rules, so they reach the writer as corrections and cost
+  // formatting score below; none of them is a truthfulness finding and none changes gate semantics.
+  const contract = evaluatePresentationContract({ resume, coverLetter, masterResumeProfile, jobRequirements });
+
+  // Stage 31.1 correction — these two defects need TEETH, not just a deduction.
+  //
+  // Third-person narration ("Owns ETL delivery…", "Works directly with…") and em/en dash prose
+  // punctuation were originally reported as capped formatting findings, on the reasoning that a
+  // writing flaw should not fail a factually sound resume. That reasoning produced a resume which
+  // scored 100/100 and reached the human-review package still carrying all three defects: a
+  // correction the gate does not enforce is a correction the writer is free to ignore.
+  //
+  // They belong in `bannedLanguage` — an EXISTING soft-gate check whose whole purpose is banned
+  // style, and which evaluateQualityGate() already requires to PASS. Nothing about Stage 21 is
+  // restructured, no gate condition is added, and truthfulness is untouched; these findings simply
+  // land in the check that already governs language the resume may not use.
+  const summaryNarration = findThirdPersonNarration(resume.summary);
+  // A summary that is a keyword dump, or four sentences in the same frame, is a style failure of the
+  // same order as narration: reported-only, it was simply ignored. Length stays a correction — a
+  // long-but-well-written summary is a trim, not a defect worth refusing the whole resume over.
+  // SUMMARY_FORMULAIC is deliberately NOT gate-blocking. Stem openings are only a problem when the
+  // sentences behind them carry no substance; a summary of four well-written capability statements
+  // is good writing, and refusing it would reject the register the candidate's own master resume
+  // uses. Technology-dumping is the signal that actually separates positioning from inventory, so
+  // that is the one with teeth. Stem-stacking still reaches the writer as a correction.
+  const gateBlockingStyle = contract.filter(
+    (i) => i.kind === "AI_DASH_PUNCTUATION" || i.kind === "SUMMARY_TECHNOLOGY_DUMP"
+  );
+  const bannedStyleCount = summaryNarration.length + gateBlockingStyle.length;
+  const contractCorrections: RequiredCorrection[] = contract.map((issue) => ({
+    priority: issue.severity,
+    description: issue.message,
+  }));
+  // Capped for the same reason the Stage 31 structure findings are: a presentation defect must be
+  // impossible to miss and equally impossible to fail a factually sound resume on by itself.
+  const contractFormattingPenalty = Math.min(15, contract.reduce((sum, i) => sum + (i.severity === "HIGH" ? 6 : i.severity === "MEDIUM" ? 4 : 2), 0));
+
+  const requiredCorrections: RequiredCorrection[] = [...structural.corrections, ...bullets.corrections, ...contractCorrections];
   if (ats.insufficientRequirementData) {
     requiredCorrections.push({ priority: "LOW", description: "No job requirements were supplied to this review — ATS/keyword/skills-ordering/summary-alignment scores are unverified defaults, not real measurements." });
   }
@@ -114,7 +155,7 @@ export function reviewResumeDeterministically(
       0.25 * truthfulness.truthfulnessScore +
       0.2 * architecture.architectureConsistencyScore +
       0.15 * recruiterReadabilityScore +
-      0.1 * structural.formattingScore
+      0.1 * clamp(structural.formattingScore - contractFormattingPenalty)
   );
   if (blockingIssues.length > 0) {
     overallScore = Math.min(overallScore, BLOCKING_ISSUE_OVERALL_CAP);
@@ -165,7 +206,7 @@ export function reviewResumeDeterministically(
     genericBulletsCount: bullets.genericBullets.length,
     bannedLanguageInBulletsCount: bullets.bannedLanguageCount,
     overlyLongOrShortCount: bullets.lengthViolationCount,
-    bannedLanguageInSummaryCount: summary.bannedLanguageFound.length,
+    bannedLanguageInSummaryCount: summary.bannedLanguageFound.length + bannedStyleCount,
     crossDocumentStatus: crossDocument.status,
     crossDocumentContradictions: crossDocument.contradictions,
     duplicateBulletCount: bullets.duplicateBulletCount,
@@ -176,7 +217,7 @@ export function reviewResumeDeterministically(
     bulletCapViolations: bulletCaps.corrections.length,
     verbTenseViolations: verbTense.corrections.length,
     structuralBlockingIssues: structural.blockingIssues,
-    formattingScore: structural.formattingScore,
+    formattingScore: clamp(structural.formattingScore - contractFormattingPenalty),
     docxValidation,
     anyBlockingIssues: blockingIssues.length > 0,
   });
@@ -228,7 +269,7 @@ export function reviewResumeDeterministically(
     truthfulnessScore: clamp(truthfulness.truthfulnessScore),
     architectureConsistencyScore: clamp(architecture.architectureConsistencyScore),
     recruiterReadabilityScore,
-    formattingScore: clamp(structural.formattingScore),
+    formattingScore: clamp(structural.formattingScore - contractFormattingPenalty),
 
     missingRequiredSkills: ats.missingRequiredSkills,
     incorrectTechnologyUsage: architecture.incorrectTechnologyUsage,

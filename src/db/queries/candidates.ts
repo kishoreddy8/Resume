@@ -55,6 +55,47 @@ export function createCandidate(input: CreateCandidateInput): CandidateRow {
   return getCandidate(Number(result.lastInsertRowid))!;
 }
 
+export interface UpdateCandidateNameInput {
+  firstName: string;
+  lastName: string;
+  /**
+   * The name shown on generated documents, verbatim.
+   *
+   * Stage 31.1 — this is deliberately NOT reconstructed from firstName + lastName when supplied.
+   * createCandidate() joins the two parts because at creation there is nothing else to go on, and
+   * that join is exactly how a display name drifts from the name a person actually writes: a
+   * candidate whose given name is "Saikishore" entered as first="Sai Kishore" renders forever as
+   * "Sai Kishore Reddy", and no amount of correcting the renderer can fix a wrong stored value.
+   * Omitting it falls back to the join, so the two callers that genuinely have no display name keep
+   * working; supplying it means "store exactly this".
+   */
+  displayName?: string;
+}
+
+/**
+ * Corrects a candidate's stored name. The candidates row is the single authoritative source of the
+ * name every generated document and filename uses, and until Stage 31.1 there was no way to change
+ * it at all — only create and archive — so a name entered wrongly at creation could never be fixed
+ * anywhere except by editing the database by hand.
+ *
+ * Nothing here touches the Master Resume/Skills files or the derived candidate profile: those are
+ * the candidate's EVIDENCE and are owned elsewhere. This is the registry record.
+ */
+export function updateCandidateName(candidateId: number, input: UpdateCandidateNameInput): CandidateRow | undefined {
+  const firstName = input.firstName.trim();
+  const lastName = input.lastName.trim();
+  const displayName = (input.displayName ?? `${firstName} ${lastName}`).trim();
+  if (firstName.length === 0 || lastName.length === 0 || displayName.length === 0) {
+    throw new Error("Candidate first name, last name, and display name must all be non-empty.");
+  }
+  getDb()
+    .prepare(
+      "UPDATE candidates SET first_name = ?, last_name = ?, display_name = ?, updated_at = datetime('now') WHERE id = ?"
+    )
+    .run(firstName, lastName, displayName, candidateId);
+  return getCandidate(candidateId);
+}
+
 export function archiveCandidate(candidateId: number): CandidateRow | undefined {
   const db = getDb();
   db.prepare("UPDATE candidates SET status = 'archived', updated_at = datetime('now') WHERE id = ?").run(candidateId);
