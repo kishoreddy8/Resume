@@ -15,6 +15,7 @@ import { getIterationDirectory, getHandoffDirectory, type QualityWorkflowLocatio
 import { buildEmployerEvidenceMap, renderEmployerEvidenceSection } from "../employerEvidence";
 import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orchestrator";
 import { renderRepairPlanSection } from "../repairScope";
+import { deriveProfessionalIdentity, renderProfessionalIdentitySection } from "../professionalIdentity";
 import type {
   ExternalHandoffExportResult,
   RequiredCorrection,
@@ -60,6 +61,9 @@ export function buildExternalWriterPrompt(input: {
   employerEvidenceSection?: string;
   /** Stage 28 — the targeted-repair brief for a correction attempt. Absent on iteration 1. */
   repairPlanSection?: string;
+  /** Stage 30 — the candidate's own professional identity, so the headline and summary lead with who
+   *  the candidate is rather than with the job's title. */
+  professionalIdentitySection?: string;
   /** Stage 21 (Evidence-Grounded Resume Quality V2) — the computed JD Priority Matrix/positioning/
    *  skill-order/ATS-coverage data the writer should actually USE, not just prose guidance about it.
    *  All optional: absent only when neither jobRequirements nor a target role title were available
@@ -154,7 +158,7 @@ Where each value goes:
 - **LinkedIn** — resume only, and only when given above. The cover letter header does not carry it.
   Omitting it from the cover letter is correct and is not an inconsistency between the documents.
 
-${input.repairPlanSection ?? ""}${input.employerEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
+${input.repairPlanSection ?? ""}${input.professionalIdentitySection ?? ""}${input.employerEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
 1. **Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
    - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
@@ -247,12 +251,12 @@ When your improvements are complete, create the file **\`writer_output.json\`** 
   "iterationNumber": ${iterationNumber},
   "resume": {
     "name": "${candidateName}",
-    "tagline": "Target Job Title / Specialization",
+    "tagline": "<candidate's professional identity> | <JD-relevant specialization> | <key technologies>",
     "location": "City, State or Remote",
     "phone": "Phone",
     "email": "Email",
     "summary": [
-      "Professional summary paragraph tailored directly to this JD..."
+      "Opens by naming the candidate's professional identity and the specialization this JD needs — never 'Engineer with...', 'Professional with...' or any other generic opener, and never a years-of-experience figure CareerOps has not verified..."
     ],
     "skillGroups": [
       {
@@ -543,6 +547,12 @@ export function exportExternalWriterPackage(
       ? renderEmployerEvidenceSection(buildEmployerEvidenceMap(writerInput.masterProfile))
       : undefined,
     repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
+    professionalIdentitySection: writerInput.masterProfile
+      ? renderProfessionalIdentitySection(
+          deriveProfessionalIdentity(writerInput.masterProfile),
+          writerInput.masterProfile.totalYearsExperience ?? null
+        )
+      : undefined,
     jdPriorityMatrix: exportJdPriorityMatrix,
     positioningRecommendation: exportPositioningRecommendation,
     recommendedSkillOrder: exportSkillOrder,

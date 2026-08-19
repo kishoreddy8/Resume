@@ -13,6 +13,32 @@ function link(displayText: string, url: string, size = SIZE_CONTACT): ExternalHy
   });
 }
 
+/**
+ * Stage 30 — the renderer owns the signature, deterministically.
+ *
+ * THE DEFECT. The template rendered `content.closing` and then appended `content.name` as its own
+ * paragraph. When the writer produced a closing that already contained the name — on the real corpus
+ * it was exactly "Sincerely,\nSai Kishore Reddy" — the letter ended with the candidate's name twice.
+ *
+ * Fixed at the renderer boundary rather than by asking the model to format it perfectly: the closing
+ * is reduced to its salutation line(s) only, and the name is emitted once, by us. A writer that omits
+ * the name, includes it, or includes it with different spacing all produce the same correct output.
+ */
+export function stripTrailingSignature(closing: string, candidateName: string): string {
+  const target = candidateName.trim().toLowerCase().replace(/\s+/g, " ");
+  if (target.length === 0) return closing.trim();
+  const lines = closing.split(/\r?\n/);
+  while (lines.length > 0) {
+    const last = lines[lines.length - 1].trim().replace(/\s+/g, " ").replace(/[.,]$/, "");
+    if (last.length === 0 || last.toLowerCase() === target) {
+      lines.pop();
+      continue;
+    }
+    break;
+  }
+  return lines.join("\n").trim();
+}
+
 function bodyParagraph(text: string): Paragraph {
   return new Paragraph({
     keepLines: true,
@@ -48,7 +74,8 @@ export async function generateCoverLetterDocx(
     new Paragraph({ spacing: { after: 300 }, children: contactChildren }),
     bodyParagraph(content.salutation),
     ...content.paragraphs.map(bodyParagraph),
-    bodyParagraph(content.closing),
+    // The closing keeps only its salutation ("Sincerely,"); the name below is the single signature.
+    bodyParagraph(stripTrailingSignature(content.closing, content.name)),
     new Paragraph({
       children: [new TextRun({ text: content.name, font: FONT, color: BLACK, size: SIZE_BODY })],
     }),

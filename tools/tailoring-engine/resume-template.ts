@@ -199,9 +199,20 @@ export async function generateResumeDocx(content: ResumeContent, outputPath: str
   for (const role of content.experience) {
     // The role header keeps-with-next unconditionally (never orphan a heading from its first bullet).
     children.push(roleHeader(role.title, role.company, role.dates, true));
-    role.bullets.forEach((text, i) => {
-      const isLast = i === role.bullets.length - 1;
-      children.push(bullet(text, !isLast));
+    // Stage 30 — bullets are NOT chained to each other.
+    //
+    // Previously every bullet but the last carried keepNext, which chained header -> bullet1 -> ...
+    // -> bulletN into a single unbreakable block. Word then had to move an ENTIRE employer to the
+    // next page whenever it did not fit in the remaining space, which is what produced the large
+    // blank region at the foot of a page on the real corpus (Comerica alone is 8 bullets averaging
+    // ~216 characters — far more than typically fits in a partial page).
+    //
+    // Each bullet still keeps its OWN lines together (keepLines) and still has widow control, so a
+    // single bullet is never split mid-sentence across a page boundary; only the boundary BETWEEN
+    // bullets is now a legal break. An employer may therefore split across pages, which is both
+    // readable and exactly what avoids the wasted space. No bullet is removed or shortened.
+    role.bullets.forEach((text) => {
+      children.push(bullet(text, false));
     });
   }
 
