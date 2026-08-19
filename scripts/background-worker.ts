@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describeSchedulerHost, SCHEDULER_HOST_ENV_VAR, workerProcessOwnsScheduler } from "@/lib/scheduler/host";
+import { WorkerScheduler, type TickName } from "@/lib/scheduler/workerScheduler";
 
 /**
  * Stage 28 — CareerOps' background worker process.
@@ -31,9 +32,6 @@ import { describeSchedulerHost, SCHEDULER_HOST_ENV_VAR, workerProcessOwnsSchedul
 const DATA_DIR = path.resolve("data");
 const LOCK_PATH = path.join(DATA_DIR, "background-worker.lock");
 const STATUS_PATH = path.join(DATA_DIR, "background-worker-status.json");
-
-/** Same cadence the web instrumentation used: how often to CHECK, never the cadence itself. */
-const TICK_CHECK_INTERVAL_MS = 60_000;
 
 interface LockFile {
   pid: number;
@@ -115,57 +113,68 @@ async function main(): Promise<void> {
   const { handleDbFailure } = await import("@/db/health");
 
   const startedAt = new Date().toISOString();
-  const lastOutcomes: Record<string, unknown> = {};
   let shuttingDown = false;
 
   console.log(`CareerOps background worker started (pid ${process.pid}). ${describeSchedulerHost()}`);
 
   // Mirrors instrumentation.ts's own classification: a poisoned SQLite handle is discarded so the
-  // next tick gets a healthy one, rather than logging the same error forever.
-  const onTickError = (scope: string, err: unknown) => {
-    const outcome = handleDbFailure(err, closeDbConnection);
-    lastOutcomes[scope] = { error: err instanceof Error ? err.message : String(err), recovery: outcome };
-    if (outcome === "unrelated") console.error(`[${scope}] unexpected error:`, err);
-    else console.error(`[${scope}] database connection failure; recovery outcome: ${outcome}`);
-  };
-
-  /** Each tick already resolves to an outcome rather than throwing; the catch is a last-resort net so
-   *  one bad tick can never stop the interval timer. */
-  const run = async (scope: string, fn: () => Promise<unknown>) => {
+  // next tick gets a healthy one, rather than logging the same error forever. Re-thrown so the
+  // scheduler records the failure against the tick that produced it and keeps that tick's own timer
+  // alive — one failing subsystem must never stop the others being dispatched.
+  const withDbRecovery = (scope: TickName, fn: () => Promise<unknown>) => async () => {
     try {
-      lastOutcomes[scope] = await fn();
+      return await fn();
     } catch (err) {
-      onTickError(scope, err);
+      const outcome = handleDbFailure(err, closeDbConnection);
+      if (outcome === "unrelated") console.error(`[${scope}] unexpected error:`, err);
+      else console.error(`[${scope}] database connection failure; recovery outcome: ${outcome}`);
+      throw err;
     }
   };
 
-  const tickAll = async () => {
+  /**
+   * Stage 29 — each tick now runs on its OWN timer with its own in-flight guard, replacing the single
+   * sequential pass that ran the resume writer last, behind a production cycle that routinely exceeds
+   * ten minutes. See workerScheduler.ts for why independent dispatch is safe here (better-sqlite3 is
+   * synchronous and Node single-threaded, so this changes interleaving, not database concurrency).
+   */
+  const scheduler = new WorkerScheduler({
+    resumeWriter: withDbRecovery("resumeWriter", () => runResumeWriterTick()),
+    jobEvaluation: withDbRecovery("jobEvaluation", () => runJobEvaluationTick()),
+    scan: withDbRecovery("scan", () => runSchedulerTick()),
+    productionCycle: withDbRecovery("productionCycle", () => runProductionCycleTick()),
+  });
+
+  const statusTimer = setInterval(() => {
     if (shuttingDown) return;
-    await run("scheduler", () => runSchedulerTick());
-    await run("productionCycle", () => runProductionCycleTick());
-    await run("jobEvaluation", () => runJobEvaluationTick());
-    await run("resumeWriter", () => runResumeWriterTick());
+    const snapshot = scheduler.snapshot();
     writeStatus({
       pid: process.pid,
       startedAt,
       lastTickAt: new Date().toISOString(),
       host: "worker",
-      lastOutcomes,
+      currentActivity: snapshot.currentActivity,
+      heavySlotHeldBy: snapshot.heavySlotHeldBy,
+      ticks: snapshot.ticks,
     });
-  };
+  }, 15_000);
 
-  // Run once immediately (restart catch-up, exactly as instrumentation.ts did), then on the interval.
-  await tickAll();
-  const timer = setInterval(() => {
-    void tickAll();
-  }, TICK_CHECK_INTERVAL_MS);
+  await scheduler.start();
 
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\nCareerOps background worker shutting down (${signal}).`);
-    clearInterval(timer);
-    writeStatus({ pid: process.pid, startedAt, stoppedAt: new Date().toISOString(), host: "worker", lastOutcomes });
+    scheduler.stop();
+    clearInterval(statusTimer);
+    writeStatus({
+      pid: process.pid,
+      startedAt,
+      stoppedAt: new Date().toISOString(),
+      host: "worker",
+      currentActivity: "IDLE",
+      ticks: scheduler.snapshot().ticks,
+    });
     releaseLock();
     // In-flight synchronous tick work finishes on its own; the leases it holds go stale and are
     // reclaimed by a later pass, which is the same recovery path a crash already exercises.

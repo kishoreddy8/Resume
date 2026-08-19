@@ -32,6 +32,17 @@ import { getResumeWriterRuntimeState, recordResumeWriterTick } from "./writerSta
  */
 export const RESUME_WRITER_INTERVAL_MINUTES = 30;
 
+/**
+ * Stage 29 — minimum spacing between writer passes WHEN APPROVED WORK IS ALREADY QUEUED.
+ *
+ * The target is that an approved workflow begins being written within roughly a minute of the worker
+ * noticing it, rather than waiting out a cadence meant for an idle system. One minute still prevents
+ * a tight loop if a pass returns immediately, while every real bound on spend (the lease, the batch
+ * ceiling, the two-iteration cap, the technical-failure cap, the subscription/auth block) is
+ * unchanged and continues to do the actual limiting.
+ */
+export const RESUME_WRITER_PENDING_INTERVAL_MINUTES = 1;
+
 /** Hard bound on workflows per pass — see RunWorkerPassOptions.maxWorkflows. Oldest-updated first, so
  *  whatever this pass does not reach is simply first in line on the next one. */
 export const RESUME_WRITER_BATCH_SIZE = 2;
@@ -76,14 +87,29 @@ export async function runResumeWriterTick(
   if (!isWithinWindow(now, settings.scheduler)) {
     return { outcome: "SKIPPED_OUTSIDE_WINDOW" };
   }
-  if (!isIntervalDue(getResumeWriterRuntimeState().lastStartedAt, RESUME_WRITER_INTERVAL_MINUTES, now)) {
-    return { outcome: "SKIPPED_INTERVAL_NOT_DUE" };
+  // Stage 29 — the cheap "is there anything to do?" read now happens BEFORE the spacing check, and
+  // it decides which spacing applies. Previously the 30-minute gap was evaluated first, so a job
+  // approved moments after a pass finished waited up to half an hour before the writer would even
+  // look at it — the second cause of writer starvation, alongside the worker running this tick last
+  // and behind a ten-minute production cycle.
+  const pending = listWorkflowsAwaitingWriter().length;
+  if (pending === 0) {
+    return { outcome: "SKIPPED_NO_PENDING_WORKFLOWS" };
   }
 
-  // Cheap read-only pre-check so an idle system never even takes the lease. Not a substitute for the
-  // lease: runGuardedWriterPass re-reads the pending list under it.
-  if (listWorkflowsAwaitingWriter().length === 0) {
-    return { outcome: "SKIPPED_NO_PENDING_WORKFLOWS" };
+  // With approved work queued the spacing drops to RESUME_WRITER_PENDING_INTERVAL_MINUTES, so a
+  // human who has just approved a job is not left waiting on a cadence designed for an idle system.
+  //
+  // This is safe to shorten because none of the actual bounds on Claude spend live here: the
+  // machine-wide lease still allows exactly one pass at a time, a pass still processes at most
+  // RESUME_WRITER_BATCH_SIZE workflows, each workflow is still capped at DEFAULT_MAX_ITERATIONS (2)
+  // content attempts, technical failures are still capped and consume no iteration, and an exhausted
+  // subscription or logged-out CLI still parks the writer entirely. What the long interval actually
+  // protected against was a tight retry loop, and every one of those conditions is now handled
+  // explicitly. The idle spacing is kept unchanged for the case where nothing is queued.
+  const spacingMinutes = pending > 0 ? RESUME_WRITER_PENDING_INTERVAL_MINUTES : RESUME_WRITER_INTERVAL_MINUTES;
+  if (!isIntervalDue(getResumeWriterRuntimeState().lastStartedAt, spacingMinutes, now)) {
+    return { outcome: "SKIPPED_INTERVAL_NOT_DUE" };
   }
 
   // RESUME_WRITER_BATCH_SIZE is a CEILING, never a target a caller can raise: a passed-in bound may

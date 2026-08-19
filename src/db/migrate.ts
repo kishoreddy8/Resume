@@ -2,7 +2,42 @@ import fs from "node:fs";
 import path from "node:path";
 import { DB_PATH, getDb } from "./index";
 
-const BACKUP_RETENTION = 20;
+/**
+ * Stage 29 — how many automatic pre-migration snapshot SETS to keep.
+ *
+ * Lowered from 20. The arithmetic that forced this: app.db is now ~2.10 GB, so twenty sets is roughly
+ * 42 GB against ~17 GB free on this volume. The old number was chosen when the database was a
+ * fraction of its current size, and keeping it would mean the Stage 27 disk preflight refusing
+ * migrations rather than backups being pruned — a safety net that blocks the thing it protects.
+ *
+ * Four sets is still several independent recovery points, and the floor below guarantees two even if
+ * the size cap would otherwise trim further.
+ */
+const BACKUP_RETENTION = 4;
+
+/**
+ * Never retain fewer than this many complete sets, whatever the size cap says. A retention policy
+ * that can prune its way down to a single copy is not a safety net.
+ */
+const MINIMUM_RETAINED_SETS = 2;
+
+/**
+ * Size-aware ceiling on the automatic backup directory. Whichever of this and BACKUP_RETENTION binds
+ * first wins, so a growing database tightens retention automatically instead of silently consuming
+ * the disk.
+ */
+const MAX_AUTOMATIC_BACKUP_BYTES = 12 * 1024 * 1024 * 1024; // 12 GiB
+
+/**
+ * Stage 29 — a single prune run may delete at most this many sets without an explicit opt-in.
+ *
+ * This exists because lowering retention from 20 to 4 would otherwise make the very next migration
+ * delete sixteen historical snapshots in one go, with no human ever having agreed to it. Ordinary
+ * steady-state pruning removes one set per migration and is unaffected; a large backlog is reported
+ * and left alone until an operator sets CAREER_OPS_ALLOW_BULK_BACKUP_PRUNE=true.
+ */
+const BULK_PRUNE_THRESHOLD = 2;
+const BULK_PRUNE_ENV_VAR = "CAREER_OPS_ALLOW_BULK_BACKUP_PRUNE";
 
 /**
  * Stage 27 — refuse to create a snapshot that would leave the volume dangerously full.
@@ -131,18 +166,106 @@ export function backupBeforeMigration(): void {
 /** Keeps only the newest BACKUP_RETENTION "pre-migration-*" snapshot sets so data/backups/ doesn't
  *  grow unbounded. Manual "pre-<feature>-*" snapshots from earlier sessions are untouched — this
  *  only prunes the ones this automatic step itself created. */
-function pruneOldBackups(backupsDir: string): void {
-  const files = fs.readdirSync(backupsDir).filter((f) => f.includes(".pre-migration-"));
+export interface BackupRetentionPlan {
+  /** Timestamps of complete sets, oldest first. */
+  completeSets: string[];
+  /** Sets this policy would remove, oldest first. */
+  toDelete: string[];
+  /** Sets kept — always includes the newest, and never fewer than MINIMUM_RETAINED_SETS. */
+  toKeep: string[];
+  bytesRecoverable: number;
+  /** True when the deletion was withheld pending an explicit operator opt-in. */
+  bulkPruneWithheld: boolean;
+  reason: string;
+}
+
+/** Bytes occupied by one snapshot set (the .bak plus whichever sidecars exist). */
+function setBytes(backupsDir: string, files: string[], timestamp: string): number {
+  return files
+    .filter((f) => f.includes(`.pre-migration-${timestamp}.bak`))
+    .reduce((total, f) => {
+      try {
+        return total + fs.statSync(path.join(backupsDir, f)).size;
+      } catch {
+        return total;
+      }
+    }, 0);
+}
+
+/**
+ * Stage 29 — decides what retention WOULD remove, without touching anything. Pure enough to test:
+ * the only I/O is reading the directory listing and file sizes.
+ *
+ * A "complete set" requires the main database snapshot; a stray WAL/SHM companion with no parent is
+ * not a recovery point and is never counted as one (nor is it kept alive by this policy).
+ */
+export function planBackupRetention(backupsDir: string, now: Date = new Date()): BackupRetentionPlan {
+  void now;
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(backupsDir).filter((f) => f.includes(".pre-migration-"));
+  } catch {
+    return { completeSets: [], toDelete: [], toKeep: [], bytesRecoverable: 0, bulkPruneWithheld: false, reason: "No backups directory." };
+  }
+
+  const baseName = path.basename(DB_PATH);
   const timestamps = Array.from(
     new Set(files.map((f) => f.match(/\.pre-migration-(.+)\.bak$/)?.[1]).filter((t): t is string => !!t))
   ).sort();
+  // Only sets whose main database snapshot exists are eligible to be counted or kept.
+  const completeSets = timestamps.filter((ts) => files.includes(`${baseName}.pre-migration-${ts}.bak`));
 
-  const toDelete = timestamps.slice(0, Math.max(0, timestamps.length - BACKUP_RETENTION));
-  for (const ts of toDelete) {
+  // Count first, then size — whichever binds tighter wins, but never below the floor.
+  let keepCount = Math.min(completeSets.length, BACKUP_RETENTION);
+  let bytes = 0;
+  const newestFirst = [...completeSets].reverse();
+  let sizeLimitedCount = 0;
+  for (const ts of newestFirst) {
+    const size = setBytes(backupsDir, files, ts);
+    if (sizeLimitedCount > 0 && bytes + size > MAX_AUTOMATIC_BACKUP_BYTES) break;
+    bytes += size;
+    sizeLimitedCount += 1;
+  }
+  keepCount = Math.max(MINIMUM_RETAINED_SETS, Math.min(keepCount, sizeLimitedCount));
+  keepCount = Math.min(keepCount, completeSets.length);
+
+  const toKeep = completeSets.slice(completeSets.length - keepCount);
+  const toDelete = completeSets.slice(0, completeSets.length - keepCount);
+  const bytesRecoverable = toDelete.reduce((t, ts) => t + setBytes(backupsDir, files, ts), 0);
+
+  const bulkPruneWithheld = toDelete.length > BULK_PRUNE_THRESHOLD && process.env[BULK_PRUNE_ENV_VAR] !== "true";
+  return {
+    completeSets,
+    toDelete,
+    toKeep,
+    bytesRecoverable,
+    bulkPruneWithheld,
+    reason: bulkPruneWithheld
+      ? `${toDelete.length} sets exceed the retention policy, which is more than a routine prune (${BULK_PRUNE_THRESHOLD}). ` +
+        `Left untouched; set ${BULK_PRUNE_ENV_VAR}=true to remove them deliberately.`
+      : toDelete.length === 0
+      ? "Within the retention policy; nothing to prune."
+      : `Pruning ${toDelete.length} set(s) beyond the ${BACKUP_RETENTION}-set / ${(MAX_AUTOMATIC_BACKUP_BYTES / 1024 ** 3).toFixed(0)} GiB policy.`,
+  };
+}
+
+/** Applies the plan. Never removes the newest set, and never drops below MINIMUM_RETAINED_SETS. */
+function pruneOldBackups(backupsDir: string): void {
+  const plan = planBackupRetention(backupsDir);
+  if (plan.bulkPruneWithheld) {
+    console.warn(`Backup retention: ${plan.reason}`);
+    return;
+  }
+  if (plan.toDelete.length === 0) return;
+
+  const files = fs.readdirSync(backupsDir).filter((f) => f.includes(".pre-migration-"));
+  for (const ts of plan.toDelete) {
+    // WAL/SHM companions go with their parent — a sidecar without its database is not a recovery point.
     for (const f of files.filter((f) => f.includes(`.pre-migration-${ts}.bak`))) {
       fs.unlinkSync(path.join(backupsDir, f));
     }
   }
+  console.log(`Backup retention: ${plan.reason}`);
 }
 
 // Only runs the actual migration (and, on failure, exits the process) when this file is executed

@@ -45,6 +45,18 @@ interface OperationsResponse {
     nextEligibleRunAt: string | null;
     health: HealthStatus;
   };
+  backgroundWorker: {
+    running: boolean;
+    schedulerHost: string;
+    schedulerHostDescription: string;
+    pid: number | null;
+    startedAt: string | null;
+    lastStatusAt: string | null;
+    currentActivity: string | null;
+    heavySlotHeldBy: string | null;
+    ticks: Record<string, { running: boolean; startedAt: string | null; lastCompletedAt: string | null; lastDurationMs: number | null }> | null;
+    detail: string;
+  } | null;
   resumeWriter: {
     state: string;
     detail: string;
@@ -301,6 +313,45 @@ export default function OperationsPage() {
               </div>
             )}
           </SectionCard>
+
+          {/* Stage 29 — what the background worker is doing right now. Every value comes from the
+              worker's own status file; when it is not running this says so rather than guessing. */}
+          {data.backgroundWorker && (
+            <SectionCard title="Background worker">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <Metric label="Worker" value={data.backgroundWorker.running ? "RUNNING" : "STOPPED"} />
+                <Metric label="Scheduler host" value={data.backgroundWorker.schedulerHost} />
+                <Metric
+                  label="Current activity"
+                  value={(data.backgroundWorker.currentActivity ?? "—").replace(/([a-z])([A-Z])/g, "$1 $2").toUpperCase()}
+                />
+                <Metric label="Heavy slot" value={data.backgroundWorker.heavySlotHeldBy ?? "free"} />
+                <Metric label="PID" value={data.backgroundWorker.pid !== null ? String(data.backgroundWorker.pid) : "—"} />
+                <Metric label="Started" value={formatTimestamp(data.backgroundWorker.startedAt)} />
+                <Metric label="Last status" value={formatTimestamp(data.backgroundWorker.lastStatusAt)} />
+                <Metric label="Writer queue" value={`${data.resumeWriter?.pendingWorkflowCount ?? 0} pending · concurrency 1`} />
+              </div>
+              {data.backgroundWorker.ticks && (
+                <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                  {Object.entries(data.backgroundWorker.ticks).map(([name, tick]) => (
+                    <Metric
+                      key={name}
+                      label={name.replace(/([a-z])([A-Z])/g, "$1 $2")}
+                      value={
+                        tick.running
+                          ? `running since ${formatTimestamp(tick.startedAt)}`
+                          : tick.lastCompletedAt
+                          ? `idle · last ${formatTimestamp(tick.lastCompletedAt)}${tick.lastDurationMs !== null ? ` (${Math.round(tick.lastDurationMs / 1000)}s)` : ""}`
+                          : "idle"
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+              <p className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">{data.backgroundWorker.detail}</p>
+              <p className="mt-1 text-[11px] text-zinc-500">{data.backgroundWorker.schedulerHostDescription}</p>
+            </SectionCard>
+          )}
 
           {/* Stage 27 — one place that answers "is approved tailoring actually moving, and if not,
               why?". Every value is read from the writer's own lease/tick/last-pass record, never

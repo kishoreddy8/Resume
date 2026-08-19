@@ -21,6 +21,7 @@ import { getScanLockStatus } from "@/lib/scheduler/lock";
 import { getSchedulerRuntimeState } from "@/lib/scheduler/state";
 import { nextEligibleRunAt } from "@/lib/scheduler/window";
 import { getResumeWriterHealth } from "@/lib/resumeQuality/writers/writerHealth";
+import { readBackgroundWorkerStatus } from "@/lib/scheduler/workerStatus";
 import { getAppSettings } from "@/db/queries/settings";
 import {
   classifyConnectorHealth,
@@ -139,6 +140,9 @@ export async function GET(req: NextRequest) {
     // (usage limit, sign-in, exhausted technical retries, stale approval, window, or simply nothing
     // queued). Read-only: this endpoint never starts, stops, or resets anything.
     resumeWriter: getResumeWriterHealth(),
+    // Stage 29 — what the background worker is actually doing right now, read from the status file it
+    // writes. Reported as UNKNOWN rather than guessed when the worker is not running.
+    backgroundWorker: readBackgroundWorkerStatus(),
     scanning: {
       window: scanningWindow,
       latest: latestScan,
