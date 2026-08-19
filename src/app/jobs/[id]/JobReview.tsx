@@ -7,6 +7,8 @@ import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { AiInsightsCard } from "./AiInsightsCard";
 import { Disclosure } from "./Disclosure";
 import { JobDecisionHeader } from "./JobDecisionHeader";
+import { JobActionDock, DockMenuItem, resolveDockState } from "./JobActionDock";
+import { JobReviewSkeleton, LoadingRegion } from "../Skeletons";
 import { MatchCard } from "./MatchCard";
 import { ResumeQualityPipeline } from "./ResumeQualityPipeline";
 import { useJobMatch } from "./useJobMatch";
@@ -97,53 +99,6 @@ function parseSections(json: string | null): DescriptionSections | null {
   }
 }
 
-function TailoringToggle({ jobId, initial, candidateId }: { jobId: number; initial: boolean; candidateId: number }) {
-  const [checked, setChecked] = useState(initial);
-  const [saving, setSaving] = useState(false);
-
-  async function toggle() {
-    const next = !checked;
-    setChecked(next);
-    setSaving(true);
-    try {
-      await fetch(`/api/jobs/${jobId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidateId, markedForTailoring: next }),
-      });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <label className="flex items-center gap-2 text-sm">
-      <input type="checkbox" checked={checked} disabled={saving} onChange={toggle} className="h-4 w-4" />
-      Marked for resume tailoring
-    </label>
-  );
-}
-
-function CopyPromptButton({ job, candidateId }: { job: JobWithCompany; candidateId: number }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    const prompt = `/tailor-resume candidate=${candidateId} job=${job.id}`;
-    await navigator.clipboard.writeText(prompt);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
-  return (
-    <button
-      onClick={copy}
-      className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)]"
-    >
-      {copied ? "Copied!" : "Copy Claude Code prompt"}
-    </button>
-  );
-}
-
 /**
  * Archive/restore/pin + a plain-language summary of where the job stands in the lifecycle (live,
  * closed-but-not-archived, or archived), plus the age band driving the automatic policy. The
@@ -223,7 +178,7 @@ function LifecycleCard({
   const ageBand = getJobAgeBand(ageDays, thresholds);
 
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+    <div className="border-t border-[var(--separator)] px-5 py-4">
       <h2 className="mb-2 text-[13px] font-semibold text-primary">Lifecycle</h2>
       <div className="mb-2 flex flex-wrap items-center gap-1.5 text-sm">
         <span
@@ -376,7 +331,7 @@ function NotesTagsCard({ job, candidateId, onChanged }: { job: JobWithCompany; c
   }
 
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+    <div className="border-t border-[var(--separator)] px-5 py-4">
       <h2 className="mb-2 text-[13px] font-semibold text-primary">Notes &amp; tags</h2>
       <textarea
         value={notes}
@@ -431,7 +386,7 @@ function HistoryCard({ jobId, refreshKey }: { jobId: number; refreshKey: number 
   }, [jobId, refreshKey]);
 
   return (
-    <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+    <section className="border-t border-[var(--separator)] px-5 py-4">
       {/* Audit trail — read occasionally, never a blocker, so it folds away by default. */}
       <Disclosure
         title="History"
@@ -467,7 +422,7 @@ function H1bIntelligenceCard({ job }: { job: JobWithCompany }) {
   const { overridden, reason } = combineH1bConfidence(job.company_h1b_confidence, job.sponsorship_polarity);
 
   return (
-    <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+    <section className="border-t border-[var(--separator)] px-5 py-4">
       <h2 className="mb-2 text-[13px] font-semibold text-primary">H1B sponsor intelligence</h2>
 
       {/* The outcome and this posting's own words stay visible. Only the provenance behind them —
@@ -691,7 +646,7 @@ function AtAGlanceCard({
   );
 
   return (
-    <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-5">
+    <section className="border-t border-[var(--separator)] px-5 py-4">
       <h2 className="section-title">At a Glance</h2>
       <p className="mb-3 text-xs text-tertiary">
         Deterministic, rule-based extraction from the full description below — always verify
@@ -782,6 +737,7 @@ export function JobReview({
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
+  const [promptCopied, setPromptCopied] = useState(false);
   const { thresholds, loaded: thresholdsLoaded } = useLifecycleThresholds();
   // Called unconditionally, above the early returns, so hook order is stable across renders. This
   // is the same single GET MatchCard used to issue on mount — lifted, not added.
@@ -810,12 +766,59 @@ export function JobReview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, candidateId]);
 
-  if (loading || !thresholdsLoaded) return <p className="p-5 text-[13px] text-tertiary">Loading…</p>;
+  if (loading || !thresholdsLoaded) {
+    return (
+      <>
+        <LoadingRegion label="Loading job review" />
+        <JobReviewSkeleton />
+      </>
+    );
+  }
   if (notFound || !data) return <p className="p-5 text-[13px] text-tertiary">Job not found.</p>;
 
   const { job, generatedFiles, skills, certifications } = data;
   const sections = parseSections(job.description_sections);
   const pane = layout === "pane";
+
+  // Presentation only: reads the decision, the tailoring mark and whether files exist. No request.
+  const dockState = resolveDockState(match, job, generatedFiles.length);
+
+  async function toggleTailoringMark() {
+    const next = job.marked_for_tailoring !== 1;
+    await fetch(`/api/jobs/${job.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidateId, markedForTailoring: next }),
+    });
+    load();
+  }
+
+  async function copyPrompt() {
+    await navigator.clipboard.writeText(`/tailor-resume candidate=${candidateId} job=${job.id}`);
+    setPromptCopied(true);
+    setTimeout(() => setPromptCopied(false), 2000);
+  }
+
+  /** Each branch runs an action that already existed; none of them is new behaviour. */
+  function onDockPrimary() {
+    switch (dockState.phase) {
+      case "unevaluated":
+        match.evaluate();
+        return;
+      case "ready-to-approve":
+        toggleTailoringMark();
+        return;
+      case "needs-review":
+      case "resume-ready":
+        // Both are "go read the section that explains this" — scroll rather than mutate.
+        document
+          .getElementById(dockState.phase === "needs-review" ? "job-evidence" : "job-resume")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      default:
+        return;
+    }
+  }
 
   const decisionHeader = (
     <JobDecisionHeader
@@ -826,23 +829,30 @@ export function JobReview({
       onClose={onClose}
       headingLevel={pane ? "h2" : "h1"}
       actions={
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-            <TailoringToggle jobId={job.id} initial={job.marked_for_tailoring === 1} candidateId={candidateId} />
-            <CopyPromptButton job={job} candidateId={candidateId} />
-          </div>
-          <p className="text-[12px] text-tertiary">
-            Tailoring runs in Claude Code, not this app. Mark this job, then run the copied skill
-            prompt in a Claude Code session in this project — nothing is written or submitted from
-            here.
-          </p>
-        </div>
+        <JobActionDock
+          state={dockState}
+          postingUrl={job.url}
+          onPrimary={onDockPrimary}
+          overflow={
+            <>
+              <DockMenuItem onSelect={copyPrompt}>
+                {promptCopied ? "Prompt copied" : "Copy Claude Code prompt"}
+              </DockMenuItem>
+              <DockMenuItem onSelect={toggleTailoringMark}>
+                {job.marked_for_tailoring === 1 ? "Unmark for tailoring" : "Mark for tailoring"}
+              </DockMenuItem>
+              {match.state === "ok" && (
+                <DockMenuItem onSelect={match.evaluate}>Re-evaluate match</DockMenuItem>
+              )}
+            </>
+          }
+        />
       }
     />
   );
 
   const pipelineCard = (
-    <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+    <section className="border-t border-[var(--separator)] px-5 py-4">
       <h2 className="mb-2 text-[13px] font-semibold text-primary">Pipeline</h2>
       <div className="mb-1 text-[11px] text-tertiary">Status</div>
       <PipelineStatusSelect
@@ -858,7 +868,7 @@ export function JobReview({
   );
 
   const generatedFilesCard = (
-    <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-4">
+    <section className="border-t border-[var(--separator)] px-5 py-4">
       <h2 className="mb-2 text-[13px] font-semibold text-primary">
         Generated files ({generatedFiles.length})
       </h2>
@@ -877,7 +887,7 @@ export function JobReview({
   );
 
   const descriptionCard = (
-    <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-5">
+    <section className="border-t border-[var(--separator)] px-5 py-4">
       {/* Open by default: the posting is primary content, and the disclosure exists only so a
        *  very long description can be folded away once read — never to truncate it. */}
       <Disclosure title="Full description" defaultOpen>
@@ -917,7 +927,10 @@ export function JobReview({
   // verdict and its reasons.
   if (pane) {
     return (
-      <div className="space-y-4 p-4">
+      /* One surface, sections separated by hairlines. The header keeps its own weight because it
+         is the only part that must be read; everything after it is depth, ordered
+         decision -> evidence -> facts -> posting -> provenance -> operational -> resume. */
+      <div className="bg-surface">
         {decisionHeader}
         <MatchCard match={match} />
         <AtAGlanceCard job={job} sections={sections} skills={skills} certifications={certifications} />
@@ -929,7 +942,9 @@ export function JobReview({
         <AiInsightsCard jobId={job.id} />
         {generatedFilesCard}
         <HistoryCard jobId={job.id} refreshKey={historyKey} />
-        <ResumeQualityPipeline jobId={job.id} jobTitle={job.title} companyName={job.company_name} />
+        <div id="job-resume" className="border-t border-[var(--separator)] px-5 py-4">
+          <ResumeQualityPipeline jobId={job.id} jobTitle={job.title} companyName={job.company_name} />
+        </div>
         <NotInterestedButton job={job} candidateId={candidateId} />
       </div>
     );

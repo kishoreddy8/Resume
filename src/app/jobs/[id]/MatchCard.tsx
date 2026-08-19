@@ -87,7 +87,7 @@ export function MatchCard({ match }: { match: JobMatch }) {
       (result.unrecognizedCandidateSkills ?? []).length > 0);
 
   return (
-    <section className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface p-5">
+    <section id="job-evidence" className="border-t border-[var(--separator)] px-5 py-4">
       <h2 className="section-title">Match evidence</h2>
       <p className="mt-0.5 mb-4 text-[12px] text-tertiary">
         Deterministic — no AI involved. Computed from job_skills/eligibility facts and your candidate

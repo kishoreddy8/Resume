@@ -7,6 +7,7 @@ import { DEFAULT_FILTERS, JobFilterSidebar, type JobFilterState } from "./JobFil
 import { ForYouList } from "./ForYouList";
 import { JobList } from "./JobList";
 import { Workbench } from "./Workbench";
+import { JobListSkeleton, LoadingRegion } from "./Skeletons";
 import { motion, useReducedMotion } from "motion/react";
 import { AppToolbarSlot } from "@/components/AppToolbarSlot";
 import { useLifecycleThresholds } from "./useLifecycleThresholds";
@@ -25,6 +26,19 @@ function useDesktopFilters() {
     return () => mq.removeEventListener("change", apply);
   }, []);
   return desktop;
+}
+
+/** Holds the workspace's shape while data arrives, so nothing collapses and snaps back. */
+function WorkspaceLoading() {
+  return (
+    <div className="flex h-[calc(100dvh-10rem)] min-h-[420px] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface">
+      <LoadingRegion label="Loading jobs" />
+      <div className="min-w-0 flex-1">
+        <JobListSkeleton />
+      </div>
+      <div className="hidden w-[42%] shrink-0 border-l border-[var(--separator)] lg:block" />
+    </div>
+  );
 }
 
 function buildQuery(filters: JobFilterState): string {
@@ -205,7 +219,7 @@ export default function JobsPage() {
 
       {view === "forYou" ? (
         !thresholdsLoaded ? (
-          <p className="text-[13px] text-tertiary">Loading…</p>
+          <WorkspaceLoading />
         ) : (
           <Workbench
             selectedJobId={selectedJobId}
@@ -240,7 +254,7 @@ export default function JobsPage() {
           </motion.div>
           <div className="min-w-0 flex-1">
             {loading || !thresholdsLoaded ? (
-              <p className="text-sm text-zinc-500">Loading…</p>
+              <WorkspaceLoading />
             ) : (
               <Workbench
                 selectedJobId={selectedJobId}

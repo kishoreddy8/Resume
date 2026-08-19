@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { JobRow } from "./JobRow";
+import { JobListSkeleton, LoadingRegion } from "./Skeletons";
 import type { RoleFamilyTier } from "@/lib/rank/forYou";
 import type { CandidateJobBucket } from "@/lib/rank/candidateJobBucket";
 import type { LifecycleThresholds } from "@/lib/jobLifecycle";
@@ -284,7 +285,10 @@ export function ForYouList({
       </div>
 
       {loading ? (
-        <p className="p-4 text-[13px] text-tertiary">Loading…</p>
+        <>
+          <LoadingRegion label="Loading recommended jobs" />
+          <JobListSkeleton />
+        </>
       ) : entries.length === 0 ? (
         <div className="m-4 rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] p-10 text-center text-[13px] text-tertiary">
           No jobs found in this view.

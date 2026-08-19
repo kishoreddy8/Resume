@@ -126,7 +126,7 @@ export function AiInsightsCard({ jobId }: { jobId: number }) {
   }
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="border-t border-[var(--separator)] px-5 py-4">
       <h2 className="mb-1 text-sm font-semibold">AI Insights</h2>
       <p className="mb-3 text-xs text-zinc-500">
         AI-generated — always verify against the full description below. Never replaces the
