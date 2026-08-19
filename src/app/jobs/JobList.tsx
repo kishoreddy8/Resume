@@ -4,15 +4,20 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { H1bBadge } from "@/components/H1bBadge";
-import { MatchDecisionBadge, type MatchDecision } from "@/components/MatchDecisionBadge";
+import { MatchDecisionBadge } from "@/components/MatchDecisionBadge";
 import { NotInterestedToggle } from "@/components/NotInterestedToggle";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import { computeFreshnessTier } from "@/lib/rank/forYou";
+import {
+  compareJobsBestFirst,
+  matchesDecisionFilter,
+  type DecisionFilter,
+  type ListMatchSummary,
+} from "@/lib/rank/jobsList";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { JobWithCompany } from "@/types";
 
-type DecisionFilter = "All" | MatchDecision | "Not Evaluated";
 const DECISION_FILTERS: DecisionFilter[] = ["All", "READY_FOR_TAILORING", "NEEDS_REVIEW", "BLOCKED", "Not Evaluated"];
 const DECISION_FILTER_LABELS: Record<DecisionFilter, string> = {
   All: "All",
@@ -26,15 +31,6 @@ const DECISION_FILTER_LABELS: Record<DecisionFilter, string> = {
  *  in JobList on why only rendering is bounded. */
 const INITIAL_RENDER_LIMIT = 100;
 const RENDER_LIMIT_STEP = 200;
-
-interface ListMatchSummary {
-  decision: MatchDecision;
-  overallScore: number;
-  /** Stage 24B — the engine's own JD-evidence-quality flag, carried through
-   *  /api/jobs/match-decisions so this list can distinguish an untrustworthy score from a real one
-   *  exactly as the For You feed does. */
-  insufficientJdSignal: boolean;
-}
 
 /** Batch-fetches the latest Phase 2 match decision for every visible job's dedupe_key in one
  *  request — never one request per row. Purely additive/client-side: does not touch listJobs'
@@ -150,40 +146,8 @@ function MatchFitCell({ summary }: { summary: ListMatchSummary | undefined }) {
   );
 }
 
-/** Stage 24B (Phase 13) — deterministic best-first ordering for the All Jobs view, which previously
- *  rendered listJobs()' raw SQL order and could therefore show an unevaluated or insufficient-signal
- *  posting above a strong fresh match. Same key philosophy as src/lib/rank/forYou.ts, applied to the
- *  facts this view actually has: decision, evidence quality, score, then recency, then a stable id
- *  tie-break. Client-side and display-only — it does not touch listJobs' SQL or its filters. */
-const LIST_DECISION_RANK: Record<MatchDecision, number> = { READY_FOR_TAILORING: 0, NEEDS_REVIEW: 1, BLOCKED: 3 };
-
-function compareJobsBestFirst(
-  a: JobWithCompany,
-  b: JobWithCompany,
-  decisions: Record<string, ListMatchSummary>
-): number {
-  const am = decisions[a.dedupe_key];
-  const bm = decisions[b.dedupe_key];
-
-  const aDecision = am ? LIST_DECISION_RANK[am.decision] : 2; // not evaluated sits above BLOCKED
-  const bDecision = bm ? LIST_DECISION_RANK[bm.decision] : 2;
-  if (aDecision !== bDecision) return aDecision - bDecision;
-
-  const aEvidence = am ? (am.insufficientJdSignal ? 1 : 0) : 2;
-  const bEvidence = bm ? (bm.insufficientJdSignal ? 1 : 0) : 2;
-  if (aEvidence !== bEvidence) return aEvidence - bEvidence;
-
-  const aScore = am && !am.insufficientJdSignal ? am.overallScore : -1;
-  const bScore = bm && !bm.insufficientJdSignal ? bm.overallScore : -1;
-  if (aScore !== bScore) return bScore - aScore;
-
-  const aPosted = a.posted_at ? new Date(a.posted_at).getTime() : 0;
-  const bPosted = b.posted_at ? new Date(b.posted_at).getTime() : 0;
-  if (aPosted !== bPosted) return bPosted - aPosted;
-
-  return b.id - a.id;
-}
-
+/** Ordering and the decision filter both come from @/lib/rank/jobsList — see that module for the
+ *  contract and why it lives there rather than inline. */
 export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; thresholds: LifecycleThresholds }) {
   const candidateId = useActiveCandidateId();
   const decisions = useMatchDecisions(jobs, candidateId);
@@ -192,12 +156,7 @@ export function JobList({ jobs, thresholds }: { jobs: JobWithCompany[]; threshol
   const visibleJobs = useMemo(
     () =>
       jobs
-        .filter((job) => {
-          if (decisionFilter === "All") return true;
-          const entry = decisions[job.dedupe_key];
-          if (decisionFilter === "Not Evaluated") return !entry;
-          return entry?.decision === decisionFilter;
-        })
+        .filter((job) => matchesDecisionFilter(job, decisions, decisionFilter))
         .slice()
         .sort((a, b) => compareJobsBestFirst(a, b, decisions)),
     [jobs, decisions, decisionFilter]
