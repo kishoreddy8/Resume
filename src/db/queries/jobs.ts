@@ -348,6 +348,23 @@ export function listJobsForList(filters: JobFilters = {}): JobWithCompany[] {
   return runJobListQuery(filters, JOB_LIST_SELECT);
 }
 
+/**
+ * Stage 32 — the same filtering and ordering as listJobs, projected to the summary columns.
+ *
+ * Sits between listJobs (every column, including the multi-KB description_html/description_sections
+ * /raw_json blobs) and listJobsForList (no description_text at all). It exists for the one caller
+ * that must READ description_text server-side to filter on it, but must never SEND the blobs:
+ * the For You search path, where selecting `j.*` was costing ~5.7 MB of columns per request that
+ * nothing downstream reads.
+ *
+ * Same rows, same order, fewer columns — no query shape, index or schema change.
+ */
+export function listJobsForListWithDescriptionText(filters: JobFilters = {}): JobWithCompanySummary[] {
+  // runJobListQuery is typed against the widest projection; this select genuinely omits the three
+  // blob columns, which is what JobWithCompanySummary asserts.
+  return runJobListQuery(filters, JOB_WITH_COMPANY_SUMMARY_SELECT) as unknown as JobWithCompanySummary[];
+}
+
 export interface CandidateRematchJobPageOptions {
   candidateId: number;
   /** Keyset cursor: only jobs with a STRICTLY greater id are returned. 0/omitted starts at the

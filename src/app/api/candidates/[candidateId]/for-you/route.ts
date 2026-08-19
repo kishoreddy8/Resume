@@ -4,8 +4,8 @@ import { listAllCandidateJobStatesForCandidate } from "@/db/queries/candidateJob
 import { getRankingPreferences } from "@/db/queries/candidateSettings";
 import {
   countActiveUnarchivedJobs,
-  listJobs,
   listJobsByDedupeKeys,
+  listJobsForListWithDescriptionText,
   listTopFreshJobs,
 } from "@/db/queries/jobs";
 import { listAllLatestDecisionsForCandidate } from "@/db/queries/jobMatches";
@@ -251,8 +251,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
   if (normalizedBucket && normalizedBucket !== "ALL") {
     rawPool = jobsByBucket[normalizedBucket] ?? [];
   } else if (searchFilter || skillsFilter) {
-    // When text search or skills filter is requested across all jobs, push filter into SQL
-    rawPool = listJobs({
+    // When text search or skills filter is requested across all jobs, push filter into SQL.
+    // Summary projection, not listJobs' `j.*`: the filters below read description_text, but nothing
+    // reads description_html/description_sections/raw_json, and selecting them cost ~4.4 MB per
+    // searched request. Same rows, same order — only the unread columns are gone.
+    rawPool = listJobsForListWithDescriptionText({
       activeOnly: true,
       candidateId,
       search: searchFilter ?? skillsFilter,
@@ -541,8 +544,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
       else freshnessTier = "STALE";
     }
 
+    // description_text is read by the search/skills filters above and by nothing else — the list
+    // contract has never included it (the unsearched path does not even select it). Dropping it
+    // here keeps the searched and unsearched responses the same shape instead of the search
+    // silently shipping ~1.3 MB of body text the UI never reads.
+    const job: typeof item.job = { ...item.job, description_text: undefined as never };
+
     return {
-      job: item.job,
+      job: job as typeof item.job,
       ranking: {
         freshnessTier,
         roleFamilyTier: item.forYouInput.roleFamilyTier,

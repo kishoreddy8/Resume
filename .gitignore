@@ -44,3 +44,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# python bytecode (the vendored .claude/skills scripts generate this when they run)
+__pycache__/
+*.pyc
