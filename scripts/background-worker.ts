@@ -151,7 +151,9 @@ async function main(): Promise<void> {
     writeStatus({
       pid: process.pid,
       startedAt,
-      lastTickAt: new Date().toISOString(),
+      // Canonical field name, matching what workerStatus.ts reads (Stage 30.1). It records when the
+      // status was last WRITTEN, which is what the reader needs to judge freshness.
+      lastStatusAt: new Date().toISOString(),
       host: "worker",
       currentActivity: snapshot.currentActivity,
       heavySlotHeldBy: snapshot.heavySlotHeldBy,

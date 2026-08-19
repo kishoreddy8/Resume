@@ -11,10 +11,19 @@ import type { TickName, TickRuntimeState } from "./workerScheduler";
  * guessing. It never estimates an ETA, and never claims a tick is running because it "should" be.
  */
 
-const STATUS_PATH = path.join(path.resolve("data"), "background-worker-status.json");
-const LOCK_PATH = path.join(path.resolve("data"), "background-worker.lock");
+export const STATUS_FILENAME = "background-worker-status.json";
+export const LOCK_FILENAME = "background-worker.lock";
 
-/** A worker that has not written a status line for this long is not considered live. */
+/**
+ * How old a status line may be before the DETAIL is described as stale.
+ *
+ * Stage 30.1 — this no longer decides whether the worker is running. A synchronous heavy tick (a
+ * scan or an ingestion pass) blocks the worker's event loop, so its own status timer cannot fire
+ * while that tick runs; the file legitimately stops being refreshed even though the process is
+ * perfectly alive and doing exactly what it should. Liveness is decided by the process and its lock,
+ * which is what "running" actually means; this threshold only governs how much to trust the
+ * activity detail alongside it.
+ */
 const STATUS_STALE_AFTER_MS = 3 * 60_000;
 
 export interface BackgroundWorkerStatus {
@@ -28,6 +37,10 @@ export interface BackgroundWorkerStatus {
   currentActivity: TickName | "IDLE" | null;
   heavySlotHeldBy: TickName | null;
   ticks: Record<string, TickRuntimeState> | null;
+  /** True when the worker is alive but its last status write is older than the staleness window —
+   *  normal while a synchronous heavy tick holds the event loop. The activity detail is then a
+   *  snapshot from `lastStatusAt`, not a live reading. */
+  statusStale: boolean;
   /** Why the status is not live, when it is not. Never a fabricated reason. */
   detail: string;
 }
@@ -41,7 +54,13 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
-export function readBackgroundWorkerStatus(now: Date = new Date()): BackgroundWorkerStatus {
+/**
+ * Reads the worker's own status file. `dataDir` exists so this is testable against a fixture
+ * directory; production callers use the default and read the real one.
+ */
+export function readBackgroundWorkerStatus(now: Date = new Date(), dataDir: string = path.resolve("data")): BackgroundWorkerStatus {
+  const statusPath = path.join(dataDir, STATUS_FILENAME);
+  const lockPath = path.join(dataDir, LOCK_FILENAME);
   const schedulerHost = getConfiguredSchedulerHost();
   const base = {
     schedulerHost,
@@ -52,11 +71,12 @@ export function readBackgroundWorkerStatus(now: Date = new Date()): BackgroundWo
     currentActivity: null,
     heavySlotHeldBy: null,
     ticks: null,
+    statusStale: false,
   };
 
   let raw: string;
   try {
-    raw = fs.readFileSync(STATUS_PATH, "utf-8");
+    raw = fs.readFileSync(statusPath, "utf-8");
   } catch {
     return {
       ...base,
@@ -68,7 +88,7 @@ export function readBackgroundWorkerStatus(now: Date = new Date()): BackgroundWo
     };
   }
 
-  let parsed: Partial<BackgroundWorkerStatus> & { stoppedAt?: string };
+  let parsed: Partial<BackgroundWorkerStatus> & { stoppedAt?: string; lastTickAt?: string };
   try {
     parsed = JSON.parse(raw);
   } catch {
@@ -76,10 +96,18 @@ export function readBackgroundWorkerStatus(now: Date = new Date()): BackgroundWo
   }
 
   const pid = typeof parsed.pid === "number" ? parsed.pid : null;
-  const lastStatusAt = parsed.lastStatusAt ?? null;
-  const alive = pid !== null && pidIsAlive(pid) && fs.existsSync(LOCK_PATH);
-  const fresh = lastStatusAt !== null && now.getTime() - new Date(lastStatusAt).getTime() <= STATUS_STALE_AFTER_MS;
-  const running = Boolean(alive && fresh && !parsed.stoppedAt);
+  // Stage 30.1 — `lastStatusAt` is the canonical field. `lastTickAt` is accepted as the legacy name a
+  // worker started before this fix still writes, so an already-running worker reports correctly
+  // without being restarted.
+  const lastStatusAt = parsed.lastStatusAt ?? parsed.lastTickAt ?? null;
+  const alive = pid !== null && pidIsAlive(pid) && fs.existsSync(lockPath);
+  const statusStale =
+    alive && (lastStatusAt === null || now.getTime() - new Date(lastStatusAt).getTime() > STATUS_STALE_AFTER_MS);
+
+  // "Running" means the process is alive and owns the lock. It deliberately does NOT depend on how
+  // recently the status file was written: reporting a healthy worker as STOPPED because a long
+  // synchronous scan stopped its timer firing was the exact defect this fixes.
+  const running = Boolean(alive && !parsed.stoppedAt);
 
   return {
     ...base,
@@ -90,12 +118,13 @@ export function readBackgroundWorkerStatus(now: Date = new Date()): BackgroundWo
     heavySlotHeldBy: running ? (parsed.heavySlotHeldBy ?? null) : null,
     ticks: running ? (parsed.ticks ?? null) : null,
     running,
-    detail: running
-      ? `Background worker running (pid ${pid}).`
-      : parsed.stoppedAt
+    statusStale,
+    detail: parsed.stoppedAt
       ? `The background worker shut down at ${parsed.stoppedAt}.`
-      : alive
-      ? "The background worker process exists but has not reported status recently."
+      : running && statusStale
+      ? `Background worker running (pid ${pid}), but its last status write was ${lastStatusAt ?? "never"} — normal while a long synchronous tick holds the event loop. The activity shown is from that moment, not live.`
+      : running
+      ? `Background worker running (pid ${pid}).`
       : "The background worker is not running.",
   };
 }
