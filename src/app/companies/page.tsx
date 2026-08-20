@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { LoadingRegion, PageHeader, SkeletonRows, Surface } from "@/components/ui";
 import { H1bBadge } from "@/components/H1bBadge";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { CompanyIntelligence } from "./CompanyIntelligence";
 import { PROVIDER_LABELS } from "@/lib/ats/providerLabels";
 import type { Company, CompanyResolutionStatus, SourceType } from "@/types";
 
@@ -422,6 +424,10 @@ function AdvancedManualForm({ onAdded }: { onAdded: () => void }) {
 
 function CompanyRow({ company, onChanged }: { company: Company; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
+  /* Observed-intelligence panel. Collapsed by default and fetched only on open, so the list itself
+   * costs nothing extra — this page already carries a large corpus. */
+  const [showIntel, setShowIntel] = useState(false);
+  const candidateId = useActiveCandidateId();
 
   async function scanThis() {
     setBusy(true);
@@ -462,7 +468,7 @@ function CompanyRow({ company, onChanged }: { company: Company; onChanged: () =>
     }
   }
 
-  return (
+  const row = (
     <tr className={company.is_active ? "" : "opacity-50"}>
       <td className="px-3 py-2">
         <div className="flex items-center gap-1.5">
@@ -524,12 +530,32 @@ function CompanyRow({ company, onChanged }: { company: Company; onChanged: () =>
           <button disabled={busy} onClick={toggleActive} className="text-zinc-600 hover:underline dark:text-zinc-400">
             {company.is_active ? "Pause" : "Resume"}
           </button>
+          <button
+            onClick={() => setShowIntel((v) => !v)}
+            aria-expanded={showIntel}
+            className="text-secondary hover:underline"
+          >
+            {showIntel ? "Hide details" : "Details"}
+          </button>
           <button disabled={busy} onClick={remove} className="text-red-600 hover:underline">
             Delete
           </button>
         </div>
       </td>
     </tr>
+  );
+
+  return (
+    <>
+      {row}
+      {showIntel && (
+        <tr>
+          <td colSpan={4} className="p-0">
+            <CompanyIntelligence companyId={company.id} candidateId={candidateId} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
