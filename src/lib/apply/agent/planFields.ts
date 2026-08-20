@@ -22,6 +22,14 @@ export interface PlanInputs {
   knownVariants: Map<string, { canonicalKey: string; type: QuestionType }>;
   /** Stored answers by canonical key, for this candidate. */
   storedAnswers: Map<string, StoredAnswer>;
+  /**
+   * The adapter's canonicalKey -> selector map.
+   *
+   * Not an optimisation. Lever's core fields carry no label, aria-label or caption anywhere — they
+   * are identified solely by their `name` attribute — so without these hints a real Lever form
+   * would block on its own name and email fields. Verified against a live posting.
+   */
+  selectorHints?: Record<string, string>;
 }
 
 /**
@@ -55,6 +63,44 @@ function contactValueFor(canonicalKey: string, ctx: AdapterContext): string | nu
   }
 }
 
+/**
+ * Resolve a field to a canonical question via the adapter's hints. Naming only, never values.
+ *
+ * Matches on the selector OR the control's own id/name, because the two can legitimately disagree:
+ * selectorFor prefers #id when one exists, while an adapter may know the field by its name. Lever's
+ * location input is exactly that — `name="location"` but `id="location-input"` — and comparing only
+ * the rendered selector left it unidentified on a real form.
+ */
+function hintedKeyFor(
+  field: { selector: string; id: string | null; name: string | null },
+  hints: Record<string, string> | undefined
+): { canonicalKey: string; type: QuestionType } | null {
+  if (!hints) return null;
+  for (const [canonicalKey, hint] of Object.entries(hints)) {
+    const type = HINT_TYPES[canonicalKey];
+    if (!type) continue;
+
+    if (hint === field.selector) return { canonicalKey, type };
+    const byName = hint.match(/^\[name="(.+)"\]$/);
+    if (byName && field.name === byName[1]) return { canonicalKey, type };
+    if (hint.startsWith("#") && field.id === hint.slice(1)) return { canonicalKey, type };
+  }
+  return null;
+}
+
+/** The question type each hintable field represents. Only well-known factual fields appear here. */
+const HINT_TYPES: Record<string, QuestionType> = {
+  full_name: "identity",
+  first_name: "identity",
+  last_name: "identity",
+  email: "contact",
+  phone: "contact",
+  location_current: "contact",
+  linkedin_url: "contact",
+  github_url: "contact",
+  portfolio_url: "contact",
+};
+
 export function planFields(input: PlanInputs): FieldPlan[] {
   const plans: FieldPlan[] = [];
 
@@ -84,15 +130,19 @@ export function planFields(input: PlanInputs): FieldPlan[] {
       continue;
     }
 
-    // --- a field with no question attached ------------------------------------------------------
-    if (!field.label) {
+    /* An adapter hint identifies a field the ATS names consistently but does not label. It maps a
+     * SELECTOR to a canonical key, so it can only ever name a field, never supply its value. */
+    const hinted = hintedKeyFor(field, input.selectorHints);
+
+    // --- a field with neither a label nor a hint ------------------------------------------------
+    if (!field.label && !hinted) {
       plans.push({ action: "ask", field, question: field.id ?? field.selector, reason: "This field has no label to identify it.", questionType: null });
       continue;
     }
 
-    const match = matchQuestion(field.label, input.knownVariants);
+    const match = hinted ?? matchQuestion(field.label!, input.knownVariants);
     if (!match) {
-      plans.push({ action: "ask", field, question: field.label, reason: "Career-Ops has no answer for this question.", questionType: null });
+      plans.push({ action: "ask", field, question: field.label!, reason: "Career-Ops has no answer for this question.", questionType: null });
       continue;
     }
 
@@ -113,7 +163,7 @@ export function planFields(input: PlanInputs): FieldPlan[] {
     plans.push({
       action: "ask",
       field,
-      question: field.label,
+      question: field.label ?? match.canonicalKey,
       /* A "fill" that reached here failed mayFill — its provenance is not recognised, which is a
        * reason to stop rather than a value to salvage. */
       reason: resolution.action === "fill" ? "This answer's source is not one Career-Ops can fill from." : resolution.reason,

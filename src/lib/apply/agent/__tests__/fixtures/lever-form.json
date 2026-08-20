@@ -1,0 +1,277 @@
+[
+  {
+    "tag": "select",
+    "type": null,
+    "id": null,
+    "name": "opportunityLocationId",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false,
+    "options": [
+      "Select...",
+      "Michigan",
+      "Indiana"
+    ]
+  },
+  {
+    "tag": "input",
+    "type": "file",
+    "id": "resume-upload-input",
+    "name": "resume",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": null,
+    "name": "name",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "email",
+    "id": null,
+    "name": "email",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": null,
+    "name": "phone",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "location-input",
+    "name": "location",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": "selected-location",
+    "name": "selectedLocation",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": null,
+    "name": "org",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": null,
+    "name": "urls[LinkedIn]",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": null,
+    "name": "urls[GitHub]",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": null,
+    "name": "urls[Portfolio]",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": null,
+    "name": "urls[Other Website]",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "cards[199840f3-cc6b-4194-aa7b-f77be8724c06][baseTemplate]",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "radio",
+    "id": null,
+    "name": "cards[199840f3-cc6b-4194-aa7b-f77be8724c06][field0]",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": "Yes – I confirm I meet the above requirement",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "radio",
+    "id": null,
+    "name": "cards[199840f3-cc6b-4194-aa7b-f77be8724c06][field0]",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": "No – I do not meet the above requirement",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "accountId",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "linkedInData",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "origin",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "referer",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": "applicant-timezone",
+    "name": "timezone",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "socialReferralKey",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "socialSource",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "resumeStorageId",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": "hcaptchaResponseInput",
+    "name": "h-captcha-response",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "source",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "consent[marketing]",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": "Yes, Sophos can contact me about future job opportunities for up to 1 yearPrivacy policy",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "checkbox",
+    "id": null,
+    "name": "consent[marketing]",
+    "ariaLabel": null,
+    "labelText": null,
+    "ancestorText": "Yes, Sophos can contact me about future job opportunities for up to 1 yearPrivacy policy",
+    "required": false
+  }
+]

@@ -20,6 +20,15 @@ export interface RawControl {
   name: string | null;
   ariaLabel: string | null;
   labelText: string | null;
+  /**
+   * Text from the element that visually captions this control, when there is no <label for>.
+   *
+   * Needed because real forms differ more than they look: Greenhouse labels everything properly,
+   * while Lever gives its core fields NO label at all and puts custom-question wording in a
+   * surrounding element. Without this, every Lever question would arrive unlabelled and the run
+   * would block on all of them — including ones the adapter knows by name.
+   */
+  ancestorText?: string | null;
   required: boolean;
   options?: string[];
 }
@@ -74,7 +83,7 @@ export function discoverFields(controls: RawControl[]): DiscoveredField[] {
     const selector = selectorFor(raw);
     if (!selector) continue; // Unaddressable — see selectorFor.
 
-    const label = cleanLabel(raw.labelText) ?? cleanLabel(raw.ariaLabel);
+    const label = cleanLabel(raw.labelText) ?? cleanLabel(raw.ariaLabel) ?? cleanLabel(raw.ancestorText ?? null);
     const kind = kindOf(raw);
 
     /* Search boxes and hidden helpers are page furniture, not questions. Matched on role rather
@@ -105,6 +114,8 @@ export const COLLECT_CONTROLS_SCRIPT = `
     name: el.getAttribute("name"),
     ariaLabel: el.getAttribute("aria-label"),
     labelText: (el.id && document.querySelector('label[for="' + el.id + '"]')?.textContent) || null,
+    ancestorText: (el.closest("li, .application-question, .application-field, fieldset")
+      ?.querySelector(".application-label, legend, label, .text")?.textContent || null),
     required: el.hasAttribute("required") || el.getAttribute("aria-required") === "true",
     options: el.tagName.toLowerCase() === "select"
       ? [...el.querySelectorAll("option")].map((o) => o.textContent?.trim() || "")

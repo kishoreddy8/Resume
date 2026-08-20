@@ -6,6 +6,7 @@ import { discoverFields, selectorFor, type RawControl } from "../fieldDiscovery"
 import { planFields, firstBlocker, unresolvedRequired } from "../planFields";
 import { detectBlocking, BLOCKING_STATUS } from "../detectBlocking";
 import { selectAdapter, automatedSourceTypes } from "../selectAdapter";
+import { leverAdapter } from "../adapters/lever";
 import type { AdapterContext } from "../types";
 import type { StoredAnswer } from "../../resolveAnswer";
 import type { QuestionType } from "../../questionTypes";
@@ -170,6 +171,70 @@ test("AGENT-10c an ATS with no form adapter yields null rather than a generic gu
   assert.equal(selectAdapter({ source_type: null, url: null }), null);
   assert.equal(selectAdapter({ source_type: null, url: "not a url" }), null);
   assert.deepEqual(automatedSourceTypes().sort(), ["greenhouse", "lever"]);
+});
+
+/* ── Lever, from a real apply form ───────────────────────────────────────────────────────────── */
+
+const LEVER_FORM: RawControl[] = JSON.parse(
+  fs.readFileSync(path.join(import.meta.dirname, "fixtures/lever-form.json"), "utf8")
+);
+
+test("LEVER-1 real Lever fields carry NO label, and are still identified by adapter hints", () => {
+  /* This is the defect real markup exposed. Lever gives its core controls no <label for>, no
+   * aria-label and no caption — only a `name`. Without hints every field blocked, including the
+   * candidate's own name and email. */
+  const fields = discoverFields(LEVER_FORM);
+  const core = fields.filter((f) => ["name", "email", "phone"].includes(f.name ?? ""));
+  assert.ok(core.length >= 3, "the core fields must be discovered");
+  for (const f of core) assert.equal(f.label, null, "Lever genuinely provides no label here");
+
+  const plans = planFields({
+    fields,
+    context: CONTEXT,
+    knownVariants: NO_VARIANTS,
+    storedAnswers: NO_ANSWERS,
+    selectorHints: leverAdapter.fieldSelectorHints(),
+  });
+  const filled = plans.filter((p) => p.action === "fill");
+  assert.ok(filled.length >= 5, `expected identity/contact fills, got ${filled.length}`);
+  for (const p of filled) {
+    assert.equal(p.action === "fill" && p.source, "PROFILE", "hints name a field; they never supply a value");
+  }
+});
+
+test("LEVER-2 a hint matches by id or name, not only by rendered selector", () => {
+  // Lever's location input is name="location" but id="location-input".
+  const plans = planFields({
+    fields: discoverFields(LEVER_FORM),
+    context: CONTEXT,
+    knownVariants: NO_VARIANTS,
+    storedAnswers: NO_ANSWERS,
+    selectorHints: leverAdapter.fieldSelectorHints(),
+  });
+  const location = plans.find((p) => p.field.name === "location" || p.field.id === "location-input");
+  assert.equal(location?.action, "fill");
+  assert.equal(location?.action === "fill" && location.value, "Dallas, TX");
+});
+
+test("LEVER-3 custom card questions still stop the run", () => {
+  const plans = planFields({
+    fields: discoverFields(LEVER_FORM),
+    context: CONTEXT,
+    knownVariants: NO_VARIANTS,
+    storedAnswers: NO_ANSWERS,
+    selectorHints: leverAdapter.fieldSelectorHints(),
+  });
+  const cards = plans.filter((p) => (p.field.name ?? "").startsWith("cards["));
+  assert.ok(cards.length > 0, "this posting has custom questions");
+  for (const c of cards) assert.equal(c.action, "ask", "a company's own question is never auto-answered");
+});
+
+test("LEVER-4 hints can only name known factual fields, never an open-ended one", () => {
+  const hints = leverAdapter.fieldSelectorHints();
+  for (const key of Object.keys(hints)) {
+    assert.doesNotMatch(key, /why|describe|cover|open|salary|demographic|gender|race|veteran|disability/i,
+      `${key} must not be fillable from a selector hint`);
+  }
 });
 
 test("AGENT-11 nothing in the planner can produce a submit action", () => {
