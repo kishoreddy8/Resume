@@ -89,7 +89,7 @@ export function NeedsYourInput({ candidateId }: { candidateId: number }) {
   if (runs.length === 0)
     return (
       <p className="text-[12.5px] leading-relaxed text-tertiary">
-        Nothing is waiting on you. Applications appear here when one asks something Career-Ops does
+        Nothing is waiting on you. Applications appear here when one asks something JobHunt does
         not have an answer for, needs a CAPTCHA or verification code, or is ready for your review.
       </p>
     );

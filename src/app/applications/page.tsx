@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import { LoadingRegion, PageHeader, SkeletonRows, Surface } from "@/components/ui";
 import { MARKER_CLASS, MARKER_TEXT, presentStatus } from "./runStatus";
+import { NeedsYourInput } from "./NeedsYourInput";
+import { ApplicationList } from "./ApplicationList";
 
 /**
  * The Application Command Center.
@@ -101,7 +103,7 @@ export default function ApplicationsPage() {
   if (candidateId === null || (runs === null && !error)) {
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader title="Applications" description="Every application Career-Ops has run for you." />
+        <PageHeader title="Applications" description="Every application JobHunt has run for you." />
         <LoadingRegion label="Loading applications" />
         <Surface level="z3" className="rounded-[var(--radius-xl)] p-5">
           <SkeletonRows rows={4} />
@@ -113,7 +115,7 @@ export default function ApplicationsPage() {
   if (error) {
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader title="Applications" description="Every application Career-Ops has run for you." />
+        <PageHeader title="Applications" description="Every application JobHunt has run for you." />
         <p className="text-[12.5px] text-tertiary">Applications could not be loaded.</p>
       </div>
     );
@@ -130,14 +132,21 @@ export default function ApplicationsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Applications"
-        description="Every application Career-Ops has run for you. Nothing is submitted without your approval."
+        description="Every application JobHunt has run for you. Nothing is submitted without your approval."
       />
+
+      {/* Runs stopped and waiting on a person. Kept above everything else because it is the only
+       *  part of this page with a pending action attached to it. */}
+      <section className="space-y-2">
+        <h2 className="section-title">Needs your input</h2>
+        <NeedsYourInput candidateId={candidateId} />
+      </section>
 
       {all.length === 0 ? (
         <Surface level="z3" className="rounded-[var(--radius-xl)] px-6 py-12 text-center">
           <p className="text-[13px] font-medium text-primary">No applications yet</p>
           <p className="mx-auto mt-1 max-w-[52ch] text-[12px] leading-relaxed text-tertiary">
-            Start one from a job that has a validated tailored resume. Career-Ops fills what it can
+            Start one from a job that has a validated tailored resume. JobHunt fills what it can
             evidence, stops for anything it cannot, and never submits without you approving it.
           </p>
           <Link
@@ -183,6 +192,13 @@ export default function ApplicationsPage() {
               </div>
             </section>
           )}
+
+          {/* Jobs acted on without an automated run — a stage set by hand, a note, an approval.
+           *  They are applications too, and the automated list would otherwise hide them. */}
+          <section className="space-y-2">
+            <h2 className="section-title">Tracked jobs</h2>
+            <ApplicationList candidateId={candidateId} />
+          </section>
         </>
       )}
     </div>

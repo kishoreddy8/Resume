@@ -76,7 +76,7 @@ export function StartApplication({ candidateId, jobId }: { candidateId: number; 
       <div aria-live="polite">
         {outcome.kind === "starting" && (
           <p className="mt-1.5 text-[11.5px] text-tertiary">
-            Opening the application and filling what Career-Ops can evidence…
+            Opening the application and filling what JobHunt can evidence…
           </p>
         )}
         {outcome.kind === "refused" && (
@@ -103,7 +103,7 @@ export function StartApplication({ candidateId, jobId }: { candidateId: number; 
       </div>
 
       <p className="mt-1.5 text-[11px] leading-relaxed text-tertiary">
-        Career-Ops fills only what your evidence supports, stops for anything it cannot answer, and
+        JobHunt fills only what your evidence supports, stops for anything it cannot answer, and
         never submits without your explicit approval.
       </p>
     </div>

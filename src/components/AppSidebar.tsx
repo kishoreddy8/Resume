@@ -5,14 +5,19 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { CandidateSelector } from "@/components/CandidateSelector";
+import { AdminRailLink } from "@/components/AdminRailLink";
 
 /**
- * CareerOps UI Stage 1 — the application shell's primary navigation.
+ * JobHunt's primary navigation.
  *
- * The nine existing routes, grouped by what the user is doing rather than
- * listed flat: the work itself, the data behind it, and the machinery that
- * keeps it running. Every entry points at a route that already exists; no
- * placeholder destinations were added to round out a group.
+ * TWO PRODUCTS, ONE SHELL. A job seeker gets six destinations about their own search. Everything
+ * that manages the machinery — connectors, scan runs, company registry, system health — lives under
+ * /admin and only appears once you are there. Previously they shared one rail, which is what made
+ * a personal job-search tool feel like somebody's internal console: a candidate looking for work
+ * does not need "ATS Coverage" between "Jobs" and "Settings".
+ *
+ * The admin rail is not hidden to be secret. The real boundary is server-side, on the APIs those
+ * pages call; this is about what a person should be asked to think about.
  *
  * Text-only by design. The project has no icon set, and inventing one or
  * installing a library for it would cost more than the labels are worth —
@@ -39,34 +44,48 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const NAV_GROUPS: NavGroup[] = [
+/** What a job seeker sees. Six destinations, each about their own search. */
+const USER_NAV: NavGroup[] = [
   {
-    title: "Work",
+    title: "Search",
     items: [
-      { href: "/dashboard", label: "Dashboard" },
+      { href: "/home", label: "Home" },
       { href: "/jobs", label: "Jobs", matchPrefix: /^\/jobs\/\d+$/ },
-      { href: "/pipeline", label: "Pipeline" },
-      { href: "/jobs/archived", label: "Archived" },
+      { href: "/applications", label: "Applications", matchPrefix: /^\/applications\/\d+$/ },
     ],
   },
   {
-    title: "Data",
+    title: "You",
     items: [
-      { href: "/companies", label: "Companies" },
-      { href: "/ats-coverage", label: "ATS Coverage" },
-      { href: "/candidate-intelligence", label: "Candidate" },
-      { href: "/master-files", label: "Master Files" },
+      { href: "/resume", label: "Resume" },
+      { href: "/profile", label: "Profile" },
+      { href: "/settings", label: "Settings" },
+    ],
+  },
+];
+
+/** What an operator sees. Only rendered under /admin. */
+const ADMIN_NAV: NavGroup[] = [
+  {
+    title: "Operations",
+    items: [
+      { href: "/admin", label: "Overview" },
+      { href: "/admin/scanner", label: "ATS Scanner" },
+      { href: "/admin/connectors", label: "Connectors" },
+      { href: "/admin/companies", label: "Companies" },
     ],
   },
   {
     title: "System",
     items: [
-      { href: "/scanner", label: "ATS Operations" },
-      { href: "/operations", label: "Operations" },
-      { href: "/settings", label: "Settings" },
+      { href: "/admin/pipeline", label: "Pipeline" },
+      { href: "/admin/operations", label: "Health" },
+      { href: "/settings", label: "Configuration" },
     ],
   },
 ];
+
+
 
 /**
  * Exact match, plus an optional pattern for detail routes. Deliberately not a
@@ -99,6 +118,10 @@ export function AppSidebar() {
   // re-open control, so navigation is never hidden behind a gesture or a guess.
   const [open, setOpen] = useState(true);
   const desktop = useDesktopRail();
+  /* Admin is a different product with a different rail. Derived from the path so a link into
+   * /admin swaps the navigation with it, and leaving swaps it back. */
+  const inAdmin = pathname.startsWith("/admin");
+  const groups = inAdmin ? ADMIN_NAV : USER_NAV;
   const collapsed = desktop && !open;
 
   return (
@@ -111,10 +134,10 @@ export function AppSidebar() {
       <div className="flex h-12 shrink-0 items-center gap-1 px-4 lg:h-14 lg:px-3">
         {!collapsed && (
           <Link
-            href="/jobs"
+            href={inAdmin ? "/admin" : "/home"}
             className="group flex min-w-0 items-center gap-2 rounded-md px-2 transition-transform duration-150 ease-out active:scale-[0.98]"
           >
-            {/* The mark: a small illuminated aperture. Career-Ops' own object rather than a wordmark
+            {/* The mark: a small illuminated aperture. JobHunt' own object rather than a wordmark
              *  in the default weight every SaaS rail uses. */}
             <span
               aria-hidden="true"
@@ -122,7 +145,10 @@ export function AppSidebar() {
             >
               <span className="h-1.5 w-1.5 rounded-full bg-white/95" />
             </span>
-            <span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-primary">career-ops</span>
+            <span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-primary">
+              JobHunt
+              {inAdmin && <span className="ml-1.5 text-[10px] font-normal uppercase tracking-[0.09em] text-tertiary">admin</span>}
+            </span>
           </Link>
         )}
         {collapsed && (
@@ -150,7 +176,7 @@ export function AppSidebar() {
         aria-label="Primary"
         className="flex gap-1 overflow-x-auto px-3 pb-2 lg:flex-1 lg:flex-col lg:gap-0 lg:overflow-x-visible lg:overflow-y-auto lg:pb-4"
       >
-        {NAV_GROUPS.map((group) => (
+        {groups.map((group) => (
           // `contents` lets the items join the horizontal row directly on narrow
           // screens while staying a titled block in the sidebar.
           <div key={group.title} className="contents lg:mb-5 lg:block lg:last:mb-0">
@@ -198,6 +224,8 @@ export function AppSidebar() {
           </h2>
           <CandidateSelector />
         </div>
+        {/* Owner-only, and the way back out again. Without it admin had no door at all. */}
+        <AdminRailLink />
       </div>
     </motion.aside>
   );

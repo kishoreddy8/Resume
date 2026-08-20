@@ -246,7 +246,7 @@ export function ApplicationDetail({ runId }: { runId: number }) {
             {busy === "answer" ? "Saving…" : "Save answer and continue"}
           </button>
           <p className="mt-1.5 text-[11px] leading-relaxed text-tertiary">
-            Career-Ops never answers a question it cannot evidence. Your answer is what gets typed.
+            JobHunt never answers a question it cannot evidence. Your answer is what gets typed.
           </p>
         </Surface>
       )}

@@ -78,7 +78,7 @@ export function CompanyIntelligence({ companyId, candidateId }: { companyId: num
   if (state === "loading")
     return (
       <p role="status" className="px-4 py-3 text-[12px] text-tertiary">
-        Loading what Career-Ops has observed…
+        Loading what JobHunt has observed…
       </p>
     );
   if (state === "error" || !data)
@@ -91,7 +91,7 @@ export function CompanyIntelligence({ companyId, candidateId }: { companyId: num
   return (
     <div className="border-t border-[var(--separator)] bg-[var(--z0-bg)] px-4 py-3">
       <p className="mb-2 text-[11px] leading-relaxed text-tertiary">
-        Everything below is what Career-Ops has seen while scanning, and what you have recorded. It is
+        Everything below is what JobHunt has seen while scanning, and what you have recorded. It is
         not a description of the company&rsquo;s hiring.
       </p>
 

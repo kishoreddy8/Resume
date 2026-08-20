@@ -531,7 +531,7 @@ export default function OnboardingPage() {
           candidateId={candidateId}
           onDone={() => {
             setPinDismissed(true);
-            router.push("/jobs");
+            router.push("/home");
           }}
         />
       )}
@@ -544,10 +544,10 @@ export default function OnboardingPage() {
             {setup?.counts.readyForTailoring.toLocaleString()} ready for tailoring
           </p>
           <Link
-            href="/jobs"
+            href="/home"
             className="mt-3 inline-block rounded-md bg-[var(--accent)] px-3.5 py-2 text-[13px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
           >
-            Open Jobs →
+            Open JobHunt →
           </Link>
         </Surface>
       )}

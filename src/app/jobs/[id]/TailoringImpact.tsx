@@ -56,7 +56,7 @@ export function TailoringImpact({
         <div className="rounded-[var(--radius-md)] bg-[var(--z0-bg)] px-3 py-2.5">
           <div className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-tertiary">Change provenance</div>
           <p className="mt-1 text-[11.5px] leading-relaxed text-secondary">
-            Detailed tailoring change provenance is not currently recorded. Career-Ops does not persist what was
+            Detailed tailoring change provenance is not currently recorded. JobHunt does not persist what was
             surfaced, reordered, rewritten, or deliberately not added, so no before/after can be shown without
             inventing it.
           </p>

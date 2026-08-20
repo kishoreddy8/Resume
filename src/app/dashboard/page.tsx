@@ -96,7 +96,7 @@ export default function DashboardPage() {
   if (loading && !data) {
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader title="Career Intelligence" description="Everything Career-Ops currently knows about your search." />
+        <PageHeader title="Career Intelligence" description="Everything JobHunt currently knows about your search." />
         <LoadingRegion label="Loading career intelligence" />
         <Surface level="z3" className="rounded-[var(--radius-xl)] p-5">
           <SkeletonMetrics count={4} />
@@ -149,7 +149,7 @@ export default function DashboardPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Career Intelligence"
-        description="Everything Career-Ops currently knows about your search. Every figure is a recorded count — nothing here is estimated or projected."
+        description="Everything JobHunt currently knows about your search. Every figure is a recorded count — nothing here is estimated or projected."
         actions={
           <Link
             href="/jobs"

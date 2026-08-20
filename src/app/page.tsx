@@ -75,7 +75,7 @@ export default function HomePage() {
       });
       primeActiveCandidateId(candidate.id);
       const setup = await fetch(`/api/candidates/${candidate.id}/setup`).then((r) => (r.ok ? r.json() : null));
-      router.push(setup && setup.complete === false ? "/onboarding" : "/jobs");
+      router.push(setup && setup.complete === false ? "/onboarding" : "/home");
     },
     [router]
   );

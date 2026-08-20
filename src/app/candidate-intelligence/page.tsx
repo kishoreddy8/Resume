@@ -273,7 +273,7 @@ export default function CandidateIntelligencePage() {
             </p>
           </div>
           <div className="grid shrink-0 grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-4">
-            {/* null years renders an em dash — Career-Ops never infers a total from employment dates. */}
+            {/* null years renders an em dash — JobHunt never infers a total from employment dates. */}
             <Metric label="Years" value={p.totalYearsExperience} hint="as stated" />
             <Metric label="Employers" value={p.experience.length} />
             <Metric label="Employer-evidenced" value={employerSkills.length} tone="success" hint="skills" />
@@ -313,7 +313,7 @@ export default function CandidateIntelligencePage() {
 
           {/* Search signal vs evidence. */}
           <section className="space-y-2">
-            <h2 className="section-title">Career-Ops search signal</h2>
+            <h2 className="section-title">JobHunt search signal</h2>
             <Surface level="z3" className="rounded-[var(--radius-xl)] px-5 py-4">
               <p className="text-[11.5px] leading-relaxed text-tertiary">
                 How often each skill appears across the{" "}
