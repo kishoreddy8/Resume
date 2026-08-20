@@ -40,6 +40,15 @@ export function useSetupNotice(): SetupNotice | null {
           fetch(`/api/candidates/${candidateId}/setup`),
           fetch(`/api/candidates/${candidateId}/build-profile`),
         ]);
+        /* A locked profile stops the poll dead. Every 401 dispatches the app-wide profile-locked
+         * event, so retrying would throw a PIN prompt at the user on a timer — and a list we
+         * cannot explain is better left with its ordinary empty state than with a guess. */
+        if (setupRes.status === 401 || buildRes.status === 401) {
+          if (!cancelled) setNotice(null);
+          stopped = true;
+          clearInterval(id);
+          return;
+        }
         if (cancelled || !setupRes.ok) return;
         const setup = (await setupRes.json()) as SetupResponse;
         const build = buildRes.ok ? await buildRes.json() : { status: "idle" };
@@ -69,7 +78,7 @@ export function useSetupNotice(): SetupNotice | null {
             body:
               "Matching reads your Master Resume and Master Skills Inventory. Until both are uploaded there is " +
               "nothing to match jobs against — this list is empty for that reason, not because no jobs exist.",
-            href: "/master-files",
+            href: "/onboarding",
             cta: "Upload documents",
           });
           return;
@@ -114,10 +123,12 @@ export function useSetupNotice(): SetupNotice | null {
       }
     }
 
+    let stopped = false;
+    /* Slow on purpose: the states it reports change on the order of minutes. */
+    const id = setInterval(() => {
+      if (!stopped) check();
+    }, 8000);
     check();
-    /* Polls only while a notice stands, and slowly: the states it reports change on the order of
-     * minutes, and a settled account stops polling entirely on the first null. */
-    const id = setInterval(check, 8000);
     return () => {
       cancelled = true;
       clearInterval(id);

@@ -27,9 +27,19 @@ export function SetupProgressStrip() {
    * without needing an effect to reset the flag — and dismissing one outcome cannot hide the next. */
   const [dismissedFor, setDismissedFor] = useState<number | null>(null);
 
+  /* Set once the endpoint answers 401. A locked profile must stop being polled entirely: every
+   * 401 anywhere in the app dispatches the profile-locked event, so a background poll that kept
+   * retrying would throw an unsolicited PIN prompt at the user every few seconds forever. Being
+   * unable to read the build state is also a perfectly good reason not to report on it. */
+  const [locked, setLocked] = useState(false);
+
   const poll = useCallback(async () => {
     try {
       const res = await fetch(`/api/candidates/${candidateId}/build-profile`);
+      if (res.status === 401) {
+        setLocked(true);
+        return;
+      }
       if (!res.ok) return;
       const body = await res.json();
       setStatus(body.status ?? "idle");
@@ -42,11 +52,12 @@ export function SetupProgressStrip() {
   }, [candidateId]);
 
   useEffect(() => {
+    if (locked) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     poll();
     const id = setInterval(poll, 4000);
     return () => clearInterval(id);
-  }, [poll]);
+  }, [poll, locked]);
 
   useEffect(() => {
     if (status !== "running") return;
@@ -54,6 +65,7 @@ export function SetupProgressStrip() {
     return () => clearInterval(id);
   }, [status]);
 
+  if (locked) return null;
   if (status === "idle") return null;
   if (dismissedFor !== null && dismissedFor === startedAt) return null;
 
