@@ -52,6 +52,8 @@ export default function OnboardingPage() {
   const [role, setRole] = useState("");
   const [saving, setSaving] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const [buildFailed, setBuildFailed] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,6 +90,31 @@ export default function OnboardingPage() {
   }
 
   /**
+   * Build the profile by running the user's own Claude Code CLI. Their subscription, no API key.
+   *
+   * If it fails for any reason the manual command is shown instead — the fallback is never removed,
+   * because this step is the one the whole match chain depends on and it must not become a dead end
+   * when the CLI is unavailable, times out, or produces something that fails validation.
+   */
+  const buildProfile = useCallback(async () => {
+    setBuilding(true);
+    setBuildFailed(null);
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/build-profile`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) {
+        setBuildFailed(body.error ?? "The profile build did not complete.");
+        return;
+      }
+      await refresh();
+    } catch {
+      setBuildFailed("Could not reach the server.");
+    } finally {
+      setBuilding(false);
+    }
+  }, [candidateId, refresh]);
+
+  /**
    * Walk the bounded rematch cursor to completion. The endpoint deliberately does one page per
    * request so a full pass cannot block the server for minutes; the client owns the loop.
    */
@@ -120,6 +147,22 @@ export default function OnboardingPage() {
       setEvaluating(false);
     }
   }, [candidateId, refresh, router]);
+
+  /* The moment the documents and target role are in place, build the profile without being asked.
+   * Guarded on buildFailed so a failure shows the manual command instead of retrying forever. */
+  useEffect(() => {
+    if (
+      setup?.steps.resume &&
+      setup.steps.skills &&
+      setup.steps.preferences &&
+      setup.profileStatus !== "ok" &&
+      !building &&
+      buildFailed === null
+    ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      buildProfile();
+    }
+  }, [setup, building, buildFailed, buildProfile]);
 
   // The moment everything it needs is in place, evaluate without being asked.
   useEffect(() => {
@@ -202,32 +245,56 @@ export default function OnboardingPage() {
         </div>
       </Surface>
 
-      {/* 4 — the one manual step, with the exact command */}
+      {/* 4 — automatic, with the manual command as a fallback that never disappears */}
       {setup && setup.steps.resume && setup.steps.skills && setup.profileStatus !== "ok" && (
-        <Surface level="z3" className="tint-alert rounded-[var(--radius-xl)] px-5 py-4">
+        <Surface level="z3" className="tint-craft rounded-[var(--radius-xl)] px-5 py-4">
           <h2 className="text-[9.5px] font-semibold uppercase tracking-[0.11em] text-tertiary">
-            Build the candidate profile
+            Candidate profile
           </h2>
-          <p className="mt-1.5 text-[12px] leading-relaxed text-secondary">
-            {setup.profileStatus === "stale"
-              ? "The documents changed since the profile was built, so matching is paused until it is rebuilt."
-              : "The documents are uploaded, but the profile the matching engine reads has not been built yet."}
+
+          {building ? (
+            <p className="mt-1.5 text-[12.5px] text-secondary">
+              Reading the Master Resume and Skills Inventory with your Claude subscription… this
+              takes a minute or two.
+            </p>
+          ) : buildFailed ? (
+            <>
+              <p className="mt-1.5 text-[12.5px] text-[var(--error)]">{buildFailed}</p>
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-tertiary">
+                Run this in Claude Code instead — it does exactly the same work:
+              </p>
+              <code className="mt-2 block select-all rounded-md bg-[var(--z0-bg)] px-3 py-2 text-[12.5px] text-primary">
+                {setup.profileCommand}
+              </code>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={buildProfile}
+                  className="rounded-md border border-[var(--border)] px-3 py-1.5 text-[12.5px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
+                >
+                  Try again
+                </button>
+                <button
+                  type="button"
+                  onClick={() => refresh()}
+                  className="rounded-md border border-[var(--border)] px-3 py-1.5 text-[12.5px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
+                >
+                  I ran it — check again
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="mt-1.5 text-[12.5px] text-secondary">
+              {setup.profileStatus === "stale"
+                ? "The documents changed, so the profile is being rebuilt."
+                : "Starting automatically…"}
+            </p>
+          )}
+
+          <p className="mt-2.5 text-[11px] leading-relaxed text-tertiary">
+            Nothing is accepted on trust: the result must pass the same validation the matching
+            engine uses, and a build that fails leaves the previous profile untouched.
           </p>
-          <p className="mt-1.5 text-[11.5px] leading-relaxed text-tertiary">
-            Career-Ops does not read .docx itself — working out which employer each skill belongs to
-            is reading comprehension, and getting it wrong would put experience you do not have into
-            a tailored resume. Run this in Claude Code:
-          </p>
-          <code className="mt-2 block select-all rounded-md bg-[var(--z0-bg)] px-3 py-2 text-[12.5px] text-primary">
-            {setup.profileCommand}
-          </code>
-          <button
-            type="button"
-            onClick={() => refresh()}
-            className="mt-3 rounded-md border border-[var(--border)] px-3 py-1.5 text-[12.5px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
-          >
-            I&apos;ve run it — check again
-          </button>
         </Surface>
       )}
 
