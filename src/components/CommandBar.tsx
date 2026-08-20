@@ -111,6 +111,10 @@ export function CommandBar() {
       { id: "nav-ats", label: "ATS Operations", group: "Go to", keywords: "scanner connectors health greenhouse lever workday", run: go("/scanner") },
       { id: "nav-coverage", label: "ATS Coverage", group: "Go to", keywords: "coverage proposals", run: go("/ats-coverage") },
       { id: "nav-candidate", label: "Candidate Intelligence", group: "Go to", keywords: "profile skills evidence experience certifications me", run: go("/candidate-intelligence") },
+      { id: "act-foryou", label: "What jobs fit my experience?", group: "Find", keywords: "for you recommended matches suitable", run: go("/jobs") },
+      { id: "act-ready", label: "Show jobs ready to tailor", group: "Find", keywords: "ready for tailoring approve", run: go("/jobs") },
+      { id: "act-applications", label: "Show active applications", group: "Find", keywords: "pipeline applied interviewing offer", run: go("/pipeline") },
+      { id: "act-scanner", label: "Show scanner health", group: "Find", keywords: "ats connectors ingestion operations", run: go("/scanner") },
       { id: "nav-master", label: "Master Files", group: "Go to", keywords: "resume skills inventory upload", run: go("/master-files") },
       { id: "nav-ops", label: "System Operations", group: "Go to", keywords: "health workers queues scheduler", run: go("/operations") },
       { id: "nav-settings", label: "Settings", group: "Go to", keywords: "configuration preferences ai providers", run: go("/settings") },
@@ -119,10 +123,11 @@ export function CommandBar() {
     // Contextual: only offered where the target actually exists on the page.
     if (onJobsSurface) {
       base.unshift(
-        { id: "job-skills", label: "Show skill alignment", group: "This job", keywords: "missing partial evidence gaps", hint: "scrolls", run: () => jumpTo("job-skills") },
+        { id: "job-why", label: "Why is this job a match?", group: "This job", keywords: "explain reason strengths concerns verdict", hint: "scrolls", run: () => jumpTo("job-why") },
+        { id: "job-skills", label: "What skills are missing evidence?", group: "This job", keywords: "compare profile jd alignment partial gaps", hint: "scrolls", run: () => jumpTo("job-skills") },
         { id: "job-requirements", label: "Show requirements", group: "This job", keywords: "experience education certification sponsorship", hint: "scrolls", run: () => jumpTo("job-requirements") },
-        { id: "job-tailoring", label: "Show tailoring readiness", group: "This job", keywords: "tailor resume approve", hint: "scrolls", run: () => jumpTo("job-tailoring") },
-        { id: "job-resume", label: "Show resume workflow", group: "This job", keywords: "quality pipeline writer iteration", hint: "scrolls", run: () => jumpTo("job-resume") }
+        { id: "job-tailoring", label: "Prepare tailoring package", group: "This job", keywords: "tailor resume approve readiness", hint: "scrolls", run: () => jumpTo("job-tailoring") },
+        { id: "job-resume", label: "Show resume history", group: "This job", keywords: "quality pipeline writer iteration workflow", hint: "scrolls", run: () => jumpTo("job-resume") }
       );
     }
 

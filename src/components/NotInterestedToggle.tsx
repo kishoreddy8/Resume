@@ -53,7 +53,7 @@ export function NotInterestedToggle({
       onClick={toggle}
       title={notInterested ? "Undo Not Interested" : "Mark Not Interested"}
       className={`text-xs hover:underline disabled:opacity-50 ${
-        notInterested ? "text-zinc-400" : "text-zinc-500 hover:text-red-600 dark:hover:text-red-400"
+        notInterested ? "text-tertiary" : "text-tertiary transition-colors duration-150 ease-out hover:text-[var(--error)]"
       }`}
     >
       {notInterested ? "Undo" : "Not interested"}

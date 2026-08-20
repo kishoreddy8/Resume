@@ -914,6 +914,7 @@ export function JobReview({
    * the sticky bar so a tabbed-to heading is never hidden underneath it. */
   const navSections: SectionDef[] = [
     { id: "job-overview", label: "Overview" },
+    { id: "job-why", label: "Why" },
     { id: "job-skills", label: "Skills" },
     { id: "job-requirements", label: "Requirements" },
     { id: "job-tailoring", label: "Tailoring" },

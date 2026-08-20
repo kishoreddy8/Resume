@@ -13,6 +13,7 @@ import { HeroTiles } from "./HeroTiles";
 import { WorkflowRail, resolveWorkflowStages } from "./WorkflowRail";
 import { RoleIdentity } from "./RoleIdentity";
 import { SkillAlignment } from "./SkillAlignment";
+import { MatchIntelligence } from "./MatchIntelligence";
 import { JobQueueNav } from "./JobQueueNav";
 import type { QueueNeighbours } from "../queue";
 import type { ResumeStageSummary } from "./resumeStage";
@@ -249,6 +250,17 @@ export function JobDecisionHeader({
           <WorkflowRail stages={stages} />
 
         </motion.div>
+
+        {/* Why this match — strengths, concerns and unknowns, then the engine's own decision.
+         *  Placed before role/skills because it is the question the page exists to answer. */}
+        {result && (
+          <motion.div variants={region} id="job-why" className="mt-5 scroll-mt-14 border-t border-[var(--separator)] pt-4">
+            <div className="text-[9.5px] font-semibold uppercase tracking-[0.11em] text-tertiary">Why this match</div>
+            <div className="mt-2.5">
+              <MatchIntelligence result={result} />
+            </div>
+          </motion.div>
+        )}
 
         {result && (
           <motion.div variants={region} className="mt-5 border-t border-[var(--separator)] pt-4">

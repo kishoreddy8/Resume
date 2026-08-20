@@ -15,10 +15,10 @@ const FRESHNESS_LABEL: Record<FreshnessTier, string> = {
 };
 
 const FRESHNESS_STYLE: Record<FreshnessTier, string> = {
-  PRIMARY: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  SECONDARY: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  UNKNOWN_DATE: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-  STALE: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-500",
+  PRIMARY: "bg-[color-mix(in_oklab,var(--success)_14%,transparent)] text-[var(--success)]",
+  SECONDARY: "bg-[color-mix(in_oklab,var(--warning)_14%,transparent)] text-[var(--warning)]",
+  UNKNOWN_DATE: "bg-[var(--z0-bg)] text-secondary",
+  STALE: "bg-[var(--z0-bg)] text-tertiary",
 };
 
 export function FreshnessBadge({ tier }: { tier: FreshnessTier }) {

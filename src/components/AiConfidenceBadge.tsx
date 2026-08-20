@@ -1,9 +1,9 @@
 export type AiConfidenceBand = "low" | "review" | "high";
 
 const STYLES: Record<AiConfidenceBand, string> = {
-  high: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  review: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  low: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+  high: "bg-[color-mix(in_oklab,var(--success)_14%,transparent)] text-[var(--success)]",
+  review: "bg-[color-mix(in_oklab,var(--warning)_14%,transparent)] text-[var(--warning)]",
+  low: "bg-[var(--z0-bg)] text-secondary",
 };
 
 const LABELS: Record<AiConfidenceBand, string> = {

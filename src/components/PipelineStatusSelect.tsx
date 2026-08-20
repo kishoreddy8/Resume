@@ -50,7 +50,7 @@ export function PipelineStatusSelect({
       value={status}
       disabled={saving}
       onChange={(e) => handleChange(e.target.value as PipelineStatus)}
-      className="rounded border border-zinc-300 bg-white px-2 py-1 text-xs disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900"
+      className="rounded-md border border-[var(--border)] bg-surface px-2 py-1 text-[11.5px] text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] disabled:opacity-50"
     >
       {STATUSES.map((s) => (
         <option key={s} value={s}>

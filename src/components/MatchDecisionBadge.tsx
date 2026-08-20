@@ -1,9 +1,9 @@
 export type MatchDecision = "BLOCKED" | "NEEDS_REVIEW" | "READY_FOR_TAILORING";
 
 const STYLES: Record<MatchDecision, string> = {
-  READY_FOR_TAILORING: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  NEEDS_REVIEW: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  BLOCKED: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+  READY_FOR_TAILORING: "bg-[color-mix(in_oklab,var(--success)_14%,transparent)] text-[var(--success)]",
+  NEEDS_REVIEW: "bg-[color-mix(in_oklab,var(--warning)_14%,transparent)] text-[var(--warning)]",
+  BLOCKED: "bg-[color-mix(in_oklab,var(--error)_13%,transparent)] text-[var(--error)]",
 };
 
 const LABELS: Record<MatchDecision, string> = {
