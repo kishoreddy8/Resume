@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { ApplicationList } from "./ApplicationList";
 import type { JobWithCompany, PipelineStatus } from "@/types";
 import {
   LoadingRegion,
@@ -206,6 +207,14 @@ export default function PipelinePage() {
             })}
           </ol>
         </Surface>
+      </section>
+
+      {/* Every job actually acted on: stage, next action, documents, notes, and its recorded
+       *  history on demand. Sourced from candidate_job_state, so it is small by construction
+       *  rather than by a cap applied to something large. */}
+      <section className="space-y-2">
+        <h2 className="section-title">Applications</h2>
+        <ApplicationList candidateId={candidateId} />
       </section>
 
       {/* Items, per engaged stage. Rendered only where they exist. */}
