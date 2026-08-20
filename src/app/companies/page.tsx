@@ -1,9 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LoadingRegion, PageHeader, SkeletonRows, Surface } from "@/components/ui";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PROVIDER_LABELS } from "@/lib/ats/providerLabels";
 import type { Company, CompanyResolutionStatus, SourceType } from "@/types";
+
+const COMPANY_LIMIT = 100;
+const UNRESOLVED_LIMIT = 25;
+const COMPANY_STEP = 200;
 
 const RESOLUTION_LABELS: Record<CompanyResolutionStatus, string> = {
   VERIFIED: "Verified",
@@ -75,6 +80,10 @@ function RetryDiscoveryButton({ company, onChanged }: { company: Company; onChan
 function UnsupportedSourcesSection({ companies, onChanged }: { companies: Company[]; onChanged: () => void }) {
   const unresolved = companies.filter((c) => UNRESOLVED_STATUSES.includes(c.resolution_status));
   if (unresolved.length === 0) return null;
+  /* Capped for the same reason the main table is: ~1,100 unresolved sources rendered in full were
+   * most of this page's DOM. The count above the table always states the real total. */
+  const shown = unresolved.slice(0, UNRESOLVED_LIMIT);
+  const hidden = unresolved.length - shown.length;
 
   return (
     <section className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/20">
@@ -99,7 +108,7 @@ function UnsupportedSourcesSection({ companies, onChanged }: { companies: Compan
             </tr>
           </thead>
           <tbody className="divide-y divide-amber-100 dark:divide-amber-900/40">
-            {unresolved.map((c) => (
+            {shown.map((c) => (
               <tr key={c.id}>
                 <td className="px-3 py-2">
                   <div className="font-medium">{c.name}</div>
@@ -127,6 +136,11 @@ function UnsupportedSourcesSection({ companies, onChanged }: { companies: Compan
           </tbody>
         </table>
       </div>
+      {hidden > 0 && (
+        <p className="px-1 text-[11.5px] tabular-nums text-tertiary">
+          Showing {shown.length} of {unresolved.length.toLocaleString()} unresolved sources.
+        </p>
+      )}
     </section>
   );
 }
@@ -521,7 +535,19 @@ function CompanyRow({ company, onChanged }: { company: Company; onChanged: () =>
 
 export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
+  /* The table rendered every company — ~2,500 rows and 75,169 DOM nodes on the measured dataset.
+   * Same render-cap vocabulary as the jobs list and the ATS table; a search narrows the set rather
+   * than forcing the cap upward. */
+  const [limit, setLimit] = useState(COMPANY_LIMIT);
+  const [query, setQuery] = useState("");
+
   const [loading, setLoading] = useState(true);
+
+  const filteredCompanies = query.trim()
+    ? companies.filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase()))
+    : companies;
+  const shownCompanies = filteredCompanies.slice(0, limit);
+  const hiddenCompanies = filteredCompanies.length - shownCompanies.length;
 
   async function load() {
     setLoading(true);
@@ -542,7 +568,10 @@ export default function CompaniesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="page-title">Companies &amp; career links</h1>
+      <PageHeader
+        title="Companies & career links"
+        description="Every configured source Career-Ops scans. Health and scan history live in ATS Operations."
+      />
 
       <div className="space-y-2">
         <AddCompanyForm onAdded={load} />
@@ -552,29 +581,70 @@ export default function CompaniesPage() {
       {!loading && <UnsupportedSourcesSection companies={companies} onChanged={load} />}
 
       {loading ? (
-        <p className="text-sm text-zinc-500">Loading…</p>
+        <>
+          <LoadingRegion label="Loading companies" />
+          <Surface level="z3" className="rounded-[var(--radius-xl)] p-5">
+            <SkeletonRows rows={8} />
+          </Surface>
+        </>
       ) : companies.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
-          No companies yet. Add one above to start scanning.
-        </div>
+        <Surface level="z3" className="rounded-[var(--radius-xl)] px-6 py-12 text-center">
+          <p className="text-[13px] font-medium text-primary">No companies yet</p>
+          <p className="mt-1 text-[12px] text-tertiary">Add one above to start scanning.</p>
+        </Surface>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-zinc-100 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-              <tr>
-                <th className="px-3 py-2 font-medium">Company</th>
-                <th className="px-3 py-2 font-medium">H1B confidence</th>
-                <th className="px-3 py-2 font-medium">Last scan</th>
-                <th className="px-3 py-2 font-medium"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {companies.map((c) => (
-                <CompanyRow key={c.id} company={c} onChanged={load} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Surface level="z3" className="overflow-hidden rounded-[var(--radius-xl)]">
+          <div className="border-b border-[var(--separator)] px-3 py-2">
+            <label className="block">
+              <span className="sr-only">Filter companies by name</span>
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setLimit(COMPANY_LIMIT);
+                }}
+                placeholder={`Filter ${companies.length.toLocaleString()} companies…`}
+                className="w-full rounded-[9px] bg-[var(--well-bg)] px-3 py-1.5 text-[12.5px] text-primary shadow-[var(--well-edge)] outline-none transition-shadow duration-150 ease-out placeholder:text-tertiary focus:shadow-[var(--well-edge),0_0_0_2px_var(--accent-soft)]"
+              />
+            </label>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[12.5px]">
+              <thead>
+                <tr className="border-b border-[var(--separator)]">
+                  {["Company", "H1B confidence", "Last scan", ""].map((h, i) => (
+                    <th
+                      key={i}
+                      className="whitespace-nowrap px-3 py-2 text-[9.5px] font-semibold uppercase tracking-[0.09em] text-tertiary"
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {shownCompanies.map((c) => (
+                  <CompanyRow key={c.id} company={c} onChanged={load} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {hiddenCompanies > 0 && (
+            <div className="flex items-center justify-between gap-3 border-t border-[var(--separator)] px-3 py-2">
+              <span className="text-[11.5px] tabular-nums text-tertiary">
+                Showing {shownCompanies.length.toLocaleString()} of {filteredCompanies.length.toLocaleString()}
+              </span>
+              <button
+                type="button"
+                onClick={() => setLimit((n) => n + COMPANY_STEP)}
+                className="shrink-0 rounded-md px-2 py-1 text-[11.5px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98]"
+              >
+                Show {Math.min(COMPANY_STEP, hiddenCompanies).toLocaleString()} more
+              </button>
+            </div>
+          )}
+        </Surface>
       )}
     </div>
   );

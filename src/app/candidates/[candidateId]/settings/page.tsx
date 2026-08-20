@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LoadingRegion, SkeletonRows, Surface } from "@/components/ui";
 import { use, useEffect, useState } from "react";
 import type { MatchAffectingCandidateSettings, CandidateRankingPreferences } from "@/db/queries/candidateSettings";
 
@@ -131,7 +132,17 @@ export default function CandidateSettingsPage({ params }: { params: Promise<{ ca
   }
 
   if (loading || !matchAffecting || !preferences || !contact) {
-    return <p className="text-sm text-zinc-500">{error ?? "Loading…"}</p>;
+    // An error here is a real failure and must keep saying so — only the loading half becomes a
+    // skeleton, so a fetch failure is never disguised as "still loading".
+    if (error) return <p className="text-[13px] text-[var(--error)]">{error}</p>;
+    return (
+      <div className="flex flex-col gap-4">
+        <LoadingRegion label="Loading candidate settings" />
+        <Surface level="z3" className="rounded-[var(--radius-xl)] p-5">
+          <SkeletonRows rows={6} />
+        </Surface>
+      </div>
+    );
   }
 
   return (

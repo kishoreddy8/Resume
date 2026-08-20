@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LoadingRegion, SkeletonRows, Surface } from "@/components/ui";
 import type { AtsCoverageCompany, AtsCoverageSummary } from "@/db/queries/atsCoverage";
 import { PROVIDER_LABELS } from "@/lib/ats/providerLabels";
 
@@ -396,7 +397,14 @@ export default function AtsCoveragePage() {
   }, []);
 
   if (loading || !data) {
-    return <p className="text-sm text-zinc-500">Loading…</p>;
+    return (
+      <div className="flex flex-col gap-4">
+        <LoadingRegion label="Loading ATS coverage" />
+        <Surface level="z3" className="rounded-[var(--radius-xl)] p-5">
+          <SkeletonRows rows={8} />
+        </Surface>
+      </div>
+    );
   }
 
   return (

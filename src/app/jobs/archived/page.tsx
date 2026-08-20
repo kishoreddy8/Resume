@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { LoadingRegion, SkeletonRows, Surface } from "@/components/ui";
 import { useEffect, useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import type { JobWithCompany } from "@/types";
+
+const ARCHIVED_LIMIT = 100;
+const ARCHIVED_STEP = 200;
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -39,6 +43,8 @@ function RestoreButton({ jobId, onRestored }: { jobId: number; onRestored: () =>
 
 export default function ArchivedJobsPage() {
   const [jobs, setJobs] = useState<JobWithCompany[]>([]);
+  /* Capped like every other long list in the app: the full archive rendered 43,433 DOM nodes. */
+  const [limit, setLimit] = useState(ARCHIVED_LIMIT);
   const [loading, setLoading] = useState(true);
 
   async function load() {
@@ -71,7 +77,12 @@ export default function ArchivedJobsPage() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-zinc-500">Loading…</p>
+        <>
+          <LoadingRegion label="Loading archived jobs" />
+          <Surface level="z3" className="rounded-[var(--radius-xl)] p-5">
+            <SkeletonRows rows={6} />
+          </Surface>
+        </>
       ) : jobs.length === 0 ? (
         <div className="rounded-lg border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
           No archived jobs.
@@ -90,7 +101,7 @@ export default function ArchivedJobsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {jobs.map((job) => (
+              {jobs.slice(0, limit).map((job) => (
                 <tr key={job.id}>
                   <td className="px-3 py-2">
                     <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">
@@ -117,6 +128,20 @@ export default function ArchivedJobsPage() {
               ))}
             </tbody>
           </table>
+          {jobs.length > limit && (
+            <div className="flex items-center justify-between gap-3 border-t border-[var(--separator)] px-3 py-2">
+              <span className="text-[11.5px] tabular-nums text-tertiary">
+                Showing {Math.min(limit, jobs.length).toLocaleString()} of {jobs.length.toLocaleString()}
+              </span>
+              <button
+                type="button"
+                onClick={() => setLimit((n) => n + ARCHIVED_STEP)}
+                className="shrink-0 rounded-md px-2 py-1 text-[11.5px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98]"
+              >
+                Show {Math.min(ARCHIVED_STEP, jobs.length - limit).toLocaleString()} more
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

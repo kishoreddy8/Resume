@@ -17,7 +17,9 @@ const DOT: Record<StatusTone, string> = {
   attention: "bg-[var(--warning)]",
   blocked: "bg-[var(--error)] shadow-[0_0_7px_var(--error)]",
   active: "bg-[var(--accent)] shadow-[0_0_8px_var(--accent)]",
-  neutral: "bg-[var(--separator)]",
+  /* --separator is 7% alpha — as a 6px dot on a white plane it was invisible, which made every
+   * inactive node in a flow rail disappear rather than read as "not reached yet". */
+  neutral: "bg-[var(--text-tertiary)] opacity-45",
   unknown: "bg-transparent ring-1 ring-inset ring-[var(--border)]",
 };
 

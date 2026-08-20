@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { LoadingRegion, PageHeader, SkeletonRows, Status, Surface, type StatusTone } from "@/components/ui";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import { MorningReadinessSection } from "./MorningReadinessSection";
 
@@ -117,18 +118,19 @@ interface OperationsResponse {
   };
 }
 
-const HEALTH_STYLES: Record<HealthStatus, string> = {
-  HEALTHY: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400",
-  WARNING: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-400",
-  ERROR: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-400",
-  DISABLED: "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-  NO_DATA: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
+/* NO_DATA maps to `unknown`, not to a neutral grey: across this application "we have not measured
+ * this" is a distinct state from "measured and idle", and the hollow dashed glyph is what carries
+ * that distinction. DISABLED is genuinely neutral — it is off on purpose. */
+const HEALTH_TONE: Record<HealthStatus, StatusTone> = {
+  HEALTHY: "ready",
+  WARNING: "attention",
+  ERROR: "blocked",
+  DISABLED: "neutral",
+  NO_DATA: "unknown",
 };
 
 function HealthBadge({ status }: { status: HealthStatus }) {
-  return (
-    <span className={`rounded px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ${HEALTH_STYLES[status]}`}>{status}</span>
-  );
+  return <Status tone={HEALTH_TONE[status]}>{status.replace("_", " ").toLowerCase()}</Status>;
 }
 
 function formatTimestamp(value: string | null): string {
@@ -144,21 +146,25 @@ function formatScore(value: number | null): string {
 
 function SectionCard({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold">{title}</h2>
+    <Surface level="z3" as="section" className="rounded-[var(--radius-xl)] px-5 py-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-[9.5px] font-semibold uppercase tracking-[0.11em] text-tertiary">{title}</h2>
         {right}
       </div>
       {children}
-    </div>
+    </Surface>
   );
 }
 
+/* Local to this page: values arrive pre-formatted as strings ("never", "—", "12.4"), so this
+ * renders them verbatim rather than going through the shared Metric's null-to-em-dash handling. */
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
-    <div>
-      <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
-      <div className="mt-0.5 text-lg font-semibold">{value}</div>
+    <div className="min-w-0">
+      <div className="text-[9.5px] font-semibold uppercase tracking-[0.11em] text-tertiary">{label}</div>
+      <div className="mt-1 truncate text-[17px] font-semibold leading-none tabular-nums tracking-[-0.02em] text-primary">
+        {value}
+      </div>
     </div>
   );
 }
@@ -203,21 +209,27 @@ export default function OperationsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="page-title">CareerOps Operations</h1>
-          <div className="text-xs text-zinc-500">Last refreshed: {lastRefreshed ? lastRefreshed.toLocaleTimeString() : "—"}</div>
-        </div>
+      <PageHeader
+        title="System Operations"
+        description={`Career-Ops' own health — schedulers, workers, queues and engines. Last refreshed: ${
+          lastRefreshed ? lastRefreshed.toLocaleTimeString() : "—"
+        }`}
+      />
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <div className="flex items-center gap-2">
-          <div className="flex overflow-hidden rounded border border-zinc-300 dark:border-zinc-700">
+          {/* Same segmented capsule the Jobs command bar uses, so a window switch reads the same
+           *  way a view switch does. */}
+          <div className="flex items-center rounded-[9px] bg-[var(--z0-bg)] p-[3px] shadow-[inset_0_1px_2px_var(--edge-lo)]">
             {WINDOW_OPTIONS.map((opt) => (
               <button
                 key={opt.key}
+                type="button"
                 onClick={() => setWindow(opt.key)}
-                className={`px-2.5 py-1 text-xs font-medium ${
+                aria-pressed={window_ === opt.key}
+                className={`rounded-[7px] px-2.5 py-1 text-[12px] font-medium transition-colors duration-150 ease-out ${
                   window_ === opt.key
-                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                    : "bg-white text-zinc-600 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                    ? "bg-[var(--z3-bg)] text-primary shadow-[var(--lift-1),inset_0_1px_0_var(--edge-hi)]"
+                    : "text-tertiary hover:text-primary"
                 }`}
               >
                 {opt.label}
@@ -225,8 +237,9 @@ export default function OperationsPage() {
             ))}
           </div>
           <button
+            type="button"
             onClick={load}
-            className="rounded border border-zinc-300 px-2.5 py-1 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            className="rounded-md border border-[var(--border)] px-2.5 py-1.5 text-[12px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98]"
           >
             Refresh
           </button>
@@ -236,13 +249,18 @@ export default function OperationsPage() {
       <MorningReadinessSection />
 
       {error && (
-        <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
+        <div className="rounded-md border border-[var(--error)]/35 bg-[color-mix(in_oklab,var(--error)_8%,transparent)] px-3 py-2.5 text-[12.5px] text-[var(--error)]">
           {error}
         </div>
       )}
 
       {loading && !data ? (
-        <p className="text-sm text-zinc-500">Loading…</p>
+        <>
+          <LoadingRegion label="Loading operations" />
+          <Surface level="z3" className="rounded-[var(--radius-xl)] p-5">
+            <SkeletonRows rows={8} />
+          </Surface>
+        </>
       ) : data ? (
         <>
           <SectionCard title="System health overview">

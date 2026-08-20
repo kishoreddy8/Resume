@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LoadingRegion, PageHeader, SkeletonRows, Surface } from "@/components/ui";
 import type { AppSettings } from "@/lib/settings";
 
 interface FieldSpec {
@@ -58,9 +59,9 @@ function CandidateSettingsGroup({
 }) {
   const fieldError = (key: string) => errors.find((e) => e.path === `candidate.${key}`);
   return (
-    <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+    <section className="plane plane-3 space-y-3 rounded-[var(--radius-xl)] px-5 py-4">
       <div>
-        <h2 className="text-sm font-semibold">Candidate Eligibility</h2>
+        <h2 className="text-[9.5px] font-semibold uppercase tracking-[0.11em] text-tertiary">Candidate Eligibility</h2>
         <p className="text-xs text-zinc-500">
           Used only by Phase 2&apos;s job-match eligibility check (sponsorship/clearance/work-authorization
           hard blockers). Never inferred from your resume — set these directly and accurately.
@@ -125,9 +126,9 @@ function SettingsGroup({
   errors: ApiError[];
 }) {
   return (
-    <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+    <section className="plane plane-3 space-y-3 rounded-[var(--radius-xl)] px-5 py-4">
       <div>
-        <h2 className="text-sm font-semibold">{title}</h2>
+        <h2 className="text-[9.5px] font-semibold uppercase tracking-[0.11em] text-tertiary">{title}</h2>
         <p className="text-xs text-zinc-500">{description}</p>
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -213,9 +214,9 @@ function ResumeWriterControl({
   }
 
   return (
-    <section className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+    <section className="plane plane-3 space-y-3 rounded-[var(--radius-xl)] px-5 py-4">
       <div>
-        <h2 className="text-sm font-semibold">Resume Writer</h2>
+        <h2 className="text-[9.5px] font-semibold uppercase tracking-[0.11em] text-tertiary">Resume Writer</h2>
         <p className="text-xs text-zinc-500">
           Whether the background worker may automatically write resumes for jobs you have already approved. This is
           the only setting that spends your Claude subscription. Turning it on approves nothing, creates no new
@@ -364,39 +365,45 @@ export default function SettingsPage() {
   }
 
   if (loading || !settings || !defaults) {
-    return <p className="text-sm text-zinc-500">Loading…</p>;
+    return (
+      <div className="flex flex-col gap-4">
+        <LoadingRegion label="Loading settings" />
+        <Surface level="z3" className="rounded-[var(--radius-xl)] p-5">
+          <SkeletonRows rows={8} />
+        </Surface>
+      </div>
+    );
   }
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="page-title">Settings</h1>
-          <p className="text-xs text-zinc-500">
-            Configure Lifecycle, Suppression, and Scanner behavior. Defaults reproduce today&apos;s
-            existing behavior — changes here take effect on the next scan or sweep.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={resetToDefaults}
-            disabled={saving || resetting}
-            className="rounded border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
-          >
-            Reset to Defaults
-          </button>
-          <button
-            onClick={save}
-            disabled={saving || resetting}
-            className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Control Center"
+        description="Lifecycle, suppression and scanner behaviour. Defaults reproduce today's existing behaviour — changes take effect on the next scan or sweep."
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={resetToDefaults}
+              disabled={saving || resetting}
+              className="rounded-md border border-[var(--border)] px-3 py-1.5 text-[12.5px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98] disabled:opacity-50"
+            >
+              Reset to defaults
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving || resetting}
+              className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </>
+        }
+      />
 
-      {formError && <p className="text-sm text-red-600">{formError}</p>}
-      {savedAt && !formError && <p className="text-xs text-emerald-700 dark:text-emerald-400">Saved.</p>}
+      {formError && <p className="text-[12.5px] text-[var(--error)]">{formError}</p>}
+      {savedAt && !formError && <p className="text-[11.5px] text-[var(--success)]">Saved.</p>}
 
       <ResumeWriterControl
         enabled={settings.scheduler.writerEnabled}

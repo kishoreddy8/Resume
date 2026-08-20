@@ -78,7 +78,12 @@ export default function JobsPage() {
    * and each commit re-ran the whole /api/jobs query — typing "data engineer" fired 13 full
    * requests over 16,005 jobs. The query itself is untouched; only how often it is asked changed.
    */
-  const [searchDraft, setSearchDraft] = useState("");
+  /* Seeded from ?q= so the command palette's "Search jobs for …" lands on a real result set rather
+   * than an empty page. Read once, at mount — the URL is an entry point, not a live binding. */
+  const [searchDraft, setSearchDraft] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("q") ?? "";
+  });
   const committedSearch = useRef("");
   const reduced = useReducedMotion() ?? false;
   const filterAnchorRef = useRef<HTMLDivElement>(null);

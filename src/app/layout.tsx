@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CommandBar } from "@/components/CommandBar";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppSidebar } from "@/components/AppSidebar";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -53,6 +54,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               {children}
             </div>
           </main>
+          {/* Global ⌘K. Renders nothing until opened. */}
+          <CommandBar />
         </div>
       </body>
     </html>
