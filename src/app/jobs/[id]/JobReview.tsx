@@ -7,6 +7,7 @@ import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { AiInsightsCard } from "./AiInsightsCard";
 import { Disclosure } from "./Disclosure";
 import { TailoringIntelligence } from "./TailoringIntelligence";
+import { AskAboutJob } from "./AskAboutJob";
 import { JobDecisionHeader } from "./JobDecisionHeader";
 import { JobActionDock, DockMenuItem, resolveDockState } from "./JobActionDock";
 import { JobReviewSkeleton, LoadingRegion } from "../Skeletons";
@@ -982,6 +983,10 @@ export function JobReview({
     <section id="job-plan" className="scroll-mt-14 border-t border-[var(--separator)] px-5 py-4">
       <h2 className="mb-2 text-[13px] font-semibold text-primary">Tailoring intelligence</h2>
       <TailoringIntelligence candidateId={candidateId} jobId={job.id} />
+      {/* Explanatory only, and only when asked — see AskAboutJob for why nothing runs on mount. */}
+      <div className="mt-3 border-t border-[var(--separator)] pt-3">
+        <AskAboutJob candidateId={candidateId} jobId={job.id} />
+      </div>
     </section>
   );
 
