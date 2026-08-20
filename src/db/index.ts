@@ -70,11 +70,61 @@ function runAdditiveMigrations(db: Database.Database) {
  * at the very end of createConnection so it's correct whether or not a rebuild just happened
  * (DROP TABLE removes a table's indexes along with it).
  */
+/**
+ * Covering index for the job-list projection.
+ *
+ * WHY IT IS THIS WIDE. `jobs` has 76 columns and stores description_html / description_text /
+ * description_sections at positions 8-10, averaging 18.6 KB per row. SQLite reads a record
+ * sequentially, so every list column — all of which sit at position 15 or later — can only be
+ * reached by walking past those blobs and their overflow pages. Measured on the real table: four
+ * early columns 28ms, the same rows with thirteen columns 1,810ms. The companies join is
+ * innocent (26ms with it, 28ms without); it is column position, not the join.
+ *
+ * WHY THE COLUMN ORDER IS WHAT IT IS. The leading columns must match the list queries' WHERE and
+ * ORDER BY or SQLite will not use this as a covering index at all. Measured on a copy of the
+ * production database, both list query shapes:
+ *
+ *   index shape                         For You        All Jobs
+ *   (none)                               2,381ms        2,414ms
+ *   is_archived first, no sort keys      1,961ms          — not covering
+ *   posted_at, first_seen_at first          56ms  cov     588ms
+ *   is_archived, posted_at, first_seen      205ms         43ms  cov      <- chosen
+ *
+ * The chosen order has the better worst case: both queries land far under a second, and the
+ * heavier All Jobs path (16k rows to the client) gets the fully covered plan. Either way the
+ * temp B-tree sort disappears, which is most of the win even when the plan is not covering.
+ *
+ * COST, stated because it is real: 10.2 MB on disk, and writes to jobs get more expensive —
+ * 2,000 last_seen_at updates measured 48ms without it and 306ms with it, because each scan write
+ * must also maintain a wide index entry. That is a background cost paid by the hourly scanner,
+ * traded against ~2.2s saved on every page load. Additive only: no existing index is removed, no
+ * schema or writer behaviour changes, and no data is rewritten.
+ *
+ * The column list must stay in step with JOB_LIST_SELECT in db/queries/jobs.ts. If a column is
+ * added there and not here, SQLite silently stops covering and the query quietly returns to ~2s.
+ */
+function ensureJobsListCoveringIndex(db: Database.Database) {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_list_covering ON jobs(
+    is_archived, posted_at DESC, first_seen_at DESC,
+    id, company_id, source_type, external_id, title, location, department, url,
+    employment_type, workplace_type, salary_text, sponsorship_snippet,
+    last_seen_at, is_active, dedupe_key,
+    sponsorship_mentioned, sponsorship_polarity, h1b_combined_confidence,
+    pipeline_status, pipeline_updated_at, marked_for_tailoring, tailoring_marked_at,
+    closed_at, missed_scan_count, archived_at, archived_reason,
+    pinned, notes, tags, created_at, updated_at,
+    employment_type_normalized, workplace_type_normalized, seniority,
+    salary_min, salary_max, salary_currency, salary_period,
+    clearance_required, industry_domain
+  )`);
+}
+
 function ensureJobsIndexes(db: Database.Database) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_archived ON jobs(is_archived)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_pinned ON jobs(pinned)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_active_archived_posted ON jobs(is_archived, is_active, posted_at DESC, first_seen_at DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_company_active ON jobs(company_id, is_active)");
+
 
   // Stage 32 — the Operations page's match-decision counts.
   //
@@ -890,6 +940,11 @@ function createConnection(): Database.Database {
   // runs only after every legacy company discovery/domain column is guaranteed to exist.
   runOrganizationRegistryBackfill(db);
   backfillOrganizationDiscoveryState(db);
+  /* Last, deliberately: this index spans columns added by several of the additive migrations above
+   * (employment_type_normalized, seniority, salary_*, clearance_required, industry_domain). Created
+   * inside ensureJobsIndexes it failed with "no such column" on any fresh database — the same
+   * ordering hazard idx_jobs_archived is documented for. */
+  ensureJobsListCoveringIndex(db);
   return db;
 }
 
