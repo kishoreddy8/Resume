@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { extractDocxText } from "./docxText";
 
 /**
  * Builds candidate-profile.json by spawning the user's own locally authenticated Claude Code CLI.
@@ -46,18 +47,23 @@ export type BuildProfileOutcome =
   | { ok: true; rawStdout: string }
   | { ok: false; reason: "disabled" | "spawn_failed" | "timeout" | "cli_error"; detail: string };
 
-function drivingPrompt(candidateId: number): string {
+function drivingPrompt(candidateId: number, resumeSha: string, skillsSha: string): string {
   return [
     `Build the derived candidate profile index for candidate ${candidateId}.`,
     "",
-    "Read these two files in the directory you have been given access to:",
-    "  master/resume.docx   — the Master Resume",
-    "  master/skills.docx   — the Master Skills Inventory",
+    "Read these two plain-text files in the directory you have been given access to:",
+    "  master/.extracted-resume.txt   — the Master Resume, text extracted verbatim",
+    "  master/.extracted-skills.txt   — the Master Skills Inventory, text extracted verbatim",
+    "",
+    "Use these EXACT values for sourceHashes — they are the hashes of the original .docx files,",
+    "which you cannot see. Do not compute or invent them:",
+    `  resume: ${resumeSha}`,
+    `  skills: ${skillsSha}`,
     "",
     "Write candidate-profile.json in that same directory, matching this exact shape:",
     "{",
     '  "schemaVersion": 1,',
-    '  "sourceHashes": { "resume": "<sha256 of master/resume.docx>", "skills": "<sha256 of master/skills.docx>" },',
+    '  "sourceHashes": { "resume": "<the resume hash given above>", "skills": "<the skills hash given above>" },',
     '  "builtAt": "<ISO 8601 timestamp>",',
     '  "skills": [{ "rawSkillName": string, "source": "employer" | "inventory_only",',
     '               "attributedTo"?: [{ "employer": string, "project"?: string }],',
@@ -84,10 +90,10 @@ function drivingPrompt(candidateId: number): string {
   ].join("\n");
 }
 
-function buildArgs(opts: BuildProfileOptions): string[] {
+function buildArgs(opts: BuildProfileOptions, resumeSha: string, skillsSha: string): string[] {
   const args = [
     "-p",
-    drivingPrompt(opts.candidateId),
+    drivingPrompt(opts.candidateId, resumeSha, skillsSha),
     "--output-format",
     "json",
     "--permission-mode",
@@ -106,6 +112,31 @@ function buildArgs(opts: BuildProfileOptions): string[] {
   return args;
 }
 
+/**
+ * Extract both documents to plain text beside them, so the sandboxed CLI can actually read them.
+ *
+ * Dot-prefixed and deleted afterwards: these are a transport detail between two processes, not
+ * something a user should find in their folder wondering whether it is authoritative.
+ */
+async function stageExtractedText(candidateDir: string): Promise<{ resumeSha: string; skillsSha: string } | null> {
+  const master = path.join(candidateDir, "master");
+  const resume = path.join(master, "resume.docx");
+  const skills = path.join(master, "skills.docx");
+  if (!fs.existsSync(resume) || !fs.existsSync(skills)) return null;
+  const r = await extractDocxText(resume);
+  const s = await extractDocxText(skills);
+  fs.writeFileSync(path.join(master, ".extracted-resume.txt"), r.text);
+  fs.writeFileSync(path.join(master, ".extracted-skills.txt"), s.text);
+  return { resumeSha: r.sha256, skillsSha: s.sha256 };
+}
+
+function clearExtractedText(candidateDir: string): void {
+  for (const f of [".extracted-resume.txt", ".extracted-skills.txt"]) {
+    const p = path.join(candidateDir, "master", f);
+    if (fs.existsSync(p)) fs.rmSync(p, { force: true });
+  }
+}
+
 export async function invokeProfileBuild(opts: BuildProfileOptions): Promise<BuildProfileOutcome> {
   const command = opts.command ?? "claude";
   if (!opts.command && process.env.CAREER_OPS_DISABLE_REAL_CLAUDE_CLI === "1") {
@@ -120,16 +151,32 @@ export async function invokeProfileBuild(opts: BuildProfileOptions): Promise<Bui
     return { ok: false, reason: "cli_error", detail: "Master Resume is not uploaded for this candidate." };
   }
 
+  /* The CLI cannot open a .docx: Read rejects it as binary and the sandbox has no Bash to unzip
+   * with. Extract to text first — see docxText.ts for why that boundary is the right one. */
+  let hashes: { resumeSha: string; skillsSha: string } | null;
+  try {
+    hashes = await stageExtractedText(opts.candidateDir);
+  } catch (err) {
+    return { ok: false, reason: "cli_error", detail: `Could not read the uploaded documents: ${String(err)}` };
+  }
+  if (!hashes) {
+    return { ok: false, reason: "cli_error", detail: "Both a Master Resume and a Skills Inventory must be uploaded." };
+  }
+
   return new Promise<BuildProfileOutcome>((resolve) => {
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const child = spawn(command, buildArgs(opts), { cwd: opts.candidateDir, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, buildArgs(opts, hashes.resumeSha, hashes.skillsSha), {
+      cwd: opts.candidateDir,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
 
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
       child.kill("SIGKILL");
+      clearExtractedText(opts.candidateDir);
       resolve({ ok: false, reason: "timeout", detail: `Profile build exceeded ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms.` });
     }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
@@ -140,6 +187,7 @@ export async function invokeProfileBuild(opts: BuildProfileOptions): Promise<Bui
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearExtractedText(opts.candidateDir);
       resolve({ ok: false, reason: "spawn_failed", detail: err.message });
     });
 
@@ -147,6 +195,7 @@ export async function invokeProfileBuild(opts: BuildProfileOptions): Promise<Bui
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearExtractedText(opts.candidateDir);
       // A non-zero exit is not the real signal — the caller checks whether a VALID profile landed.
       // stdout is captured because --output-format json reports the actual reason there.
       if (code !== 0) {

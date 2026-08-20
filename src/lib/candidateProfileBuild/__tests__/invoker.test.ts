@@ -3,6 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import JSZip from "jszip";
 import { invokeProfileBuild } from "@/lib/candidateProfileBuild/invoker";
 
 /**
@@ -12,10 +13,21 @@ import { invokeProfileBuild } from "@/lib/candidateProfileBuild/invoker";
  * subscription every time CI runs.
  */
 
-function candidateDir(withResume: boolean): string {
+/** A real (minimal) .docx — a zip with word/document.xml. The invoker now extracts text before
+ *  spawning anything, so a text file named .docx is correctly rejected and cannot stand in. */
+async function writeDocx(filePath: string, body: string): Promise<void> {
+  const zip = new JSZip();
+  zip.file("word/document.xml", `<w:document><w:body><w:p>${body}</w:p></w:body></w:document>`);
+  fs.writeFileSync(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+}
+
+async function candidateDir(withDocs: boolean): Promise<string> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "co-profile-build-"));
   fs.mkdirSync(path.join(dir, "master"), { recursive: true });
-  if (withResume) fs.writeFileSync(path.join(dir, "master", "resume.docx"), "not really a docx");
+  if (withDocs) {
+    await writeDocx(path.join(dir, "master", "resume.docx"), "Test Resume");
+    await writeDocx(path.join(dir, "master", "skills.docx"), "Test Skills");
+  }
   return dir;
 }
 
@@ -31,7 +43,7 @@ test("the billing guard refuses to spawn the real binary when disabled", async (
   const prev = process.env.CAREER_OPS_DISABLE_REAL_CLAUDE_CLI;
   process.env.CAREER_OPS_DISABLE_REAL_CLAUDE_CLI = "1";
   try {
-    const res = await invokeProfileBuild({ candidateId: 1, candidateDir: candidateDir(true) });
+    const res = await invokeProfileBuild({ candidateId: 1, candidateDir: await candidateDir(true) });
     assert.equal(res.ok, false);
     assert.equal(res.ok === false && res.reason, "disabled");
   } finally {
@@ -46,7 +58,7 @@ test("an explicit fixture command bypasses the guard — tests stay runnable", a
   try {
     const res = await invokeProfileBuild({
       candidateId: 1,
-      candidateDir: candidateDir(true),
+      candidateDir: await candidateDir(true),
       command: fixture("exit 0"),
     });
     assert.equal(res.ok, true);
@@ -59,7 +71,7 @@ test("an explicit fixture command bypasses the guard — tests stay runnable", a
 test("refuses before spawning anything when the Master Resume is missing", async () => {
   const res = await invokeProfileBuild({
     candidateId: 1,
-    candidateDir: candidateDir(false),
+    candidateDir: await candidateDir(false),
     command: fixture("echo should-not-run; exit 0"),
   });
   assert.equal(res.ok, false);
@@ -69,7 +81,7 @@ test("refuses before spawning anything when the Master Resume is missing", async
 test("a non-zero exit is reported rather than treated as success", async () => {
   const res = await invokeProfileBuild({
     candidateId: 1,
-    candidateDir: candidateDir(true),
+    candidateDir: await candidateDir(true),
     command: fixture("echo 'boom' >&2; exit 3"),
   });
   assert.equal(res.ok, false);
@@ -80,7 +92,7 @@ test("a non-zero exit is reported rather than treated as success", async () => {
 test("a spawn failure is reported, not thrown", async () => {
   const res = await invokeProfileBuild({
     candidateId: 1,
-    candidateDir: candidateDir(true),
+    candidateDir: await candidateDir(true),
     command: "/definitely/not/a/real/binary",
   });
   assert.equal(res.ok, false);
@@ -90,7 +102,7 @@ test("a spawn failure is reported, not thrown", async () => {
 test("a hung process is killed and reported as a timeout", async () => {
   const res = await invokeProfileBuild({
     candidateId: 1,
-    candidateDir: candidateDir(true),
+    candidateDir: await candidateDir(true),
     command: fixture("sleep 5"),
     timeoutMs: 300,
   });

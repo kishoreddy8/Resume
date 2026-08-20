@@ -82,6 +82,8 @@ export default function CandidateIntelligencePage() {
   const candidateId = useActiveCandidateId();
   const [data, setData] = useState<ProfileResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [building, setBuilding] = useState(false);
+  const [buildError, setBuildError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,6 +103,27 @@ export default function CandidateIntelligencePage() {
       cancelled = true;
     };
   }, [candidateId]);
+
+  /* Build from here too. This page was the dead end the user actually hit: it stated the profile
+   * was not built and named a command, with no way to act. Same failure shape as the PIN prompt —
+   * telling someone what to do while giving them no way to do it. */
+  async function build() {
+    setBuilding(true);
+    setBuildError(null);
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/build-profile`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) {
+        setBuildError(body.error ?? "The profile build did not complete.");
+        return;
+      }
+      window.location.reload();
+    } catch {
+      setBuildError("Could not reach the server.");
+    } finally {
+      setBuilding(false);
+    }
+  }
 
   if (loading && !data) {
     return (
@@ -131,15 +154,30 @@ export default function CandidateIntelligencePage() {
           </p>
           <p className="mx-auto mt-1.5 max-w-[54ch] text-[12px] leading-relaxed text-tertiary">{reason}</p>
           <p className="mx-auto mt-2 max-w-[54ch] text-[11.5px] leading-relaxed text-tertiary">
-            Run the <span className="text-secondary">/build-candidate-profile</span> skill to rebuild it. Nothing is
-            shown here from a profile that cannot be trusted.
+            Nothing is shown here from a profile that cannot be trusted. Building reads your Master
+            Resume and Skills Inventory with your Claude subscription — it takes a couple of minutes.
           </p>
-          <Link
-            href="/master-files"
-            className="mt-4 inline-block rounded-md border border-[var(--border)] px-3 py-1.5 text-[12.5px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
-          >
-            Master Files
-          </Link>
+          {buildError && <p className="mt-2 text-[12px] text-[var(--error)]">{buildError}</p>}
+          <div className="mt-4 flex justify-center gap-2">
+            <button
+              type="button"
+              onClick={build}
+              disabled={building}
+              className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
+            >
+              {building ? "Building…" : "Build profile now"}
+            </button>
+            <Link
+              href="/master-files"
+              className="rounded-md border border-[var(--border)] px-3 py-1.5 text-[12.5px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
+            >
+              Master Files
+            </Link>
+          </div>
+          <p className="mx-auto mt-3 max-w-[54ch] text-[11px] leading-relaxed text-tertiary">
+            If it does not complete, run <span className="text-secondary">/build-candidate-profile {candidateId}</span>{" "}
+            in Claude Code instead.
+          </p>
         </Surface>
       </div>
     );
