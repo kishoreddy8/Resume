@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 
 /**
  * Why a job list is empty, when the reason is setup rather than filters.
@@ -28,13 +28,17 @@ interface SetupResponse {
 }
 
 export function useSetupNotice(): SetupNotice | null {
-  const candidateId = useActiveCandidateId();
+  const candidateId = useResolvedCandidateId();
   const [notice, setNotice] = useState<SetupNotice | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    /* Closure-scoped rather than state: it must take effect before the next tick, not the next
+     * render, so a locked profile costs exactly one request instead of one per interval. */
+    let stopped = false;
 
     async function check() {
+      if (stopped || cancelled || candidateId === null) return;
       try {
         const [setupRes, buildRes] = await Promise.all([
           fetch(`/api/candidates/${candidateId}/setup`),
@@ -123,7 +127,6 @@ export function useSetupNotice(): SetupNotice | null {
       }
     }
 
-    let stopped = false;
     /* Slow on purpose: the states it reports change on the order of minutes. */
     const id = setInterval(() => {
       if (!stopped) check();

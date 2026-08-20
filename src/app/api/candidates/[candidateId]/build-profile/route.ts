@@ -5,7 +5,26 @@ import { requireActiveCandidate } from "@/db/queries/candidates";
 import { requireCandidateAccess } from "@/lib/auth/guard";
 import { loadCandidateProfile } from "@/lib/match/candidateProfile";
 import { invokeProfileBuild } from "@/lib/candidateProfileBuild/invoker";
-import { beginBuild, finishBuild, getBuildState, reportPhase, PHASE_LABEL } from "@/lib/candidateProfileBuild/registry";
+import { restoreProfile, snapshotProfile } from "@/lib/candidateProfileBuild/rollback";
+import {
+  beginBuild,
+  finishBuild,
+  getBuildState,
+  reportPhase,
+  PHASE_LABEL,
+  type BuildFailureCode,
+} from "@/lib/candidateProfileBuild/registry";
+
+/** Invoker reasons are internal; the registry's codes are what the UI maps to guidance. */
+const FAILURE_CODE: Record<string, BuildFailureCode> = {
+  disabled: "cli_disabled",
+  not_installed: "cli_unavailable",
+  spawn_failed: "cli_unavailable",
+  timeout: "cli_timeout",
+  cli_error: "cli_error",
+  documents_missing: "documents_missing",
+  documents_unreadable: "documents_unreadable",
+};
 
 /**
  * POST — start a profile build. Returns immediately; GET reports progress.
@@ -54,7 +73,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
   }
 
   // Snapshot whatever is there now, so a failed build is never destructive.
-  const previous = fs.existsSync(profilePath) ? fs.readFileSync(profilePath) : null;
+  const previous = snapshotProfile(profilePath);
 
   /* Runs detached from this response. Every exit path must call finishBuild, or the UI would show a
    * build running forever. */
@@ -68,10 +87,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
       if (!run.ok) {
         finishBuild(candidateId, {
           ok: false,
-          error:
-            run.reason === "disabled"
-              ? "Automatic profile building is disabled in this environment."
-              : `Profile build did not complete: ${run.detail}`,
+          code: FAILURE_CODE[run.reason] ?? "unexpected",
+          detail: run.detail,
         });
         return;
       }
@@ -80,12 +97,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
       reportPhase(candidateId, "validating");
       const loaded = loadCandidateProfile(candidateId);
       if (loaded.status !== "ok") {
-        if (previous) fs.writeFileSync(profilePath, previous);
-        else if (fs.existsSync(profilePath)) fs.rmSync(profilePath);
+        restoreProfile(profilePath, previous);
         finishBuild(candidateId, {
           ok: false,
-          error:
-            "The generated profile did not pass validation and was discarded. Your previous profile, if any, is unchanged.",
+          code: "validation_failed",
+          detail: `The loader reported "${loaded.status}".`,
         });
         return;
       }
@@ -110,7 +126,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
         },
       });
     } catch (err) {
-      finishBuild(candidateId, { ok: false, error: `Profile build failed unexpectedly: ${String(err)}` });
+      finishBuild(candidateId, { ok: false, code: "unexpected", detail: String(err) });
     }
   })();
 
@@ -128,15 +144,20 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ candidateId
   if (accessDenial) return accessDenial;
 
   const state = getBuildState(candidateId);
+  const lastPhase = state?.observed.at(-1) ?? null;
   return NextResponse.json({
     candidateId,
     status: state?.status ?? "idle",
-    /* The phase is sent as finished prose, not a key, so the strip and the setup page cannot
-     *  drift apart on wording — and so no client is tempted to derive a percentage from it. */
-    phase: state?.phase ? PHASE_LABEL[state.phase] : null,
+    /* Phase keys, so the rail can mark exactly which steps were observed. The single-line label is
+     *  sent alongside as finished prose, so the strip and the setup page cannot drift on wording —
+     *  and so no client is tempted to derive a percentage from a position in the list. */
+    observed: state?.observed ?? [],
+    phase: lastPhase ? PHASE_LABEL[lastPhase] : null,
     startedAt: state?.startedAt ?? null,
     finishedAt: state?.finishedAt ?? null,
-    error: state?.error ?? null,
+    failureCode: state?.failure?.code ?? null,
+    /* Deliberately NOT the raw detail: CLI output can be a stack trace, and that must not reach a
+     *  user-facing screen. The client maps the code to an explanation. */
     summary: state?.summary ?? null,
   });
 }

@@ -16,6 +16,23 @@ import type { BuildPhase } from "./invoker";
 
 export type BuildStatus = "running" | "done" | "failed";
 
+/**
+ * Why a build ended, as a code rather than prose.
+ *
+ * The UI maps these to an explanation, what is still safe, and a next action. Passing a code
+ * instead of a sentence keeps that mapping in one place and stops raw CLI output — which can be a
+ * stack trace — from reaching a user-facing screen.
+ */
+export type BuildFailureCode =
+  | "cli_disabled"
+  | "cli_unavailable"
+  | "cli_timeout"
+  | "cli_error"
+  | "documents_missing"
+  | "documents_unreadable"
+  | "validation_failed"
+  | "unexpected";
+
 /** Human-facing wording for each observed phase. Present tense: it is happening right now. */
 export const PHASE_LABEL: Record<BuildPhase, string> = {
   extracting: "Reading your uploaded documents",
@@ -25,18 +42,23 @@ export const PHASE_LABEL: Record<BuildPhase, string> = {
   validating: "Checking the profile is valid",
 };
 
-/** Declared order, used only to stop a late-arriving event from moving the display backwards. */
-const PHASE_ORDER: BuildPhase[] = ["extracting", "reading_resume", "reading_skills", "writing", "validating"];
-
 export interface BuildState {
   status: BuildStatus;
-  /** The furthest phase actually observed. Null until the first one is reported. */
-  phase: BuildPhase | null;
+  /**
+   * Phases in the order they were ACTUALLY observed, deduped.
+   *
+   * Not a monotonic "furthest reached" counter, which is what this was first written as. Nothing
+   * tells the CLI to read the resume before the skills inventory, so a run that happened to read
+   * them the other way round had a genuine observation silently discarded for being "backwards",
+   * and the UI showed a finished step as pending. An arrival-ordered list cannot lie that way:
+   * every entry is something that demonstrably happened.
+   */
+  observed: BuildPhase[];
   startedAt: number;
   finishedAt?: number;
-  /** Present only on failure — the message the UI should show. */
-  error?: string;
-  /** Present only on success, for a summary without re-reading the profile. */
+  /** Present only on failure. */
+  failure?: { code: BuildFailureCode; detail: string };
+  /** Present only on success — real counts read from the validated profile, never estimated. */
   summary?: { skills: number; experience: number; certifications: number };
 }
 
@@ -62,36 +84,41 @@ export function isBuilding(candidateId: number): boolean {
 /** Returns false when a build is already in flight — the caller must not start a second one. */
 export function beginBuild(candidateId: number): boolean {
   if (isBuilding(candidateId)) return false;
-  builds.set(candidateId, { status: "running", phase: null, startedAt: Date.now() });
+  builds.set(candidateId, { status: "running", observed: [], startedAt: Date.now() });
   return true;
 }
 
-/**
- * Record an observed phase. Monotonic: a phase earlier than the one already recorded is ignored,
- * so an out-of-order or repeated event can never make the display appear to go backwards.
- */
+/** Record that a phase actually happened. Repeats are ignored; nothing is ever un-recorded. */
 export function reportPhase(candidateId: number, phase: BuildPhase): void {
   const state = builds.get(candidateId);
   if (!state || state.status !== "running") return;
-  const current = state.phase ? PHASE_ORDER.indexOf(state.phase) : -1;
-  if (PHASE_ORDER.indexOf(phase) <= current) return;
-  state.phase = phase;
+  if (state.observed.includes(phase)) return;
+  state.observed.push(phase);
 }
 
 export function finishBuild(
   candidateId: number,
-  outcome: { ok: true; summary: BuildState["summary"] } | { ok: false; error: string }
+  outcome:
+    | { ok: true; summary: BuildState["summary"] }
+    | { ok: false; code: BuildFailureCode; detail: string }
 ): void {
-  const startedAt = builds.get(candidateId)?.startedAt ?? Date.now();
+  const previous = builds.get(candidateId);
+  const startedAt = previous?.startedAt ?? Date.now();
+  const observed = previous?.observed ?? [];
   builds.set(
     candidateId,
     outcome.ok
-      ? { status: "done", phase: null, startedAt, finishedAt: Date.now(), summary: outcome.summary }
-      : { status: "failed", phase: builds.get(candidateId)?.phase ?? null, startedAt, finishedAt: Date.now(), error: outcome.error }
+      ? { status: "done", observed, startedAt, finishedAt: Date.now(), summary: outcome.summary }
+      : {
+          status: "failed",
+          observed,
+          startedAt,
+          finishedAt: Date.now(),
+          failure: { code: outcome.code, detail: outcome.detail },
+        }
   );
 }
 
-/** Any candidate currently building — the global status strip needs this without knowing who. */
 export function listRunning(): { candidateId: number; startedAt: number }[] {
   const out: { candidateId: number; startedAt: number }[] = [];
   for (const [candidateId, state] of builds) {

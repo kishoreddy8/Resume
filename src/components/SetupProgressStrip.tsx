@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
+import { onBuildStarted } from "@/lib/buildEvents";
+import { shortFailure } from "@/app/onboarding/stageModel";
 
 /**
  * A slim strip showing a profile build that is running somewhere else.
@@ -17,7 +19,7 @@ import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
  * running, so an idle app makes no requests at all.
  */
 export function SetupProgressStrip() {
-  const candidateId = useActiveCandidateId();
+  const candidateId = useResolvedCandidateId();
   const [status, setStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -32,11 +34,16 @@ export function SetupProgressStrip() {
    * retrying would throw an unsolicited PIN prompt at the user every few seconds forever. Being
    * unable to read the build state is also a perfectly good reason not to report on it. */
   const [locked, setLocked] = useState(false);
+  /* A ref as well as state: state does not update until the next render, so an interval tick that
+   * fires in between would issue a second doomed request. The ref stops it on the very first. */
+  const lockedRef = useRef(false);
 
   const poll = useCallback(async () => {
     try {
+      if (lockedRef.current || candidateId === null) return;
       const res = await fetch(`/api/candidates/${candidateId}/build-profile`);
       if (res.status === 401) {
+        lockedRef.current = true;
         setLocked(true);
         return;
       }
@@ -44,20 +51,39 @@ export function SetupProgressStrip() {
       const body = await res.json();
       setStatus(body.status ?? "idle");
       setStartedAt(body.startedAt ?? null);
-      setError(body.error ?? null);
+      setError(body.status === "failed" ? shortFailure(body.failureCode ?? null) : null);
       setPhase(body.phase ?? null);
     } catch {
       // A failed poll is not worth surfacing; the next one will tell the truth.
     }
   }, [candidateId]);
 
+  /* One check on mount — enough to catch a build that started before this page existed — and then
+   * silence. Repeat polling only happens while something is actually running. */
   useEffect(() => {
-    if (locked) return;
+    if (locked || candidateId === null) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     poll();
+  }, [poll, locked, candidateId]);
+
+  /* Interval only while a build is in flight. An idle app makes no requests at all. */
+  useEffect(() => {
+    if (status !== "running" || locked || candidateId === null) return;
     const id = setInterval(poll, 4000);
     return () => clearInterval(id);
-  }, [poll, locked]);
+  }, [status, poll, locked, candidateId]);
+
+  /* A build begun on another page — or in another tab — announces itself rather than being
+   * discovered by polling for it. */
+  useEffect(() => {
+    if (candidateId === null) return;
+    return onBuildStarted((id) => {
+      if (id === candidateId) {
+        setStatus("running");
+        poll();
+      }
+    });
+  }, [candidateId, poll]);
 
   useEffect(() => {
     if (status !== "running") return;

@@ -69,6 +69,16 @@ export function primeActiveCandidateId(id: number): void {
   }
 }
 
+/**
+ * The authoritative active candidate, resolved once and shared.
+ *
+ * Exported so ProfileLockPrompt can distinguish a lock that matters from one that does not — see
+ * the note there about speculative requests on a fresh browser.
+ */
+export function resolveActiveCandidateId(): Promise<number> {
+  return fetchActiveCandidateId();
+}
+
 function fetchActiveCandidateId(): Promise<number> {
   if (cachedId !== null) return Promise.resolve(cachedId);
   if (inFlight) return inFlight;
@@ -105,4 +115,33 @@ export function useActiveCandidateId(): number {
   }, []);
 
   return candidateId;
+}
+
+/**
+ * The active candidate, or null until the SERVER has actually said which one it is.
+ *
+ * useActiveCandidateId above returns an optimistic guess immediately so pages can render. That is
+ * right for rendering and wrong for fetching: a page that starts fetching on the guess issues a
+ * full set of candidate-scoped requests for the wrong profile and then repeats every one of them
+ * when the real id arrives — measured at ten duplicated calls on a single setup page load. On a
+ * fresh browser those speculative calls also 401, because the guessed profile may be someone
+ * else's and PIN-protected.
+ *
+ * Fetch on this; render on the other.
+ */
+export function useResolvedCandidateId(): number | null {
+  const [id, setId] = useState<number | null>(() => cachedId);
+
+  useEffect(() => {
+    if (id !== null) return;
+    let cancelled = false;
+    resolveActiveCandidateId().then((v) => {
+      if (!cancelled) setId(v);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  return id;
 }

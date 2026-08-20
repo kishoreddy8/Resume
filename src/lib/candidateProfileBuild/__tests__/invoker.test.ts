@@ -89,14 +89,22 @@ test("a non-zero exit is reported rather than treated as success", async () => {
   assert.match(res.ok === false ? res.detail : "", /exit 3/);
 });
 
-test("a spawn failure is reported, not thrown", async () => {
+test("a missing binary is reported as not_installed, not thrown", async () => {
+  /* Distinguished from spawn_failed on purpose: "the CLI is not installed" and "the CLI would not
+   * start" lead to different next actions, and the setup screen offers a different one for each.
+   * Collapsing them left users reading "try again" for a tool they had never installed. */
   const res = await invokeProfileBuild({
     candidateId: 1,
     candidateDir: await candidateDir(true),
     command: "/definitely/not/a/real/binary",
   });
   assert.equal(res.ok, false);
-  assert.equal(res.ok === false && res.reason, "spawn_failed");
+  assert.equal(res.ok === false && res.reason, "not_installed");
+  assert.doesNotMatch(
+    res.ok === false ? res.detail : "",
+    /ENOENT|spawn |errno/,
+    "the detail reaches a user-facing screen, so it must not be a raw system error"
+  );
 });
 
 test("a hung process is killed and reported as a timeout", async () => {

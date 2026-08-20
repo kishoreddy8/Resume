@@ -47,7 +47,18 @@ export interface BuildProfileOptions {
 
 export type BuildProfileOutcome =
   | { ok: true; rawStdout: string }
-  | { ok: false; reason: "disabled" | "spawn_failed" | "timeout" | "cli_error"; detail: string };
+  | {
+      ok: false;
+      reason:
+        | "disabled"
+        | "not_installed"
+        | "spawn_failed"
+        | "timeout"
+        | "cli_error"
+        | "documents_missing"
+        | "documents_unreadable";
+      detail: string;
+    };
 
 function drivingPrompt(candidateId: number, resumeSha: string, skillsSha: string): string {
   return [
@@ -178,7 +189,7 @@ export async function invokeProfileBuild(opts: BuildProfileOptions): Promise<Bui
     };
   }
   if (!fs.existsSync(path.join(opts.candidateDir, "master", "resume.docx"))) {
-    return { ok: false, reason: "cli_error", detail: "Master Resume is not uploaded for this candidate." };
+    return { ok: false, reason: "documents_missing", detail: "Master Resume is not uploaded for this candidate." };
   }
 
   /* The CLI cannot open a .docx: Read rejects it as binary and the sandbox has no Bash to unzip
@@ -188,10 +199,10 @@ export async function invokeProfileBuild(opts: BuildProfileOptions): Promise<Bui
     opts.onPhase?.("extracting");
     hashes = await stageExtractedText(opts.candidateDir);
   } catch (err) {
-    return { ok: false, reason: "cli_error", detail: `Could not read the uploaded documents: ${String(err)}` };
+    return { ok: false, reason: "documents_unreadable", detail: `Could not read the uploaded documents: ${String(err)}` };
   }
   if (!hashes) {
-    return { ok: false, reason: "cli_error", detail: "Both a Master Resume and a Skills Inventory must be uploaded." };
+    return { ok: false, reason: "documents_missing", detail: "Both a Master Resume and a Skills Inventory must be uploaded." };
   }
 
   return new Promise<BuildProfileOutcome>((resolve) => {
@@ -247,7 +258,17 @@ export async function invokeProfileBuild(opts: BuildProfileOptions): Promise<Bui
       settled = true;
       clearTimeout(timer);
       clearExtractedText(opts.candidateDir);
-      resolve({ ok: false, reason: "spawn_failed", detail: err.message });
+      /* ENOENT means the `claude` binary is not on PATH at all, which is a different problem from
+       * a CLI that ran and failed — one is "install it", the other is "look at the output". The
+       * UI needs to tell those apart to give a next action worth following. */
+      const notInstalled = (err as NodeJS.ErrnoException).code === "ENOENT";
+      resolve({
+        ok: false,
+        reason: notInstalled ? "not_installed" : "spawn_failed",
+        detail: notInstalled
+          ? "The Claude CLI was not found on this machine."
+          : err.message,
+      });
     });
 
     child.on("close", (code) => {

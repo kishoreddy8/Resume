@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { announceBuildStarted } from "@/lib/buildEvents";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import {
   LoadingRegion,
@@ -12,6 +13,7 @@ import {
   Surface,
 } from "@/components/ui";
 import { BuildingProfile } from "@/components/BuildingProfile";
+import { shortFailure } from "@/app/onboarding/stageModel";
 
 /**
  * Candidate Intelligence Center.
@@ -122,7 +124,7 @@ export default function CandidateIntelligencePage() {
         setBuildPhase(body.phase ?? null);
         if (body.status === "running") return;
         setBuilding(false);
-        if (body.status === "failed") setBuildError(body.error ?? "The profile build did not complete.");
+        if (body.status === "failed") setBuildError(shortFailure(body.failureCode ?? null));
         else window.location.reload();
       } catch {
         // A dropped poll is not a failed build.
@@ -141,6 +143,7 @@ export default function CandidateIntelligencePage() {
     setBuildError(null);
     try {
       const res = await fetch(`/api/candidates/${candidateId}/build-profile`, { method: "POST" });
+      announceBuildStarted(candidateId);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setBuildError(body.error ?? "The profile build could not be started.");

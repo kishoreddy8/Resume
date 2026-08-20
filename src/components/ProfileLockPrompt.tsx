@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { resolveActiveCandidateId } from "@/lib/useActiveCandidateId";
 
 /**
  * A PIN prompt that appears wherever a locked profile is hit.
@@ -45,7 +46,22 @@ if (typeof window !== "undefined" && !(window as unknown as { __coLockPatched?: 
         // Read a clone so the caller still receives an unconsumed body.
         const body = await res.clone().json();
         if (body?.reason === "profile_locked" && typeof body.candidateId === "number") {
-          window.dispatchEvent(new CustomEvent(LOCK_EVENT, { detail: { candidateId: body.candidateId } }));
+          /* Only prompt for the profile the user is ACTUALLY on.
+           *
+           * useActiveCandidateId optimistically starts at candidate 1 before the server answers,
+           * so a browser with no stored id — a phone opening the app for the first time — fires a
+           * handful of requests for candidate 1 on every page. If candidate 1 has a PIN, those
+           * 401 immediately, and a full-screen "Saikishore Reddy is locked" prompt landed on top
+           * of a setup page belonging to somebody else, with no way past it. Onboarding on a new
+           * device was blocked outright.
+           *
+           * The 401 body names the candidate it refers to, so a lock for anyone other than the
+           * resolved active profile is a speculative request the user never asked for, and is
+           * dropped. Locks for the profile they really are on behave exactly as before. */
+          const active = await resolveActiveCandidateId().catch(() => null);
+          if (active === null || active === body.candidateId) {
+            window.dispatchEvent(new CustomEvent(LOCK_EVENT, { detail: { candidateId: body.candidateId } }));
+          }
         }
       } catch {
         // A 401 without our JSON shape is somebody else's concern.
