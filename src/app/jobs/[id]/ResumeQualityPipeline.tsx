@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { summarizeResumeStage, type ResumeStageSummary } from "./resumeStage";
 import { presentDisposition } from "@/lib/resumeQuality/dispositionPresentation";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { StructuredResumeReview, RequiredCorrection } from "@/lib/resumeQuality/types";
@@ -283,10 +284,14 @@ export function ResumeQualityPipeline({
   jobId,
   jobTitle,
   companyName,
+  onStageChange,
 }: {
   jobId: number;
   jobTitle: string;
   companyName: string;
+  /** Reports the workflow stage upward so the command center can show where the resume stands.
+   *  This is a REPORT of the response this component already fetched — it adds no request. */
+  onStageChange?: (stage: ResumeStageSummary) => void;
 }) {
   const candidateId = useActiveCandidateId();
   const [data, setData] = useState<QualityWorkflowResponse | null>(null);
@@ -295,6 +300,26 @@ export function ResumeQualityPipeline({
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedIterationNumber, setSelectedIterationNumber] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  /* Report the workflow stage upward. Keyed on the few primitives the summary actually depends on,
+   * so this fires when the STAGE changes rather than on every poll tick that returns the same
+   * status. No request is made here — this is the response this component already has. */
+  const reportedStatus = data?.workflow?.status ?? null;
+  const reportedWaiting = data?.waitingFor ?? null;
+  const reportedDisposition = data?.finalDisposition?.disposition ?? null;
+  const reportedIteration = data?.workflow?.current_iteration ?? null;
+  useEffect(() => {
+    if (!onStageChange) return;
+    onStageChange(
+      summarizeResumeStage({
+        status: reportedStatus,
+        waitingFor: reportedWaiting,
+        disposition: reportedDisposition,
+        currentIteration: reportedIteration,
+      })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportedStatus, reportedWaiting, reportedDisposition, reportedIteration]);
 
   async function loadData() {
     try {

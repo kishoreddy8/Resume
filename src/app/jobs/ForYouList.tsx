@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import type { QueueItem } from "./queue";
+import { ScrollStrip } from "./ScrollStrip";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { JobRow } from "./JobRow";
 import { JobListSkeleton, LoadingRegion } from "./Skeletons";
+import { EmptyState } from "./EmptyState";
+import { AnimatePresence, motion } from "motion/react";
 import type { RoleFamilyTier } from "@/lib/rank/forYou";
 import type { CandidateJobBucket } from "@/lib/rank/candidateJobBucket";
 import type { LifecycleThresholds } from "@/lib/jobLifecycle";
@@ -100,15 +104,48 @@ function bucketEchoesDecision(ranking: ForYouResponseEntry["ranking"]): boolean 
   return ranking.primaryBucket === ranking.decision;
 }
 
-/** The recommendation-specific context that All Jobs has no equivalent for. */
-function RecommendationMeta({ ranking }: { ranking: ForYouResponseEntry["ranking"] }) {
+/**
+ * The recommendation-specific context that All Jobs has no equivalent for.
+ *
+ * The role cue now NAMES the target role that matched rather than printing the bare tier. Both
+ * halves are already on the wire: `ranking.roleFamilyTier` is per entry, and the matched role text
+ * comes from the response's own top-level `preferences` — the same object the empty state already
+ * reads. No extra field, no extra request, and no second line: it replaces the label that was
+ * occupying that slot, so row height and row DOM are unchanged.
+ *
+ * Which secondary role matched is not resolvable per row (the API sends the tier, not the winning
+ * preference string), so SECONDARY names no role rather than guessing one.
+ */
+function RecommendationMeta({
+  ranking,
+  prefs,
+}: {
+  ranking: ForYouResponseEntry["ranking"];
+  prefs: CandidateRankingPreferences | null;
+}) {
   const bucket =
     ranking.primaryBucket && !bucketEchoesDecision(ranking) ? BUCKET[ranking.primaryBucket] : null;
-  const family = ranking.roleFamilyTier !== "NONE" ? ROLE_FAMILY_LABEL[ranking.roleFamilyTier] : null;
+  const tier = ranking.roleFamilyTier;
+  const family =
+    tier === "PRIMARY"
+      ? prefs?.primaryTargetRole
+        ? `P · ${prefs.primaryTargetRole}`
+        : ROLE_FAMILY_LABEL.PRIMARY
+      : tier === "SECONDARY"
+        ? ROLE_FAMILY_LABEL.SECONDARY
+        : null;
   if (!bucket && !family) return null;
   return (
     <span className="ml-auto flex shrink-0 items-center gap-2">
-      {family && <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--accent)]">{family}</span>}
+      {family && (
+        <span
+          className={`truncate text-[10px] uppercase tracking-[0.06em] ${
+            tier === "PRIMARY" ? "font-semibold text-[var(--accent)]" : "text-tertiary"
+          }`}
+        >
+          {family}
+        </span>
+      )}
       {bucket && (
         <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium text-secondary">
           <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${bucket.dot}`} />
@@ -155,6 +192,7 @@ export function ForYouList({
   search,
   selectedJobId,
   onSelect,
+  onQueueChange,
 }: {
   candidateId: number;
   thresholds: LifecycleThresholds;
@@ -162,6 +200,8 @@ export function ForYouList({
   search: string;
   selectedJobId: number | null;
   onSelect: (id: number) => void;
+  /** Same contract as JobList: the rendered order, so Previous/Next never recomputes neighbours. */
+  onQueueChange?: (queue: QueueItem[]) => void;
 }) {
   const [data, setData] = useState<ForYouApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -195,6 +235,14 @@ export function ForYouList({
   }, [load]);
 
   const entries = data?.entries ?? [];
+
+  /* Publish the rendered order for Previous/Next. Same keying discipline as JobList. */
+  const queueKey = entries.map((e) => e.job.id).join(",");
+  useEffect(() => {
+    if (!onQueueChange) return;
+    onQueueChange(entries.map((e) => ({ id: e.job.id, title: e.job.title })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queueKey]);
 
   // Same contract as the All Jobs list: keep the selection on something the feed actually renders.
   const selectionVisible = selectedJobId !== null && entries.some((e) => e.job.id === selectedJobId);
@@ -237,8 +285,10 @@ export function ForYouList({
           </div>
         )}
 
-        {/* Bucket tabs. Horizontally scrollable so the list column never dictates how many fit. */}
-        <div className="flex gap-1 overflow-x-auto px-3 py-2">
+        {/* Bucket tabs. Every bucket must be REACHABLE, not merely present: the strip carries real
+         *  scroll controls outside the track, and the active tab is scrolled into view whenever it
+         *  changes. A fade alone left the later buckets unreachable by mouse or keyboard. */}
+        <ScrollStrip label="job buckets" activeSelector="[data-bucket-active='true']">
           {TABS.map((tab) => {
             const count = data?.bucketCounts?.[tab.countKey] ?? 0;
             const isActive = activeTab === tab.id;
@@ -248,6 +298,7 @@ export function ForYouList({
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
                 aria-pressed={isActive}
+                data-bucket-active={isActive ? "true" : undefined}
                 className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors duration-150 ease-out active:scale-[0.98] ${
                   isActive
                     ? "bg-[var(--accent)] text-[var(--accent-fg)]"
@@ -261,7 +312,7 @@ export function ForYouList({
               </button>
             );
           })}
-        </div>
+        </ScrollStrip>
 
         <div className="flex items-center gap-3 px-4 pb-2 text-[11px]">
           <select
@@ -285,14 +336,34 @@ export function ForYouList({
       </div>
 
       {loading ? (
-        <>
-          <LoadingRegion label="Loading recommended jobs" />
-          <JobListSkeleton />
-        </>
+        <AnimatePresence mode="wait">
+          <motion.div key="skeleton" exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+            <LoadingRegion label="Loading recommended jobs" />
+            <JobListSkeleton />
+          </motion.div>
+        </AnimatePresence>
       ) : entries.length === 0 ? (
-        <div className="m-4 rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] p-10 text-center text-[13px] text-tertiary">
-          No jobs found in this view.
-        </div>
+        <EmptyState
+          title={search.trim() ? "No recommendations match that search" : activeTab === "all" ? "No recommendations yet" : "This bucket is empty"}
+          body={
+            search.trim()
+              ? `Nothing in your feed matches “${search.trim()}”. Clear the search to see the full recommendation set.`
+              : activeTab === "all"
+                ? "Once jobs are scanned and evaluated against your profile, your strongest matches appear here."
+                : "No job currently sits in this stage. Other buckets may still have work waiting."
+          }
+          action={
+            activeTab !== "all" ? (
+              <button
+                type="button"
+                onClick={() => setActiveTab("all")}
+                className="rounded-[9px] bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--accent-fg)] shadow-[var(--lift-1)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
+              >
+                Show all recommendations
+              </button>
+            ) : null
+          }
+        />
       ) : (
         <div
           ref={listRef}
@@ -312,7 +383,7 @@ export function ForYouList({
               selected={job.id === selectedJobId}
               onSelect={onSelect}
               sharedLayout={sharedLayout}
-              meta={<RecommendationMeta ranking={ranking} />}
+              meta={<RecommendationMeta ranking={ranking} prefs={data?.preferences ?? null} />}
             />
           ))}
         </div>

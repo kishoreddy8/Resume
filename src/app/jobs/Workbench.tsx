@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { JobReview } from "./[id]/JobReview";
+import { neighbours, type QueueItem } from "./queue";
 
 /**
  * WORKBENCH PHASE 1 — the Jobs workspace as a master/detail pair.
@@ -20,9 +21,12 @@ import { JobReview } from "./[id]/JobReview";
  */
 
 /** Pane width as a percentage of the workspace. Kept inside a band that leaves both panes usable. */
-const MIN_DETAIL_PCT = 32;
-const MAX_DETAIL_PCT = 58;
-const DEFAULT_DETAIL_PCT = 42;
+/* The detail pane is now the command center, so it takes the majority of the frame by default —
+ * but the band's lower bound still guarantees the queue can never be squeezed out of existence.
+ * The queue stays visible at every width in this range; that is the point of the pair. */
+const MIN_DETAIL_PCT = 34;
+const MAX_DETAIL_PCT = 74;
+const DEFAULT_DETAIL_PCT = 60;
 
 function useIsWide() {
   // Derived boolean rather than a raw width subscription, so a resize only re-renders when the
@@ -46,10 +50,16 @@ function ReviewPane({
   jobId,
   reduced,
   onClose,
+  queue,
+  onSelect,
+  scrollRoot,
 }: {
   jobId: number;
   reduced: boolean;
   onClose?: () => void;
+  queue: QueueItem[];
+  onSelect: (id: number) => void;
+  scrollRoot?: HTMLElement | null;
 }) {
   return (
     <motion.div
@@ -60,7 +70,14 @@ function ReviewPane({
       // retargets from the current value rather than restarting.
       transition={reduced ? { duration: 0.1 } : { type: "spring", duration: 0.22, bounce: 0 }}
     >
-      <JobReview jobId={jobId} layout="pane" onClose={onClose} />
+      <JobReview
+        jobId={jobId}
+        layout="pane"
+        onClose={onClose}
+        nav={neighbours(queue, jobId)}
+        onSelectJob={onSelect}
+        scrollRoot={scrollRoot}
+      />
     </motion.div>
   );
 }
@@ -68,11 +85,16 @@ function ReviewPane({
 export function Workbench({
   list,
   selectedJobId,
+  queue,
+  onSelect,
 }: {
   /** The master list for this view. All Jobs and For You each supply their own; everything to the
    *  right of it — pane, divider, sheet, motion, request debounce — is shared. */
   list: ReactNode;
   selectedJobId: number | null;
+  /** The visible ordered queue, straight from the mounted list. */
+  queue: QueueItem[];
+  onSelect: (id: number) => void;
 }) {
   const wide = useIsWide();
   const reduced = useReducedMotion() ?? false;
@@ -83,6 +105,15 @@ export function Workbench({
   // cover the list with a job nobody asked for the moment the page loaded.
   const [sheetOpen, setSheetOpen] = useState(false);
   const frameRef = useRef<HTMLDivElement>(null);
+  /* Two handles to one element, on purpose. The section observer needs it as a PROP, so it has to
+   * live in state (reading `ref.current` during render is the pattern React's refs rule forbids);
+   * the scroll reset MUTATES it, which belongs on a ref. One callback ref sets both. */
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const [paneEl, setPaneEl] = useState<HTMLDivElement | null>(null);
+  const attachPane = useCallback((el: HTMLDivElement | null) => {
+    paneRef.current = el;
+    setPaneEl(el);
+  }, []);
 
   /**
    * Selection is applied immediately so the row highlights with zero delay; only the *detail load*
@@ -95,6 +126,12 @@ export function Workbench({
     const t = setTimeout(() => setCommittedId(selectedJobId), 140);
     return () => clearTimeout(t);
   }, [selectedJobId, committedId]);
+
+  /* A new job opens at its Overview. The queue's own scroll is untouched — only this pane resets,
+   * so the user never loses their place in the list while moving through it. */
+  useEffect(() => {
+    if (paneRef.current) paneRef.current.scrollTop = 0;
+  }, [committedId]);
 
   const onDividerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -149,7 +186,7 @@ export function Workbench({
     return (
       <div
         onClick={openSheetOnRowClick}
-        className="h-[calc(100dvh-10rem)] min-h-[420px] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface"
+        className="plane plane-2 relative h-[calc(100dvh-var(--workspace-chrome))] min-h-[420px] overflow-hidden"
       >
         {list}
         <AnimatePresence>
@@ -185,7 +222,13 @@ export function Workbench({
                   if (info.offset.x > 120 || info.velocity.x > 500) closeSheet();
                 }}
               >
-                <ReviewPane jobId={selectedJobId} reduced={reduced} onClose={closeSheet} />
+                <ReviewPane
+                  jobId={selectedJobId}
+                  reduced={reduced}
+                  onClose={closeSheet}
+                  queue={queue}
+                  onSelect={onSelect}
+                />
               </motion.aside>
             </>
           )}
@@ -198,10 +241,11 @@ export function Workbench({
   return (
     <div
       ref={frameRef}
-      className="flex h-[calc(100dvh-10rem)] min-h-[480px] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface"
+      className="flex h-[calc(100dvh-var(--workspace-chrome))] min-h-[480px] gap-3"
       style={dragging ? { cursor: "col-resize", userSelect: "none" } : undefined}
     >
-      <div className="min-w-0 flex-1">{list}</div>
+      {/* Z2 — the queue sits behind the studio. */}
+      <div className="plane plane-2 relative min-w-0 flex-1 overflow-hidden">{list}</div>
 
       <div
         role="separator"
@@ -216,22 +260,30 @@ export function Workbench({
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onKeyDown={onDividerKey}
-        className={`group relative w-px shrink-0 cursor-col-resize bg-[var(--separator)] ${
-          dragging ? "bg-[var(--accent)]" : "hover:bg-[var(--accent)]"
+        className={`group relative w-1 shrink-0 cursor-col-resize rounded-full transition-colors duration-150 ease-out ${
+          dragging ? "bg-[var(--accent)]" : "bg-transparent hover:bg-[var(--accent-soft)]"
         }`}
       >
         {/* Widened invisible hit area — the visible line stays 1px, the grab target is 11px. */}
         <span aria-hidden="true" className="absolute inset-y-0 -left-[5px] -right-[5px]" />
       </div>
 
+      {/* Z3 — the review studio is nearer the viewer and softly illuminated. */}
       <div
-        className="min-w-0 shrink-0 overflow-y-auto [scroll-padding-block:1rem]"
+        ref={attachPane}
+        className="plane plane-3 lit relative min-w-0 shrink-0 overflow-y-auto [scroll-padding-block:1rem]"
         style={{ width: `${detailPct}%` }}
       >
         {committedId === null ? (
           <p className="p-6 text-[13px] text-tertiary">Select a job to review it here.</p>
         ) : (
-          <ReviewPane jobId={committedId} reduced={reduced} />
+          <ReviewPane
+            jobId={committedId}
+            reduced={reduced}
+            queue={queue}
+            onSelect={onSelect}
+            scrollRoot={paneEl}
+          />
         )}
       </div>
     </div>

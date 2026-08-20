@@ -1,12 +1,23 @@
 import type { H1bJobConfidence } from "@/types";
 
-const STYLES: Record<H1bJobConfidence, string> = {
-  "Very High": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  High: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  Medium: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  Low: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
-  "Not Sponsoring": "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-  Unknown: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+/** Dot carries the semantic; the label always carries the meaning. Unknown is hollow so an
+ *  absent signal is distinguishable from a weak positive without relying on colour. */
+const DOT: Record<H1bJobConfidence, string> = {
+  "Very High": "bg-[var(--success)]",
+  High: "bg-[var(--success)]",
+  Medium: "bg-[var(--warning)]",
+  Low: "bg-orange-500",
+  "Not Sponsoring": "bg-[var(--error)]",
+  Unknown: "bg-transparent ring-1 ring-inset ring-[var(--border)]",
+};
+
+const TEXT: Record<H1bJobConfidence, string> = {
+  "Very High": "text-secondary",
+  High: "text-secondary",
+  Medium: "text-secondary",
+  Low: "text-secondary",
+  "Not Sponsoring": "text-[var(--error)] font-medium",
+  Unknown: "text-tertiary",
 };
 
 /** confidence accepts H1bJobConfidence (job level, 6 values) or H1bCompanyConfidence (company
@@ -14,9 +25,10 @@ const STYLES: Record<H1bJobConfidence, string> = {
 export function H1bBadge({ confidence }: { confidence: H1bJobConfidence }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STYLES[confidence]}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] ${TEXT[confidence]}`}
       title={`H1B sponsorship confidence: ${confidence}`}
     >
+      <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[confidence]}`} />
       {confidence}
     </span>
   );

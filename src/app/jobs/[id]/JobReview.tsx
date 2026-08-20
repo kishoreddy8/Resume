@@ -9,8 +9,18 @@ import { Disclosure } from "./Disclosure";
 import { JobDecisionHeader } from "./JobDecisionHeader";
 import { JobActionDock, DockMenuItem, resolveDockState } from "./JobActionDock";
 import { JobReviewSkeleton, LoadingRegion } from "../Skeletons";
+import { AnimatePresence, motion } from "motion/react";
 import { MatchCard } from "./MatchCard";
 import { ResumeQualityPipeline } from "./ResumeQualityPipeline";
+import { RequirementsPanel } from "./RequirementsPanel";
+import { RequirementsSummary } from "./RequirementsSummary";
+import { SkillAlignment } from "./SkillAlignment";
+import { TailoringStudio } from "./TailoringStudio";
+import { ApplicationReadiness } from "./ApplicationReadiness";
+import type { ResumeStageSummary } from "./resumeStage";
+import { SectionNav, type SectionDef } from "./SectionNav";
+import type { QueueNeighbours } from "../queue";
+import { TailoringImpact } from "./TailoringImpact";
 import { useJobMatch } from "./useJobMatch";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
@@ -247,7 +257,7 @@ function LifecycleCard({
           {job.pinned === 1 ? "Unpin" : "Pin (never auto-archive/delete)"}
         </button>
       </div>
-      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {error && <p className="mt-2 text-xs text-[var(--error)]">{error}</p>}
     </div>
   );
 }
@@ -294,7 +304,7 @@ function NotInterestedButton({ job, candidateId }: { job: JobWithCompany; candid
       <button
         disabled={busy}
         onClick={markNotInterested}
-        className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/30"
+        className="rounded-md border border-[var(--error)]/35 px-3 py-1.5 text-xs font-medium text-[var(--error)] transition-[background-color,transform] duration-150 ease-out hover:bg-[color-mix(in_oklab,var(--error)_10%,transparent)] active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
       >
         {busy ? "Deleting…" : "Not interested — delete"}
       </button>
@@ -350,7 +360,7 @@ function NotesTagsCard({ job, candidateId, onChanged }: { job: JobWithCompany; c
         <button
           disabled={saving}
           onClick={save}
-          className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-[var(--accent-fg)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] disabled:opacity-50"
+          className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
         >
           {saving ? "Saving…" : "Save"}
         </button>
@@ -726,17 +736,28 @@ export function JobReview({
   jobId,
   layout = "page",
   onClose,
+  nav,
+  onSelectJob,
+  scrollRoot,
 }: {
   jobId: number;
   layout?: "page" | "pane";
   /** Rendered as a close affordance when the review is presented as a pane/sheet. */
   onClose?: () => void;
+  /** Position in the visible queue. Absent on the standalone route, which has no queue beside it. */
+  nav?: QueueNeighbours;
+  onSelectJob?: (id: number) => void;
+  /** The scrolling ancestor, so the section observer watches the right root. */
+  scrollRoot?: HTMLElement | null;
 }) {
   const candidateId = useActiveCandidateId();
   const [data, setData] = useState<JobDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
+  /* The resume workflow stage, reported up by ResumeQualityPipeline. This is a lift, not a second
+   * fetch — that component still owns the only GET of /quality-workflow. */
+  const [resumeStage, setResumeStage] = useState<ResumeStageSummary | null>(null);
   const [promptCopied, setPromptCopied] = useState(false);
   const { thresholds, loaded: thresholdsLoaded } = useLifecycleThresholds();
   // Called unconditionally, above the early returns, so hook order is stable across renders. This
@@ -768,10 +789,14 @@ export function JobReview({
 
   if (loading || !thresholdsLoaded) {
     return (
-      <>
-        <LoadingRegion label="Loading job review" />
-        <JobReviewSkeleton />
-      </>
+      <AnimatePresence mode="wait">
+        {/* One grouped fade, not one per skeleton line: the placeholder leaves as a single
+         *  object so the real content resolves into the same space without a blank frame. */}
+        <motion.div key="skeleton" exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+          <LoadingRegion label="Loading job review" />
+          <JobReviewSkeleton />
+        </motion.div>
+      </AnimatePresence>
     );
   }
   if (notFound || !data) return <p className="p-5 text-[13px] text-tertiary">Job not found.</p>;
@@ -828,6 +853,37 @@ export function JobReview({
       showBackLink={!pane}
       onClose={onClose}
       headingLevel={pane ? "h2" : "h1"}
+      generatedFileCount={generatedFiles.length}
+      nav={nav}
+      onSelectJob={onSelectJob}
+      resumeStage={resumeStage}
+      requirementsSummary={
+        <RequirementsSummary
+          job={job}
+          result={match.result}
+          certifications={certifications}
+          onJump={() => document.getElementById("job-requirements")?.scrollIntoView({ block: "start" })}
+        />
+      }
+      intelligenceBand={
+        /* Splits only once there is genuinely room for two columns. At lg the readiness column
+         * measured 146px and its rows wrapped; stacking beats two cramped columns. */
+        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+          <TailoringStudio
+            job={job}
+            match={match}
+            generatedFileCount={generatedFiles.length}
+            resume={resumeStage}
+            onJumpToPipeline={() => document.getElementById("job-resume")?.scrollIntoView({ block: "start" })}
+          />
+          <ApplicationReadiness
+            job={job}
+            result={match.result}
+            certifications={certifications}
+            onJump={() => document.getElementById("job-skills")?.scrollIntoView({ block: "start" })}
+          />
+        </div>
+      }
       actions={
         <JobActionDock
           state={dockState}
@@ -849,6 +905,63 @@ export function JobReview({
         />
       }
     />
+  );
+
+  /* Requirements and tailoring sit immediately under the hero — both read state the page already
+   * has (the job row, the match result, the certifications from the detail payload, and the
+   * generated-file list). Neither adds a request. */
+  /* Section ids double as scroll targets for SectionNav. `scroll-mt` keeps each heading clear of
+   * the sticky bar so a tabbed-to heading is never hidden underneath it. */
+  const navSections: SectionDef[] = [
+    { id: "job-overview", label: "Overview" },
+    { id: "job-skills", label: "Skills" },
+    { id: "job-requirements", label: "Requirements" },
+    { id: "job-tailoring", label: "Tailoring" },
+    { id: "job-resume", label: "Resume" },
+    { id: "job-posting", label: "Job" },
+    { id: "job-evidence", label: "Evidence" },
+  ];
+
+  /* The full alignment matrix. The hero carries the summary and the first four rows; everything
+   * else lives here so the command center stays readable in one screen. */
+  const skillsCard = match.result ? (
+    <section id="job-skills" className="scroll-mt-14 border-t border-[var(--separator)] px-5 py-4">
+      <h2 className="mb-2 text-[13px] font-semibold text-primary">Skill intelligence</h2>
+      <SkillAlignment result={match.result} />
+    </section>
+  ) : null;
+
+  /* The detailed resume pipeline. Moved out of the page's very bottom to sit directly after
+   * Tailoring — the two are the same subject, and burying it under job facts, H1B, the full posting
+   * and history meant the only place to see resume progress was six screens down. Its high-level
+   * stage now also appears in the studio at the top, from this same component's own fetch. */
+  const resumePipelineCard = (
+    <section id="job-resume" className="scroll-mt-14 border-t border-[var(--separator)] px-5 py-4">
+      <ResumeQualityPipeline
+        jobId={job.id}
+        jobTitle={job.title}
+        companyName={job.company_name}
+        onStageChange={setResumeStage}
+      />
+    </section>
+  );
+
+  const requirementsCard = (
+    <section id="job-requirements" className="scroll-mt-14 border-t border-[var(--separator)] px-5 py-4">
+      <h2 className="mb-2 text-[13px] font-semibold text-primary">Requirements</h2>
+      <RequirementsPanel job={job} result={match.result} certifications={certifications} />
+    </section>
+  );
+
+  const tailoringCard = (
+    <section id="job-tailoring" className="scroll-mt-14 border-t border-[var(--separator)] px-5 py-4">
+      <h2 className="mb-2 text-[13px] font-semibold text-primary">Tailoring</h2>
+      <TailoringImpact
+        result={match.result}
+        approved={job.marked_for_tailoring === 1}
+        generatedFileCount={generatedFiles.length}
+      />
+    </section>
   );
 
   const pipelineCard = (
@@ -887,7 +1000,7 @@ export function JobReview({
   );
 
   const descriptionCard = (
-    <section className="border-t border-[var(--separator)] px-5 py-4">
+    <section id="job-posting" className="scroll-mt-14 border-t border-[var(--separator)] px-5 py-4">
       {/* Open by default: the posting is primary content, and the disclosure exists only so a
        *  very long description can be folded away once read — never to truncate it. */}
       <Disclosure title="Full description" defaultOpen>
@@ -931,7 +1044,14 @@ export function JobReview({
          is the only part that must be read; everything after it is depth, ordered
          decision -> evidence -> facts -> posting -> provenance -> operational -> resume. */
       <div className="bg-surface">
+        <div id="job-overview" className="scroll-mt-14" />
         {decisionHeader}
+        {pane && <SectionNav sections={navSections} scrollRoot={scrollRoot} />}
+        {skillsCard}
+        {requirementsCard}
+        {tailoringCard}
+        {resumePipelineCard}
+        <div id="job-evidence" className="scroll-mt-14" />
         <MatchCard match={match} />
         <AtAGlanceCard job={job} sections={sections} skills={skills} certifications={certifications} />
         {descriptionCard}
@@ -942,9 +1062,6 @@ export function JobReview({
         <AiInsightsCard jobId={job.id} />
         {generatedFilesCard}
         <HistoryCard jobId={job.id} refreshKey={historyKey} />
-        <div id="job-resume" className="border-t border-[var(--separator)] px-5 py-4">
-          <ResumeQualityPipeline jobId={job.id} jobTitle={job.title} companyName={job.company_name} />
-        </div>
         <NotInterestedButton job={job} candidateId={candidateId} />
       </div>
     );
@@ -953,11 +1070,16 @@ export function JobReview({
   return (
     <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
       <div className="min-w-0 space-y-5">
+        <div id="job-overview" className="scroll-mt-14" />
         {decisionHeader}
+        {skillsCard}
+        {requirementsCard}
+        {tailoringCard}
+        {resumePipelineCard}
+        <div id="job-evidence" className="scroll-mt-14" />
         <MatchCard match={match} />
         <AtAGlanceCard job={job} sections={sections} skills={skills} certifications={certifications} />
         {descriptionCard}
-        <ResumeQualityPipeline jobId={job.id} jobTitle={job.title} companyName={job.company_name} />
       </div>
 
       <div className="min-w-0 space-y-5">

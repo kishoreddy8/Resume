@@ -109,6 +109,12 @@ export function JobFilterSidebar({
     onChange({ ...filters, [key]: value });
   }
 
+  const activeCount = (Object.keys(DEFAULT_FILTERS) as (keyof JobFilterState)[]).filter((k) => {
+    const cur = filters[k];
+    const def = DEFAULT_FILTERS[k];
+    return Array.isArray(cur) ? cur.length !== (def as unknown[]).length : cur !== def;
+  }).length;
+
   function toggleH1bConfidence(level: H1bJobConfidence) {
     const set = new Set(filters.h1bConfidence);
     if (set.has(level)) set.delete(level);
@@ -122,195 +128,137 @@ export function JobFilterSidebar({
     update("h1bConfidence", sameValues(values, filters.h1bConfidence) ? [] : values);
   }
 
+  const sel =
+    "w-full rounded-[7px] bg-[var(--z0-bg)] px-2 py-1.5 text-[12px] text-primary shadow-[inset_0_1px_2px_var(--edge-lo)] outline-none transition-shadow duration-150 ease-out focus:shadow-[inset_0_1px_2px_var(--edge-lo),0_0_0_2px_var(--accent-soft)]";
+  const chip = (on: boolean) =>
+    `rounded-[7px] px-2 py-1 text-[11px] font-medium transition-[background-color,color,box-shadow] duration-150 ease-out active:scale-[0.97] ${
+      on
+        ? "bg-[var(--accent)] text-[var(--accent-fg)] shadow-[var(--lift-1)]"
+        : "bg-[var(--z0-bg)] text-secondary shadow-[inset_0_1px_2px_var(--edge-lo)] hover:text-primary"
+    }`;
+
   return (
-    <aside className="w-full shrink-0 space-y-5 rounded-lg border border-zinc-200 bg-white p-4 text-sm dark:border-zinc-800 dark:bg-zinc-900 lg:w-64">
+    <div className="text-[12px]">
+      {/* MATCH — where the job sits in the user's own pipeline. */}
+      <Group title="Match">
+        <Row label="Pipeline status">
+          <select value={filters.status} onChange={(e) => update("status", e.target.value as PipelineStatus | "")} className={sel}>
+            <option value="">All</option>
+            {STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
+          </select>
+        </Row>
+        <Toggle checked={filters.activeOnly} onChange={(v) => update("activeOnly", v)} label="Active postings only" />
+      </Group>
 
+      {/* JOB — properties of the posting itself. */}
+      <Group title="Job">
+        <Row label="Work arrangement">
+          <select value={filters.workplaceType} onChange={(e) => update("workplaceType", e.target.value as WorkplaceTypeNormalized | "")} className={sel}>
+            <option value="">All</option>
+            {WORKPLACE_TYPES.map((w) => (<option key={w} value={w}>{w}</option>))}
+          </select>
+        </Row>
+        <Row label="Employment type">
+          <select value={filters.employmentType} onChange={(e) => update("employmentType", e.target.value as EmploymentTypeNormalized | "")} className={sel}>
+            <option value="">All</option>
+            {EMPLOYMENT_TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
+          </select>
+        </Row>
+        <Row label="Seniority">
+          <select value={filters.seniority} onChange={(e) => update("seniority", e.target.value as Seniority | "")} className={sel}>
+            <option value="">All</option>
+            {SENIORITY_LEVELS.map((s) => (<option key={s} value={s}>{s}</option>))}
+          </select>
+        </Row>
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
+          <Toggle checked={filters.salaryAvailable} onChange={(v) => update("salaryAvailable", v)} label="Salary available" />
+          <Toggle checked={filters.clearanceRequired} onChange={(v) => update("clearanceRequired", v)} label="Clearance required" />
+        </div>
+      </Group>
 
-      <div>
-        <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">
-          Pipeline status
-        </label>
-        <select
-          value={filters.status}
-          onChange={(e) => update("status", e.target.value as PipelineStatus | "")}
-          className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        >
-          <option value="">All</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">Company</label>
-        <select
-          value={filters.companyId}
-          onChange={(e) => update("companyId", e.target.value ? Number(e.target.value) : "")}
-          className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        >
-          <option value="">All</option>
-          {companies.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">Source</label>
-        <select
-          value={filters.sourceType}
-          onChange={(e) => update("sourceType", e.target.value as SourceType | "")}
-          className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        >
-          <option value="">All</option>
-          {SOURCES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">
-          Work arrangement
-        </label>
-        <select
-          value={filters.workplaceType}
-          onChange={(e) => update("workplaceType", e.target.value as WorkplaceTypeNormalized | "")}
-          className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        >
-          <option value="">All</option>
-          {WORKPLACE_TYPES.map((w) => (
-            <option key={w} value={w}>
-              {w}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">
-          Employment type
-        </label>
-        <select
-          value={filters.employmentType}
-          onChange={(e) => update("employmentType", e.target.value as EmploymentTypeNormalized | "")}
-          className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        >
-          <option value="">All</option>
-          {EMPLOYMENT_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="mb-1 block font-medium text-zinc-700 dark:text-zinc-300">Seniority</label>
-        <select
-          value={filters.seniority}
-          onChange={(e) => update("seniority", e.target.value as Seniority | "")}
-          className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        >
-          <option value="">All</option>
-          {SENIORITY_LEVELS.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <label className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
-        <input
-          type="checkbox"
-          checked={filters.salaryAvailable}
-          onChange={(e) => update("salaryAvailable", e.target.checked)}
-        />
-        Salary available
-      </label>
-
-      <label className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
-        <input
-          type="checkbox"
-          checked={filters.clearanceRequired}
-          onChange={(e) => update("clearanceRequired", e.target.checked)}
-        />
-        Clearance required
-      </label>
-
-      <div>
-        <label className="mb-1 flex items-center justify-between font-medium text-zinc-700 dark:text-zinc-300">
-          Sponsorship state
-        </label>
-        <label className="mb-2 flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
-          <input
-            type="checkbox"
-            checked={filters.hideNotSponsoring}
-            onChange={(e) => update("hideNotSponsoring", e.target.checked)}
-          />
-          Hide &quot;Not Sponsoring&quot;
-        </label>
-        <div className="mb-2 flex flex-wrap gap-1.5">
+      {/* SPONSORSHIP — presets first, then the individual levels they compose. */}
+      <Group title="Sponsorship">
+        <Toggle checked={filters.hideNotSponsoring} onChange={(v) => update("hideNotSponsoring", v)} label={'Hide "Not Sponsoring"'} />
+        <div className="flex flex-wrap gap-1.5 pt-1">
           {H1B_PRESETS.map((preset) => (
-            <button
-              key={preset.label}
-              type="button"
-              onClick={() => applyPreset(preset.values)}
-              className={`rounded border px-2 py-0.5 text-xs ${
-                sameValues(preset.values, filters.h1bConfidence)
-                  ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
-                  : "border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-              }`}
-            >
+            <button key={preset.label} type="button" onClick={() => applyPreset(preset.values)} className={chip(sameValues(preset.values, filters.h1bConfidence))}>
               {preset.label}
             </button>
           ))}
         </div>
         <div className="flex flex-wrap gap-1.5">
           {H1B_CONFIDENCE_LEVELS.map((level) => (
-            <button
-              key={level}
-              type="button"
-              onClick={() => toggleH1bConfidence(level)}
-              className={`rounded-full border px-2 py-0.5 text-xs ${
-                filters.h1bConfidence.includes(level)
-                  ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
-                  : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400"
-              }`}
-            >
+            <button key={level} type="button" onClick={() => toggleH1bConfidence(level)} className={chip(filters.h1bConfidence.includes(level))}>
               {level}
             </button>
           ))}
         </div>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="text-[11px] leading-relaxed text-tertiary">
           Selecting none shows all levels. Selecting some shows only those.
         </p>
+      </Group>
+
+      {/* SOURCE — where the posting came from. */}
+      <Group title="Source" last>
+        <Row label="Company">
+          <select value={filters.companyId} onChange={(e) => update("companyId", e.target.value ? Number(e.target.value) : "")} className={sel}>
+            <option value="">All</option>
+            {companies.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+          </select>
+        </Row>
+        <Row label="ATS source">
+          <select value={filters.sourceType} onChange={(e) => update("sourceType", e.target.value as SourceType | "")} className={sel}>
+            <option value="">All</option>
+            {SOURCES.map((s) => (<option key={s} value={s}>{s}</option>))}
+          </select>
+        </Row>
+      </Group>
+
+      <div className="flex items-center justify-between border-t border-[var(--separator)] px-3.5 py-2.5">
+        <span className="text-[11px] text-tertiary">
+          {activeCount === 0 ? "No filters active" : `${activeCount} filter${activeCount === 1 ? "" : "s"} active`}
+        </span>
+        <button
+          type="button"
+          onClick={() => onChange(DEFAULT_FILTERS)}
+          disabled={activeCount === 0}
+          className="rounded-[7px] px-2 py-1 text-[11px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.97] disabled:opacity-40"
+        >
+          Clear all
+        </button>
       </div>
+    </div>
+  );
+}
 
-      <label className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
-        <input
-          type="checkbox"
-          checked={filters.activeOnly}
-          onChange={(e) => update("activeOnly", e.target.checked)}
-        />
-        Active postings only
-      </label>
+/** A titled band. Sections are separated by hairlines, not boxes — the panel is one plane. */
+function Group({ title, children, last }: { title: string; children: React.ReactNode; last?: boolean }) {
+  return (
+    <div className={last ? "px-3.5 py-3" : "border-b border-[var(--separator)] px-3.5 py-3"}>
+      <h3 className="mb-2 flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.13em] text-tertiary">
+        <span aria-hidden="true" className="h-px w-2.5 bg-[var(--border)]" />
+        {title}
+      </h3>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
 
-      <button
-        type="button"
-        onClick={() => onChange(DEFAULT_FILTERS)}
-        className="text-xs text-zinc-500 underline hover:text-zinc-800 dark:hover:text-zinc-200"
-      >
-        Reset filters
-      </button>
-    </aside>
+/** Label left, control right — a compact row instead of a stacked label/field pair. */
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="grid grid-cols-[8.5rem_1fr] items-center gap-2">
+      <span className="text-[11.5px] text-secondary">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-secondary">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-3.5 w-3.5 accent-[var(--accent)]" />
+      {label}
+    </label>
   );
 }

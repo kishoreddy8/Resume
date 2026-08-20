@@ -26,11 +26,33 @@
   /* Text, by rank */
   --text-primary: #18181b;
   --text-secondary: #52525b;
-  --text-tertiary: #71717a;
+  /* Measured, not guessed: #71717a scored 4.05:1 against the light canvas — a real AA failure on
+   * the inactive segmented-control label — and only 4.67:1 behind 9px tile labels. #66666f puts
+   * every tertiary pairing at 4.77-5.68:1 while keeping a legible three-step ramp against
+   * secondary (7.7:1) and primary (16:1). Dark mode overrides this below and is unaffected. */
+  --text-tertiary: #66666f;
 
   /* Lines. Separator divides content; border encloses it. */
   --separator: rgba(0, 0, 0, 0.07);
   --border: rgba(0, 0, 0, 0.12);
+  /* A recessed well — the inverse of a plane. Inputs sink instead of rising, which is how the
+   * search field reads as a field without a 3:1 outline that would fight the off-white material. */
+  /* Tile identity. Each is a *reflection* at 3-5% — enough that a tile reads as belonging to a
+   * family, far too little to become a coloured box. Text sits on the plane, not on the tint, so
+   * contrast is unchanged from the neutral tile. */
+  --tint-match: rgba(79, 70, 229, 0.045);
+  --tint-info: rgba(71, 85, 105, 0.040);
+  --tint-neutral: rgba(100, 116, 139, 0.030);
+  --tint-craft: rgba(124, 58, 237, 0.050);
+  --tint-alert: rgba(180, 83, 9, 0.055);
+  /* Everything above the workspace, so the Workbench can be exactly as tall as what is left.
+   * It was a hardcoded 10rem guess that over-subtracted by 48px and left a dead band across the
+   * bottom of the window. Derived, not guessed:
+   *     header h-12 (48px) + main py-6 (24px x 2) = 96px
+   * If either the header height or the page padding changes, change this with it. */
+  --workspace-chrome: 6rem;
+  --well-bg: #e2e5ee;
+  --well-edge: inset 0 1px 2px rgba(30, 41, 59, 0.10), inset 0 0 0 1px rgba(30, 41, 59, 0.05);
 
   /* One accent, matching the blue the app already uses for links. */
   --accent: #2563eb;
@@ -72,6 +94,14 @@
 
     --separator: rgba(255, 255, 255, 0.08);
     --border: rgba(255, 255, 255, 0.14);
+    /* Dark mode carries tint slightly higher: on a graphite canvas a 4% wash is invisible. */
+    --tint-match: rgba(99, 102, 241, 0.10);
+    --tint-info: rgba(148, 163, 184, 0.055);
+    --tint-neutral: rgba(148, 163, 184, 0.040);
+    --tint-craft: rgba(139, 92, 246, 0.11);
+    --tint-alert: rgba(251, 191, 36, 0.085);
+    --well-bg: #0d0f14;
+    --well-edge: inset 0 1px 2px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 
     --accent: #3b82f6;
     --accent-hover: #60a5fa;
@@ -164,6 +194,222 @@ body {
  * digits change metrics, surrounding prose does not. */
 table {
   font-variant-numeric: tabular-nums;
+}
+
+
+/* ============================================================================
+ * CINEMATIC RESTRUCTURE — depth, lighting and canvas.
+ *
+ * Depth here is a system, not a set of shadows chosen per component. Every
+ * surface sits at exactly one of seven levels, and each level owns its tone,
+ * its edge highlight, its shadow and its blur rule. That is what lets the eye
+ * read "the review is in front of the queue" without anything being explained.
+ *
+ * The research this follows is unambiguous about the trade: layered-depth
+ * styling costs almost nothing to render (no drivers) but carries a HIGH
+ * accessibility risk, because depth is easy to express as contrast the eye
+ * cannot resolve. So every level below keeps text contrast on a real surface
+ * tone, and translucency is used only where content does not have to be read
+ * through it. Cinematic-scroll and skeuomorphic styling were rejected outright:
+ * both are cost:high with animation and large-image drivers, which a 16,000-row
+ * triage tool cannot pay.
+ * ========================================================================= */
+
+:root {
+  /* --- Depth planes. Z0 canvas ... Z6 modal. --- */
+  /* Light mode is its own material system, not an inversion. The canvas carries a faint indigo
+   * cast so white planes above it read as genuinely lit rather than merely brighter, and each
+   * level steps by a small, even amount so elevation is felt at a glance. */
+  --z0-bg: #e4e7f0;
+  --z1-bg: #f2f3f8;
+  --z2-bg: #fafbfd;
+  --z3-bg: #ffffff;
+  --z4-bg: rgba(255, 255, 255, 0.92);
+  --z5-bg: #ffffff;
+
+  /* Edge highlight: the lit top edge of a raised plane. */
+  --edge-hi: rgba(255, 255, 255, 0.95);
+  --edge-lo: rgba(30, 41, 59, 0.07);
+  /* The canvas grid must be felt, not read. Anything stronger becomes graph paper. */
+  --grid-line: rgba(15, 23, 42, 0.022);
+
+  /* Elevation. Two-part shadows — a tight contact shadow plus a wide ambient
+   * one — because a single blur reads as a sticker rather than a raised plane. */
+  /* Light-mode depth is carried by shadow, because the tone steps between planes are only
+   * 1.04-1.19:1 by design — an off-white system cannot separate levels by fill without turning
+   * gray. The contact shadow was too faint to read at Z2/Z3, so each level now gets a tighter,
+   * slightly deeper contact term plus its indigo-tinted ambient throw. */
+  --lift-1: 0 1px 1px rgba(15, 23, 42, 0.05), 0 2px 6px rgba(15, 23, 42, 0.06);
+  --lift-2: 0 1px 2px rgba(30, 41, 59, 0.08), 0 6px 16px -4px rgba(49, 46, 129, 0.14);
+  --lift-3: 0 2px 5px rgba(30, 41, 59, 0.09), 0 14px 34px -10px rgba(49, 46, 129, 0.20);
+  --lift-4: 0 4px 12px rgba(15, 23, 42, 0.11), 0 26px 60px -18px rgba(15, 23, 42, 0.26);
+
+  /* Ambient illumination behind the active workspace. Static — it never moves. */
+  --glow-accent: rgba(79, 70, 229, 0.13);
+  --glow-warm: rgba(99, 102, 241, 0.08);
+
+  /* Accent moves to indigo: a distinct identity, and it reads as light rather
+   * than as a link colour when used for illumination. */
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: rgba(79, 70, 229, 0.12);
+  --focus-ring: #4f46e5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --z0-bg: #0a0b0f;
+    --z1-bg: #101218;
+    --z2-bg: #14171f;
+    --z3-bg: #191d27;
+    --z4-bg: rgba(28, 33, 45, 0.94);
+    --z5-bg: #1c2030;
+
+    /* In dark, the lit edge is the primary depth cue — shadows barely read. */
+    --edge-hi: rgba(255, 255, 255, 0.09);
+    --edge-lo: rgba(0, 0, 0, 0.55);
+    --grid-line: rgba(255, 255, 255, 0.02);
+
+    --lift-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+    --lift-2: 0 2px 6px rgba(0, 0, 0, 0.5), 0 8px 20px -6px rgba(0, 0, 0, 0.55);
+    --lift-3: 0 4px 12px rgba(0, 0, 0, 0.55), 0 18px 44px -12px rgba(0, 0, 0, 0.65);
+    --lift-4: 0 8px 20px rgba(0, 0, 0, 0.6), 0 32px 70px -20px rgba(0, 0, 0, 0.75);
+
+    --glow-accent: rgba(99, 102, 241, 0.20);
+    --glow-warm: rgba(129, 140, 248, 0.10);
+
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --accent-soft: rgba(99, 102, 241, 0.18);
+    --focus-ring: #818cf8;
+  }
+}
+
+/* A raised plane: surface tone + lit top edge + elevation, in one place so no
+ * component invents its own combination. */
+/* Deliberately sets NO position. Tailwind v4 emits utilities inside a cascade layer, and an
+ * unlayered rule here would beat `absolute`/`sticky` no matter how low its specificity — which
+ * silently dragged every floating surface back into flow. Callers supply their own positioning;
+ * ::before only needs *a* containing block, which absolute and sticky both provide. */
+.plane {
+  border-radius: var(--radius-xl);
+  box-shadow: var(--lift-2);
+}
+.plane::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding-top: 1px;
+  background: linear-gradient(to bottom, var(--edge-hi), transparent 42%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.plane-2 { background: var(--z2-bg); }
+.plane-3 { background: var(--z3-bg); box-shadow: var(--lift-3); }
+.plane-4 { background: var(--z4-bg); box-shadow: var(--lift-4); }
+/* Z5 — popovers. Opaque on purpose. Z4 is the translucent floating layer (the action dock, which
+ * WANTS the review surface showing through it), but a popover is read, not glanced past: at 0.92
+ * alpha the page text behind the notification inbox was legible through its own body copy. */
+.plane-5 { background: var(--z5-bg); box-shadow: var(--lift-4); }
+
+/* Tile identity, applied over the tile's own surface rather than replacing it. `background-image`
+ * so the tile keeps its plane colour underneath and the tint is genuinely a wash on top. */
+.tint-match   { background-image: linear-gradient(var(--tint-match), var(--tint-match)); }
+.tint-info    { background-image: linear-gradient(var(--tint-info), var(--tint-info)); }
+.tint-neutral { background-image: linear-gradient(var(--tint-neutral), var(--tint-neutral)); }
+.tint-craft   { background-image: linear-gradient(var(--tint-craft), var(--tint-craft)); }
+.tint-alert   { background-image: linear-gradient(var(--tint-alert), var(--tint-alert)); }
+
+/* Reduced transparency and forced contrast both want the tint gone, not merely reduced — it is
+ * decoration, and it is the first thing to drop when someone has asked for plainer surfaces. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .tint-match, .tint-info, .tint-neutral, .tint-craft, .tint-alert { background-image: none; }
+}
+
+/* lg raises both: header h-14 (56px) + main py-7 (28px x 2) = 112px. */
+@media (min-width: 1024px) {
+  :root { --workspace-chrome: 7rem; }
+}
+
+/* Scroll-edge fade for a horizontally scrolling strip. The bucket tabs were already scrollable,
+ * but the hard clip at the panel edge read as a layout bug rather than as "there is more" — a
+ * scroll edge effect says the same thing without a divider or an arrow button. */
+.scroll-fade-x {
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+  scrollbar-width: none;
+}
+.scroll-fade-x::-webkit-scrollbar { display: none; }
+
+/* Same hidden scrollbar, no mask — used when the track has nothing further to reveal, so the last
+ * item is never dimmed by a fade that is lying about there being more. */
+.scroll-fade-none { scrollbar-width: none; }
+.scroll-fade-none::-webkit-scrollbar { display: none; }
+
+/* The application canvas. Two static radial washes and one hairline grid —
+ * no movement, no image, no backdrop-filter. The grid is a repeating gradient,
+ * which the compositor rasterises once. */
+/* Ambient parallax was built, measured and removed. At every tested width the planes, rail and
+ * header cover 100% of the viewport, so the light field it moved was never visible — it bought a
+ * global pointermove listener for zero observable effect. */
+.app-canvas {
+  background-color: var(--z0-bg);
+  background-image:
+    radial-gradient(1100px 620px at 68% -12%, var(--glow-accent), transparent 62%),
+    radial-gradient(760px 520px at 8% 108%, var(--glow-warm), transparent 60%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 72px 72px, 72px 72px;
+}
+
+/* Ambient light behind the active workspace, so the review surface reads as
+ * illuminated rather than merely lighter. */
+.lit {
+  position: relative;
+  isolation: isolate;
+}
+.lit::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(120% 90% at 50% 0%, var(--accent-soft), transparent 68%);
+  pointer-events: none;
+}
+
+/* A metric tile: its own plane tone, a lit top edge, and a 1px rise on real
+ * pointers. Distinct from .plane because tiles sit ON the review studio rather
+ * than floating above the canvas — they need less elevation, not more. */
+.tile {
+  background:
+    linear-gradient(to bottom, var(--edge-hi), transparent 30%),
+    var(--z2-bg);
+  box-shadow: inset 0 0 0 1px var(--edge-lo), var(--lift-1);
+  transition: transform 160ms ease-out, box-shadow 160ms ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .tile:hover {
+    transform: translateY(-1px);
+    box-shadow: inset 0 0 0 1px var(--edge-lo), var(--lift-2);
+  }
+}
+
+/* Hover lift on real pointers only — a touch tap must not leave a row raised.
+ * transform-only, one pixel, and the global reduced-motion rule flattens it. */
+@media (hover: hover) and (pointer: fine) {
+  .row-lift:not([aria-selected="true"]):hover {
+    transform: translateY(-1px);
+  }
+}
+
+/* Reduced transparency: the one translucent plane becomes solid. */
+@media (prefers-reduced-transparency: reduce) {
+  :root { --z4-bg: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --z4-bg: #1c2030; } }
 }
 
 /* ---------------------------------------------------------------------------

@@ -108,6 +108,7 @@ export function resolveDockState(
 function Overflow({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const reduced = useReducedMotion() ?? false;
 
   useEffect(() => {
@@ -116,7 +117,11 @@ function Overflow({ children }: { children: ReactNode }) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      // Escape returns focus to the trigger, same as the filter panel and the notification inbox.
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     }
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -129,6 +134,7 @@ function Overflow({ children }: { children: ReactNode }) {
   return (
     <div ref={ref} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
@@ -148,7 +154,7 @@ function Overflow({ children }: { children: ReactNode }) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.98 }}
             transition={reduced ? { duration: 0.1 } : { type: "spring", duration: 0.18, bounce: 0 }}
-            className="absolute right-0 z-30 mt-1 min-w-[13rem] rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface-elevated p-1 shadow-[var(--shadow-md)]"
+            className="plane plane-5 absolute right-0 z-30 mt-1 min-w-[13rem] p-1"
           >
             {children}
           </motion.div>
@@ -164,7 +170,7 @@ export function DockMenuItem({ onSelect, children }: { onSelect: () => void; chi
       type="button"
       role="menuitem"
       onClick={onSelect}
-      className="block w-full rounded-md px-2.5 py-1.5 text-left text-[13px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
+      className="block w-full rounded-md px-2.5 py-1.5 text-left text-[13px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:bg-[var(--surface-active)]"
     >
       {children}
     </button>
@@ -184,8 +190,10 @@ export function JobActionDock({
 }) {
   const reduced = useReducedMotion() ?? false;
 
+  // Z4 — the dock floats over the review surface rather than sitting in the flow, so the primary
+  // action stays visually available as the eye travels down the page.
   return (
-    <div className="border-t border-[var(--separator)] pt-4">
+    <div className="plane plane-4 sticky bottom-3 z-20 mt-4 px-3.5 py-3">
       <div className="flex items-center gap-2">
         {/* The primary slot is one element that CHANGES rather than a stack of buttons that appear
          *  and disappear — so advancing the workflow reads as the same control moving forward. */}

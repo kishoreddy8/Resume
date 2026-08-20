@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { QueueItem } from "./queue";
 import { useRouter } from "next/navigation";
 import { JobRow } from "./JobRow";
+import { EmptyState } from "./EmptyState";
 import type { LifecycleThresholds } from "@/lib/jobLifecycle";
 import {
   compareJobsBestFirst,
@@ -71,11 +73,14 @@ export function JobList({
   thresholds,
   selectedJobId,
   onSelect,
+  onQueueChange,
 }: {
   jobs: JobWithCompany[];
   thresholds: LifecycleThresholds;
   selectedJobId: number | null;
   onSelect: (id: number) => void;
+  /** Reports the rendered order upward so Previous/Next reads the same array this list traverses. */
+  onQueueChange?: (queue: QueueItem[]) => void;
 }) {
   const candidateId = useActiveCandidateId();
   const decisions = useMatchDecisions(jobs, candidateId);
@@ -114,6 +119,15 @@ export function JobList({
   const renderLimit = renderState.key === resetKey ? renderState.limit : INITIAL_RENDER_LIMIT;
   const renderedJobs = visibleJobs.slice(0, renderLimit);
   const hiddenCount = visibleJobs.length - renderedJobs.length;
+
+  /* Publish the rendered order. Keyed on the id signature so this fires when the ORDER changes,
+   * not on every render — the array identity changes constantly, the ordering rarely does. */
+  const queueKey = renderedJobs.map((j) => j.id).join(",");
+  useEffect(() => {
+    if (!onQueueChange) return;
+    onQueueChange(renderedJobs.map((j) => ({ id: j.id, title: j.title })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queueKey]);
 
   // Keep the selection inside the rendered window. This is re-checked whenever the selection stops
   // being visible — which matters on first paint, because the match decisions arrive after the jobs
@@ -184,9 +198,25 @@ export function JobList({
       </div>
 
       {visibleJobs.length === 0 ? (
-        <div className="m-4 rounded-[var(--radius-lg)] border border-dashed border-[var(--border)] p-10 text-center text-[13px] text-tertiary">
-          No jobs match these filters. Add companies and run a scan, or widen your filters.
-        </div>
+        <EmptyState
+          title={decisionFilter === "All" ? "No jobs match these filters" : `No ${DECISION_FILTER_LABELS[decisionFilter].toLowerCase()} jobs`}
+          body={
+            decisionFilter === "All"
+              ? "Nothing in the queue matches the current filters. Widen them, or add companies and run a scan."
+              : "Nothing currently carries this decision. Try All, or widen the filters in the sidebar."
+          }
+          action={
+            decisionFilter !== "All" ? (
+              <button
+                type="button"
+                onClick={() => setDecisionFilter("All")}
+                className="rounded-[9px] bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--accent-fg)] shadow-[var(--lift-1)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
+              >
+                Show all decisions
+              </button>
+            ) : null
+          }
+        />
       ) : (
         <div
           ref={listRef}
