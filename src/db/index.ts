@@ -926,6 +926,64 @@ function runTailoringApprovalMigrations(db: Database.Database) {
   }
 }
 
+/**
+ * Application Answer Vault — what the user has already told an application form.
+ *
+ * PURELY ADDITIVE. Three new tables, created only if absent; no existing table is altered and no
+ * data is rewritten. An installation that never applies to anything carries three empty tables.
+ *
+ * WHY THREE. The canonical question is the thing an answer belongs to; the variants are the exact
+ * wordings different sites used for it, kept verbatim so a mapping can always be audited against
+ * what was really on screen; the answer is per candidate, because two people sharing this app do
+ * not share a salary expectation or a work authorisation.
+ *
+ * `approved_by_user` and `auto_fill_allowed` are separate on purpose. Approving an answer once is
+ * not the same as consenting to it being typed into every future form unattended, and collapsing
+ * the two would make the second happen silently as a side effect of the first.
+ */
+function runApplicationVaultMigrations(db: Database.Database) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS application_questions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      canonical_key TEXT NOT NULL UNIQUE,
+      normalized_question TEXT NOT NULL,
+      question_type TEXT NOT NULL,
+      sensitivity TEXT NOT NULL DEFAULT 'normal',
+      reuse_policy TEXT NOT NULL DEFAULT 'ask_each_time',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS application_question_variants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      question_id INTEGER NOT NULL REFERENCES application_questions(id) ON DELETE CASCADE,
+      observed_text TEXT NOT NULL,
+      normalized_text TEXT NOT NULL,
+      source_ats TEXT,
+      first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(question_id, normalized_text)
+    );
+
+    CREATE TABLE IF NOT EXISTS application_answers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      question_id INTEGER NOT NULL REFERENCES application_questions(id) ON DELETE CASCADE,
+      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+      answer_value TEXT NOT NULL,
+      answer_source TEXT NOT NULL,
+      approved_by_user INTEGER NOT NULL DEFAULT 0,
+      auto_fill_allowed INTEGER NOT NULL DEFAULT 0,
+      last_confirmed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(question_id, candidate_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_app_variants_normalized ON application_question_variants(normalized_text);
+    CREATE INDEX IF NOT EXISTS idx_app_answers_candidate ON application_answers(candidate_id);
+  `);
+}
+
 function ensureCandidateOne(db: Database.Database) {
   const existing = db.prepare("SELECT id FROM candidates WHERE id = 1").get();
   if (existing) return;
@@ -972,6 +1030,7 @@ function createConnection(): Database.Database {
   runCompaniesDomainIdentityMigrations(db);
   runTailoringApprovalMigrations(db);
   runJobSourceReviewMigrations(db);
+  runApplicationVaultMigrations(db);
   // 50K ATS/company registry: schema.sql creates the additive tables; this idempotent projection
   // runs only after every legacy company discovery/domain column is guaranteed to exist.
   runOrganizationRegistryBackfill(db);
