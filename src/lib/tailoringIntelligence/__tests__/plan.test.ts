@@ -204,6 +204,50 @@ test("EAT-5 a role with no written evidence never outranks one that has some", (
   );
 });
 
+test("RS-1 eligibility never presents MSI availability as written evidence", () => {
+  const plan = buildTailoringPlan(
+    result({
+      employerEvidencedMatches: [
+        match("Snowflake", { evidence: { source: "employer", rawSkillName: "Snowflake", canonicalSkillName: "Snowflake", employers: ["Comerica"] } }),
+      ],
+    }),
+    profile
+  );
+  const snow = plan.msiEligibility.find((m) => m.technology === "Snowflake")!;
+  assert.deepEqual(snow.writtenAt, ["Comerica"], "only the client it is actually written under");
+  assert.ok(!snow.writtenAt.includes("IntlMotors"), "MSI availability must never be reported as written");
+  assert.ok(snow.eligibleViaMsi.includes("IntlMotors"), "and must be reported as available instead");
+});
+
+test("RS-2 every excluded employer carries a deterministic reason", () => {
+  const plan = buildTailoringPlan(
+    result({
+      employerEvidencedMatches: [
+        match("Kubernetes", { evidence: { source: "employer", rawSkillName: "Kubernetes", canonicalSkillName: "Kubernetes", employers: ["Client A"] } }),
+      ],
+    }),
+    profile
+  );
+  for (const m of plan.msiEligibility) {
+    for (const e of m.excluded) {
+      assert.ok(e.reason.length > 0, `${m.technology} at ${e.employer} was excluded with no reason given`);
+    }
+  }
+});
+
+test("RS-3 an unsupported technology has no eligibility entry at all", () => {
+  const plan = buildTailoringPlan(result({ missingRequirements: [match("Kafka")] }), profile);
+  assert.ok(
+    !plan.msiEligibility.some((m) => m.technology === "Kafka"),
+    "listing it would suggest it were a candidate for use somewhere"
+  );
+});
+
+test("RS-4 eligibility is omitted entirely when no validated profile is loaded", () => {
+  const plan = buildTailoringPlan(result({ employerEvidencedMatches: [match("Snowflake")] }), null);
+  assert.deepEqual(plan.msiEligibility, [], "eligibility has no honest basis without a profile");
+});
+
 test("TI-6 employer emphasis is real overlap, ranked, and never invented", () => {
   const plan = buildTailoringPlan(
     result({

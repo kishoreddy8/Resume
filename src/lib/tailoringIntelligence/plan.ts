@@ -1,6 +1,7 @@
 import type { JobMatchResult, RequirementMatch } from "@/lib/match/types";
 import type { CandidateProfile } from "@/lib/match/types";
 import { buildEmployerEvidenceMap } from "@/lib/resumeQuality/employerEvidence";
+import { classifyForEmployer } from "@/lib/resumeQuality/msiEvidence";
 
 /**
  * The Tailoring Intelligence plan: why this resume is being tailored the way it will be.
@@ -93,6 +94,22 @@ export interface EmployerEmphasis {
   inventoryReachesRole: boolean;
 }
 
+/**
+ * Where one technology may actually be used, employer by employer.
+ *
+ * The UI must never imply an inventory skill was written under a client when it was not, and it
+ * must never leave "why not here" unexplained. Both halves are stated explicitly.
+ */
+export interface MsiEligibility {
+  technology: string;
+  /** Employers where it is already written in the Master Resume. */
+  writtenAt: string[];
+  /** Employers where the inventory makes it usable, though it is not written there. */
+  eligibleViaMsi: string[];
+  /** Employers where it may NOT be used, each with the deterministic reason. */
+  excluded: { employer: string; reason: string }[];
+}
+
 export interface TailoringPlan {
   candidateId: number;
   jobId: number;
@@ -116,6 +133,12 @@ export interface TailoringPlan {
 
   /** Skills with no employer attribution anywhere — listable, never presentable as work performed. */
   inventoryOnlyCount: number;
+
+  /**
+   * Per-technology, per-employer eligibility for the requirements this candidate can evidence.
+   * Empty when no profile is loaded — eligibility has no honest basis without one.
+   */
+  msiEligibility: MsiEligibility[];
 }
 
 const LEVEL: Record<string, "Required" | "Preferred"> = { Required: "Required", Preferred: "Preferred" };
@@ -257,7 +280,45 @@ export function buildTailoringPlan(
     }
   }
 
+  /* Built only for requirements the candidate can actually evidence: an unsupported technology has
+   * no eligibility question to answer, and listing one would suggest it were a candidate for use. */
+  const msiEligibility: MsiEligibility[] = [];
+  if (profile) {
+    for (const r of requirements) {
+      if (r.state !== "STRONG" && r.state !== "PARTIAL" && r.state !== "MENTIONED") continue;
+
+      const writtenAt: string[] = [];
+      const eligibleViaMsi: string[] = [];
+      const excluded: { employer: string; reason: string }[] = [];
+
+      for (const role of profile.experience) {
+        switch (classifyForEmployer(profile, r.label, role.employer)) {
+          case "EXPLICIT_RESUME_EVIDENCE":
+            writtenAt.push(role.employer);
+            break;
+          case "MSI_EVIDENCE":
+            eligibleViaMsi.push(role.employer);
+            break;
+          case "CLIENT_SCOPED_ELSEWHERE":
+            excluded.push({ employer: role.employer, reason: "Skills Inventory scopes this to other clients" });
+            break;
+          case "ROLE_OUT_OF_SCOPE":
+            excluded.push({ employer: role.employer, reason: "role outside technical domain" });
+            break;
+          default:
+            excluded.push({ employer: role.employer, reason: "no evidence for this role" });
+            break;
+        }
+      }
+
+      if (writtenAt.length > 0 || eligibleViaMsi.length > 0) {
+        msiEligibility.push({ technology: r.label, writtenAt, eligibleViaMsi, excluded });
+      }
+    }
+  }
+
   return {
+    msiEligibility,
     candidateId: result.candidateId,
     jobId: result.jobId,
     decision: result.decision,

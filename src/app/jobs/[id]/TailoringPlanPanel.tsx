@@ -191,6 +191,44 @@ export function TailoringPlanPanel({ plan }: { plan: TailoringPlan }) {
         </Block>
       )}
 
+      {plan.msiEligibility.length > 0 && (
+        <Block
+          title="Where each technology may be used"
+          note="Written under a client, or available there through your Skills Inventory. These are never the same thing, and this never claims the second is the first."
+        >
+          <ul className="flex flex-col gap-2">
+            {plan.msiEligibility.slice(0, 10).map((m) => (
+              <li key={m.technology} className="rounded-[var(--radius-lg)] border border-[var(--border)] px-3 py-2.5">
+                <div className="text-[12.5px] font-medium text-primary">{m.technology}</div>
+                {m.writtenAt.length > 0 && (
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-tertiary">
+                    <span className="text-[var(--success)]">Written under: </span>
+                    {m.writtenAt.join(", ")}
+                  </p>
+                )}
+                {m.eligibleViaMsi.length > 0 && (
+                  <p className="mt-0.5 text-[11.5px] leading-relaxed text-tertiary">
+                    <span className="text-secondary">Available through the Skills Inventory at: </span>
+                    {m.eligibleViaMsi.join(", ")}
+                  </p>
+                )}
+                {m.excluded.length > 0 && (
+                  <p className="mt-0.5 text-[11.5px] leading-relaxed text-tertiary">
+                    <span className="text-secondary">Not eligible: </span>
+                    {m.excluded.map((e) => `${e.employer} — ${e.reason}`).join("; ")}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+          {plan.msiEligibility.length > 10 && (
+            <p className="mt-1.5 text-[11px] text-tertiary">
+              +{plan.msiEligibility.length - 10} more technologies with the same breakdown.
+            </p>
+          )}
+        </Block>
+      )}
+
       {plan.sectionsAffected.length > 0 && (
         <Block title="Sections this would touch">
           <ul className="flex flex-wrap gap-1.5">
