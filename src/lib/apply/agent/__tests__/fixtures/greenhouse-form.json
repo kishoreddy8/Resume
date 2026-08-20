@@ -1,0 +1,461 @@
+[
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "first_name",
+    "name": null,
+    "ariaLabel": "First Name",
+    "labelText": "First Name*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "last_name",
+    "name": null,
+    "ariaLabel": "Last Name",
+    "labelText": "Last Name*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "preferred_name",
+    "name": null,
+    "ariaLabel": "Preferred First Name",
+    "labelText": "Preferred First Name",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "email",
+    "name": null,
+    "ariaLabel": "Email",
+    "labelText": "Email*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "country",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Country*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": null,
+    "id": null,
+    "name": null,
+    "ariaLabel": null,
+    "labelText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "search",
+    "id": "iti-0__search-input",
+    "name": null,
+    "ariaLabel": "Search",
+    "labelText": null,
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "tel",
+    "id": "phone",
+    "name": null,
+    "ariaLabel": "Phone",
+    "labelText": "Phone*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "file",
+    "id": "resume",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Attach",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "file",
+    "id": "cover_letter",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Attach",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "company-name-0",
+    "name": null,
+    "ariaLabel": "Company name",
+    "labelText": "Company name*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "title-0",
+    "name": null,
+    "ariaLabel": "Title",
+    "labelText": "Title*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "start-date-month-0",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Start date month*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": null,
+    "id": null,
+    "name": null,
+    "ariaLabel": null,
+    "labelText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "start-date-year-0",
+    "name": null,
+    "ariaLabel": "Start date year",
+    "labelText": "Start date year*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "end-date-month-0",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "End date month*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": null,
+    "id": null,
+    "name": null,
+    "ariaLabel": null,
+    "labelText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "end-date-year-0",
+    "name": null,
+    "ariaLabel": "End date year",
+    "labelText": "End date year*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "checkbox",
+    "id": "current-role-0_1",
+    "name": "current-role-0",
+    "ariaLabel": null,
+    "labelText": "Current role",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "school--0",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "School",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "degree--0",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Degree",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "discipline--0",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Discipline",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "start-month--0",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Start date month",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "number",
+    "id": "start-year--0",
+    "name": null,
+    "ariaLabel": "Start date year",
+    "labelText": "Start date year",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "end-month--0",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "End date month",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "number",
+    "id": "end-year--0",
+    "name": null,
+    "ariaLabel": "End date year",
+    "labelText": "End date year",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949397004",
+    "name": null,
+    "ariaLabel": "LinkedIn Profile",
+    "labelText": "LinkedIn Profile",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949398004",
+    "name": null,
+    "ariaLabel": "Website",
+    "labelText": "Website",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949399004",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Are you 18 or older?*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": null,
+    "id": null,
+    "name": null,
+    "ariaLabel": null,
+    "labelText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949400004",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Have you previously worked at Natera?*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": null,
+    "id": null,
+    "name": null,
+    "ariaLabel": null,
+    "labelText": null,
+    "required": true
+  },
+  {
+    "tag": "textarea",
+    "type": null,
+    "id": "question_17949401004",
+    "name": null,
+    "ariaLabel": "Do you have any family members or relatives currently employed by Natera?\n\nIf yes, please provide the following information: Name of the family member, Relationship to you, and Department or role (if known)",
+    "labelText": "Do you have any family members or relatives currently employed by Natera?\n\nIf yes, please provide the following information: Name of the family member, Relationship to you, and Department or role (if known)*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949402004",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Are you legally authorized to work in the United States?*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": null,
+    "id": null,
+    "name": null,
+    "ariaLabel": null,
+    "labelText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949403004",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Do you now or will you in the future require sponsorship?*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": null,
+    "id": null,
+    "name": null,
+    "ariaLabel": null,
+    "labelText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949404004",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Have you signed a non-compete with your current employer?*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": null,
+    "id": null,
+    "name": null,
+    "ariaLabel": null,
+    "labelText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949405004",
+    "name": null,
+    "ariaLabel": "Please  provide your current permanent residence street address?\n\n\n \n\n\n ",
+    "labelText": "Please  provide your current permanent residence street address?\n\n\n \n\n\n *",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949406004",
+    "name": null,
+    "ariaLabel": "What city do you currently live in?",
+    "labelText": "What city do you currently live in?*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949407004",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "What state do you currently live in?*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": null,
+    "id": null,
+    "name": null,
+    "ariaLabel": null,
+    "labelText": null,
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949408004",
+    "name": null,
+    "ariaLabel": "Postal Code",
+    "labelText": "Postal Code*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949409004",
+    "name": null,
+    "ariaLabel": "What are your salary expectations?",
+    "labelText": "What are your salary expectations?*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "question_17949410004",
+    "name": null,
+    "ariaLabel": "Who is your most recent/current employer?",
+    "labelText": "Who is your most recent/current employer?*",
+    "required": true
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "gender",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Gender",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "hispanic_ethnicity",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Are you Hispanic/Latino?",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "veteran_status",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Veteran Status",
+    "required": false
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "disability_status",
+    "name": null,
+    "ariaLabel": null,
+    "labelText": "Disability Status",
+    "required": false
+  },
+  {
+    "tag": "textarea",
+    "type": null,
+    "id": "g-recaptcha-response-100000",
+    "name": "g-recaptcha-response",
+    "ariaLabel": null,
+    "labelText": null,
+    "required": false
+  }
+]
