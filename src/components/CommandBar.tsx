@@ -119,6 +119,12 @@ export function CommandBar() {
       { id: "nav-ops", label: "System Operations", group: "Go to", keywords: "health workers queues scheduler", run: go("/operations") },
       { id: "nav-settings", label: "Settings", group: "Go to", keywords: "configuration preferences ai providers", run: go("/settings") },
       { id: "nav-setup", label: "Profile setup", group: "Go to", keywords: "onboarding first run upload resume skills target role pin", run: go("/onboarding") },
+      { id: "nav-applications", label: "Applications", group: "Go to", keywords: "application runs apply submitted waiting review agent", run: go("/applications") },
+      /* These land on the same workspace, which groups by what needs a person — so they are one
+       * destination reached three ways, not three parallel screens. */
+      { id: "act-app-waiting", label: "Show applications waiting on me", group: "Find", keywords: "needs input captcha mfa question intervention blocked", run: go("/applications") },
+      { id: "act-app-review", label: "Show applications ready for review", group: "Find", keywords: "approve submit ready review", run: go("/applications") },
+      { id: "act-app-resume", label: "Resume an interrupted application", group: "Find", keywords: "continue paused stopped resume run", run: go("/applications") },
     ];
 
     // Contextual: only offered where the target actually exists on the page.

@@ -13,6 +13,7 @@ import { ApplicationBrowserRuntime, realApplicationAgentDisabled } from "@/lib/a
 import { executeRun, approveAndSubmit } from "@/lib/apply/engine/executor";
 import type { StoredAnswer } from "@/lib/apply/resolveAnswer";
 import type { QuestionType } from "@/lib/apply/questionTypes";
+import { notifyApplicationState } from "@/lib/apply/applicationNotifications";
 
 /**
  * POST — start (or resume) one application run, or submit one the user has approved.
@@ -79,6 +80,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
     );
   }
 
+  /* One check for every path that would open a browser.
+   *
+   * Previously only the start path reported this, so pressing Approve & Submit with the agent
+   * switched off marked the run FAILED — technically safe, since nothing was submitted, but it
+   * told the user their application had broken when in fact the feature was simply turned off. */
+  if (realApplicationAgentDisabled()) {
+    return NextResponse.json({
+      status: "agent_disabled",
+      message:
+        'Real application runs are switched off. Set CAREER_OPS_DISABLE_REAL_APPLICATION_AGENT to "false" to enable them.',
+    });
+  }
+
   const runtime = new ApplicationBrowserRuntime();
   try {
     // ── submit ────────────────────────────────────────────────────────────────────────────────
@@ -91,6 +105,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
         return NextResponse.json({ error: "The approval does not belong to this application." }, { status: 400 });
       }
       const after = await approveAndSubmit(run.id, runtime, { runId: run.id });
+      const job = getJob(after.job_id);
+      notifyApplicationState(after, job?.title ?? "an application", job?.company_id ? getCompany(job.company_id)?.name ?? null : null);
       return NextResponse.json({ status: after.status, run: { id: after.id, confirmation: after.confirmation_text } });
     }
 
@@ -110,6 +126,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
         knownVariants: loadKnownVariants() as Map<string, { canonicalKey: string; type: QuestionType }>,
         storedAnswers: storedAnswerMap(candidateId),
       });
+      const job = getJob(after.job_id);
+      notifyApplicationState(after, job?.title ?? "an application", job?.company_id ? getCompany(job.company_id)?.name ?? null : null);
       return NextResponse.json({ status: after.status, run: { id: after.id, question: after.blocking_question } });
     }
 
@@ -133,14 +151,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
       return NextResponse.json({ status: "resume_required", message: docs.reason });
     }
 
-    if (realApplicationAgentDisabled()) {
-      return NextResponse.json({
-        status: "agent_disabled",
-        message:
-          "Real application runs are switched off. Set CAREER_OPS_DISABLE_REAL_APPLICATION_AGENT to \"false\" to enable them.",
-      });
-    }
-
     const run = createRun({
       candidateId,
       jobId: job.id,
@@ -162,6 +172,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
       storedAnswers: storedAnswerMap(candidateId),
     });
 
+    notifyApplicationState(after, job.title, companyName);
     return NextResponse.json({ status: after.status, run: { id: after.id, question: after.blocking_question } });
   } finally {
     /* The browser closes with the request. A run that paused resumes by opening a fresh page and

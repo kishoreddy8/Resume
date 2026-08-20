@@ -8,6 +8,7 @@ import { AiInsightsCard } from "./AiInsightsCard";
 import { Disclosure } from "./Disclosure";
 import { TailoringIntelligence } from "./TailoringIntelligence";
 import { AskAboutJob } from "./AskAboutJob";
+import { StartApplication } from "./StartApplication";
 import { JobDecisionHeader } from "./JobDecisionHeader";
 import { JobActionDock, DockMenuItem, resolveDockState } from "./JobActionDock";
 import { JobReviewSkeleton, LoadingRegion } from "../Skeletons";
@@ -974,6 +975,11 @@ export function JobReview({
         approved={job.marked_for_tailoring === 1}
         generatedFileCount={generatedFiles.length}
       />
+      {/* The only control that can reach the execution engine. Rendering it costs nothing — every
+       *  precondition is checked server-side when it is pressed, not before. */}
+      <div className="mt-3 border-t border-[var(--separator)] pt-3">
+        <StartApplication candidateId={candidateId} jobId={job.id} />
+      </div>
     </section>
   );
 
