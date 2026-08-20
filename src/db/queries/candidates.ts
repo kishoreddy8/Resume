@@ -14,18 +14,42 @@ export interface CandidateRow {
   status: "active" | "archived";
   created_at: string;
   updated_at: string;
+  /** Presentation-safe: whether a PIN exists, never the PIN material itself. */
+  has_pin: 0 | 1;
+  is_owner: 0 | 1;
 }
+
+/**
+ * Explicit column list, never SELECT *.
+ *
+ * The PIN migration added pin_hash and pin_salt to this table, and SELECT * put both on the wire
+ * through /api/candidates — which is unauthenticated by necessity, since the profile picker has to
+ * list profiles before anyone has unlocked anything. Publishing the hash and salt would have made
+ * the PIN worthless: 10,000 combinations is seconds of offline work once you hold them.
+ *
+ * `has_pin` is derived here so callers can render a lock icon without ever seeing the secret, and
+ * the lockout counters stay server-side because they are attacker-useful feedback.
+ */
+const CANDIDATE_SELECT = `
+  id, first_name, last_name, display_name, status, created_at, updated_at,
+  CASE WHEN pin_hash IS NOT NULL AND pin_salt IS NOT NULL THEN 1 ELSE 0 END AS has_pin,
+  is_owner
+`;
 
 export function listCandidates(includeArchived = false): CandidateRow[] {
   const db = getDb();
   if (includeArchived) {
-    return db.prepare("SELECT * FROM candidates ORDER BY id").all() as CandidateRow[];
+    return db.prepare(`SELECT ${CANDIDATE_SELECT} FROM candidates ORDER BY id`).all() as CandidateRow[];
   }
-  return db.prepare("SELECT * FROM candidates WHERE status = 'active' ORDER BY id").all() as CandidateRow[];
+  return db
+    .prepare(`SELECT ${CANDIDATE_SELECT} FROM candidates WHERE status = 'active' ORDER BY id`)
+    .all() as CandidateRow[];
 }
 
 export function getCandidate(candidateId: number): CandidateRow | undefined {
-  return getDb().prepare("SELECT * FROM candidates WHERE id = ?").get(candidateId) as CandidateRow | undefined;
+  return getDb()
+    .prepare(`SELECT ${CANDIDATE_SELECT} FROM candidates WHERE id = ?`)
+    .get(candidateId) as CandidateRow | undefined;
 }
 
 /** Every candidate-scoped API handler must call this before doing anything — explicit validation
