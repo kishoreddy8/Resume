@@ -45,8 +45,37 @@ function finalizeCompany(company: Company) {
   });
 }
 
-export async function GET() {
-  return NextResponse.json({ companies: listCompanies() });
+/**
+ * Field sets a caller may ask for, smallest first.
+ *
+ * OPT-IN, NEVER SUBTRACTIVE. Omitting `fields` returns every column exactly as before, so no
+ * existing caller can be broken by this. Each named set was derived by reading what that caller
+ * actually touches — see the measurements in the commit that introduced this.
+ */
+const FIELD_SETS: Record<string, readonly string[]> = {
+  /** A name-and-id dropdown. The jobs filter panel renders nothing else. */
+  minimal: ["id", "name"],
+  /** Connector health tables: identity, source, and why a connector is unhappy. */
+  scan: ["id", "name", "source_type", "connector_health", "consecutive_failures", "last_error_category", "last_error_message"],
+};
+
+export async function GET(req: NextRequest) {
+  const companies = listCompanies();
+
+  const requested = req.nextUrl.searchParams.get("fields");
+  const projection = requested ? FIELD_SETS[requested] : undefined;
+  if (!projection) {
+    /* Unknown or absent value returns the full row rather than erroring: a caller that guesses a
+     * field-set name gets correct-but-large data, never a broken page. */
+    return NextResponse.json({ companies });
+  }
+
+  const projected = companies.map((company) => {
+    const row: Record<string, unknown> = {};
+    for (const key of projection) row[key] = (company as unknown as Record<string, unknown>)[key];
+    return row;
+  });
+  return NextResponse.json({ companies: projected, fields: requested });
 }
 
 export async function POST(req: NextRequest) {

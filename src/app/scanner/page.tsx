@@ -76,7 +76,8 @@ export default function ScannerPage() {
     setLoading(true);
     try {
       const [companiesRes, latestRes, recentRes] = await Promise.all([
-        fetch("/api/companies"),
+        // Connector health only — see FIELD_SETS.scan in the companies route.
+        fetch("/api/companies?fields=scan"),
         fetch("/api/scan-runs?latestPerCompany=1"),
         fetch("/api/scan-runs?limit=25"),
       ]);
