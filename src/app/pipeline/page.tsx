@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
-import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import { ApplicationList } from "./ApplicationList";
+import { NeedsYourInput } from "./NeedsYourInput";
 import type { JobWithCompany, PipelineStatus } from "@/types";
 import {
   LoadingRegion,
@@ -64,12 +65,16 @@ interface OperationsSlice {
 }
 
 export default function PipelinePage() {
-  const candidateId = useActiveCandidateId();
+  /* Resolved, not the optimistic guess: fetching on the guess issues a full set of requests for a
+   * profile the user may not be on, then repeats every one when the real id arrives. */
+  const candidateId = useResolvedCandidateId();
   const [ops, setOps] = useState<OperationsSlice | null>(null);
   const [itemsByStatus, setItemsByStatus] = useState<Record<string, JobWithCompany[]>>({});
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    // Nothing is fetched until the server has said which candidate this is.
+    if (candidateId === null) return;
     setLoading(true);
     try {
       const res = await fetch(`/api/operations?candidateId=${candidateId}&window=30d`);
@@ -110,7 +115,7 @@ export default function PipelinePage() {
     load();
   }, [load]);
 
-  if (loading && !ops) {
+  if (candidateId === null || (loading && !ops)) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader title="Applications" description="Where every job you have engaged with currently stands." />
@@ -212,6 +217,13 @@ export default function PipelinePage() {
       {/* Every job actually acted on: stage, next action, documents, notes, and its recorded
        *  history on demand. Sourced from candidate_job_state, so it is small by construction
        *  rather than by a cap applied to something large. */}
+      {/* Anything stopped and waiting on the user comes first — it is the only part of this page
+       *  with a pending action attached to it. */}
+      <section className="space-y-2">
+        <h2 className="section-title">Needs your input</h2>
+        <NeedsYourInput candidateId={candidateId} />
+      </section>
+
       <section className="space-y-2">
         <h2 className="section-title">Applications</h2>
         <ApplicationList candidateId={candidateId} />

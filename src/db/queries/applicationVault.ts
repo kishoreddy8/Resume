@@ -109,11 +109,19 @@ export function saveAnswer(input: {
     sourceAts: input.sourceAts,
   });
 
-  /* A protected question can never become unattended-fillable, whatever the caller asks for. The
-   * guard lives here rather than only at the call site so no future caller can route around it. */
+  /* Only a question whose policy actually permits unattended reuse may store the flag.
+   *
+   * Both other policies refuse it, for different reasons: `never_auto` covers protected questions,
+   * which must never be filled unattended at all; `ask_each_time` covers salary, open-ended prose
+   * and similar, which are confirmed on every use. resolveAnswer already declines to fill either,
+   * so storing the flag would not have caused a wrong fill — but it would have recorded a
+   * permission the system will never honour, and data that lies about itself is how a later change
+   * starts honouring it by accident.
+   *
+   * The guard lives here rather than only at the call site so no future caller can route around it. */
   const policy = DEFAULT_POLICY[input.questionType];
   const autoAllowed =
-    policy.reusePolicy === "never_auto" ? false : Boolean(input.autoFillAllowed) && input.approvedByUser;
+    policy.reusePolicy === "auto_after_approval" && Boolean(input.autoFillAllowed) && input.approvedByUser;
 
   getDb()
     .prepare(
