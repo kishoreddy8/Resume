@@ -23,6 +23,23 @@ import { useEffect, useState } from "react";
 let cachedId: number | null = null;
 let inFlight: Promise<number> | null = null;
 
+/**
+ * Seed the cache after the active candidate is CHANGED by this tab.
+ *
+ * Required because the cache above is module-scoped and outlives a client-side navigation. Creating
+ * a candidate POSTs /api/candidates/active and then router.push()es — no page reload, so a stale id
+ * survived the navigation and the destination page rendered the PREVIOUS candidate. That looked
+ * exactly like "creating a new person sends you to the first person's profile"; the record was
+ * created correctly every time, the UI just kept reading the old id.
+ *
+ * CandidateSelector does a full window.location.reload() and so was never affected — which is why
+ * only the create-new path showed it.
+ */
+export function primeActiveCandidateId(id: number): void {
+  cachedId = id;
+  inFlight = null;
+}
+
 function fetchActiveCandidateId(): Promise<number> {
   if (cachedId !== null) return Promise.resolve(cachedId);
   if (inFlight) return inFlight;

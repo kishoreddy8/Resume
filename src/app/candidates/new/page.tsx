@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { primeActiveCandidateId } from "@/lib/useActiveCandidateId";
 
 /**
  * Minimal candidate onboarding: name only here — master resume/skills upload happens on the
@@ -41,6 +42,9 @@ export default function NewCandidatePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ candidateId: candidate.id }),
       });
+      // The next page is reached by client-side navigation, so nothing clears the cached active id.
+      // Seed it with the candidate we just created, or /master-files renders the previous one.
+      primeActiveCandidateId(candidate.id);
       router.push("/master-files");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create candidate");

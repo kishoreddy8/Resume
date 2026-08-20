@@ -33,6 +33,7 @@ function UploadSlot({
   onUploaded: () => void;
 }) {
   const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -71,6 +72,24 @@ function UploadSlot({
     doUpload(file);
   }
 
+  /** Dropping a file behaves exactly like choosing one, replace-confirmation included. */
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    if (uploading) return;
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (entry) {
+      // Route it through the same input the confirm step reads, so one code path does the upload.
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      if (inputRef.current) inputRef.current.files = dt.files;
+      setConfirming(true);
+      return;
+    }
+    doUpload(file);
+  }
+
   function confirmReplace() {
     const file = inputRef.current?.files?.[0];
     if (file) doUpload(file);
@@ -94,16 +113,38 @@ function UploadSlot({
         </div>
       )}
 
-      <div className="mt-3">
+      {/* Was a bare <input type="file">: no cursor, no hover, no focus ring — nothing indicated it
+       *  was clickable. Now a real drop target wrapping a visually-hidden input, so the whole area
+       *  is the hit region, the pointer changes, hover and drag are both reflected, and it is
+       *  reachable and operable from the keyboard. */}
+      <label
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!uploading) setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        className={`mt-3 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-[var(--radius-lg)] border border-dashed px-4 py-5 text-center transition-colors duration-150 ease-out focus-within:ring-2 focus-within:ring-[var(--focus-ring)] focus-within:ring-offset-2 ${
+          uploading
+            ? "cursor-wait border-[var(--border)] opacity-60"
+            : dragging
+              ? "border-[var(--accent)] bg-[var(--accent-soft)]"
+              : "border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--surface-hover)]"
+        }`}
+      >
         <input
           ref={inputRef}
           type="file"
           accept=".docx,.md,.txt"
           disabled={uploading}
           onChange={handleFileChange}
-          className="text-xs"
+          className="sr-only"
         />
-      </div>
+        <span className="text-[12.5px] font-medium text-primary">
+          {uploading ? "Uploading…" : entry ? "Replace file" : "Choose a file"}
+        </span>
+        <span className="text-[11px] text-tertiary">or drag it here · .docx, .md, .txt</span>
+      </label>
 
       {confirming && (
         <div className="mt-2 flex items-center gap-2 text-xs">
