@@ -1,7 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getCandidate } from "@/db/queries/candidates";
-import { attemptPin, clearPin, getPinState, setPin } from "@/db/queries/candidatePinStore";
-import { isValidPinFormat } from "@/lib/auth/candidatePin";
+import { attemptPin, clearPin, getPinState, getUnlockSecret, setPin } from "@/db/queries/candidatePinStore";
+import {
+  UNLOCK_COOKIE,
+  UNLOCK_TTL_MS,
+  isValidPinFormat,
+  signUnlockToken,
+  verifyUnlockToken,
+} from "@/lib/auth/candidatePin";
 import { requireOwnerAuthorization } from "@/lib/auth/guard";
 
 /**
@@ -54,7 +60,27 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
   }
 
   setPin(candidateId, pin);
-  return NextResponse.json({ ok: true, candidateId, hasPin: true });
+
+  /* Unlock this browser immediately.
+   *
+   * Without this, setting a PIN locked you out of the very page you set it on: the profile becomes
+   * protected, the session holds no unlock token, and the next request 401s. Observed in real use —
+   * the owner set a PIN and was instantly unable to reach settings or delete anything.
+   *
+   * It grants nothing unearned: choosing the PIN is stronger proof of knowing it than typing it. */
+  const secret = getUnlockSecret();
+  const existing = verifyUnlockToken(req.cookies.get(UNLOCK_COOKIE)?.value, secret);
+  const ids = Array.from(new Set([...(existing?.ids ?? []), candidateId]));
+  const exp = Date.now() + UNLOCK_TTL_MS;
+
+  const res = NextResponse.json({ ok: true, candidateId, hasPin: true, unlockedIds: ids });
+  res.cookies.set(UNLOCK_COOKIE, signUnlockToken({ ids, exp }, secret), {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: Math.floor(UNLOCK_TTL_MS / 1000),
+  });
+  return res;
 }
 
 /** DELETE — remove protection. Same authorisation as changing it. */

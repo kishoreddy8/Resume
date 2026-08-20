@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ProfileLockPrompt } from "@/components/ProfileLockPrompt";
 import { AppShell } from "@/components/AppShell";
 import { CommandBar } from "@/components/CommandBar";
 import { Geist, Geist_Mono } from "next/font/google";
@@ -55,6 +56,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         </AppShell>
         {/* Global ⌘K. Renders nothing until opened. */}
         <CommandBar />
+        {/* Catches any 401 from a locked profile and offers the PIN, so no page is a dead end. */}
+        <ProfileLockPrompt />
       </body>
     </html>
   );
