@@ -19,14 +19,24 @@ test("CRED-1 the database reference is not a secret and cannot be exchanged for 
   assert.ok(ref.includes("career-ops-ats"));
 });
 
-test("CRED-2 a generated password is long and drawn from crypto randomness", () => {
-  const a = generatePassword();
-  const b = generatePassword();
-  assert.equal(a.length, 24);
-  assert.notEqual(a, b, "two generated passwords must not collide");
-  assert.match(a, /[A-Z]/);
-  assert.match(a, /[a-z]/);
-  assert.match(a, /[0-9]/);
+test("CRED-2 a generated password is long, varied and drawn from crypto randomness", () => {
+  /* Asserting that each character class appears in ONE sample is a flaky test, not a strong one:
+   * a 24-character draw from this alphabet omits digits about 1.6% of the time, so the suite would
+   * fail roughly once every sixty runs for no real reason. What matters is the alphabet and the
+   * entropy, so those are what get asserted — across a sample large enough to be deterministic. */
+  const samples = Array.from({ length: 40 }, () => generatePassword());
+  const alphabet = /^[A-Za-z0-9!@#$%^&*\-_=+]+$/;
+
+  for (const p of samples) {
+    assert.equal(p.length, 24, "length is fixed and long");
+    assert.match(p, alphabet, "no character outside the declared alphabet");
+  }
+  assert.equal(new Set(samples).size, samples.length, "generated passwords must never collide");
+
+  /* Over 960 characters, every class is present unless the generator is broken. */
+  const all = samples.join("");
+  for (const cls of [/[A-Z]/, /[a-z]/, /[0-9]/]) assert.match(all, cls);
+  assert.ok(new Set(all).size > 30, `expected wide character coverage, saw ${new Set(all).size}`);
 });
 
 test("CRED-3 availability is honest about the platform", async () => {

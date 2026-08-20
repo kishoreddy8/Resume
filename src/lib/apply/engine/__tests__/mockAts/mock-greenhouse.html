@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- Mock Greenhouse application form.
+
+     Mirrors the shape captured read-only from a real job-boards.greenhouse.io posting: stable ids,
+     proper <label for> associations, required flags. The whole execution flow is proven against
+     this file before any real site is touched. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Greenhouse — Data Engineer</title></head>
+<body>
+  <h1>Apply — Data Engineer at Mockcorp</h1>
+  <form id="application_form">
+    <label for="first_name">First Name*</label>
+    <input id="first_name" type="text" required>
+
+    <label for="last_name">Last Name*</label>
+    <input id="last_name" type="text" required>
+
+    <label for="email">Email*</label>
+    <input id="email" type="email" required>
+
+    <label for="phone">Phone*</label>
+    <input id="phone" type="tel" required>
+
+    <label for="resume">Resume/CV*</label>
+    <input id="resume" type="file" required>
+
+    <label for="cover_letter">Cover Letter</label>
+    <input id="cover_letter" type="file">
+
+    <label for="q_sponsorship">Will you now or in the future require sponsorship?*</label>
+    <input id="q_sponsorship" type="text" required>
+
+    <label for="q_salary">What is your desired base salary?*</label>
+    <input id="q_salary" type="text" required>
+
+    <label for="q_values">Which of our engineering values resonates most with you?*</label>
+    <textarea id="q_values" required></textarea>
+
+    <label for="q_newsletter">Join our talent newsletter?</label>
+    <input id="q_newsletter" type="checkbox">
+
+    <button id="submit_application" type="button"
+      onclick="document.body.innerHTML='<h1>Thank you for applying!</h1><p>Your application has been submitted. Confirmation #MG-1042.</p>'">
+      Submit Application
+    </button>
+  </form>
+</body>
+</html>

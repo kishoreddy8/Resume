@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- Mock Lever form. Faithful to the real defect: NO labels anywhere — controls are identified
+     only by name, and custom-question wording lives in a captioning ancestor. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Lever — Data Engineer</title></head>
+<body>
+  <h1>Mockcorp — Data Engineer</h1>
+  <form>
+    <input name="name" type="text" required>
+    <input name="email" type="email" required>
+    <input name="phone" type="text" required>
+    <input name="location" id="location-input" type="text">
+    <input name="resume" id="resume-upload-input" type="file">
+    <input name="urls[LinkedIn]" type="text">
+    <input name="urls[GitHub]" type="text">
+    <li class="application-question">
+      <div class="application-label">Do you require employment sponsorship?*</div>
+      <input name="cards[abc][field0]" id="card-q0" type="text" required>
+    </li>
+    <button type="button" id="submit_application"
+      onclick="document.body.innerHTML='<p>Application submitted — thanks for applying.</p>'">Submit application</button>
+  </form>
+</body>
+</html>

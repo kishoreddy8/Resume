@@ -138,6 +138,20 @@ export function advanceRun(
   return getRun(runId)!;
 }
 
+/**
+ * Update the checkpoint without a status change.
+ *
+ * The executor checkpoints after EVERY successful action, and most of those happen inside one
+ * FILLING state — a same-state advanceRun would be an illegal transition, and looping through
+ * states to record progress would corrupt the history. Checkpoints hold navigational state (URL,
+ * step, which selectors are done), never passwords or verification codes.
+ */
+export function updateCheckpoint(runId: number, checkpoint: unknown): void {
+  getDb()
+    .prepare("UPDATE application_runs SET checkpoint_json = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(JSON.stringify(checkpoint), runId);
+}
+
 /** Runs stopped and waiting on the user — the Needs Your Input inbox. */
 export function listWaitingRuns(candidateId: number): ApplicationRun[] {
   return getDb()

@@ -49,9 +49,23 @@ export const TERMINAL_STATES: readonly RunStatus[] = ["SUBMITTED", "SUBMISSION_U
  * discouraged.
  */
 const TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
-  QUEUED: ["STARTING", "CANCELLED"],
+  /* FAILED is reachable from QUEUED: a run can be unstartable — no application URL, no adapter —
+   * and discovering that before opening a browser must still be recordable as a failure. Without
+   * it the executor's own guard threw an illegal-transition error instead of failing cleanly. */
+  QUEUED: ["STARTING", "FAILED", "CANCELLED"],
   STARTING: ["NAVIGATING", "FAILED", "CANCELLED"],
-  NAVIGATING: ["ACCOUNT_REQUIRED", "FILLING", "WAITING_FOR_CAPTCHA", "FAILED", "CANCELLED"],
+  /* Every verification wall is reachable while navigating, not only while filling. A login gate
+   * asking for an emailed code appears before any form does, and omitting those two edges made a
+   * real MFA page fail the run instead of pausing it. */
+  NAVIGATING: [
+    "ACCOUNT_REQUIRED",
+    "FILLING",
+    "WAITING_FOR_CAPTCHA",
+    "WAITING_FOR_MFA",
+    "WAITING_FOR_EMAIL_VERIFICATION",
+    "FAILED",
+    "CANCELLED",
+  ],
   ACCOUNT_REQUIRED: ["NAVIGATING", "FILLING", "WAITING_FOR_MFA", "WAITING_FOR_EMAIL_VERIFICATION", "FAILED", "CANCELLED"],
   FILLING: [
     "WAITING_FOR_ANSWER",

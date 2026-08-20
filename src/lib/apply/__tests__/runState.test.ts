@@ -56,6 +56,20 @@ test("RUN-6 every waiting state tells the user what to do, in their words", () =
   }
 });
 
+test("RUN-6b widening NAVIGATING did not open a path to submission", () => {
+  /* Two edges were added to NAVIGATING (MFA, email verification) and one to QUEUED (FAILED), after
+   * a real MFA page failed a run instead of pausing it. Re-assert the invariant they could have
+   * broken: submission still has exactly one entrance. */
+  const sources = ALL.filter((s) => canTransition(s, "SUBMITTING"));
+  assert.deepEqual(sources, ["WAITING_FOR_SUBMIT_APPROVAL"]);
+  assert.equal(canTransition("NAVIGATING", "SUBMITTING"), false);
+  assert.equal(canTransition("QUEUED", "SUBMITTED"), false);
+  assert.equal(canTransition("QUEUED", "FAILED"), true, "an unstartable run must be recordable as failed");
+  for (const s of ["WAITING_FOR_MFA", "WAITING_FOR_EMAIL_VERIFICATION"] as RunStatus[]) {
+    assert.equal(canTransition("NAVIGATING", s), true, "a login wall appears before any form does");
+  }
+});
+
 test("RUN-7 verification states never route around the human", () => {
   // A CAPTCHA/MFA state must go back into the flow, never forward to review or submission.
   for (const s of ["WAITING_FOR_CAPTCHA", "WAITING_FOR_MFA", "WAITING_FOR_EMAIL_VERIFICATION"] as RunStatus[]) {
