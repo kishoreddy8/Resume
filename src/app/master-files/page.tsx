@@ -1,15 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { useDisplayCandidateId, useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import { UploadSlot, type Manifest } from "@/components/MasterFileUpload";
+import { SkeletonRows } from "@/components/ui";
 
 export default function MasterFilesPage() {
-  const candidateId = useActiveCandidateId();
+  /* Two different questions, deliberately answered by two different hooks. Requests wait only for
+   * the server's answer; the id printed in the copy below waits for mount as well, because server
+   * and client must agree on the very first render. */
+  const candidateId = useResolvedCandidateId();
+  const displayCandidateId = useDisplayCandidateId();
   const [manifest, setManifest] = useState<Manifest>({});
   const [loading, setLoading] = useState(true);
 
   async function load() {
+    // Nothing is fetched against the optimistic guess — a request for a profile the user is not on
+    // 401s when that profile has a PIN, and its only other outcome is a wasted round trip.
+    if (candidateId === null) return;
     setLoading(true);
     try {
       const res = await fetch(`/api/master-files?candidateId=${candidateId}`);
@@ -36,13 +44,15 @@ export default function MasterFilesPage() {
           programmatically — re-uploading archives the previous version. Tailoring itself happens
           through the Claude Code or Codex project skill with this explicit candidate id:{" "}
           <code className="rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-800">
-            candidate={candidateId}
+            candidate={displayCandidateId ?? "…"}
           </code>{" "}
           plus the target job id. Tailoring does not run inside this app.
         </p>
       </div>
 
-      {!loading && (
+      {(loading || candidateId === null) && <SkeletonRows rows={2} />}
+
+      {!loading && candidateId !== null && (
         <div className="grid gap-4 md:grid-cols-2">
           <UploadSlot
             slot="resume"

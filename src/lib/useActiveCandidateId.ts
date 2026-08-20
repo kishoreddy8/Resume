@@ -145,3 +145,32 @@ export function useResolvedCandidateId(): number | null {
 
   return id;
 }
+
+/**
+ * The active candidate, but never before the browser has mounted.
+ *
+ * WHY A THIRD HOOK. The other two are correct for fetching and for driving layout, and wrong for
+ * anything that reaches the RENDERED MARKUP. Server rendering has no browser, no localStorage and
+ * no module cache, so it emits the fallback; the client's very first render may already hold a
+ * resolved id from a previous page. React compares those two and reports a hydration mismatch,
+ * which is exactly what /master-files hit by printing the id into its own copy.
+ *
+ * This returns null until after mount, so the first client render is identical to the server's by
+ * construction, and the real value arrives on the next paint. Callers show a neutral placeholder
+ * for that one frame — honest, because until the server answers the app genuinely does not know
+ * which candidate this is.
+ *
+ * Use this ONLY for values that appear in markup. For requests use useResolvedCandidateId, which
+ * does not need to wait for a paint.
+ */
+export function useDisplayCandidateId(): number | null {
+  const [mounted, setMounted] = useState(false);
+  const resolved = useResolvedCandidateId();
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMounted(true);
+  }, []);
+
+  return mounted ? resolved : null;
+}
