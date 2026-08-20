@@ -123,7 +123,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
 
   const sortBy = searchParams.get("sortBy") ?? "recommended";
   const sortOrder = searchParams.get("sortOrder") === "asc" ? "asc" : "desc";
-  const roleFamilyFilter = searchParams.get("roleFamily")?.toUpperCase();
+  /* Accepts one tier as before, or several comma-separated ("PRIMARY,SECONDARY"). Strictly
+   * additive: a single value parses to a one-element set and filters exactly as it always did, so
+   * every existing caller is byte-for-byte unaffected. The UI needs P+S together because role tier
+   * is only a TIE-BREAKER in the ranking, not the leading key — 66 role-matched jobs sat after the
+   * first unmatched one in a 200-item page, so filtering client-side would silently drop matches
+   * that fell beyond the limit. Filtering here happens before the limit, so it cannot. */
+  const roleFamilyFilter = searchParams
+    .get("roleFamily")
+    ?.toUpperCase()
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => v === "PRIMARY" || v === "SECONDARY" || v === "NONE");
   const locationFilter = searchParams.get("location")?.toLowerCase().trim();
   const searchFilter = searchParams.get("search")?.toLowerCase().trim();
   const skillsFilter = searchParams.get("skills")?.toLowerCase().trim();
@@ -398,8 +409,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
     });
   }
 
-  if (roleFamilyFilter && (roleFamilyFilter === "PRIMARY" || roleFamilyFilter === "SECONDARY" || roleFamilyFilter === "NONE")) {
-    filtered = filtered.filter((item) => item.forYouInput.roleFamilyTier === roleFamilyFilter);
+  if (roleFamilyFilter && roleFamilyFilter.length > 0) {
+    const wanted = new Set(roleFamilyFilter);
+    filtered = filtered.filter((item) => wanted.has(item.forYouInput.roleFamilyTier));
   }
 
   if (locationFilter) {

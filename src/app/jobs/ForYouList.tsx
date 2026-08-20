@@ -208,6 +208,13 @@ export function ForYouList({
   const [activeTab, setActiveTab] = useState<FeedTab>("all");
   const [includeStale, setIncludeStale] = useState(false);
   const [minScore, setMinScore] = useState<string>("");
+  /* For You defaults to roles you actually target. Measured on the live feed: 364 of 500 entries
+   * were NONE-tier — "Sr. Bioinformatics Scientist", "Financial Consultant Senior" — so three
+   * quarters of the recommendations were not the job you are looking for. Filtering happens on the
+   * server, before the limit, because role tier is only a tie-breaker in the ranking: 66 matched
+   * jobs sat after the first unmatched one in a 200-item page, so a client-side filter would drop
+   * matches that fell past the cap. Switchable, never silent. */
+  const [roleScope, setRoleScope] = useState<"matched" | "all">("matched");
   const listRef = useRef<HTMLDivElement>(null);
   const [sharedLayout, setSharedLayout] = useState(true);
 
@@ -219,6 +226,7 @@ export function ForYouList({
       if (activeTab !== "all") params.set("bucket", activeTab);
       if (search.trim()) params.set("search", search.trim());
       if (minScore) params.set("minScore", minScore);
+      if (roleScope === "matched") params.set("roleFamily", "PRIMARY,SECONDARY");
 
       const res = await fetch(`/api/candidates/${candidateId}/for-you?${params.toString()}`);
       const body = await res.json();
@@ -226,7 +234,7 @@ export function ForYouList({
     } finally {
       setLoading(false);
     }
-  }, [candidateId, includeStale, activeTab, search, minScore]);
+  }, [candidateId, includeStale, activeTab, search, minScore, roleScope]);
 
   useEffect(() => {
     // Intentional: fetch-on-mount/filter-change with loading flag, not a render loop
@@ -326,6 +334,17 @@ export function ForYouList({
             <option value="85">85+ Score</option>
             <option value="80">80+ Score</option>
             <option value="70">70+ Score</option>
+          </select>
+          {/* Role scope. Named after the candidate's own target roles so it is obvious what is
+           *  being filtered, and what switching it off would let back in. */}
+          <select
+            value={roleScope}
+            onChange={(e) => setRoleScope(e.target.value as "matched" | "all")}
+            aria-label="Role scope"
+            className="rounded-md border border-[var(--border)] bg-surface px-2 py-1 text-[11px] text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)]"
+          >
+            <option value="matched">My target roles</option>
+            <option value="all">All roles</option>
           </select>
           <label className="flex items-center gap-1.5 text-secondary">
             <input type="checkbox" checked={includeStale} onChange={(e) => setIncludeStale(e.target.checked)} />
