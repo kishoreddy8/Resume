@@ -20,6 +20,30 @@ import { useEffect, useState } from "react";
  * picks a different one, and that path sets it explicitly rather than re-reading this endpoint.
  */
 
+const LAST_ACTIVE_KEY = "career-ops:last-active-candidate";
+
+/**
+ * Seeded from the last id this browser resolved.
+ *
+ * The hook used to start at 1 on every fresh page load, so each page fired its first request for
+ * candidate 1 before the real id arrived. Once candidate 1 had a PIN that first request 401'd, and
+ * a spurious "Saikishore Reddy is locked" prompt appeared in front of people who were not using
+ * that profile at all. Remembering the last resolved id makes the optimistic guess a correct one
+ * for every load after the first.
+ *
+ * It is only ever a starting guess: the server remains the authority and overwrites it below.
+ */
+function seedFromStorage(): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LAST_ACTIVE_KEY);
+    const n = raw === null ? NaN : Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 let cachedId: number | null = null;
 let inFlight: Promise<number> | null = null;
 
@@ -38,6 +62,11 @@ let inFlight: Promise<number> | null = null;
 export function primeActiveCandidateId(id: number): void {
   cachedId = id;
   inFlight = null;
+  try {
+    window.localStorage.setItem(LAST_ACTIVE_KEY, String(id));
+  } catch {
+    /* ignore */
+  }
 }
 
 function fetchActiveCandidateId(): Promise<number> {
@@ -48,6 +77,11 @@ function fetchActiveCandidateId(): Promise<number> {
     .then((body) => {
       const id = typeof body?.candidateId === "number" ? body.candidateId : 1;
       cachedId = id;
+      try {
+        window.localStorage.setItem(LAST_ACTIVE_KEY, String(id));
+      } catch {
+        /* a browser refusing storage is not worth failing over */
+      }
       return id;
     })
     .catch(() => 1 /* stay on the default */)
@@ -58,7 +92,7 @@ function fetchActiveCandidateId(): Promise<number> {
 }
 
 export function useActiveCandidateId(): number {
-  const [candidateId, setCandidateId] = useState(cachedId ?? 1);
+  const [candidateId, setCandidateId] = useState(() => cachedId ?? seedFromStorage() ?? 1);
 
   useEffect(() => {
     let cancelled = false;

@@ -75,11 +75,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
     );
   }
 
-  // Record how it was produced. Written after validation so an unparseable file is never touched.
+  /* Provenance goes in a SIBLING file, never inside the profile.
+   *
+   * The first version wrote builtBy into candidate-profile.json itself. candidateProfileSchema is
+   * .strict(), so the next read failed with unrecognized_keys and a freshly built, perfectly good
+   * profile was reported invalid — the write that recorded how it was made is what broke it.
+   * Validating before the write hid this; only re-reading afterwards exposed it. */
   try {
-    const parsed = JSON.parse(fs.readFileSync(profilePath, "utf-8"));
-    parsed.builtBy = "claude-cli";
-    fs.writeFileSync(profilePath, JSON.stringify(parsed, null, 2));
+    fs.writeFileSync(
+      path.join(candidateDir, "profile-build-meta.json"),
+      JSON.stringify({ builtBy: "claude-cli", builtAt: new Date().toISOString() }, null, 2)
+    );
   } catch {
     // Provenance is a nicety; a valid profile must not be rejected because this failed.
   }

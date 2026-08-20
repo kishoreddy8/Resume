@@ -11,6 +11,7 @@ import {
   StatusDot,
   Surface,
 } from "@/components/ui";
+import { BuildingProfile } from "@/components/BuildingProfile";
 
 /**
  * Candidate Intelligence Center.
@@ -157,6 +158,11 @@ export default function CandidateIntelligencePage() {
             Nothing is shown here from a profile that cannot be trusted. Building reads your Master
             Resume and Skills Inventory with your Claude subscription — it takes a couple of minutes.
           </p>
+          {building && (
+            <div className="mx-auto mt-4 max-w-[46ch] text-left">
+              <BuildingProfile candidateId={candidateId} />
+            </div>
+          )}
           {buildError && <p className="mt-2 text-[12px] text-[var(--error)]">{buildError}</p>}
           <div className="mt-4 flex justify-center gap-2">
             <button

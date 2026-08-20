@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import { Surface, StatusDot, type StatusTone } from "@/components/ui";
+import { BuildingProfile } from "@/components/BuildingProfile";
 
 /**
  * First-run setup: Master Resume, Master Skills Inventory, target-role preferences, then evaluation.
@@ -253,10 +254,9 @@ export default function OnboardingPage() {
           </h2>
 
           {building ? (
-            <p className="mt-1.5 text-[12.5px] text-secondary">
-              Reading the Master Resume and Skills Inventory with your Claude subscription… this
-              takes a minute or two.
-            </p>
+            <div className="mt-2">
+              <BuildingProfile candidateId={candidateId} />
+            </div>
           ) : buildFailed ? (
             <>
               <p className="mt-1.5 text-[12.5px] text-[var(--error)]">{buildFailed}</p>
