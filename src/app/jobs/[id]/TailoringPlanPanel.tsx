@@ -171,6 +171,13 @@ export function TailoringPlanPanel({ plan }: { plan: TailoringPlan }) {
                     Supports none of this job&rsquo;s stated requirements — no reason to lead with it here.
                   </p>
                 )}
+                {!e.inventoryReachesRole && (
+                  <p className="mt-1 text-[11px] leading-relaxed text-tertiary">
+                    Outside your technical domain — nothing in this role&rsquo;s own recorded work overlaps your
+                    Skills Inventory, so inventory skills are not offered here. It will be presented using only
+                    what is already written under it.
+                  </p>
+                )}
                 {e.prohibitedHere.length > 0 && (
                   <p className="mt-1 text-[11px] leading-relaxed text-tertiary">
                     <span className="text-secondary">Never attribute to {e.employer}: </span>

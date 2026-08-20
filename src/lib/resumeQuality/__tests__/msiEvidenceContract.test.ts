@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { CandidateProfile } from "@/lib/match/types";
 import { buildEmployerEvidenceMap, renderEmployerEvidenceSection } from "../employerEvidence";
-import { classifyForEmployer, mayUseAtEmployer } from "../msiEvidence";
+import { classifyForEmployer, mayUseAtEmployer, roleAcceptsInventoryEvidence } from "../msiEvidence";
 import { evaluateMsiCompliance } from "../reviewers/msiComplianceChecks";
 import { checkPresentationAttribution } from "../presentationStructure";
 import { CANONICAL_TAILORING_INSTRUCTIONS } from "../canonicalInstructions";
@@ -147,6 +147,64 @@ test("MSI-10 deterministic validation still runs and cannot be bypassed", () => 
   assert.deepEqual(checkPresentationAttribution(resume(), undefined), []);
   assert.equal(evaluateMsiCompliance(resume(), undefined).insufficientProfileData, true);
   // With a profile, a violation is still produced (see MSI-3) — the path is live, not short-circuited.
+});
+
+/* ── The role-domain boundary ───────────────────────────────────────────────────────────────── */
+
+/** Three technical roles that share ground, plus one from an entirely different field. */
+const MIXED: CandidateProfile = {
+  ...PROFILE,
+  skills: [
+    ...PROFILE.skills,
+    // The inventory lists the non-software skills too — which is exactly why "is it a declared
+    // skill" cannot be the test.
+    { rawSkillName: "Routine & type testing", source: "employer", attributedTo: [{ employer: "Heavy Electricals" }] },
+  ],
+  experience: [
+    ...PROFILE.experience,
+    { employer: "Heavy Electricals", title: "Graduate Engineer Trainee", startDate: "2018", endDate: "2019", technologies: ["Routine & type testing", "Quality inspection"] },
+  ],
+} as CandidateProfile;
+
+test("MSI-13 an out-of-field role is not offered inventory skills from the rest of the career", () => {
+  assert.equal(roleAcceptsInventoryEvidence(MIXED, "Heavy Electricals"), false);
+  assert.equal(classifyForEmployer(MIXED, "Snowflake", "Heavy Electricals"), "ROLE_OUT_OF_SCOPE");
+  assert.equal(mayUseAtEmployer(MIXED, "Snowflake", "Heavy Electricals"), false, "a manufacturing traineeship did not run Snowflake");
+
+  const role = buildEmployerEvidenceMap(MIXED).employers.find((e) => e.employer === "Heavy Electricals")!;
+  assert.deepEqual(role.availableViaMsi, [], "nothing from the inventory may be offered there");
+  assert.equal(role.inventoryReachesRole, false);
+});
+
+test("MSI-14 the out-of-field role KEEPS everything already written under it", () => {
+  const role = buildEmployerEvidenceMap(MIXED).employers.find((e) => e.employer === "Heavy Electricals")!;
+  assert.ok(role.supported.includes("Routine & type testing"), "its own recorded work is untouched");
+  assert.ok(role.supported.includes("Quality inspection"));
+});
+
+test("MSI-15 technical roles on DIFFERENT stacks still receive inventory evidence", () => {
+  /* Client A records Snowflake, Client B records SQL — they share no technology at all. An earlier
+   * cross-role-overlap rule blocked exactly this, which is the legitimate cross-client case
+   * Override 2 exists to allow. Both are recognisable technology roles, so both are in scope. */
+  for (const emp of ["Client A", "Client B"]) {
+    assert.equal(roleAcceptsInventoryEvidence(MIXED, emp), true, `${emp} records recognisable technology`);
+  }
+  assert.equal(mayUseAtEmployer(MIXED, "Snowflake", "Client B"), true, "Override 2 still applies where it should");
+});
+
+test("MSI-16 a role recording no technology at all is out of scope — the rule fails closed", () => {
+  const vague: CandidateProfile = {
+    ...PROFILE,
+    experience: [...PROFILE.experience, { employer: "Client C", title: "Analyst", startDate: "2018", endDate: "2019", technologies: [] }],
+  } as CandidateProfile;
+  assert.equal(roleAcceptsInventoryEvidence(vague, "Client C"), false, "absence of evidence that it is a technology role is not evidence that it is");
+  assert.equal(mayUseAtEmployer(vague, "Snowflake", "Client C"), false);
+});
+
+test("MSI-17 the writer is told WHY an out-of-field role gains nothing", () => {
+  const section = renderEmployerEvidenceSection(buildEmployerEvidenceMap(MIXED));
+  assert.match(section, /outside the candidate's technical domain/i);
+  assert.match(section, /do not bring in technologies from other roles/i);
 });
 
 test("MSI-9 the frozen presentation/layout contract is unchanged by this pass", () => {

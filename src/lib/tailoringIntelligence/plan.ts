@@ -88,6 +88,9 @@ export interface EmployerEmphasis {
   viaMsi: string[];
   /** Technologies the MSI explicitly limits to other clients — the only real mis-attribution risk. */
   prohibitedHere: string[];
+  /** False when this role is outside the candidate's technical domain, so the inventory does not
+   *  reach it. Its emphasis then rests solely on what is already written under it. */
+  inventoryReachesRole: boolean;
 }
 
 export interface TailoringPlan {
@@ -226,6 +229,7 @@ export function buildTailoringPlan(
           alreadyWritten: dedupe(alreadyWritten),
           viaMsi: dedupe(viaMsi),
           prohibitedHere: e.prohibitedHere,
+          inventoryReachesRole: e.inventoryReachesRole,
         };
       })
       /* Written evidence ranks first, then total supportable.

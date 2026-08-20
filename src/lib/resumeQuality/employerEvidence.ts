@@ -45,6 +45,12 @@ export interface EmployerEvidence {
    * restriction is a statement about limits, unlike a resume's silence, so it is honoured absolutely.
    */
   prohibitedHere: string[];
+  /**
+   * False when this role operates outside the candidate's technical domain, so the (global) Skills
+   * Inventory does not reach it. Such a role keeps everything already written under it and gains
+   * nothing — see roleAcceptsInventoryEvidence.
+   */
+  inventoryReachesRole: boolean;
 }
 
 export interface EmployerEvidenceMap {
@@ -107,6 +113,7 @@ export function buildEmployerEvidenceMap(profile: CandidateProfile): EmployerEvi
       supported,
       availableViaMsi: classified.availableViaMsi,
       prohibitedHere: classified.prohibitedHere,
+      inventoryReachesRole: classified.inventoryReachesRole,
     };
   });
 
@@ -141,6 +148,12 @@ export function renderEmployerEvidenceSection(map: EmployerEvidenceMap): string 
       out +=
         `- **Available here under the MSI rule (${employer.availableViaMsi.length}):** ` +
         `${employer.availableViaMsi.join(", ")}\n`;
+    }
+    if (!employer.inventoryReachesRole) {
+      out +=
+        `- **This role is outside the candidate's technical domain.** Nothing in its own recorded work ` +
+        `overlaps the Skills Inventory, so the inventory does not extend here. Present this role using ` +
+        `only what is already written above — do not bring in technologies from other roles.\n`;
     }
     if (employer.prohibitedHere.length > 0) {
       out +=

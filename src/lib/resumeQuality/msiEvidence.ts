@@ -1,4 +1,5 @@
 import type { CandidateProfile, CandidateSkillEntry } from "@/lib/match/types";
+import { resolveSkillForReview } from "./reviewers/skillAliases";
 
 /**
  * How a technology is evidenced for a given employer.
@@ -23,11 +24,53 @@ export type MsiEvidenceState =
   | "MSI_EVIDENCE"
   /** Declared in the MSI but explicitly limited to other clients — NOT usable here. */
   | "CLIENT_SCOPED_ELSEWHERE"
+  /**
+   * Declared in the MSI, but this ROLE is not in the same technical domain, so the inventory does
+   * not reach it. See roleAcceptsInventoryEvidence.
+   */
+  | "ROLE_OUT_OF_SCOPE"
   /** Not in the Master Resume and not in the MSI. Nothing supports it anywhere. */
   | "UNSUPPORTED";
 
 function norm(v: string): string {
   return v.trim().toLowerCase();
+}
+
+/**
+ * Whether the Master Skills Inventory reaches a given role at all.
+ *
+ * WHY THIS LIMIT EXISTS. The inventory is global, so without a boundary every declared technology
+ * became available at every listed employer — including ones in an entirely different field. On
+ * real data a "Graduate Engineer Trainee — Electrical Machines Manufacturing & Testing" came back
+ * able to support seven cloud data-engineering requirements. The MSI contract permits applying
+ * declared skills across clients when technically plausible, and that role is precisely where it is
+ * not: an electrical manufacturing traineeship did not run Azure Data Factory.
+ *
+ * THE TEST. A role is in scope when at least one technology ITS OWN bullets record resolves to a
+ * known technology in this app's skill taxonomy. The inventory describes technologies; a role whose
+ * recorded work contains no recognisable technology at all is not a technology role, and a
+ * technology inventory does not extend to it.
+ *
+ * Measured on the profile that exposed the problem: the three data/ML roles resolve 15/20, 14/19
+ * and 12/12 of their recorded items; the electrical traineeship resolves 0 of 4 — "Heavy electrical
+ * machines", "Routine & type testing", "Quality inspection", "Test data sheets".
+ *
+ * TWO EARLIER ATTEMPTS, AND WHY THEY WERE WRONG.
+ *   - "Is the role's technology a declared skill?" is useless: the inventory lists the electrical
+ *     skills too, so every role passed trivially.
+ *   - "Does the role share a technology with another role?" is too strict. Two genuinely technical
+ *     roles on different stacks — Snowflake at one client, SQL at another — share nothing, and the
+ *     rule silently blocked exactly the cross-client use Override 2 exists to allow.
+ *
+ * IT FAILS CLOSED. A role recording no technologies is out of scope: absence of evidence that it is
+ * a technology role is not evidence that it is. Such a role keeps everything already written under
+ * it and simply gains nothing.
+ */
+export function roleAcceptsInventoryEvidence(profile: CandidateProfile, employer: string): boolean {
+  const emp = norm(employer);
+  const role = profile.experience.find((e) => norm(e.employer) === emp);
+  if (!role) return false;
+  return role.technologies.some((t) => Boolean(resolveSkillForReview(t)));
 }
 
 /** The employers a skill is explicitly limited to, or null when it carries no restriction. */
@@ -61,7 +104,15 @@ export function classifyForEmployer(
     if (attributed) return "EXPLICIT_RESUME_EVIDENCE";
   }
 
-  // 2. Anything the MSI declares. Both sources count — "employer" and "inventory_only" alike are
+  /* 2. The inventory only reaches roles that share technical ground with the rest of the career.
+   *    Checked BEFORE anything is granted, not after: an earlier ordering let a technology recorded
+   *    in some other role — but not declared as a skill — slip past the boundary and be offered at
+   *    an out-of-domain role anyway. */
+  if (employer !== null && !roleAcceptsInventoryEvidence(profile, employer)) {
+    return "ROLE_OUT_OF_SCOPE";
+  }
+
+  // 3. Anything the MSI declares. Both sources count — "employer" and "inventory_only" alike are
   //    technologies the candidate states they have genuinely worked with.
   const declared = profile.skills.filter((s) => norm(s.rawSkillName) === tech);
   if (declared.length === 0) {
@@ -71,7 +122,7 @@ export function classifyForEmployer(
     return somewhere ? "MSI_EVIDENCE" : "UNSUPPORTED";
   }
 
-  // 3. An explicit restriction is the only thing that limits a declared skill.
+  // 4. An explicit restriction is the only thing that limits a declared skill.
   if (employer !== null) {
     const restrictions = declared.map(explicitRestriction).filter((r): r is string[] => r !== null);
     // Restricted only if EVERY declaration that carries a restriction excludes this employer, and at
@@ -100,7 +151,7 @@ export function mayUseAtEmployer(profile: CandidateProfile, technology: string, 
 export function evidenceForEmployer(
   profile: CandidateProfile,
   employer: string
-): { supported: string[]; availableViaMsi: string[]; prohibitedHere: string[] } {
+): { supported: string[]; availableViaMsi: string[]; prohibitedHere: string[]; inventoryReachesRole: boolean } {
   const seen = new Map<string, string>();
   for (const e of profile.experience) for (const t of e.technologies) if (t.trim()) seen.set(norm(t), t.trim());
   for (const s of profile.skills) if (s.rawSkillName.trim()) seen.set(norm(s.rawSkillName), s.rawSkillName.trim());
@@ -120,11 +171,21 @@ export function evidenceForEmployer(
       case "CLIENT_SCOPED_ELSEWHERE":
         prohibitedHere.push(display);
         break;
+      case "ROLE_OUT_OF_SCOPE":
+        /* Deliberately listed in neither bucket. It is not prohibited — the candidate really does
+         * know it — it simply has no bearing on a role in another field, and offering it as
+         * "available here" would invite exactly the claim this boundary exists to prevent. */
+        break;
       default:
         break;
     }
   }
 
   const asc = (a: string, b: string) => a.localeCompare(b);
-  return { supported: supported.sort(asc), availableViaMsi: availableViaMsi.sort(asc), prohibitedHere: prohibitedHere.sort(asc) };
+  return {
+    supported: supported.sort(asc),
+    availableViaMsi: availableViaMsi.sort(asc),
+    prohibitedHere: prohibitedHere.sort(asc),
+    inventoryReachesRole: roleAcceptsInventoryEvidence(profile, employer),
+  };
 }
