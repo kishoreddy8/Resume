@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { SetupProgressStrip } from "@/components/SetupProgressStrip";
 
 /**
  * Chrome that only belongs to a signed-in session.
@@ -38,6 +39,9 @@ export function AppShell({
       {sidebar}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {header}
+        {/* Follows a running build across every page, so nobody meets an empty Jobs list and
+         *  concludes the app is broken while their profile is still being read. */}
+        <SetupProgressStrip />
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[1600px] px-6 py-6 lg:px-8 lg:py-7">{children}</div>
         </main>

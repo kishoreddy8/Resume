@@ -98,6 +98,7 @@ function contactLine(params: {
   phone: string;
   email: string;
   linkedin?: string;
+  github?: string;
 }): Paragraph {
   const sep = () => new TextRun({ text: "  |  ", size: SIZE_CONTACT, font: FONT, color: BLACK });
   const children: (TextRun | ExternalHyperlink)[] = [
@@ -110,6 +111,11 @@ function contactLine(params: {
   if (params.linkedin) {
     const url = params.linkedin.startsWith("http") ? params.linkedin : `https://${params.linkedin}`;
     children.push(sep(), link(params.linkedin, url));
+  }
+  /* After LinkedIn, so the header order stays stable whether or not GitHub is present. */
+  if (params.github) {
+    const url = params.github.startsWith("http") ? params.github : `https://${params.github}`;
+    children.push(sep(), link(params.github, url));
   }
   return new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 60 }, children });
 }
@@ -374,6 +380,7 @@ export async function generateResumeDocx(content: ResumeContent, outputPath: str
       phone: content.phone,
       email: content.email,
       linkedin: content.linkedin,
+      github: content.github,
     }),
 
     sectionHeading("Professional Summary"),

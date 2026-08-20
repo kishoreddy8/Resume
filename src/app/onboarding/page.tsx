@@ -55,6 +55,7 @@ export default function OnboardingPage() {
   const [evaluating, setEvaluating] = useState(false);
   const [building, setBuilding] = useState(false);
   const [buildFailed, setBuildFailed] = useState<string | null>(null);
+  const [buildPhase, setBuildPhase] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,19 +102,51 @@ export default function OnboardingPage() {
     setBuilding(true);
     setBuildFailed(null);
     try {
+      /* POST only STARTS the build — it returns 202 straight away and the work continues on the
+       * server. Awaiting the whole two minutes is what used to trap people on this page, and
+       * navigating away silently abandoned a build that was in fact still running. */
       const res = await fetch(`/api/candidates/${candidateId}/build-profile`, { method: "POST" });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body.ok) {
-        setBuildFailed(body.error ?? "The profile build did not complete.");
+      if (!res.ok) {
+        setBuildFailed(body.error ?? "The profile build could not be started.");
+        setBuilding(false);
         return;
       }
-      await refresh();
     } catch {
       setBuildFailed("Could not reach the server.");
-    } finally {
       setBuilding(false);
     }
-  }, [candidateId, refresh]);
+  }, [candidateId]);
+
+  /**
+   * Follow a running build to its end.
+   *
+   * The phase comes from the server as finished prose and is shown verbatim. There is no
+   * percentage here on purpose — nothing knows what fraction of the work remains, so the honest
+   * report is which step is happening now and how long it has been going.
+   */
+  useEffect(() => {
+    if (!building) return;
+    let cancelled = false;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/candidates/${candidateId}/build-profile`);
+        if (!res.ok || cancelled) return;
+        const body = await res.json();
+        setBuildPhase(body.phase ?? null);
+        if (body.status === "running") return;
+        setBuilding(false);
+        if (body.status === "failed") setBuildFailed(body.error ?? "The profile build did not complete.");
+        else await refresh();
+      } catch {
+        // A dropped poll is not a failed build; the next tick will find out either way.
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [building, candidateId, refresh]);
 
   /**
    * Walk the bounded rematch cursor to completion. The endpoint deliberately does one page per
@@ -255,7 +288,7 @@ export default function OnboardingPage() {
 
           {building ? (
             <div className="mt-2">
-              <BuildingProfile candidateId={candidateId} />
+              <BuildingProfile candidateId={candidateId} phase={buildPhase} />
             </div>
           ) : buildFailed ? (
             <>

@@ -56,6 +56,7 @@ const contactSchema = z
     phone: z.string().trim().max(50).nullable(),
     location: z.string().trim().max(200).nullable(),
     linkedin: z.string().trim().max(300).nullable(),
+    github: z.string().trim().max(300).nullable(),
   })
   .partial()
   .strict();

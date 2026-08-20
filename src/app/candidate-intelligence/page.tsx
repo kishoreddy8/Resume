@@ -84,6 +84,7 @@ export default function CandidateIntelligencePage() {
   const [data, setData] = useState<ProfileResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [building, setBuilding] = useState(false);
+  const [buildPhase, setBuildPhase] = useState<string | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -108,20 +109,45 @@ export default function CandidateIntelligencePage() {
   /* Build from here too. This page was the dead end the user actually hit: it stated the profile
    * was not built and named a command, with no way to act. Same failure shape as the PIN prompt —
    * telling someone what to do while giving them no way to do it. */
+  /* Follows a build this page started — or one already running when the page loaded, since the
+   * registry is server-side and a build begun on the setup page is visible from here too. */
+  useEffect(() => {
+    if (!building) return;
+    let cancelled = false;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/candidates/${candidateId}/build-profile`);
+        if (!res.ok || cancelled) return;
+        const body = await res.json();
+        setBuildPhase(body.phase ?? null);
+        if (body.status === "running") return;
+        setBuilding(false);
+        if (body.status === "failed") setBuildError(body.error ?? "The profile build did not complete.");
+        else window.location.reload();
+      } catch {
+        // A dropped poll is not a failed build.
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [building, candidateId]);
+
+  /* POST starts the build and returns; the poll below follows it. Awaiting the whole run here
+   * meant leaving this page abandoned a build that was in fact still going on the server. */
   async function build() {
     setBuilding(true);
     setBuildError(null);
     try {
       const res = await fetch(`/api/candidates/${candidateId}/build-profile`, { method: "POST" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body.ok) {
-        setBuildError(body.error ?? "The profile build did not complete.");
-        return;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setBuildError(body.error ?? "The profile build could not be started.");
+        setBuilding(false);
       }
-      window.location.reload();
     } catch {
       setBuildError("Could not reach the server.");
-    } finally {
       setBuilding(false);
     }
   }
@@ -160,7 +186,7 @@ export default function CandidateIntelligencePage() {
           </p>
           {building && (
             <div className="mx-auto mt-4 max-w-[46ch] text-left">
-              <BuildingProfile candidateId={candidateId} />
+              <BuildingProfile candidateId={candidateId} phase={buildPhase} />
             </div>
           )}
           {buildError && <p className="mt-2 text-[12px] text-[var(--error)]">{buildError}</p>}

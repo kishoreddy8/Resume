@@ -37,7 +37,7 @@ const PLACEHOLDER_PHONE_PATTERNS = [
 export type ContactFieldName = "email" | "phone" | "location";
 
 export interface ContactFieldProblem {
-  field: ContactFieldName | "linkedin";
+  field: ContactFieldName | "linkedin" | "github";
   /** Short, human-facing sentence naming exactly what must be entered or corrected. */
   message: string;
 }
@@ -59,6 +59,8 @@ export interface VerifiedCandidateContact {
   location: string;
   /** Optional throughout — ResumeContent.linkedin is optional and the renderer never requires it. */
   linkedin?: string;
+  /** Same contract as linkedin: rendered only when the candidate supplied it, never invented. */
+  github?: string;
 }
 
 function normalize(raw: string | null | undefined): string {
@@ -110,6 +112,7 @@ export function validateCandidateContact(input: {
   const phone = normalize(input.contact.phone);
   const location = normalize(input.contact.location);
   const linkedin = normalize(input.contact.linkedin);
+  const github = normalize(input.contact.github);
 
   if (email.length === 0) {
     problems.push({ field: "email", message: "Email address is required — the resume renderer cannot produce a document without it." });
@@ -135,6 +138,12 @@ export function validateCandidateContact(input: {
     problems.push({ field: "linkedin", message: "LinkedIn must be a URL or profile path with no spaces." });
   }
 
+  /* Absence is never a problem — GitHub is opt-in. Only a value that cannot be a URL is, because a
+   * broken link in a resume header is worse than no link at all. */
+  if (github.length > 0 && /\s/.test(github)) {
+    problems.push({ field: "github", message: "GitHub must be a URL or profile path with no spaces." });
+  }
+
   if (name.length === 0) {
     problems.push({ field: "location", message: "Candidate name is missing — set the candidate's name before tailoring." });
   }
@@ -143,7 +152,14 @@ export function validateCandidateContact(input: {
   return {
     isComplete: true,
     problems: [],
-    contact: { name, email, phone, location, ...(linkedin.length > 0 ? { linkedin } : {}) },
+    contact: {
+      name,
+      email,
+      phone,
+      location,
+      ...(linkedin.length > 0 ? { linkedin } : {}),
+      ...(github.length > 0 ? { github } : {}),
+    },
   };
 }
 

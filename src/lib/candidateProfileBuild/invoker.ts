@@ -41,6 +41,8 @@ export interface BuildProfileOptions {
   timeoutMs?: number;
   maxBudgetUsd?: number;
   model?: string;
+  /** Called as each phase is observed. Never called with a phase that has not actually begun. */
+  onPhase?: (phase: BuildPhase) => void;
 }
 
 export type BuildProfileOutcome =
@@ -90,12 +92,40 @@ function drivingPrompt(candidateId: number, resumeSha: string, skillsSha: string
   ].join("\n");
 }
 
+/**
+ * The phases a build actually passes through, in order.
+ *
+ * These are OBSERVED, not scheduled. Each one is emitted because the corresponding event really
+ * happened — the documents were extracted, the CLI read a specific file, the CLI wrote the profile.
+ * There is deliberately no percentage anywhere in this module: nothing in the pipeline knows what
+ * fraction of the work remains, and a bar advancing on a timer would be a fabricated fact dressed
+ * up as a measurement. Four true checkpoints beat one convincing lie.
+ */
+export type BuildPhase = "extracting" | "reading_resume" | "reading_skills" | "writing" | "validating";
+
+/** Maps a tool-use event from the CLI stream to a phase, or null when it tells us nothing new. */
+function phaseForToolUse(name: string, input: unknown): BuildPhase | null {
+  const target = typeof input === "object" && input !== null && "file_path" in input
+    ? String((input as { file_path?: unknown }).file_path ?? "")
+    : "";
+  if (name === "Write") return "writing";
+  if (name !== "Read") return null;
+  if (target.includes("extracted-resume")) return "reading_resume";
+  if (target.includes("extracted-skills")) return "reading_skills";
+  return null;
+}
+
 function buildArgs(opts: BuildProfileOptions, resumeSha: string, skillsSha: string): string[] {
   const args = [
     "-p",
     drivingPrompt(opts.candidateId, resumeSha, skillsSha),
+    /* stream-json rather than json purely so progress is observable while the build runs. The
+     * final line of the stream is the same result object json would have produced, and nothing
+     * downstream parses stdout anyway — the route judges success by whether a VALID profile
+     * landed on disk, which is the only claim worth trusting. */
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose",
     "--permission-mode",
     "acceptEdits",
     "--tools",
@@ -155,6 +185,7 @@ export async function invokeProfileBuild(opts: BuildProfileOptions): Promise<Bui
    * with. Extract to text first — see docxText.ts for why that boundary is the right one. */
   let hashes: { resumeSha: string; skillsSha: string } | null;
   try {
+    opts.onPhase?.("extracting");
     hashes = await stageExtractedText(opts.candidateDir);
   } catch (err) {
     return { ok: false, reason: "cli_error", detail: `Could not read the uploaded documents: ${String(err)}` };
@@ -180,7 +211,35 @@ export async function invokeProfileBuild(opts: BuildProfileOptions): Promise<Bui
       resolve({ ok: false, reason: "timeout", detail: `Profile build exceeded ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms.` });
     }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
-    child.stdout.on("data", (d) => (stdout += String(d)));
+    /* Line-buffered: a chunk boundary can land mid-object, so only complete lines are parsed and
+     * the remainder is carried forward. A malformed line is skipped rather than thrown — progress
+     * reporting must never be able to fail a build. */
+    let pending = "";
+    child.stdout.on("data", (d) => {
+      const chunk = String(d);
+      stdout += chunk;
+      if (!opts.onPhase) return;
+      pending += chunk;
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line) as {
+            type?: string;
+            message?: { content?: { type?: string; name?: string; input?: unknown }[] };
+          };
+          if (event.type !== "assistant") continue;
+          for (const block of event.message?.content ?? []) {
+            if (block.type !== "tool_use" || !block.name) continue;
+            const phase = phaseForToolUse(block.name, block.input);
+            if (phase) opts.onPhase(phase);
+          }
+        } catch {
+          // Not a JSON line, or a shape we do not recognise. Progress is best-effort by design.
+        }
+      }
+    });
     child.stderr.on("data", (d) => (stderr += String(d)));
 
     child.on("error", (err) => {

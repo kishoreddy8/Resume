@@ -35,7 +35,15 @@ let resolveCandidateContact: typeof import("../candidateContact").resolveCandida
 let aliceId: number;
 let bobId: number;
 
-const REAL = { email: "sai.reddy@gmail.com", phone: "(214) 987-6543", location: "Dallas, TX", linkedin: "linkedin.com/in/saikishore" };
+/* github is carried here rather than null-padded into the assertions so the optional field gets
+ * the same round-trip and isolation coverage as every other contact field. */
+const REAL = {
+  email: "sai.reddy@gmail.com",
+  phone: "(214) 987-6543",
+  location: "Dallas, TX",
+  linkedin: "linkedin.com/in/saikishore",
+  github: "github.com/saikishore",
+};
 
 before(async () => {
   tmpDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-s26b-db-"));
@@ -151,7 +159,7 @@ test("S26B-25 contact persists per candidate and survives a reload", () => {
 });
 
 test("S26B-26 candidate isolation: one candidate's contact never leaks into another's", () => {
-  assert.deepEqual(getCandidateContact(bobId), { email: null, phone: null, location: null, linkedin: null });
+  assert.deepEqual(getCandidateContact(bobId), { email: null, phone: null, location: null, linkedin: null, github: null });
   assert.equal(resolveCandidateContact(bobId).isComplete, false, "an unconfigured candidate must not inherit anyone else's details");
 
   updateCandidateContact(bobId, { email: "bob@bobmail.com", phone: "469-987-1234", location: "Austin, TX" });

@@ -10,20 +10,32 @@ import { useEffect, useState } from "react";
  * outcome than a slow success.
  *
  * Everything here is real. The elapsed counter is a clock, not a simulation. The typical duration is
- * the measured one. There is deliberately NO percentage and no progress bar that fills: the app
- * cannot see inside the CLI run, so any bar would be a comforting fiction — and inventing progress
- * is the same class of lie as inventing evidence.
+ * the measured one.
  *
- * The phase line changes only at thresholds the app genuinely knows: extraction happens in-process
- * and is over in well under a second, so anything past that is honestly "Claude is reading". Past
- * the expected duration it stops reassuring and offers the manual command instead, because at that
- * point continuing to say "nearly there" would be guessing.
+ * The phase line now reports what the build ACTUALLY did. The CLI runs under --output-format
+ * stream-json, so each file it reads and the moment it writes the profile arrive as events; the
+ * server records the furthest one reached and this shows it verbatim. Before the first event lands
+ * — or if the caller has no phase to pass — it falls back to a time-based line that claims only
+ * what the clock can support.
+ *
+ * There is still deliberately NO percentage and no bar that fills. Knowing which step is running is
+ * not the same as knowing how much remains, and a bar advancing on a timer would be a comforting
+ * fiction — the same class of lie as inventing evidence. Past the expected duration it stops
+ * reassuring and offers the manual command instead, because continuing to say "nearly there" would
+ * be guessing.
  */
 
 /** Measured on a real resume: 2m06s. SLOW is comfortably past it, not a guess dressed as one. */
 const SLOW_MS = 210_000;
 
-export function BuildingProfile({ candidateId }: { candidateId: number }) {
+export function BuildingProfile({
+  candidateId,
+  /** The server's observed phase, already worded for display. Null until the first event arrives. */
+  phase: observedPhase = null,
+}: {
+  candidateId: number;
+  phase?: string | null;
+}) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -37,12 +49,12 @@ export function BuildingProfile({ candidateId }: { candidateId: number }) {
   const ss = String(seconds % 60).padStart(2, "0");
   const slow = elapsed > SLOW_MS;
 
-  const phase =
-    elapsed < 3_000
-      ? "Extracting text from your documents…"
-      : slow
-        ? "Still working — this is longer than usual."
-        : "Claude is reading your resume and skills inventory…";
+  /* A real observation always wins over a guess from the clock. The slow warning is the exception:
+   * once past the measured duration, how long it has taken matters more than what it is doing. */
+  let phase: string;
+  if (slow) phase = "Still working — this is longer than usual.";
+  else if (observedPhase) phase = `${observedPhase}…`;
+  else phase = elapsed < 3_000 ? "Starting…" : "Reading your documents…";
 
   return (
     <div>

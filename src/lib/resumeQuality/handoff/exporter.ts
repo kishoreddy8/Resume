@@ -98,6 +98,7 @@ export function buildExternalWriterPrompt(input: {
         `- Phone: ${input.candidateContact.phone}`,
         `- Location: ${input.candidateContact.location}`,
         ...(input.candidateContact.linkedin ? [`- LinkedIn: ${input.candidateContact.linkedin}`] : []),
+        ...(input.candidateContact.github ? [`- GitHub: ${input.candidateContact.github}`] : []),
       ].join("\n")
     : "NOT PROVIDED — do not invent any contact value; CareerOps stops a workflow before this point when contact details are missing.";
 

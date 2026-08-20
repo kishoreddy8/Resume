@@ -44,6 +44,7 @@ interface CandidateSettingsRow {
   contact_phone: string | null;
   contact_location: string | null;
   contact_linkedin: string | null;
+  contact_github: string | null;
 }
 
 function getRow(candidateId: number): CandidateSettingsRow | undefined {
@@ -92,16 +93,21 @@ export interface CandidateContact {
   phone: string | null;
   location: string | null;
   linkedin: string | null;
+  /* Optional in the TYPE as well as in the data. Every other contact field predates this one,
+   * so requiring it would force a null into call sites that have nothing to say about GitHub — and
+   * "not mentioned" and "explicitly none" are the same thing for a field that is opt-in anyway. */
+  github?: string | null;
 }
 
 export function getCandidateContact(candidateId: number): CandidateContact {
   const row = getRow(candidateId);
-  if (!row) return { email: null, phone: null, location: null, linkedin: null };
+  if (!row) return { email: null, phone: null, location: null, linkedin: null, github: null };
   return {
     email: row.contact_email ?? null,
     phone: row.contact_phone ?? null,
     location: row.contact_location ?? null,
     linkedin: row.contact_linkedin ?? null,
+    github: row.contact_github ?? null,
   };
 }
 
@@ -114,13 +120,14 @@ export function updateCandidateContact(candidateId: number, input: Partial<Candi
   };
   getDb()
     .prepare(
-      `INSERT INTO candidate_settings (candidate_id, contact_email, contact_phone, contact_location, contact_linkedin, updated_at)
-       VALUES (@candidateId, @email, @phone, @location, @linkedin, datetime('now'))
+      `INSERT INTO candidate_settings (candidate_id, contact_email, contact_phone, contact_location, contact_linkedin, contact_github, updated_at)
+       VALUES (@candidateId, @email, @phone, @location, @linkedin, @github, datetime('now'))
        ON CONFLICT(candidate_id) DO UPDATE SET
          contact_email = excluded.contact_email,
          contact_phone = excluded.contact_phone,
          contact_location = excluded.contact_location,
          contact_linkedin = excluded.contact_linkedin,
+         contact_github = excluded.contact_github,
          updated_at = excluded.updated_at`
     )
     .run({
@@ -129,6 +136,7 @@ export function updateCandidateContact(candidateId: number, input: Partial<Candi
       phone: trim(current.phone),
       location: trim(current.location),
       linkedin: trim(current.linkedin),
+      github: trim(current.github ?? null),
     });
 }
 

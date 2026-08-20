@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { QueueItem } from "./queue";
 import { useRouter } from "next/navigation";
 import { JobRow } from "./JobRow";
+import Link from "next/link";
 import { EmptyState } from "./EmptyState";
+import { useSetupNotice } from "@/lib/useSetupNotice";
 import type { LifecycleThresholds } from "@/lib/jobLifecycle";
 import {
   compareJobsBestFirst,
@@ -83,6 +85,8 @@ export function JobList({
   onQueueChange?: (queue: QueueItem[]) => void;
 }) {
   const candidateId = useActiveCandidateId();
+  /** Non-null only while setup is unfinished — otherwise the ordinary empty states apply. */
+  const setupNotice = useSetupNotice();
   const decisions = useMatchDecisions(jobs, candidateId);
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>("All");
   const router = useRouter();
@@ -197,7 +201,21 @@ export function JobList({
         )}
       </div>
 
-      {visibleJobs.length === 0 ? (
+      {visibleJobs.length === 0 && setupNotice ? (
+        /* Same reasoning as For You: an unevaluated queue is not a filtered-out queue. */
+        <EmptyState
+          title={setupNotice.title}
+          body={setupNotice.body}
+          action={
+            <Link
+              href={setupNotice.href}
+              className="inline-block rounded-[9px] bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--accent-fg)] shadow-[var(--lift-1)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
+            >
+              {setupNotice.cta}
+            </Link>
+          }
+        />
+      ) : visibleJobs.length === 0 ? (
         <EmptyState
           title={decisionFilter === "All" ? "No jobs match these filters" : `No ${DECISION_FILTER_LABELS[decisionFilter].toLowerCase()} jobs`}
           body={

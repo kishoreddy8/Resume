@@ -70,6 +70,8 @@ export interface ResumeContent {
   phone: string;
   email: string;
   linkedin?: string;
+  /** Optional. Rendered in the header beside LinkedIn only when supplied. */
+  github?: string;
   /** Each string is one summary paragraph/sentence-cluster, rendered as its own paragraph. */
   summary: string[];
   /** Groups already ordered by relevance to the target JD, most relevant first. */
@@ -99,6 +101,8 @@ export interface CoverLetterContent {
   phone: string;
   email: string;
   linkedin?: string;
+  /** Optional. Rendered in the header beside LinkedIn only when supplied. */
+  github?: string;
   salutation: string;
   /** Each string is one paragraph. */
   paragraphs: string[];

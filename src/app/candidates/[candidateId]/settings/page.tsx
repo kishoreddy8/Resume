@@ -13,6 +13,7 @@ interface ContactForm {
   phone: string;
   location: string;
   linkedin: string;
+  github: string;
 }
 
 interface ContactProblem {
@@ -70,6 +71,7 @@ export default function CandidateSettingsPage({ params }: { params: Promise<{ ca
         phone: data.contact?.phone ?? "",
         location: data.contact?.location ?? "",
         linkedin: data.contact?.linkedin ?? "",
+        github: data.contact?.github ?? "",
       });
       setContactProblems(data.contactStatus?.problems ?? []);
       setSecondaryRolesText((data.preferences?.secondaryTargetRoles ?? []).join(", "));
@@ -102,6 +104,7 @@ export default function CandidateSettingsPage({ params }: { params: Promise<{ ca
                 phone: contact.phone.trim() || null,
                 location: contact.location.trim() || null,
                 linkedin: contact.linkedin.trim() || null,
+                github: contact.github.trim() || null,
               }
             : undefined,
         }),
@@ -230,6 +233,18 @@ export default function CandidateSettingsPage({ params }: { params: Promise<{ ca
               placeholder="linkedin.com/in/your-profile"
               onChange={(e) => setContact({ ...contact, linkedin: e.target.value })}
             />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">GitHub (optional)</span>
+            <input
+              className="rounded border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              value={contact.github}
+              placeholder="github.com/your-username"
+              onChange={(e) => setContact({ ...contact, github: e.target.value })}
+            />
+            <span className="text-xs text-zinc-500">
+              Added to the resume header beside LinkedIn. Left out entirely when blank.
+            </span>
           </label>
         </div>
       </section>

@@ -429,7 +429,7 @@ export interface ResumeWriterInput {
    *  Always present by the time a writer runs — a workflow with no valid contact configuration is
    *  stopped before any writer attempt (CANDIDATE_CONTACT_REQUIRED), so the writer is never asked to
    *  produce a resume it cannot legitimately fill a header for. */
-  candidateContact?: { name: string; email: string; phone: string; location: string; linkedin?: string };
+  candidateContact?: { name: string; email: string; phone: string; location: string; linkedin?: string; github?: string };
   /** Stage 28 — the deterministic targeted-repair plan for a correction attempt, derived from the
    *  PRIOR review by CareerOps (see repairScope.ts). Absent on iteration 1, which writes from
    *  scratch. Narrows what the writer REWRITES; never narrows what CareerOps reviews afterwards. */

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { JobRow } from "./JobRow";
 import { JobListSkeleton, LoadingRegion } from "./Skeletons";
 import { EmptyState } from "./EmptyState";
+import { useSetupNotice } from "@/lib/useSetupNotice";
 import { AnimatePresence, motion } from "motion/react";
 import type { RoleFamilyTier } from "@/lib/rank/forYou";
 import type { CandidateJobBucket } from "@/lib/rank/candidateJobBucket";
@@ -205,6 +206,8 @@ export function ForYouList({
 }) {
   const [data, setData] = useState<ForYouApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  /** Non-null only while setup is unfinished — otherwise the ordinary empty states apply. */
+  const setupNotice = useSetupNotice();
   const [activeTab, setActiveTab] = useState<FeedTab>("all");
   const [includeStale, setIncludeStale] = useState(false);
   const [minScore, setMinScore] = useState<string>("");
@@ -361,6 +364,21 @@ export function ForYouList({
             <JobListSkeleton />
           </motion.div>
         </AnimatePresence>
+      ) : entries.length === 0 && setupNotice ? (
+        /* Setup, not filters. Saying "no recommendations match" to someone whose profile is still
+         *  being built is simply false, and it is the wording that reads as a broken app. */
+        <EmptyState
+          title={setupNotice.title}
+          body={setupNotice.body}
+          action={
+            <Link
+              href={setupNotice.href}
+              className="inline-block rounded-[9px] bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--accent-fg)] shadow-[var(--lift-1)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
+            >
+              {setupNotice.cta}
+            </Link>
+          }
+        />
       ) : entries.length === 0 ? (
         <EmptyState
           title={search.trim() ? "No recommendations match that search" : activeTab === "all" ? "No recommendations yet" : "This bucket is empty"}

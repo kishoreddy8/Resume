@@ -65,6 +65,10 @@ export async function generateCoverLetterDocx(
     const url = content.linkedin.startsWith("http") ? content.linkedin : `https://${content.linkedin}`;
     contactChildren.push(sep(), link(content.linkedin, url));
   }
+  if (content.github) {
+    const url = content.github.startsWith("http") ? content.github : `https://${content.github}`;
+    contactChildren.push(sep(), link(content.github, url));
+  }
 
   const children: Paragraph[] = [
     new Paragraph({

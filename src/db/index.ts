@@ -676,6 +676,7 @@ const CANDIDATE_CONTACT_ADDITIVE_COLUMNS: { name: string; ddl: string }[] = [
   { name: "contact_phone", ddl: "ALTER TABLE candidate_settings ADD COLUMN contact_phone TEXT" },
   { name: "contact_location", ddl: "ALTER TABLE candidate_settings ADD COLUMN contact_location TEXT" },
   { name: "contact_linkedin", ddl: "ALTER TABLE candidate_settings ADD COLUMN contact_linkedin TEXT" },
+  { name: "contact_github", ddl: "ALTER TABLE candidate_settings ADD COLUMN contact_github TEXT" },
 ];
 
 export function runCandidateContactMigrations(db: Database.Database) {
