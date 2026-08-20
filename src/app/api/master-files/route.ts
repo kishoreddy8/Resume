@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import fs from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
@@ -89,6 +90,8 @@ export async function GET(req: NextRequest) {
   const candidateId = parseCandidateId(req.nextUrl.searchParams.get("candidateId"));
   if (candidateId === null) return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const manifest = readManifest(candidateId);
   return NextResponse.json({ manifest });
@@ -103,6 +106,8 @@ export async function POST(req: NextRequest) {
   const candidateId = parseCandidateId(formData.get("candidateId") as string | null);
   if (candidateId === null) return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const slot = formData.get("slot");
   const file = formData.get("file");

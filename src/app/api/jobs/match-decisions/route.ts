@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { listLatestDecisionsForDedupeKeys } from "@/db/queries/jobMatches";
 
@@ -10,6 +11,8 @@ export async function POST(req: NextRequest) {
   const candidateId = typeof body?.candidateId === "number" ? body.candidateId : null;
   if (candidateId === null) return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const dedupeKeys = Array.isArray(body?.dedupeKeys) ? body.dedupeKeys.filter((k: unknown) => typeof k === "string") : [];
   if (dedupeKeys.length === 0) return NextResponse.json({ decisions: {} });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { z } from "zod";
 import { getCandidateJobState } from "@/db/queries/candidateJobState";
 import { requireActiveCandidate } from "@/db/queries/candidates";
@@ -45,8 +46,13 @@ const START_RUN_SCHEMA = z.object({
 
 type CandidateJobResolution = { error: NextResponse } | { candidateId: number; job: JobWithCompany };
 
-async function resolveCandidateAndJob(candidateIdParam: string, jobIdParam: string): Promise<CandidateJobResolution> {
+async function resolveCandidateAndJob(req: NextRequest, candidateIdParam: string, jobIdParam: string): Promise<CandidateJobResolution> {
   const candidateId = parsePositiveInt(candidateIdParam);
+  // Guarded in the shared resolver so GET and POST cannot diverge.
+  if (candidateId !== null) {
+    const accessDenial = requireCandidateAccess(req, candidateId);
+    if (accessDenial) return { error: accessDenial };
+  }
   if (candidateId === null) {
     return { error: NextResponse.json({ error: "Invalid candidate id" }, { status: 400 }) };
   }
@@ -70,7 +76,7 @@ async function resolveCandidateAndJob(candidateIdParam: string, jobIdParam: stri
  *  candidate's runs, regardless of dedupe_key overlap. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ candidateId: string; jobId: string }> }): Promise<NextResponse> {
   const { candidateId: candidateIdParam, jobId: jobIdParam } = await params;
-  const resolved = await resolveCandidateAndJob(candidateIdParam, jobIdParam);
+  const resolved = await resolveCandidateAndJob(req, candidateIdParam, jobIdParam);
   if ("error" in resolved) return resolved.error;
 
   const runs = listTailoringRuns(resolved.candidateId, resolved.job.dedupe_key);
@@ -86,7 +92,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ candidateId: string; jobId: string }> }): Promise<NextResponse> {
   const { candidateId: candidateIdParam, jobId: jobIdParam } = await params;
-  const resolved = await resolveCandidateAndJob(candidateIdParam, jobIdParam);
+  const resolved = await resolveCandidateAndJob(req, candidateIdParam, jobIdParam);
   if ("error" in resolved) return resolved.error;
   const { candidateId, job } = resolved;
   const dedupeKey = job.dedupe_key;

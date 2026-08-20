@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { loadCandidateProfile } from "@/lib/match/candidateProfile";
 import { getJobSkillCorpusSize, getJobSkillSignal } from "@/db/queries/jobSkillSignal";
@@ -28,6 +29,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ candidateId
   if (!requireActiveCandidate(candidateId)) {
     return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
   }
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const loaded = loadCandidateProfile(candidateId);
   const signal = getJobSkillSignal();

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { z } from "zod";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import {
@@ -34,6 +35,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ can
   const candidateId = Number(candidateIdParam);
   if (!Number.isInteger(candidateId)) return NextResponse.json({ error: "Invalid candidateId" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   // An absent/empty body is a valid "first page, default size" request.
   const raw = await req.json().catch(() => null);

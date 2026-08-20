@@ -1,4 +1,5 @@
 import path from "node:path";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveCandidate } from "@/db/queries/candidates";
@@ -64,6 +65,8 @@ export async function PATCH(
   const candidateId = parsePositiveInt(candidateIdParam);
   if (candidateId === null) return NextResponse.json({ error: "Invalid candidate id" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const jobId = parsePositiveInt(jobIdParam);
   if (jobId === null) return NextResponse.json({ error: "Invalid job id" }, { status: 400 });

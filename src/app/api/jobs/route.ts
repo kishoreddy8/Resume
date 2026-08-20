@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { listJobsForList } from "@/db/queries/jobs";
 import type {
   EmploymentTypeNormalized,
@@ -68,6 +69,10 @@ export async function GET(req: NextRequest) {
   const clearanceRequired = params.get("clearanceRequired");
   const candidateIdParam = params.get("candidateId");
   const candidateId = candidateIdParam && Number.isInteger(Number(candidateIdParam)) ? Number(candidateIdParam) : undefined;
+  if (candidateId !== undefined) {
+    const accessDenial = requireCandidateAccess(req, candidateId);
+    if (accessDenial) return accessDenial;
+  }
 
   if (status && !VALID_STATUSES.includes(status as PipelineStatus)) {
     return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 });

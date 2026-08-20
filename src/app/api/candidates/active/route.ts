@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { z } from "zod";
 import { getActiveCandidateId, requireActiveCandidate, setActiveCandidateId } from "@/db/queries/candidates";
 
@@ -24,6 +25,11 @@ export async function POST(req: NextRequest) {
   if (!requireActiveCandidate(parsed.data.candidateId)) {
     return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
   }
+  /* Switching INTO a protected profile must prove its PIN. Without this the gate would be trivially
+   * bypassable: set the active candidate to a locked profile, then read its data through the
+   * routes that default to the active id. */
+  const accessDenial = requireCandidateAccess(req, parsed.data.candidateId);
+  if (accessDenial) return accessDenial;
   setActiveCandidateId(parsed.data.candidateId);
   return NextResponse.json({ candidateId: parsed.data.candidateId });
 }

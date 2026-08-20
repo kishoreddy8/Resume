@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { z } from "zod";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import {
@@ -67,11 +68,13 @@ const patchSchema = z
   })
   .strict();
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ candidateId: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ candidateId: string }> }) {
   const { candidateId: candidateIdParam } = await params;
   const candidateId = Number(candidateIdParam);
   if (!Number.isInteger(candidateId)) return NextResponse.json({ error: "Invalid candidateId" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const contactValidation = resolveCandidateContact(candidateId);
   return NextResponse.json({
@@ -92,6 +95,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ca
   const candidateId = Number(candidateIdParam);
   if (!Number.isInteger(candidateId)) return NextResponse.json({ error: "Invalid candidateId" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const body = await req.json().catch(() => null);
   const parsed = patchSchema.safeParse(body);

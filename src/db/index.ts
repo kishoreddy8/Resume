@@ -785,6 +785,40 @@ export function runCompaniesDiscoveryMigrations(db: Database.Database) {
  * re-exec-schema pattern exactly — a table rebuild is NOT needed here, since this only adds a column
  * and changes an index, never a column type or a CHECK constraint.
  */
+/**
+ * Profile access control: per-candidate PIN, lockout state, and the owner flag.
+ *
+ * Additive only — new nullable columns on an existing table, no rewrite, no index change. A
+ * candidate with pin_hash NULL is UNPROTECTED BY DESIGN: gating a profile that has never set a PIN
+ * would have locked every existing profile out on first deploy with no way back in. Protection is
+ * opt-in per profile, and the UI has to say so plainly rather than implying everything is guarded.
+ *
+ * is_owner marks the single account allowed to authorise destructive operations (deleting another
+ * profile). It is seeded onto candidate 1 — the account that created this database — and never
+ * onto anyone else automatically, because "first user is the owner" is the only rule that cannot be
+ * gamed by creating another account.
+ */
+function runCandidatePinMigrations(db: Database.Database) {
+  const cols = new Set(
+    (db.prepare("PRAGMA table_info(candidates)").all() as { name: string }[]).map((c) => c.name)
+  );
+  if (!cols.has("pin_hash")) db.exec("ALTER TABLE candidates ADD COLUMN pin_hash TEXT");
+  if (!cols.has("pin_salt")) db.exec("ALTER TABLE candidates ADD COLUMN pin_salt TEXT");
+  if (!cols.has("pin_set_at")) db.exec("ALTER TABLE candidates ADD COLUMN pin_set_at TEXT");
+  // Lockout state. This — not scrypt — is what makes a 4-digit PIN survive an online attack.
+  if (!cols.has("pin_failed_attempts"))
+    db.exec("ALTER TABLE candidates ADD COLUMN pin_failed_attempts INTEGER NOT NULL DEFAULT 0");
+  if (!cols.has("pin_locked_until")) db.exec("ALTER TABLE candidates ADD COLUMN pin_locked_until TEXT");
+  if (!cols.has("is_owner")) db.exec("ALTER TABLE candidates ADD COLUMN is_owner INTEGER NOT NULL DEFAULT 0");
+
+  // Seed exactly one owner: the lowest-numbered surviving candidate, which is candidate 1 on every
+  // existing database. Guarded so it can never promote a second account on a later startup.
+  const ownerCount = (db.prepare("SELECT COUNT(*) AS n FROM candidates WHERE is_owner = 1").get() as { n: number }).n;
+  if (ownerCount === 0) {
+    db.exec("UPDATE candidates SET is_owner = 1 WHERE id = (SELECT MIN(id) FROM candidates)");
+  }
+}
+
 function runCandidateScopingMigrations(db: Database.Database, schemaSql: string) {
   const jobMatchResultsColumns = new Set(
     (db.prepare("PRAGMA table_info(job_match_results)").all() as { name: string }[]).map((c) => c.name)
@@ -933,6 +967,7 @@ function createConnection(): Database.Database {
   runCompaniesDiscoveryMigrations(db);
   ensureCandidateOne(db);
   runCandidateScopingMigrations(db, schema);
+  runCandidatePinMigrations(db);
   runCompaniesDomainIdentityMigrations(db);
   runTailoringApprovalMigrations(db);
   runJobSourceReviewMigrations(db);

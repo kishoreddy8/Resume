@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { listAllCandidateJobStatesForCandidate } from "@/db/queries/candidateJobState";
 import { getRankingPreferences } from "@/db/queries/candidateSettings";
@@ -105,6 +106,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
     return NextResponse.json({ error: "Invalid candidateId" }, { status: 400 });
   }
   const candidate = requireActiveCandidate(candidateId);
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
   if (!candidate) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
 
   const searchParams = req.nextUrl.searchParams;

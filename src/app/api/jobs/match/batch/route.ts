@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { getMatchAffectingSettings } from "@/db/queries/candidateSettings";
 import { getJob, listJobs } from "@/db/queries/jobs";
@@ -29,6 +30,8 @@ export async function POST(req: NextRequest) {
   const candidateId = typeof body?.candidateId === "number" ? body.candidateId : null;
   if (candidateId === null) return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const requestedLimit = typeof body?.limit === "number" ? body.limit : DEFAULT_LIMIT;
   const limit = Math.max(1, Math.min(MAX_LIMIT, requestedLimit));

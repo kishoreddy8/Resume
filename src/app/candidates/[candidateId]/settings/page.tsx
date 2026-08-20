@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ProfileSecurity } from "@/components/ProfileSecurity";
 import { LoadingRegion, SkeletonRows, Surface } from "@/components/ui";
 import { use, useEffect, useState } from "react";
 import type { MatchAffectingCandidateSettings, CandidateRankingPreferences } from "@/db/queries/candidateSettings";
@@ -161,6 +162,8 @@ export default function CandidateSettingsPage({ params }: { params: Promise<{ ca
           ← Back to Jobs
         </Link>
       </div>
+
+      <ProfileSecurity candidateId={candidateId} />
 
       {error && <p className="text-sm text-red-600">{error}</p>}
       {savedAt && !error && <p className="text-xs text-emerald-700 dark:text-emerald-400">Saved.</p>}

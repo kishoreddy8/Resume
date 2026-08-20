@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import {
   getApplicationLifecycleCounts,
@@ -65,6 +66,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "candidateId is required and must be an integer" }, { status: 400 });
   }
   const candidate = requireActiveCandidate(candidateId);
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
   if (!candidate) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
 
   const windowParam = params.get("window");

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { getCandidateJobState } from "@/db/queries/candidateJobState";
@@ -56,6 +57,8 @@ export async function GET(
   const candidateId = parsePositiveInt(candidateIdParam);
   if (candidateId === null) return NextResponse.json({ error: "Invalid candidate id" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const jobId = parsePositiveInt(jobIdParam);
   if (jobId === null) return NextResponse.json({ error: "Invalid job id" }, { status: 400 });
@@ -437,6 +440,8 @@ export async function POST(
   const candidateId = parsePositiveInt(candidateIdParam);
   if (candidateId === null) return NextResponse.json({ error: "Invalid candidate id" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const jobId = parsePositiveInt(jobIdParam);
   if (jobId === null) return NextResponse.json({ error: "Invalid job id" }, { status: 400 });

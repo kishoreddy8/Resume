@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { getMatchAffectingSettings } from "@/db/queries/candidateSettings";
 import { getJob } from "@/db/queries/jobs";
@@ -41,6 +42,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const candidateId = parseCandidateId(body?.candidateId != null ? String(body.candidateId) : null);
   if (candidateId === null) return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const job = getJob(jobId);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
@@ -80,6 +83,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const candidateId = parseCandidateId(req.nextUrl.searchParams.get("candidateId"));
   if (candidateId === null) return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const job = getJob(jobId);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });

@@ -44,12 +44,12 @@ function getRequest(candidateId: number) {
 }
 
 function patchOneRequest(candidateId: number, notificationId: number) {
-  const req = new Request(`http://localhost/api/candidates/${candidateId}/notifications/${notificationId}`, { method: "PATCH" });
+  const req = new NextRequest(`http://localhost/api/candidates/${candidateId}/notifications/${notificationId}`, { method: "PATCH" });
   return PATCH_ONE(req, { params: Promise.resolve({ candidateId: String(candidateId), notificationId: String(notificationId) }) });
 }
 
 function postAllRequest(candidateId: number) {
-  const req = new Request(`http://localhost/api/candidates/${candidateId}/notifications/mark-all-read`, { method: "POST" });
+  const req = new NextRequest(`http://localhost/api/candidates/${candidateId}/notifications/mark-all-read`, { method: "POST" });
   return POST_ALL(req, { params: Promise.resolve({ candidateId: String(candidateId) }) });
 }
 

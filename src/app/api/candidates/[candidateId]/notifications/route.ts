@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { getJobIdByDedupeKey } from "@/db/queries/jobs";
 import { getUnreadNotificationCount, listNotificationsForCandidate, type NotificationRow } from "@/db/queries/notifications";
@@ -49,6 +50,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
   const candidateId = parsePositiveInt(candidateIdParam);
   if (candidateId === null) return NextResponse.json({ error: "Invalid candidate id" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const searchParams = req.nextUrl.searchParams;
   const unreadOnly = searchParams.get("unreadOnly") === "true";

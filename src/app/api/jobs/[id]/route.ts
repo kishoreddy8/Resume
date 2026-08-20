@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveCandidate } from "@/db/queries/candidates";
@@ -54,6 +55,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Invalid job id" }, { status: 400 });
   }
   const candidateId = parseCandidateId(req.nextUrl.searchParams.get("candidateId"));
+  if (candidateId !== null && candidateId !== undefined) {
+    const accessDenial = requireCandidateAccess(req, candidateId);
+    if (accessDenial) return accessDenial;
+  }
   const job = getJob(jobId, candidateId);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
@@ -90,6 +95,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!existing) return NextResponse.json({ error: "Job not found" }, { status: 404 });
   const dedupeKey = existing.dedupe_key;
   const candidateId = parsed.data.candidateId;
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   if (parsed.data.pipelineStatus !== undefined) {
     setPipelineStatus(candidateId, dedupeKey, parsed.data.pipelineStatus as PipelineStatus);

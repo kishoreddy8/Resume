@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { setNotInterested } from "@/db/queries/candidateJobState";
 import { getJob } from "@/db/queries/jobs";
@@ -25,6 +26,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const candidateId = typeof body?.candidateId === "number" ? body.candidateId : null;
   if (candidateId === null) return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const job = getJob(jobId);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });

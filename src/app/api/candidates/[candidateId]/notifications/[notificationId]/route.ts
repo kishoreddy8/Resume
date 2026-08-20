@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import { requireCandidateAccess } from "@/lib/auth/guard";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { markNotificationRead } from "@/db/queries/notifications";
 
@@ -12,8 +13,7 @@ function parsePositiveInt(raw: string): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-export async function PATCH(
-  _req: Request,
+export async function PATCH(req: NextRequest,
   { params }: { params: Promise<{ candidateId: string; notificationId: string }> }
 ) {
   const { candidateId: candidateIdParam, notificationId: notificationIdParam } = await params;
@@ -21,6 +21,8 @@ export async function PATCH(
   const candidateId = parsePositiveInt(candidateIdParam);
   if (candidateId === null) return NextResponse.json({ error: "Invalid candidate id" }, { status: 400 });
   if (!requireActiveCandidate(candidateId)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
 
   const notificationId = parsePositiveInt(notificationIdParam);
   if (notificationId === null) return NextResponse.json({ error: "Invalid notification id" }, { status: 400 });
