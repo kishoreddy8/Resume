@@ -118,6 +118,7 @@ export function CommandBar() {
       { id: "nav-master", label: "Master Files", group: "Go to", keywords: "resume skills inventory upload", run: go("/master-files") },
       { id: "nav-ops", label: "System Operations", group: "Go to", keywords: "health workers queues scheduler", run: go("/operations") },
       { id: "nav-settings", label: "Settings", group: "Go to", keywords: "configuration preferences ai providers", run: go("/settings") },
+      { id: "nav-setup", label: "Profile setup", group: "Go to", keywords: "onboarding first run upload resume skills target role pin", run: go("/onboarding") },
     ];
 
     // Contextual: only offered where the target actually exists on the page.
@@ -127,19 +128,33 @@ export function CommandBar() {
         { id: "job-skills", label: "What skills are missing evidence?", group: "This job", keywords: "compare profile jd alignment partial gaps", hint: "scrolls", run: () => jumpTo("job-skills") },
         { id: "job-requirements", label: "Show requirements", group: "This job", keywords: "experience education certification sponsorship", hint: "scrolls", run: () => jumpTo("job-requirements") },
         { id: "job-tailoring", label: "Prepare tailoring package", group: "This job", keywords: "tailor resume approve readiness", hint: "scrolls", run: () => jumpTo("job-tailoring") },
-        { id: "job-resume", label: "Show resume history", group: "This job", keywords: "quality pipeline writer iteration workflow", hint: "scrolls", run: () => jumpTo("job-resume") }
+        { id: "job-resume", label: "Show resume history", group: "This job", keywords: "quality pipeline writer iteration workflow", hint: "scrolls", run: () => jumpTo("job-resume") },
+        /* The tailoring plan: what will be emphasised, what must not be claimed, and where each
+         * technology may be used. Scrolls rather than navigates — it lives on this page. */
+        { id: "job-plan", label: "Open the tailoring plan", group: "This job", keywords: "resume studio evidence msi emphasize do not claim eligibility", hint: "scrolls", run: () => jumpTo("job-plan") }
       );
     }
 
-    // A free-text query becomes a real job search rather than a dead end.
+    // A free-text query becomes a real search rather than a dead end. Both destinations filter
+    // client-side against data they already load, so neither preloads an index for the palette.
     if (query.trim().length > 1) {
-      base.unshift({
-        id: "search-jobs",
-        label: `Search jobs for “${query.trim()}”`,
-        group: "Search",
-        hint: "title, company, description",
-        run: () => router.push(`/jobs?q=${encodeURIComponent(query.trim())}`),
-      });
+      const q = query.trim();
+      base.unshift(
+        {
+          id: "search-jobs",
+          label: `Search jobs for “${q}”`,
+          group: "Search",
+          hint: "title, company, description",
+          run: () => router.push(`/jobs?q=${encodeURIComponent(q)}`),
+        },
+        {
+          id: "search-companies",
+          label: `Find company “${q}”`,
+          group: "Search",
+          hint: "name",
+          run: () => router.push(`/companies?q=${encodeURIComponent(q)}`),
+        }
+      );
     }
     return base;
   }, [router, onJobsSurface, jumpTo, query]);

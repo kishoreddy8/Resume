@@ -565,7 +565,12 @@ export default function CompaniesPage() {
    * Same render-cap vocabulary as the jobs list and the ATS table; a search narrows the set rather
    * than forcing the cap upward. */
   const [limit, setLimit] = useState(COMPANY_LIMIT);
-  const [query, setQuery] = useState("");
+  /* Seeded from ?q= so the command bar can hand off a company search instead of dead-ending at an
+   * unfiltered list. Read once on mount; the field is the source of truth afterwards. */
+  const [query, setQuery] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("q") ?? "";
+  });
 
   const [loading, setLoading] = useState(true);
 
