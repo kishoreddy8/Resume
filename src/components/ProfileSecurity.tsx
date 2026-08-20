@@ -102,7 +102,8 @@ export function ProfileSecurity({ candidateId }: { candidateId: number }) {
       if (!res.ok) throw new Error(body.error ?? "Could not delete that profile.");
       const rows = Object.values(body.deletedRows ?? {}).reduce((a: number, b) => a + Number(b), 0);
       setMsg({ kind: "ok", text: `Deleted “${target.display_name}” — ${rows} rows removed.` });
-      await load();
+      // Reload so the app-shell candidate selector drops the deleted profile too — see page.tsx.
+      window.location.reload();
     } catch (e) {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "Could not delete that profile." });
     } finally {

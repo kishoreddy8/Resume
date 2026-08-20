@@ -129,7 +129,11 @@ export default function HomePage() {
       const res = await fetch(`/api/candidates/${c.id}`, { method: "DELETE" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Could not delete.");
-      await load();
+      /* Full reload rather than a local refetch. The candidate selector in the app shell fetches
+       * once on mount and lives outside this tree, so a local refetch left deleted profiles listed
+       * there — indistinguishable, from the user's side, from the delete having failed. Same
+       * approach CandidateSelector already uses when switching profiles. */
+      window.location.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not delete.");
     } finally {
