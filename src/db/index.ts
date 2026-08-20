@@ -984,6 +984,55 @@ function runApplicationVaultMigrations(db: Database.Database) {
   `);
 }
 
+/**
+ * Application runs and their history.
+ *
+ * PERSISTED, NOT IN MEMORY. A run can sit waiting for a CAPTCHA, an MFA code or an answer for as
+ * long as the user needs. Holding that in a process variable means restarting Career-Ops silently
+ * loses a half-completed application, and the user only finds out by discovering they never
+ * applied. State lives in SQLite so a restart is survivable.
+ *
+ * NO SECRETS HERE. Passwords and verification codes are never written to these tables — see the
+ * credential store for where a secret actually lives. `checkpoint_json` holds navigational state
+ * (URL, step, which fields are done), not values typed into sensitive fields.
+ *
+ * Additive: two new tables, nothing existing altered.
+ */
+function runApplicationRunMigrations(db: Database.Database) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS application_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+      job_id INTEGER NOT NULL,
+      dedupe_key TEXT NOT NULL,
+      ats TEXT,
+      apply_url TEXT,
+      status TEXT NOT NULL,
+      blocking_reason TEXT,
+      blocking_question TEXT,
+      checkpoint_json TEXT,
+      resume_file TEXT,
+      cover_letter_file TEXT,
+      submit_approved_at TEXT,
+      submitted_at TEXT,
+      confirmation_text TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS application_run_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id INTEGER NOT NULL REFERENCES application_runs(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      detail TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_app_runs_candidate_status ON application_runs(candidate_id, status);
+    CREATE INDEX IF NOT EXISTS idx_app_run_events_run ON application_run_events(run_id, id);
+  `);
+}
+
 function ensureCandidateOne(db: Database.Database) {
   const existing = db.prepare("SELECT id FROM candidates WHERE id = 1").get();
   if (existing) return;
@@ -1031,6 +1080,7 @@ function createConnection(): Database.Database {
   runTailoringApprovalMigrations(db);
   runJobSourceReviewMigrations(db);
   runApplicationVaultMigrations(db);
+  runApplicationRunMigrations(db);
   // 50K ATS/company registry: schema.sql creates the additive tables; this idempotent projection
   // runs only after every legacy company discovery/domain column is guaranteed to exist.
   runOrganizationRegistryBackfill(db);
