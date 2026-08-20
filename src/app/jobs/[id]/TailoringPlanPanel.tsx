@@ -33,11 +33,12 @@ const STATE_STYLE: Record<EvidenceState, { dot: string; text: string }> = {
 
 function RequirementRow({ r }: { r: PlanRequirement }) {
   const style = STATE_STYLE[r.state];
-  const sources: string[] = [];
-  if (r.employers.length > 0) sources.push(r.employers.join(", "));
-  if (r.inventoryOnly) sources.push("Skills Inventory only — no employer attribution");
-  if (r.transferableReason) sources.push(r.transferableReason);
+  /* Sources are NAMED — both candidate documents are first-class. The Master Skills Inventory is a
+   * declaration of technologies genuinely worked with, so it is listed as a source in its own right
+   * rather than footnoted as a weaker kind of evidence. */
+  const sources: string[] = [...r.sources];
   if (typeof r.yearsStated === "number") sources.push(`${r.yearsStated}y stated`);
+  if (r.transferableReason) sources.push(r.transferableReason);
 
   return (
     <li className="flex gap-2.5 py-1.5">
@@ -146,23 +147,35 @@ export function TailoringPlanPanel({ plan }: { plan: TailoringPlan }) {
                   <span className="text-[12.5px] font-medium text-primary">{e.employer}</span>
                   <span className="text-[11px] text-tertiary">{e.title}</span>
                 </div>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-secondary">
-                  {e.overlapping.length > 0 ? (
-                    <>
-                      Supports {e.overlapping.length} of this job&rsquo;s requirements:{" "}
-                      <span className="text-tertiary">{e.overlapping.join(", ")}</span>
-                    </>
-                  ) : (
-                    <span className="text-tertiary">
-                      Supports none of this job&rsquo;s stated requirements — no reason to lead with it here.
-                    </span>
-                  )}
-                </p>
-                {e.notEvidencedHere.length > 0 && (
+                {e.overlapping.length > 0 ? (
+                  <div className="mt-1 space-y-0.5">
+                    <p className="text-[11.5px] leading-relaxed text-secondary">
+                      Can support {e.overlapping.length} of this job&rsquo;s requirements.
+                    </p>
+                    {e.alreadyWritten.length > 0 && (
+                      <p className="text-[11px] leading-relaxed text-tertiary">
+                        <span className="text-secondary">Already written here: </span>
+                        {e.alreadyWritten.join(", ")}
+                      </p>
+                    )}
+                    {e.viaMsi.length > 0 && (
+                      <p className="text-[11px] leading-relaxed text-tertiary">
+                        <span className="text-secondary">Available via Master Skills Inventory: </span>
+                        {e.viaMsi.join(", ")}
+                        {" — declared experience the compressed resume does not happen to show under this client."}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-tertiary">
+                    Supports none of this job&rsquo;s stated requirements — no reason to lead with it here.
+                  </p>
+                )}
+                {e.prohibitedHere.length > 0 && (
                   <p className="mt-1 text-[11px] leading-relaxed text-tertiary">
                     <span className="text-secondary">Never attribute to {e.employer}: </span>
-                    {e.notEvidencedHere.slice(0, 8).join(", ")}
-                    {e.notEvidencedHere.length > 8 ? ` +${e.notEvidencedHere.length - 8} more` : ""}
+                    {e.prohibitedHere.slice(0, 8).join(", ")}
+                    {e.prohibitedHere.length > 8 ? ` +${e.prohibitedHere.length - 8} more` : ""}
                   </p>
                 )}
               </li>
@@ -185,6 +198,26 @@ export function TailoringPlanPanel({ plan }: { plan: TailoringPlan }) {
           </ul>
         </Block>
       )}
+
+      <div className="rounded-[var(--radius-lg)] border border-[var(--border)] px-3.5 py-2.5">
+        <h3 className="text-[9.5px] font-semibold uppercase tracking-[0.11em] text-tertiary">
+          What validation will enforce
+        </h3>
+        {/* Named, NOT ticked. These gates run after a resume is written, so showing them as passed
+         *  here would be a result invented before the work happened. The Resume section on this page
+         *  reports what they actually returned. */}
+        <ul className="mt-1.5 space-y-0.5 text-[11.5px] leading-relaxed text-tertiary">
+          <li>Employers, titles and dates must match the Master Resume exactly.</li>
+          <li>Every technology claimed must trace to the Master Resume or the Master Skills Inventory.</li>
+          <li>A technology the inventory scopes to another client may not be attributed here.</li>
+          <li>Certifications and stated years may not be invented or inflated.</li>
+          <li>One primary technology or capability per bullet.</li>
+        </ul>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-tertiary">
+          These run after generation. Results appear in the Resume section of this page — a resume
+          that fails them is not delivered.
+        </p>
+      </div>
 
       <p className="rounded-[var(--radius-lg)] border border-[var(--border)] px-3.5 py-2.5 text-[11.5px] leading-relaxed text-tertiary">
         <span className="font-medium text-secondary">This plan is guidance, not a decision. </span>

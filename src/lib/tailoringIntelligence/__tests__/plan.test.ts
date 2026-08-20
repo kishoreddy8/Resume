@@ -112,7 +112,99 @@ test("TI-5 Required outranks Preferred even when the Preferred one has stronger 
   assert.equal(plan.emphasize[0].label, "MustHave");
 });
 
-test("TI-6 employer emphasis is real overlap, ranked, with zero-overlap roles last", () => {
+/* ── The MSI evidence contract, end to end through the plan ─────────────────────────────────── */
+
+test("EAT-1 a skill declared ONLY in the Master Skills Inventory is usable at a listed client", () => {
+  // Terraform is declared in the inventory with NO employer attribution, and appears in neither
+  // role's technologies — exactly the case the old rule refused to use anywhere.
+  const plan = buildTailoringPlan(
+    result({
+      inventoryOnlyMatches: [
+        match("Terraform", { evidence: { source: "inventory_only", rawSkillName: "Terraform", canonicalSkillName: "Terraform" } }),
+      ],
+    }),
+    profile
+  );
+  for (const e of plan.employerEmphasis) {
+    assert.ok(e.viaMsi.includes("Terraform"), `${e.employer}: MSI evidence must be usable where the resume does not show it`);
+    assert.ok(e.overlapping.includes("Terraform"), `${e.employer}: and must count toward that role's emphasis`);
+    assert.ok(!e.alreadyWritten.includes("Terraform"), `${e.employer}: while staying separated from what IS written`);
+  }
+});
+
+test("EAT-2 the Master Skills Inventory is named as a source, not footnoted as weaker evidence", () => {
+  const plan = buildTailoringPlan(
+    result({
+      inventoryOnlyMatches: [
+        match("PySpark", { evidence: { source: "inventory_only", rawSkillName: "PySpark", canonicalSkillName: "PySpark" } }),
+      ],
+      employerEvidencedMatches: [
+        match("Snowflake", { evidence: { source: "employer", rawSkillName: "Snowflake", canonicalSkillName: "Snowflake", employers: ["Comerica"] } }),
+      ],
+    }),
+    profile
+  );
+  const pyspark = plan.requirements.find((r) => r.label === "PySpark")!;
+  const snowflake = plan.requirements.find((r) => r.label === "Snowflake")!;
+  assert.ok(pyspark.sources.includes("Master Skills Inventory"));
+  assert.ok(snowflake.sources.some((x) => x.startsWith("Master Resume — Comerica")));
+});
+
+test("EAT-3 a skill in neither document is never made available at any client", () => {
+  // Kafka appears in no skill entry and no role's technologies.
+  const plan = buildTailoringPlan(result({ missingRequirements: [match("Kafka")] }), profile);
+  for (const e of plan.employerEmphasis) {
+    assert.ok(!e.viaMsi.includes("Kafka"), "MSI availability can never manufacture undeclared evidence");
+    assert.ok(!e.alreadyWritten.includes("Kafka"));
+    assert.ok(!e.overlapping.includes("Kafka"));
+  }
+  assert.ok(plan.doNotClaim.some((r) => r.label === "Kafka"));
+});
+
+test("EAT-4 ranking counts written AND MSI-available evidence, so no role is understated", () => {
+  const plan = buildTailoringPlan(
+    result({
+      employerEvidencedMatches: [
+        match("Snowflake", { evidence: { source: "employer", rawSkillName: "Snowflake", canonicalSkillName: "Snowflake", employers: ["Comerica"] } }),
+      ],
+      inventoryOnlyMatches: [
+        match("PySpark", { evidence: { source: "inventory_only", rawSkillName: "PySpark", canonicalSkillName: "PySpark" } }),
+      ],
+    }),
+    profile
+  );
+  for (const e of plan.employerEmphasis) {
+    assert.equal(
+      e.overlapping.length,
+      new Set([...e.alreadyWritten, ...e.viaMsi]).size,
+      `${e.employer}: the count must be the union, not just what is written`
+    );
+  }
+});
+
+test("EAT-5 a role with no written evidence never outranks one that has some", () => {
+  /* The inventory is global, so MSI availability alone says nothing about whether a role is the
+   * right one to emphasise. Ranking must lead with evidence the resume actually carries. */
+  const plan = buildTailoringPlan(
+    result({
+      employerEvidencedMatches: [
+        match("Snowflake", { evidence: { source: "employer", rawSkillName: "Snowflake", canonicalSkillName: "Snowflake", employers: ["Comerica"] } }),
+      ],
+      inventoryOnlyMatches: [
+        match("Terraform", { evidence: { source: "inventory_only", rawSkillName: "Terraform", canonicalSkillName: "Terraform" } }),
+      ],
+    }),
+    profile
+  );
+  const written = plan.employerEmphasis.map((e) => e.alreadyWritten.length);
+  assert.deepEqual(
+    [...written].sort((a, b) => b - a),
+    written,
+    "roles must be ordered by written evidence first, not by globally-available inventory skills"
+  );
+});
+
+test("TI-6 employer emphasis is real overlap, ranked, and never invented", () => {
   const plan = buildTailoringPlan(
     result({
       employerEvidencedMatches: [
@@ -121,10 +213,24 @@ test("TI-6 employer emphasis is real overlap, ranked, with zero-overlap roles la
     }),
     profile
   );
+  // Comerica has it WRITTEN, so it ranks on the strongest evidence and reports it as already-written.
   assert.equal(plan.employerEmphasis[0].employer, "Comerica");
-  assert.ok(plan.employerEmphasis[0].overlapping.includes("Snowflake"));
-  const last = plan.employerEmphasis[plan.employerEmphasis.length - 1];
-  assert.equal(last.overlapping.length, 0, "a role with no overlap must not be given invented relevance");
+  assert.ok(plan.employerEmphasis[0].alreadyWritten.includes("Snowflake"));
+
+  /* Under the MSI contract the other role can also support Snowflake — the inventory declares it
+   * without restriction — but it must be reported as MSI-available, never as already written. */
+  const intl = plan.employerEmphasis.find((e) => e.employer === "IntlMotors")!;
+  assert.ok(!intl.alreadyWritten.includes("Snowflake"), "it is not written under this client and must not claim to be");
+
+  // Nothing outside the candidate's documents ever enters any bucket.
+  for (const e of plan.employerEmphasis) {
+    for (const label of e.overlapping) {
+      assert.ok(
+        plan.requirements.some((r) => r.label === label),
+        `${label} was not a requirement of this job — emphasis must never invent one`
+      );
+    }
+  }
 });
 
 test("TI-7 with no candidate profile, employer emphasis is omitted rather than approximated", () => {

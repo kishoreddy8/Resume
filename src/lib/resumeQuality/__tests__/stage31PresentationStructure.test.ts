@@ -226,22 +226,60 @@ test("S31-07 the Project/Environment labels are emphasised so they read as annot
 
 // --- S31-08..11 — employer-scoped attribution (the safety core) ---------------------------------
 
-test("S31-08 an Environment technology evidenced only at ANOTHER employer is caught", () => {
+/* REVISED BY THE MSI EVIDENCE CONTRACT.
+ *
+ * S31-08 and S31-09 previously asserted that a technology evidenced at ANOTHER employer, and an
+ * inventory-only technology, were both rejected under a given employer. Those were the two rules
+ * the MSI contract replaces: a Master Resume is compressed, so its silence about a technology under
+ * one client is not a statement that the candidate never used it there, and the Master Skills
+ * Inventory is candidate-declared evidence rather than a keyword list.
+ *
+ * The safety core they were protecting is unchanged and is still asserted below — an explicitly
+ * client-scoped technology, and one with no evidence anywhere, are both still caught. */
+
+test("S31-08 a technology evidenced at ANOTHER employer may now be used here", () => {
   const content = resume();
-  content.experience[0].environment = ["Azure Data Factory", "Snowflake"]; // Snowflake is Microgate's
-  const issues = checkPresentationAttribution(content, PROFILE);
+  content.experience[0].environment = ["Azure Data Factory", "Snowflake"]; // Snowflake is written at Microgate
+  assert.deepEqual(
+    checkPresentationAttribution(content, PROFILE),
+    [],
+    "the Master Resume's silence about Snowflake at Comerica is not evidence of absence"
+  );
+});
+
+test("S31-08b an EXPLICITLY client-scoped technology is still caught elsewhere", () => {
+  // Same shape as S31-08, except the inventory itself limits the skill.
+  const scoped: CandidateProfile = {
+    ...PROFILE,
+    skills: PROFILE.skills.map((sk) =>
+      sk.rawSkillName === "Snowflake" ? { ...sk, restrictedToEmployers: ["Microgate Technologies"] } : sk
+    ),
+  };
+  const content = resume();
+  content.experience[0].environment = ["Azure Data Factory", "Snowflake"];
+  const issues = checkPresentationAttribution(content, scoped);
   assert.equal(issues.length, 1, `expected exactly one issue, got ${JSON.stringify(issues)}`);
   assert.equal(issues[0].field, "environment");
   assert.equal(issues[0].offending, "Snowflake");
   assert.match(issues[0].message, /Comerica Bank/);
 });
 
-test("S31-09 an inventory-only technology may not be listed under any employer", () => {
+test("S31-09 an inventory-declared technology may now be listed under an employer", () => {
   const content = resume();
   content.experience[0].environment = ["Terraform"];
+  assert.deepEqual(
+    checkPresentationAttribution(content, PROFILE),
+    [],
+    "the Skills Inventory is genuine candidate evidence, not a keyword list"
+  );
+});
+
+test("S31-09b a technology evidenced NOWHERE is still rejected", () => {
+  const content = resume();
+  content.experience[0].environment = ["Kafka"];
   const issues = checkPresentationAttribution(content, PROFILE);
   assert.equal(issues.length, 1);
-  assert.equal(issues[0].offending, "Terraform");
+  assert.equal(issues[0].offending, "Kafka");
 });
 
 test("S31-10 a correctly-attributed Environment line produces no issues at all", () => {
@@ -273,12 +311,15 @@ test("S31-12 attribution failures reach the quality gate through truthfulness, n
   const clean = evaluateTruthfulness(resume(), PROFILE);
   assert.equal(clean.truthfulnessScore, 100, `baseline must be clean: ${JSON.stringify(clean.truthfulnessIssues)}`);
 
+  /* Uses a technology evidenced NOWHERE, since a cross-employer one is no longer a failure. The
+   * property under test is unchanged: a real attribution failure must reduce the truthfulness score
+   * and name the offending technology, rather than being swallowed. */
   const dirty = resume();
-  dirty.experience[0].environment = ["Azure Data Factory", "Snowflake"];
+  dirty.experience[0].environment = ["Azure Data Factory", "Kafka"];
   const result = evaluateTruthfulness(dirty, PROFILE);
   assert.ok(result.truthfulnessScore < 100, "the gate requires 100, so this must reduce the score");
   assert.ok(
-    result.truthfulnessIssues.some((i) => i.includes("Snowflake")),
+    result.truthfulnessIssues.some((i) => i.includes("Kafka")),
     "the concrete offending technology must reach the writer"
   );
 });

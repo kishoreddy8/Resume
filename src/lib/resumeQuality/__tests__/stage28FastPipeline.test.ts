@@ -220,19 +220,25 @@ const PROFILE: CandidateProfile = {
   certifications: [],
 } as unknown as CandidateProfile;
 
-test("S28-20 employer evidence separates global skills from employer-specific experience", () => {
+test("S28-20 employer evidence separates what is already written from what may be brought in", () => {
   const map = buildEmployerEvidenceMap(PROFILE);
   const fiserv = map.employers.find((e) => e.employer === "Fiserv")!;
   const microgate = map.employers.find((e) => e.employer === "Microgate Technologies")!;
 
-  assert.ok(fiserv.supported.includes("Surrogate Keys"), "explicit attribution counts as support");
-  assert.ok(fiserv.supported.includes("Azure Data Factory"), "the role's own bullets count as support");
-  // The exact Stage 27 leakage, now stated as prohibited.
+  assert.ok(fiserv.supported.includes("Surrogate Keys"), "explicit attribution counts as already-written");
+  assert.ok(fiserv.supported.includes("Azure Data Factory"), "the role's own bullets count as already-written");
+
+  /* REVISED BY THE MSI EVIDENCE CONTRACT. This test previously asserted that a technology evidenced
+   * at another employer was PROHIBITED at Fiserv. That encoded the rule the MSI contract replaces:
+   * a Master Resume is compressed, so its silence about a technology under one client is not a
+   * statement that the candidate never used it there. The separation of "already written" from
+   * "available" is still asserted — only the verdict on the second bucket changed. */
   for (const tech of ["Python", "Spark"]) {
-    assert.ok(!fiserv.supported.includes(tech), `${tech} is not Fiserv evidence`);
-    assert.ok(fiserv.notEvidencedHere.includes(tech), `${tech} must be explicitly prohibited at Fiserv`);
+    assert.ok(!fiserv.supported.includes(tech), `${tech} is not written under Fiserv`);
+    assert.ok(fiserv.availableViaMsi.includes(tech), `${tech} is declared evidence and may be brought in`);
+    assert.ok(!fiserv.prohibitedHere.includes(tech), `${tech} carries no explicit client restriction`);
   }
-  assert.ok(microgate.notEvidencedHere.includes("Surrogate Keys"), "Surrogate Keys must be prohibited at Microgate");
+  assert.ok(microgate.availableViaMsi.includes("Surrogate Keys"), "available at Microgate, not prohibited");
 });
 
 test("S28-21 inventory-only skills are attributed to no employer at all", () => {
@@ -246,25 +252,33 @@ test("S28-21 inventory-only skills are attributed to no employer at all", () => 
 test("S28-22 negative evidence is derived, never invented", () => {
   const map = buildEmployerEvidenceMap(PROFILE);
   const fiserv = map.employers.find((e) => e.employer === "Fiserv")!;
-  // Only technologies genuinely evidenced SOMEWHERE may appear as prohibited-here; the module never
-  // asserts the candidate lacks a skill, and never lists a technology nobody has evidence for.
-  const evidencedSomewhere = new Set(["Python", "Spark", "Surrogate Keys", "Azure Data Factory", "SQL"]);
-  for (const tech of fiserv.notEvidencedHere) {
-    assert.ok(evidencedSomewhere.has(tech), `${tech} was invented as negative evidence`);
+  /* The prohibition list is now reserved for EXPLICIT client scoping, so with no restricted skills
+   * in this fixture it must be empty — the module still never asserts the candidate lacks a skill,
+   * and now also never prohibits one merely because the resume is silent about it here. */
+  assert.deepEqual(fiserv.prohibitedHere, [], "nothing in this profile carries an explicit restriction");
+  const declaredSomewhere = new Set(["Python", "Spark", "Surrogate Keys", "Azure Data Factory", "SQL", "Kubernetes"]);
+  for (const tech of fiserv.availableViaMsi) {
+    assert.ok(declaredSomewhere.has(tech), `${tech} was invented as available evidence`);
   }
-  assert.ok(!fiserv.notEvidencedHere.includes("Kubernetes"), "an inventory-only skill is not employer-leakage");
 });
 
 test("S28-23 the rendered writer section states the stricter cover-letter rule", () => {
   const section = renderEmployerEvidenceSection(buildEmployerEvidenceMap(PROFILE));
-  assert.match(section, /EMPLOYER-SCOPED EVIDENCE/);
-  assert.match(section, /NOT evidenced here/);
+  assert.match(section, /PER-EMPLOYER EVIDENCE/);
+  assert.match(section, /Available here under the MSI rule/);
   assert.match(section, /cover letter/i);
   assert.ok(
     section.includes("must also appear in the bullets you write for that same employer"),
     "the cover letter is validated against the written resume, not against this map — the writer must be told so"
   );
-  assert.match(section, /wrong employer is a fabrication/i);
+  /* The old assertion required "attributing a real skill to the wrong employer is a fabrication",
+   * which is precisely the sentence the MSI contract retires. What must still be stated is that
+   * anything outside BOTH candidate sources is a fabrication, and that explicit client scoping is
+   * absolute — both are asserted here instead of dropping the guarantee. */
+  assert.match(section, /remains a fabrication and is rejected as such/i);
+  assert.match(section, /EXPLICITLY SCOPED TO OTHER CLIENTS/);
+  assert.match(section, /One PRIMARY technology or capability per bullet still applies/i);
+  assert.match(section, /Employers, titles, dates, education, certifications, project identity and chronology are hard facts/i);
 });
 
 test("S28-24 an empty profile produces no employer section rather than an invented one", () => {

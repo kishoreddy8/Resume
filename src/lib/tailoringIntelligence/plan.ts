@@ -68,15 +68,26 @@ export interface PlanRequirement {
   transferableReason: string | null;
   /** True when the only evidence is inventory-level, with no employer behind it. */
   inventoryOnly: boolean;
+  /**
+   * Where this evidence comes from, named. Both candidate documents are first-class sources: the
+   * Master Skills Inventory is a declaration of technologies genuinely worked with, not a keyword
+   * list, so a requirement it covers says "Master Skills Inventory" rather than being reported as
+   * a thinner kind of evidence.
+   */
+  sources: string[];
 }
 
 export interface EmployerEmphasis {
   employer: string;
   title: string;
-  /** Requirements of THIS job that this employer's own evidence supports. */
+  /** Requirements of THIS job this role can support — written here OR available under the MSI rule. */
   overlapping: string[];
-  /** Technologies evidenced at a DIFFERENT employer — the real mis-attribution risks. */
-  notEvidencedHere: string[];
+  /** The subset already written under this employer in the Master Resume. */
+  alreadyWritten: string[];
+  /** The subset usable here because the Master Skills Inventory declares them without restriction. */
+  viaMsi: string[];
+  /** Technologies the MSI explicitly limits to other clients — the only real mis-attribution risk. */
+  prohibitedHere: string[];
 }
 
 export interface TailoringPlan {
@@ -107,15 +118,28 @@ export interface TailoringPlan {
 const LEVEL: Record<string, "Required" | "Preferred"> = { Required: "Required", Preferred: "Preferred" };
 
 function toPlanRequirement(match: RequirementMatch, state: EvidenceState): PlanRequirement {
+  const employers = match.evidence?.employers ?? [];
+  const inventoryOnly = match.evidence?.source === "inventory_only";
+
+  /* Named sources, never a count. An empty list means the engine recorded no source, which is
+   * itself the honest answer for a missing or unresolved requirement. */
+  const sources: string[] = [];
+  if (employers.length > 0) sources.push(`Master Resume — ${employers.join(", ")}`);
+  if (inventoryOnly || match.evidence?.rawSkillName) sources.push("Master Skills Inventory");
+  if (match.transferable) {
+    sources.push(`Transferable from ${match.transferable.fromRawSkillName}`);
+  }
+
   return {
+    sources: [...new Set(sources)],
     label: match.requirement.label,
     state,
     requirementLevel: LEVEL[match.requirement.requirementLevel] ?? "Required",
     criticality: match.requirement.criticality,
-    employers: match.evidence?.employers ?? [],
+    employers,
     yearsStated: typeof match.evidence?.yearsStated === "number" ? match.evidence.yearsStated : null,
     transferableReason: match.transferable?.reason ?? null,
-    inventoryOnly: match.evidence?.source === "inventory_only",
+    inventoryOnly,
   };
 }
 
@@ -164,29 +188,60 @@ export function buildTailoringPlan(
     const map = buildEmployerEvidenceMap(profile);
     inventoryOnlyCount = map.inventoryOnlyCount;
 
-    const evidencedLabels = requirements.filter((r) => r.state === "STRONG" || r.state === "PARTIAL");
+    /* MENTIONED is included deliberately. It means the Master Skills Inventory declares the skill
+     * with no employer attribution — and the inventory is a statement of technologies genuinely
+     * worked with, not a keyword list. Excluding it made MSI-only evidence count for nothing when
+     * choosing which roles to emphasise, which is the interpretation the MSI contract replaces. */
+    const evidencedLabels = requirements.filter(
+      (r) => r.state === "STRONG" || r.state === "PARTIAL" || r.state === "MENTIONED"
+    );
 
     employerEmphasis = map.employers
       .map((e) => {
-        const supported = new Set(e.supported.map((s) => s.trim().toLowerCase()));
-        const overlapping = evidencedLabels
-          .filter(
-            (r) =>
-              // Either the engine named this employer outright, or this employer supports the skill.
-              r.employers.some((emp) => emp.trim().toLowerCase() === e.employer.trim().toLowerCase()) ||
-              supported.has(r.label.trim().toLowerCase())
-          )
-          .map((r) => r.label);
+        const written = new Set(e.supported.map((s) => s.trim().toLowerCase()));
+        const msi = new Set(e.availableViaMsi.map((s) => s.trim().toLowerCase()));
+        const here = e.employer.trim().toLowerCase();
+
+        const alreadyWritten: string[] = [];
+        const viaMsi: string[] = [];
+
+        for (const r of evidencedLabels) {
+          const label = r.label.trim().toLowerCase();
+          if (r.employers.some((emp) => emp.trim().toLowerCase() === here) || written.has(label)) {
+            alreadyWritten.push(r.label);
+          } else if (msi.has(label)) {
+            /* The Master Skills Inventory is candidate-declared evidence, so a requirement it
+             * covers is genuinely supportable at this client even though the compressed Master
+             * Resume does not happen to show it here. Counting only what is already written
+             * understated every role and would have ranked the emphasis wrongly. */
+            viaMsi.push(r.label);
+          }
+        }
+
+        const dedupe = (xs: string[]) => [...new Set(xs)];
         return {
           employer: e.employer,
           title: e.title,
-          overlapping: [...new Set(overlapping)],
-          notEvidencedHere: e.notEvidencedHere,
+          overlapping: dedupe([...alreadyWritten, ...viaMsi]),
+          alreadyWritten: dedupe(alreadyWritten),
+          viaMsi: dedupe(viaMsi),
+          prohibitedHere: e.prohibitedHere,
         };
       })
-      // Most overlap first. A stable sort keeps the profile's own order for equal counts, so the
-      // ranking never appears to encode a judgement it does not have.
-      .sort((a, b) => b.overlapping.length - a.overlapping.length);
+      /* Written evidence ranks first, then total supportable.
+       *
+       * Ordering on the total alone let a role with NO written evidence outrank one with plenty,
+       * purely because the inventory is global and therefore available everywhere. Observed on real
+       * data: an electrical-machines manufacturing traineeship surfaced seven "available" cloud
+       * data-engineering requirements and zero written ones. The MSI contract genuinely permits
+       * using declared skills at a listed client, but only where it is technically plausible — a
+       * judgement nothing here can compute. Sorting on what is actually written keeps the
+       * recommendation grounded in evidence the resume already carries, and leaves the plausibility
+       * call where the canonical rule puts it: with the writer, under conditions it must satisfy.
+       *
+       * A stable sort keeps the profile's own order for equal counts, so the ranking never appears
+       * to encode a judgement it does not have. */
+      .sort((a, b) => b.alreadyWritten.length - a.alreadyWritten.length || b.overlapping.length - a.overlapping.length);
   }
 
   /* Named from what the emphasis would actually touch, never a fabricated count of "changes". */

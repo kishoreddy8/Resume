@@ -93,13 +93,21 @@ export function checkPresentationAttribution(
     // in checkEmploymentFacts; not this module's finding to duplicate.
     if (!employerEvidence) continue;
 
-    const supportedKeys = new Set(employerEvidence.supported.map(normalizeKey));
+    /* The Master Skills Inventory is candidate-declared evidence, not a keyword list, and a
+     * compressed Master Resume's silence about a technology under one client is not a statement
+     * that it was never used there. So an Environment entry is accepted when it is written here OR
+     * available here under the MSI rule. What stays rejected is unchanged: anything the candidate
+     * cannot evidence at all, and anything the MSI explicitly scopes to other clients — those never
+     * enter `availableViaMsi` in the first place. */
+    const supportedKeys = new Set(
+      [...employerEvidence.supported, ...employerEvidence.availableViaMsi].map(normalizeKey)
+    );
     const ownText = roleOwnText(role);
     const ownTextLower = ownText.toLowerCase();
     // Canonical forms let "ADF" in an Environment line match "Azure Data Factory" in the evidence,
     // and vice versa, instead of failing on a spelling the writer was never told to use.
     const supportedCanonical = extractCanonicalSkillsFromText(
-      [...employerEvidence.supported, ownText].join(" \n ")
+      [...employerEvidence.supported, ...employerEvidence.availableViaMsi, ownText].join(" \n ")
     );
 
     // --- Environment: every listed technology must be evidenced AT THIS EMPLOYER ---------------
@@ -334,9 +342,10 @@ export function renderPresentationStandardSection(profile: CandidateProfile | un
     "figure in it must already appear in THIS role's own bullets. Introducing anything new here is a " +
     "truthfulness failure and is checked automatically.\n";
   out +=
-    "  - `environment` — the technology stack of THIS role, and only technologies the employer-evidence " +
-    "section above marks as supported for THIS employer. A technology the candidate genuinely knows but " +
-    "used somewhere else may not be listed here. This is checked automatically, per employer, per item.\n\n";
+    "  - `environment` — the technology stack of THIS role. Every entry must be either Already written " +
+    "for THIS employer or Available here under the MSI rule, per the per-employer evidence section above. " +
+    "A technology the candidate cannot evidence at all, or one the inventory explicitly scopes to another " +
+    "client, may not be listed. This is checked automatically, per employer, per item.\n\n";
   out +=
     "Write every bullet as a complete sentence. Never abbreviate, elide or end one with \"…\" to save space — " +
     "the layout is dense enough to carry full bullets, and a cut bullet is a defect, not a fit.\n\n";

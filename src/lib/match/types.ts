@@ -23,6 +23,9 @@ export interface CandidateSkillEntry {
   rawSkillName: string;
   source: SkillEvidenceSource;
   attributedTo?: { employer: string; project?: string }[];
+  /** Employers this skill is EXPLICITLY limited to, per the Master Skills Inventory's own wording.
+   *  Absent means unrestricted — NOT "restricted to wherever attributedTo happens to name". */
+  restrictedToEmployers?: string[];
   /** Only set when the Master Resume/Skills Inventory explicitly states a number for THIS skill —
    *  never inferred from an employer's tenure or a role's date range. */
   yearsStated?: number;

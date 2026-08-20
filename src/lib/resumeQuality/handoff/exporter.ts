@@ -521,7 +521,8 @@ export function exportExternalWriterPackage(
           ? buildEmployerEvidenceMap(writerInput.masterProfile).employers.map((e) => ({
               employer: e.employer,
               supportedCount: e.supported.length,
-              prohibitedCount: e.notEvidencedHere.length,
+              msiAvailableCount: e.availableViaMsi.length,
+              prohibitedCount: e.prohibitedHere.length,
             }))
           : undefined,
         repairPlan: writerInput.repairPlan,

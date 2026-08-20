@@ -29,12 +29,22 @@ export interface EmployerEvidence {
   /** Technologies this employer's own evidence supports, sorted for deterministic output. */
   supported: string[];
   /**
-   * Technologies evidenced for the candidate at a DIFFERENT employer and not at this one — i.e. the
-   * specific, real confusion risks. Deliberately not "every skill the candidate has never used here":
-   * the inventory holds hundreds of entries, and listing them all would bury the handful that
-   * actually get mis-attributed while making the prompt enormous.
+   * Technologies the candidate declares but which are NOT written under this employer — available
+   * to use here under the Master Skills Inventory rule, when JD-relevant and architecturally
+   * plausible.
+   *
+   * This list used to be called "not evidenced here" and was flatly prohibited. That conflated two
+   * different facts: a resume is compressed, so its silence about a technology under one client is
+   * not a statement that the candidate never used it there. The Master Skills Inventory is a
+   * candidate-authored declaration of technologies genuinely worked with, and it is not scoped to
+   * whichever client the resume happened to mention.
    */
-  notEvidencedHere: string[];
+  availableViaMsi: string[];
+  /**
+   * The only real prohibition: technologies the MSI EXPLICITLY limits to other clients. An explicit
+   * restriction is a statement about limits, unlike a resume's silence, so it is honoured absolutely.
+   */
+  prohibitedHere: string[];
 }
 
 export interface EmployerEvidenceMap {
@@ -45,6 +55,8 @@ export interface EmployerEvidenceMap {
    */
   inventoryOnlyCount: number;
 }
+
+import { evidenceForEmployer } from "./msiEvidence";
 
 function normalizeKey(value: string): string {
   return value.trim().toLowerCase();
@@ -80,22 +92,22 @@ export function buildEmployerEvidenceMap(profile: CandidateProfile): EmployerEvi
     }
   }
 
-  // Every technology evidenced ANYWHERE at a named employer — the universe from which each
-  // employer's "not evidenced here" list is the complement.
-  const evidencedSomewhere = new Map<string, string>();
-  for (const bucket of supportedByEmployer.values()) {
-    for (const [key, display] of bucket) evidencedSomewhere.set(key, display);
-  }
-
   const employers: EmployerEvidence[] = profile.experience.map((entry) => {
     const key = normalizeKey(entry.employer);
     const bucket = supportedByEmployer.get(key) ?? new Map<string, string>();
     const supported = [...bucket.values()].sort((a, b) => a.localeCompare(b));
-    const notEvidencedHere = [...evidencedSomewhere.entries()]
-      .filter(([techKey]) => !bucket.has(techKey))
-      .map(([, display]) => display)
-      .sort((a, b) => a.localeCompare(b));
-    return { employer: entry.employer, title: entry.title, supported, notEvidencedHere };
+
+    /* Classification is delegated so there is ONE definition of what MSI evidence means, shared with
+     * the deterministic presentation check. Two implementations would eventually disagree, and the
+     * disagreement would surface as a resume rejected for a claim the prompt had just permitted. */
+    const classified = evidenceForEmployer(profile, entry.employer);
+    return {
+      employer: entry.employer,
+      title: entry.title,
+      supported,
+      availableViaMsi: classified.availableViaMsi,
+      prohibitedHere: classified.prohibitedHere,
+    };
   });
 
   return {
@@ -115,32 +127,45 @@ export function buildEmployerEvidenceMap(profile: CandidateProfile): EmployerEvi
 export function renderEmployerEvidenceSection(map: EmployerEvidenceMap): string {
   if (map.employers.length === 0) return "";
 
-  let out = "## EMPLOYER-SCOPED EVIDENCE — WHAT EACH EMPLOYER SUPPORTS, AND WHAT IT DOES NOT\n\n";
+  let out = "## PER-EMPLOYER EVIDENCE — WHAT IS ALREADY WRITTEN, WHAT MAY BE BROUGHT IN, WHAT MAY NOT\n\n";
   out +=
-    "A technology existing somewhere in this candidate's skills inventory does NOT make it attributable to every " +
-    "employer. Global skill evidence is not employer-specific experience evidence. For each employer below you may " +
-    "only present the technologies under **Supported here**.\n\n";
+    "The Master Resume is a compressed presentation of this career, not an exhaustive log of it. The absence of a " +
+    "technology under a client therefore does NOT mean the candidate never used it there. The Master Skills " +
+    "Inventory is the candidate's own declaration of technologies they have genuinely worked with — it is evidence, " +
+    "not a keyword list — and it is not confined to whichever client the resume happens to mention.\n\n";
 
   for (const employer of map.employers) {
     out += `### ${employer.employer} — ${employer.title}\n`;
-    out += `- **Supported here (${employer.supported.length}):** ${employer.supported.join(", ") || "(none recorded)"}\n`;
-    if (employer.notEvidencedHere.length > 0) {
+    out += `- **Already written here (${employer.supported.length}):** ${employer.supported.join(", ") || "(none recorded)"}\n`;
+    if (employer.availableViaMsi.length > 0) {
       out +=
-        `- **NOT evidenced here — never attribute these to ${employer.employer} (${employer.notEvidencedHere.length}):** ` +
-        `${employer.notEvidencedHere.join(", ")}\n`;
+        `- **Available here under the MSI rule (${employer.availableViaMsi.length}):** ` +
+        `${employer.availableViaMsi.join(", ")}\n`;
+    }
+    if (employer.prohibitedHere.length > 0) {
+      out +=
+        `- **EXPLICITLY SCOPED TO OTHER CLIENTS — never attribute these to ${employer.employer} ` +
+        `(${employer.prohibitedHere.length}):** ${employer.prohibitedHere.join(", ")}\n`;
     }
     out += "\n";
   }
 
   out += "**Rules that follow from the above — all are enforced by CareerOps' own review:**\n";
   out +=
-    "1. A resume bullet under an employer may only claim technologies listed as Supported for THAT employer.\n" +
-    `2. ${map.inventoryOnlyCount} further skills exist in the inventory with no employer attribution at all. They may ` +
-    "appear in a skills section as capabilities, but must never be described as work performed at a named employer.\n" +
-    "3. The cover letter is held to a STRICTER rule than this map: every technology it attributes to an employer must " +
-    "also appear in the bullets you write for that same employer in THIS resume. Supported-but-unused is not enough — " +
+    "1. A bullet under an employer may claim anything listed as Already written OR Available under the MSI rule for " +
+    "THAT employer, subject to the MASTER SKILLS INVENTORY RULE above: architecturally compatible with that " +
+    "project's real stack, not contradicting a more specific Master Resume fact, not stacking competing tools for " +
+    "the same responsibility, realistic for that project's objective, and defensible in an interview.\n" +
+    "2. A technology listed as EXPLICITLY SCOPED TO OTHER CLIENTS may never be attributed here. An explicit " +
+    "restriction is a statement about limits; a resume's silence is not.\n" +
+    "3. Nothing outside both the Master Resume and the Master Skills Inventory may be claimed anywhere, at any " +
+    "employer, under any circumstances. That remains a fabrication and is rejected as such.\n" +
+    "4. Bringing a technology in does not license keyword stuffing. One PRIMARY technology or capability per bullet " +
+    "still applies; supporting technologies appear only where the architecture genuinely requires them.\n" +
+    "5. The cover letter is held to a STRICTER rule than this map: every technology it attributes to an employer must " +
+    "also appear in the bullets you write for that same employer in THIS resume. Available-but-unused is not enough — " +
     "if you did not put it in that employer's bullets, do not attribute it to them in the cover letter.\n" +
-    "4. Attributing a real skill to the wrong employer is a fabrication, and is rejected exactly as harshly as " +
-    "inventing a technology outright.\n\n";
+    "6. Employers, titles, dates, education, certifications, project identity and chronology are hard facts. The MSI " +
+    "rule widens which TECHNOLOGIES may be discussed; it never touches any of those.\n\n";
   return out;
 }

@@ -48,6 +48,17 @@ const skillEntrySchema = z
     rawSkillName: z.string().min(1),
     source: z.enum(["employer", "inventory_only"]),
     attributedTo: z.array(z.object({ employer: z.string().min(1), project: z.string().optional() })).optional(),
+    /**
+     * Employers this skill is EXPLICITLY limited to, when the Master Skills Inventory itself says so
+     * (e.g. "Kubernetes — Client A only").
+     *
+     * Distinct from `attributedTo`, which merely records where the resume happens to mention it. A
+     * resume is compressed, so the absence of a technology under a client is not a statement that it
+     * was never used there — but an explicit restriction IS a statement, and it wins. Optional, so
+     * every profile written before this field existed still validates and simply carries no
+     * restrictions.
+     */
+    restrictedToEmployers: z.array(z.string().min(1)).optional(),
     yearsStated: z.number().positive().optional(),
   })
   .strict();
