@@ -34,12 +34,15 @@ export interface JobMatch {
   evaluate: () => Promise<void>;
 }
 
-export function useJobMatch(jobId: number, candidateId: number): JobMatch {
+/** `candidateId` may be null while the active candidate is still resolving; nothing is fetched
+ *  until it is known, so the guess never produces a request for the wrong profile. */
+export function useJobMatch(jobId: number, candidateId: number | null): JobMatch {
   const [result, setResult] = useState<JobMatchResult | null>(null);
   const [state, setState] = useState<MatchState>("idle");
   const [reason, setReason] = useState<string | null>(null);
 
   async function loadLatest() {
+    if (candidateId === null) return;
     setState("loading");
     try {
       const res = await fetch(`/api/jobs/${jobId}/match?candidateId=${candidateId}`);
@@ -68,6 +71,7 @@ export function useJobMatch(jobId: number, candidateId: number): JobMatch {
   }, [jobId, candidateId]);
 
   async function evaluate() {
+    if (candidateId === null) return;
     setState("loading");
     try {
       const res = await fetch(`/api/jobs/${jobId}/match`, {

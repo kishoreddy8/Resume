@@ -6,6 +6,7 @@ import { H1bBadge } from "@/components/H1bBadge";
 import { PipelineStatusSelect } from "@/components/PipelineStatusSelect";
 import { AiInsightsCard } from "./AiInsightsCard";
 import { Disclosure } from "./Disclosure";
+import { TailoringIntelligence } from "./TailoringIntelligence";
 import { JobDecisionHeader } from "./JobDecisionHeader";
 import { JobActionDock, DockMenuItem, resolveDockState } from "./JobActionDock";
 import { JobReviewSkeleton, LoadingRegion } from "../Skeletons";
@@ -25,7 +26,7 @@ import { useJobMatch } from "./useJobMatch";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import { sanitizeJobHtml } from "@/lib/sanitizeHtml";
-import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { useActiveCandidateId, useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import type { DescriptionSections, JobCertification, JobSkill, JobStatusHistoryEntry, JobWithCompany } from "@/types";
 import { useLifecycleThresholds } from "../useLifecycleThresholds";
 
@@ -751,6 +752,10 @@ export function JobReview({
   scrollRoot?: HTMLElement | null;
 }) {
   const candidateId = useActiveCandidateId();
+  /* Fetching waits for the SERVER's answer. useActiveCandidateId returns an optimistic guess so the
+   * shell can render, and loading this page on that guess meant a fresh browser requested a profile
+   * the user is not on — which 401s when that profile has a PIN. */
+  const resolvedCandidateId = useResolvedCandidateId();
   const [data, setData] = useState<JobDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -762,16 +767,21 @@ export function JobReview({
   const { thresholds, loaded: thresholdsLoaded } = useLifecycleThresholds();
   // Called unconditionally, above the early returns, so hook order is stable across renders. This
   // is the same single GET MatchCard used to issue on mount — lifted, not added.
-  const match = useJobMatch(jobId, candidateId);
+  const match = useJobMatch(jobId, resolvedCandidateId);
 
   async function load() {
+    if (resolvedCandidateId === null) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/jobs/${jobId}?candidateId=${candidateId}`);
+      const res = await fetch(`/api/jobs/${jobId}?candidateId=${resolvedCandidateId}`);
       if (res.status === 404) {
         setNotFound(true);
         return;
       }
+      /* Any other failure — a locked profile most of all — returns an error object, not a job.
+       * Parsing it as one put `{error, reason}` into `data` and the render then threw on the
+       * missing fields, so a 401 surfaced as "This page couldn't load" with no way back. */
+      if (!res.ok) return;
       const json = (await res.json()) as JobDetailResponse;
       setData(json);
       setNotFound(false);
@@ -785,7 +795,7 @@ export function JobReview({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId, candidateId]);
+  }, [jobId, resolvedCandidateId]);
 
   if (loading || !thresholdsLoaded) {
     return (
@@ -918,6 +928,7 @@ export function JobReview({
     { id: "job-skills", label: "Skills" },
     { id: "job-requirements", label: "Requirements" },
     { id: "job-tailoring", label: "Tailoring" },
+    { id: "job-plan", label: "Plan" },
     { id: "job-resume", label: "Resume" },
     { id: "job-posting", label: "Job" },
     { id: "job-evidence", label: "Evidence" },
@@ -962,6 +973,15 @@ export function JobReview({
         approved={job.marked_for_tailoring === 1}
         generatedFileCount={generatedFiles.length}
       />
+    </section>
+  );
+
+  /* Why this resume would be tailored the way it will be. Reads the persisted match result; adds
+   * no evaluation and, being collapsed by default, adds no request until it is opened. */
+  const tailoringPlanCard = (
+    <section id="job-plan" className="scroll-mt-14 border-t border-[var(--separator)] px-5 py-4">
+      <h2 className="mb-2 text-[13px] font-semibold text-primary">Tailoring intelligence</h2>
+      <TailoringIntelligence candidateId={candidateId} jobId={job.id} />
     </section>
   );
 
@@ -1051,6 +1071,7 @@ export function JobReview({
         {skillsCard}
         {requirementsCard}
         {tailoringCard}
+        {tailoringPlanCard}
         {resumePipelineCard}
         <div id="job-evidence" className="scroll-mt-14" />
         <MatchCard match={match} />
@@ -1076,6 +1097,7 @@ export function JobReview({
         {skillsCard}
         {requirementsCard}
         {tailoringCard}
+        {tailoringPlanCard}
         {resumePipelineCard}
         <div id="job-evidence" className="scroll-mt-14" />
         <MatchCard match={match} />
