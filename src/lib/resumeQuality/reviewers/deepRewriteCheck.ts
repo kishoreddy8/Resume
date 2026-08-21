@@ -21,6 +21,27 @@ import { extractCanonicalSkillsFromText } from "./skillAliases";
  *      stack at all (dominant-skill presence in the summary, dominant skills not buried in Technical
  *      Skills) — reusing the exact same dominant-stack extraction summaryChecks.ts/
  *      skillsOrderingChecks.ts already compute, not a second implementation of that logic.
+ *
+ * APPLICABILITY — WHEN A DEEP REWRITE WAS NEVER THE INSTRUCTION.
+ *
+ * Mode 1 asks "did the bullets change after the writer was handed corrections". That question is
+ * only fair when the writer was actually asked to rewrite. Stage 28's repairScope.ts hands it the
+ * opposite instruction — "TARGETED REPAIR — CHANGE ONLY WHAT IS LISTED HERE" — and emits that header
+ * for EVERY scope, FULL included; FULL means both documents are in scope, not that either should be
+ * regenerated. Its closing line is explicit: return both documents, "the unchanged one reproduced
+ * verbatim, the repaired one corrected".
+ *
+ * So a writer that obeys a repair plan will necessarily leave most bullets identical, and mode 1
+ * would fail it for exactly that. Two real workflows show the signature: a targeted repair fixed
+ * every outstanding finding, took the score to 100 with zero corrections and zero blocking issues,
+ * and was then blocked solely by this check at 84% unchanged. One was RESUME_ONLY and one was FULL,
+ * which is why the scope VALUE cannot be the discriminator — the presence of a repair contract is.
+ *
+ * `rewriteExpectation` therefore carries what the writer was told, resolved from the persisted
+ * writer_input.json for that iteration. It is never inferred from the output: not from the unchanged
+ * percentage, not from the score, not from the correction count, not from the iteration number. When
+ * it is absent or unresolvable the check stays FULLY APPLICABLE — an unknown contract must never be
+ * read as permission to skip a guardrail.
  */
 
 const UNCHANGED_BULLET_FAIL_THRESHOLD = 0.8; // >=80% byte-identical bullets after a revision request = not a rewrite
@@ -41,12 +62,32 @@ export interface DeepRewriteCheckResult {
   evidence: string[];
 }
 
+/**
+ * What the writer was instructed to produce for this iteration.
+ *
+ * FULL_REWRITE is the default and the fail-closed value: it is what an unknown contract resolves to.
+ */
+export type RewriteExpectation = "FULL_REWRITE" | "TARGETED_REPAIR";
+
 export function evaluateDeepRewrite(input: {
   resume: ResumeContent;
   priorResume?: ResumeContent;
   jobRequirements?: RequirementUnit[];
+  /** Absent = unknown = treated as FULL_REWRITE. */
+  rewriteExpectation?: RewriteExpectation;
 }): DeepRewriteCheckResult {
-  const { resume, priorResume, jobRequirements } = input;
+  const { resume, priorResume, jobRequirements, rewriteExpectation } = input;
+
+  /* Checked before the diff, not after: the point is that the comparison was never the contract, so
+   * running it and then discarding the answer would still record a percentage that means nothing. */
+  if (rewriteExpectation === "TARGETED_REPAIR") {
+    return {
+      status: "NOT_APPLICABLE",
+      evidence: [
+        "This iteration was governed by a targeted repair plan, which instructed the writer to change only the listed findings and reproduce the rest verbatim. A full-document rewrite was not required, so the deep-rewrite comparison does not apply.",
+      ],
+    };
+  }
 
   if (priorResume) {
     const priorBullets = new Set(priorResume.experience.flatMap((e) => e.bullets.map(normalizeBullet)));

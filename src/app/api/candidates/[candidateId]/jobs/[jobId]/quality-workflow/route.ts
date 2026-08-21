@@ -18,6 +18,7 @@ import { evaluateTailoringAuthorization } from "@/lib/resumeQuality/tailoringAut
 import { evaluateWorkflowRetry } from "@/lib/resumeQuality/workflowRetry";
 import { getResumeWriterHealth, type ResumeWriterHealth } from "@/lib/resumeQuality/writers/writerHealth";
 import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
+import { isComplianceBlocking } from "@/lib/resumeQuality/instructionCompliance";
 import { evaluateApplicationReadiness, type ApplicationReadinessResult } from "@/lib/resumeQuality/applicationReadiness";
 import { isLegacyReviewMissingTypedSafetyAnalysis, canRevalidate } from "@/lib/resumeQuality/legacyReview";
 import { startTailoringRun, type TailoringRunAuthorizationError } from "@/lib/tailoringExecution";
@@ -171,7 +172,7 @@ export async function GET(
         const isCurrent = compliance !== undefined && matchesCurrentInstructions(compliance);
         const failingChecks = compliance
           ? Object.entries(compliance.checks)
-              .filter(([, status]) => status !== "PASS")
+              .filter(([, status]) => isComplianceBlocking(status))
               .map(([name]) => name)
           : [];
         /* Whether the ONE recoverable blocking condition applies: a review written before today's
@@ -281,7 +282,11 @@ export async function GET(
           architectureConsistencyScore: winner.architectureConsistencyScore,
           instructionCompliancePassCount: compliance ? Object.values(compliance.checks).filter((s) => s === "PASS").length : 0,
           instructionComplianceTotal: compliance ? Object.keys(compliance.checks).length : 22,
-          failingChecks: compliance ? Object.entries(compliance.checks).filter(([, s]) => s !== "PASS").map(([name]) => name) : [],
+          failingChecks: compliance
+            ? Object.entries(compliance.checks)
+                .filter(([, s]) => isComplianceBlocking(s))
+                .map(([name]) => name)
+            : [],
           blockingIssues: winner.blockingIssues,
         };
       }

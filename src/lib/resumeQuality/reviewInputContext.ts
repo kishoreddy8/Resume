@@ -4,7 +4,8 @@ import type { ResumeContent } from "../../../tools/tailoring-engine/types";
 import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
 import { loadCandidateProfile } from "@/lib/match/candidateProfile";
 import { getJobByDedupeKey } from "@/db/queries/jobs";
-import { getIterationDirectory, getWorkspaceDirectory, type QualityWorkflowLocation } from "./workspace";
+import { getHandoffDirectory, getIterationDirectory, getWorkspaceDirectory, type QualityWorkflowLocation } from "./workspace";
+import type { RewriteExpectation } from "./reviewers/deepRewriteCheck";
 
 /**
  * The four things a deterministic review needs that are resolved from the candidate, the workspace
@@ -35,6 +36,17 @@ export interface DeterministicReviewContext {
   priorResume: ResumeContent | undefined;
   /** The job's OWN posted title — P0 role identity, never derived from the resume or requirements. */
   targetRoleTitle: string | undefined;
+  /**
+   * What the writer was INSTRUCTED to produce for this iteration, read from the repair plan that was
+   * persisted when the handoff was exported.
+   *
+   * Read, never inferred. It comes from `handoffs/iteration-N/writer_input.json`, which is written
+   * at the moment the writer is instructed and already carries `repairPlan` verbatim — so the
+   * reviewer sees the same contract the writer saw, rather than reconstructing intent from output.
+   * Anything unresolvable resolves to FULL_REWRITE: a missing contract must never be read as
+   * permission to skip the check.
+   */
+  rewriteExpectation: RewriteExpectation;
 }
 
 export interface ResolveDeterministicReviewContextInput {
@@ -46,6 +58,23 @@ export interface ResolveDeterministicReviewContextInput {
   /** Callers that already hold either value pass it through untouched. */
   masterResumeProfile?: CandidateProfile;
   jobRequirements?: RequirementUnit[];
+}
+
+/**
+ * The repair contract for the iteration being written.
+ *
+ * Any repair plan means a targeted repair, whatever its scope: repairScope.ts renders
+ * "CHANGE ONLY WHAT IS LISTED HERE" for FULL, RESUME_ONLY and COVER_LETTER_ONLY alike. Scope
+ * describes WHICH documents may be touched, not how much of them must be rewritten — the two real
+ * workflows that exposed this were RESUME_ONLY and FULL respectively.
+ */
+function resolveRewriteExpectation(location: QualityWorkflowLocation, iterationNumber: number): RewriteExpectation {
+  const writerInput = readJson<{ repairPlan?: { scope?: string } | null }>(
+    path.join(getHandoffDirectory(location, iterationNumber), "writer_input.json")
+  );
+  if (!writerInput) return "FULL_REWRITE";
+  const scope = writerInput.repairPlan?.scope;
+  return typeof scope === "string" && scope.length > 0 ? "TARGETED_REPAIR" : "FULL_REWRITE";
 }
 
 function readJson<T>(file: string): T | undefined {
@@ -88,6 +117,7 @@ export function resolveDeterministicReviewContext(
       : undefined;
 
   const targetRoleTitle = getJobByDedupeKey(dedupeKey)?.title;
+  const rewriteExpectation = resolveRewriteExpectation(location, iterationNumber);
 
-  return { masterResumeProfile, jobRequirements, priorResume, targetRoleTitle };
+  return { masterResumeProfile, jobRequirements, priorResume, targetRoleTitle, rewriteExpectation };
 }

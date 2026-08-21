@@ -161,6 +161,9 @@ export function revalidateLatestReview(candidateId: number, workflowId: number):
      * missing docx-validation input is reported by the reviewer's own checks rather than assumed. */
     docxValidation: undefined,
     targetRoleTitle: context.targetRoleTitle,
+    /* The same repair contract the original iteration was written under. A re-review must judge the
+     * document by the instruction it was produced from, not by a stricter one it never saw. */
+    rewriteExpectation: context.rewriteExpectation,
   });
   const review = structuredResumeReviewSchema.parse(raw);
 

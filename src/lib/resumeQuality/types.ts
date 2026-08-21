@@ -171,7 +171,25 @@ const scoreSchema = z.number().min(0).max(100);
 // below, which is provenance-only and never gates anything). Field names are the exact canonical
 // guardrail names, matching the hardening spec's own "instructionCompliance.checks.*" naming.
 
-export const COMPLIANCE_STATUSES = ["PASS", "FAIL", "REVIEW"] as const;
+/**
+ * NOT_APPLICABLE is an APPLICABILITY state, not a pass.
+ *
+ * It exists because Stage 28 and the deep-rewrite check were giving the writer contradictory
+ * contracts. repairScope.ts tells the writer "TARGETED REPAIR — CHANGE ONLY WHAT IS LISTED HERE"
+ * (that header is emitted for every scope, FULL included), while deepRewriteCheck judged the result
+ * as though a full rewrite had been required and failed it for preserving >=80% of bullets. A
+ * correctly executed narrow repair was therefore unsendable for having obeyed its instructions —
+ * observed on two real workflows, one RESUME_ONLY and one FULL.
+ *
+ * The honest fix is a third answer to "did this check pass". Forcing PASS would record that a
+ * full-rewrite requirement was met when it was never evaluated; leaving FAIL blocks compliant work.
+ * NOT_APPLICABLE says the check did not apply to this iteration and carries its reason in
+ * `checkNotes`, so review_json stays auditable about WHY it did not run.
+ *
+ * It is never produced by inference. Only a check that receives explicit contract context may emit
+ * it, and absent context every check falls back to being applicable — see deepRewriteCheck.ts.
+ */
+export const COMPLIANCE_STATUSES = ["PASS", "FAIL", "REVIEW", "NOT_APPLICABLE"] as const;
 export type ComplianceStatus = (typeof COMPLIANCE_STATUSES)[number];
 
 /** Every canonical guardrail CareerOps independently evaluates. See instructionCompliance.ts for
@@ -589,6 +607,14 @@ export interface ResumeQualityLoopResult {
 }
 
 export interface ResumeReviewerInput {
+  /**
+   * What the writer was instructed to produce for this iteration (Stage 28 repair contract).
+   *
+   * Consumed only by the deep-rewrite check, which asks "did the bullets change after corrections" —
+   * a question that is only fair when a rewrite was actually required. Optional, and absence means
+   * FULL_REWRITE: an unknown contract never suppresses a guardrail.
+   */
+  rewriteExpectation?: import("./reviewers/deepRewriteCheck").RewriteExpectation;
   applicationId: number;
   candidateId: number;
   workflowId: number;

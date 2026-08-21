@@ -3,6 +3,7 @@ import { gateBlockingComplianceCorrections } from "./instructionCompliance";
 import {
   CORRECTION_PRIORITIES,
   INSTRUCTION_COMPLIANCE_CHECK_NAMES,
+  type ComplianceStatus,
   type CorrectionPriority,
   type InstructionComplianceChecks,
   type StructuredResumeReview,
@@ -46,10 +47,14 @@ function humanizeCheckName(name: keyof InstructionComplianceChecks): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-const STATUS_MARK: Record<"PASS" | "FAIL" | "REVIEW", string> = {
+/** Typed against ComplianceStatus rather than a hand-written union, so a new status is a compile
+ *  error here instead of an undefined marker in the writer's feedback file. */
+const STATUS_MARK: Record<ComplianceStatus, string> = {
   PASS: "✓",
   FAIL: "✗",
   REVIEW: "⚠",
+  /* Not a tick: the writer must not read "did not apply" as "you satisfied it". */
+  NOT_APPLICABLE: "–",
 };
 
 function complianceSection(review: StructuredResumeReview): string {

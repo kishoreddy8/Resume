@@ -1,6 +1,6 @@
 import { selectBestResumeQualityAttempt, type ResumeQualityAttemptSummary } from "./bestAttemptSelection";
 import { evaluateQualityGate } from "./qualityGate";
-import { HARD_GATE_CHECKS } from "./instructionCompliance";
+import { HARD_GATE_CHECKS, isComplianceBlocking } from "./instructionCompliance";
 import type { InstructionComplianceChecks, StructuredResumeReview } from "./types";
 
 /**
@@ -107,7 +107,7 @@ export function evaluateSafety(review: StructuredResumeReview): SafetyVerdict {
   } else {
     for (const check of TRUTHFULNESS_COMPLIANCE_CHECKS) {
       const status = compliance.checks[check];
-      if (status !== "PASS") {
+      if (isComplianceBlocking(status)) {
         const reasons = compliance.checkNotes?.[check] ?? [];
         blockers.push(`Truthfulness check ${check} is ${status}.${reasons.length > 0 ? ` Reason: ${reasons.join(" | ")}` : ""}`);
       }

@@ -1,4 +1,5 @@
 import type { InstructionComplianceChecks, StructuredResumeReview } from "./types";
+import { isComplianceBlocking } from "./instructionCompliance";
 
 /**
  * Stage 28 — how much of the application package iteration 2 actually has to rewrite.
@@ -110,7 +111,9 @@ export function planRepairScope(review: StructuredResumeReview): RepairPlan {
   let structuralCheckFailure: string | null = null;
   if (compliance) {
     for (const check of RESUME_STRUCTURAL_CHECKS) {
-      if (compliance.checks[check] !== "PASS") {
+      /* A check that did not apply to the iteration is not a finding to repair — telling the writer
+       * to fix something that was never evaluated would put a phantom instruction in the plan. */
+      if (isComplianceBlocking(compliance.checks[check])) {
         structuralCheckFailure = check;
         const notes = compliance.checkNotes?.[check] ?? [];
         resumeFindings.push(`Compliance check ${check} is ${compliance.checks[check]}.${notes.length > 0 ? ` Reason: ${notes.join(" | ")}` : ""}`);

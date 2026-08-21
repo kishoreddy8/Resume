@@ -82,10 +82,18 @@ function clamp(n: number): number {
 export function reviewResumeDeterministically(
   input: Pick<
     ResumeReviewerInput,
-    "resume" | "jobRequirements" | "masterResumeProfile" | "coverLetter" | "priorResume" | "docxValidation" | "targetRoleTitle"
+    | "resume"
+    | "jobRequirements"
+    | "masterResumeProfile"
+    | "coverLetter"
+    | "priorResume"
+    | "docxValidation"
+    | "targetRoleTitle"
+    | "rewriteExpectation"
   >
 ): StructuredResumeReview {
-  const { resume, jobRequirements, masterResumeProfile, coverLetter, priorResume, docxValidation, targetRoleTitle } = input;
+  const { resume, jobRequirements, masterResumeProfile, coverLetter, priorResume, docxValidation, targetRoleTitle, rewriteExpectation } =
+    input;
 
   const ats = evaluateAtsAlignment(resume, jobRequirements);
   const structural = evaluateStructuralChecks(resume, masterResumeProfile);
@@ -164,7 +172,7 @@ export function reviewResumeDeterministically(
   // --- Resume Quality Hardening: canonical instruction compliance (additive) --------------------
 
   const msi = evaluateMsiCompliance(resume, masterResumeProfile);
-  const deepRewrite = evaluateDeepRewrite({ resume, priorResume, jobRequirements });
+  const deepRewrite = evaluateDeepRewrite({ resume, priorResume, jobRequirements, rewriteExpectation });
   const technologyGroupingFindings = evaluateTechnologyGrouping(resume.skillGroups);
   const laundryListFindings = evaluateOnePrimaryTechnologyPerResponsibility(resume.experience);
   const metricProvenance = evaluateMetricProvenance(resume.experience, priorResume?.experience);
@@ -194,6 +202,7 @@ export function reviewResumeDeterministically(
     employmentOrEducationSoftIssues: truthfulness.truthfulnessIssues,
     ungroundedTechnologies: msi.ungroundedTechnologies,
     deepRewriteStatus: deepRewrite.status,
+    deepRewriteEvidence: deepRewrite.evidence,
     architectureContradictions: architecture.incorrectTechnologyUsage,
     coverLetterContradictions,
     technologyGroupingFindings,

@@ -73,6 +73,8 @@ export interface EvaluateInstructionComplianceInput {
 
   // Deep rewrite (from deepRewriteCheck.evaluateDeepRewrite)
   deepRewriteStatus: ComplianceStatus;
+  /** The check's own evidence, so review_json records WHY it passed, failed, or did not apply. */
+  deepRewriteEvidence?: string[];
 
   // Architecture / contradictions (from architectureChecks.evaluateArchitectureConsistency, extended
   // to also scan the cover letter — see deterministicReviewer.ts)
@@ -194,6 +196,12 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
 
   // C. Deep rewrite
   checks.deepRewrite = input.deepRewriteStatus;
+  /* NOT_APPLICABLE has to carry its reason: a status that blocks nothing is only auditable if the
+   * record says what made it inapplicable. Attributed to the check, not pushed into the flat notes
+   * list, so it does not read as a finding in the writer's feedback. */
+  if (input.deepRewriteEvidence && input.deepRewriteEvidence.length > 0) {
+    (checkNotes.deepRewrite ??= []).push(...input.deepRewriteEvidence);
+  }
 
   // D. Architecture integrity (resume-scoped only — cover letter contradictions live under
   // noContradictingTechnologies per the canonical text's own explicit "scan resume AND cover letter"
@@ -305,7 +313,7 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
   // W. Final validation — meta-check: every OTHER hard-gate check must PASS, plus no blocking issues
   // anywhere in the review. This is never independently "found" — it is the synthesis itself.
   const otherHardGateChecks = HARD_GATE_CHECKS.filter((name) => name !== "finalValidation");
-  const anyHardGateNotPass = otherHardGateChecks.some((name) => checks[name] !== "PASS");
+  const anyHardGateNotPass = otherHardGateChecks.some((name) => isComplianceBlocking(checks[name]));
   checks.finalValidation = input.anyBlockingIssues || anyHardGateNotPass ? "FAIL" : "PASS";
 
   const identity = currentInstructionIdentity();
@@ -363,7 +371,7 @@ export function hardGateFailureCorrections(compliance: InstructionComplianceResu
   const corrections: RequiredCorrection[] = [];
   for (const name of HARD_GATE_CHECKS) {
     const status = compliance.checks[name];
-    if (status !== "PASS") {
+    if (isComplianceBlocking(status)) {
       corrections.push({
         priority: "CRITICAL",
         description: `Canonical instruction compliance — ${name}: ${status}. This is a hard-gate check and must PASS before this resume can be marked READY.`,
@@ -378,6 +386,23 @@ export function hardGateFailureCorrections(compliance: InstructionComplianceResu
  *  tolerated as "not yet verified" rather than "known violation" for genuinely ambiguous evidence —
  *  and REVIEW on a check this function treats as NOT all-PASS, so it still blocks READY, matching
  *  "the writer's self-validation is NOT sufficient" / "never silently mark as compliant"). */
+/**
+ * Whether a compliance status blocks READY.
+ *
+ * THE ONE PLACE THAT DECIDES. FAIL and REVIEW block; PASS does not; NOT_APPLICABLE does not, because
+ * a check that did not apply to this iteration cannot have been violated by it. Every caller that
+ * used to spell this as `status !== "PASS"` now asks here, so introducing an applicability state
+ * could not silently turn "did not apply" into "failed" in one of the eight places that predicate
+ * was written out by hand.
+ *
+ * Note what this deliberately does NOT do: it never converts a real FAIL or REVIEW into a pass, and
+ * it has no knowledge of which check it is looking at. A check becomes non-applicable by returning
+ * NOT_APPLICABLE from its own evaluator, with a recorded reason — never by being named here.
+ */
+export function isComplianceBlocking(status: ComplianceStatus): boolean {
+  return status !== "PASS" && status !== "NOT_APPLICABLE";
+}
+
 export function allChecksPass(compliance: InstructionComplianceResult): boolean {
-  return Object.values(compliance.checks).every((status) => status === "PASS");
+  return Object.values(compliance.checks).every((status) => !isComplianceBlocking(status));
 }

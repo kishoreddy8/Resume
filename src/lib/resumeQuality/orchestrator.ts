@@ -485,6 +485,10 @@ export async function executeResumeQualityIteration(
       priorResume,
       docxValidation,
       targetRoleTitle,
+      /* Stage 28 contract for THIS iteration, resolved from the writer_input.json that was written
+       * when the handoff was exported — the same instruction the writer received. Only the
+       * deep-rewrite check reads it. */
+      rewriteExpectation: reviewContext.rewriteExpectation,
     };
 
     const { review: rawReview } = await reviewer.review(reviewerInput);
