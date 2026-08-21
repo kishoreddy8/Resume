@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import { IconBell } from "@/components/icons";
 import type { NotificationResponseEntry } from "@/app/api/candidates/[candidateId]/notifications/route";
 
@@ -28,7 +28,7 @@ function ago(iso: string): string {
 }
 
 export function NotificationBell() {
-  const candidateId = useActiveCandidateId();
+  const candidateId = useResolvedCandidateId();
   const [notifications, setNotifications] = useState<NotificationResponseEntry[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
@@ -37,6 +37,9 @@ export function NotificationBell() {
   const reduced = useReducedMotion() ?? false;
 
   async function load() {
+    // Nothing is fetched until the server has said which candidate this is — a request against the
+    // optimistic guess 401s whenever that guess is someone else's PIN-locked profile.
+    if (candidateId === null) return;
     const res = await fetch(`/api/candidates/${candidateId}/notifications?limit=20`);
     if (!res.ok) return;
     const body = await res.json();
@@ -82,12 +85,14 @@ export function NotificationBell() {
   }
 
   async function markRead(notificationId: number) {
+    if (candidateId === null) return;
     setNotifications((prev) => prev.map((n) => (n.id === notificationId ? { ...n, readAt: new Date().toISOString() } : n)));
     setUnreadCount((prev) => Math.max(0, prev - 1));
     await fetch(`/api/candidates/${candidateId}/notifications/${notificationId}`, { method: "PATCH" });
   }
 
   async function markAllRead() {
+    if (candidateId === null) return;
     setNotifications((prev) => prev.map((n) => (n.readAt ? n : { ...n, readAt: new Date().toISOString() })));
     setUnreadCount(0);
     await fetch(`/api/candidates/${candidateId}/notifications/mark-all-read`, { method: "POST" });
