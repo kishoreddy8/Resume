@@ -18,6 +18,14 @@ test("For You uses the candidate-facing role label and Settings destination", ()
   assert.doesNotMatch(source, /`P · \$\{prefs\.primaryTargetRole\}`/);
 });
 
+test("For You exposes and activates the selected option through the focused listbox", () => {
+  const source = fs.readFileSync(path.resolve("src/app/jobs/ForYouList.tsx"), "utf8");
+  assert.match(source, /aria-activedescendant=/);
+  assert.match(source, /optionId={`recommended-job-\$\{job\.id\}`}/);
+  assert.match(source, /e\.key === "Enter" \|\| e\.key === " "/);
+  assert.match(source, /openJob\(selectedJobId\)/);
+});
+
 test("Settings deduplicates role chips without changing the established removal transition", () => {
   const source = fs.readFileSync(path.resolve("src/app/settings/page.tsx"), "utf8");
   assert.match(source, /Array\.from\(new Set\(/, "displayed role chips should be deduplicated");

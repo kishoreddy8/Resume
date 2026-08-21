@@ -147,7 +147,7 @@ export function NotificationBell() {
                 <button
                   type="button"
                   onClick={markAllRead}
-                  className="rounded-md px-1.5 py-0.5 text-[11px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.97]"
+                  className="inline-flex min-h-8 items-center rounded-md px-1.5 text-[11px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.97] [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-2.5"
                 >
                   Mark all read
                 </button>
@@ -195,7 +195,7 @@ export function NotificationBell() {
                       <Link
                         href={`/jobs/${n.jobId}`}
                         onClick={() => !n.readAt && markRead(n.id)}
-                        className="text-[11px] font-medium text-[var(--accent)] transition-opacity duration-150 ease-out hover:opacity-80"
+                        className="inline-flex min-h-8 items-center text-[11px] font-medium text-[var(--accent)] transition-opacity duration-150 ease-out hover:opacity-80 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-2"
                       >
                         View job
                       </Link>
@@ -204,9 +204,9 @@ export function NotificationBell() {
                       <button
                         type="button"
                         onClick={() => markRead(n.id)}
-                        /* Revealed on hover/focus so a read inbox is quiet, but never keyboard-only
-                         *  invisible — focus-within brings it back for tab users. */
-                        className="text-[11px] text-tertiary opacity-0 transition-opacity duration-150 ease-out focus-visible:opacity-100 group-hover:opacity-100"
+                        /* Fine pointers keep the quiet hover reveal. Coarse pointers cannot hover,
+                         * so the action is visible and carries a full-size touch target there. */
+                        className="inline-flex min-h-8 items-center text-[11px] text-tertiary opacity-0 transition-opacity duration-150 ease-out focus-visible:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-2 [@media(pointer:coarse)]:opacity-100"
                       >
                         Mark read
                       </button>

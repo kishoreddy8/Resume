@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { resolveActiveCandidateId } from "@/lib/useActiveCandidateId";
 
@@ -23,6 +23,9 @@ import { resolveActiveCandidateId } from "@/lib/useActiveCandidateId";
 interface LockedInfo {
   candidateId: number;
 }
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * The wrapper is installed at MODULE LOAD, not in an effect.
@@ -77,7 +80,11 @@ export function ProfileLockPrompt() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState<string>("");
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const releaseModalRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const onLocked = (e: Event) => {
@@ -90,7 +97,6 @@ export function ProfileLockPrompt() {
 
   useEffect(() => {
     if (!locked) return;
-    inputRef.current?.focus();
     fetch(`/api/candidates`)
       .then((r) => (r.ok ? r.json() : null))
       .then((b) => {
@@ -100,7 +106,84 @@ export function ProfileLockPrompt() {
       .catch(() => {});
   }, [locked]);
 
-  const submit = useCallback(async () => {
+  useEffect(() => {
+    if (!locked || !overlayRef.current) return;
+
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overlay = overlayRef.current;
+    const overlayRoot = Array.from(document.body.children).find(
+      (child): child is HTMLElement => child instanceof HTMLElement && (child === overlay || child.contains(overlay))
+    );
+    const previousInert = new Map<HTMLElement, boolean>();
+
+    const makeBackgroundInert = (element: Element) => {
+      if (!(element instanceof HTMLElement) || element === overlayRoot || element.contains(overlay)) return;
+      if (!previousInert.has(element)) previousInert.set(element, element.inert);
+      element.inert = true;
+    };
+
+    Array.from(document.body.children).forEach(makeBackgroundInert);
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of Array.from(record.addedNodes)) {
+          if (node instanceof Element) makeBackgroundInert(node);
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true });
+
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      observer.disconnect();
+      previousInert.forEach((wasInert, element) => {
+        element.inert = wasInert;
+      });
+      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
+      previousFocusRef.current = null;
+      releaseModalRef.current = null;
+    };
+    releaseModalRef.current = release;
+    inputRef.current?.focus();
+    return release;
+  }, [locked]);
+
+  function handleDialogKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape") {
+      // A locked profile has no dismiss action: Escape must not reveal protected content.
+      e.preventDefault();
+      e.stopPropagation();
+      inputRef.current?.focus();
+      return;
+    }
+
+    if (e.key === "Tab") {
+      const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
+      if (focusable.length === 0) {
+        e.preventDefault();
+        dialogRef.current?.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+      return;
+    }
+
+    if (e.key === "Enter" && e.target === inputRef.current && pin.length === 4) {
+      e.preventDefault();
+      submit();
+    }
+  }
+
+  async function submit() {
     if (!locked) return;
     setBusy(true);
     setError(null);
@@ -122,6 +205,7 @@ export function ProfileLockPrompt() {
         setPin("");
         return;
       }
+      releaseModalRef.current?.();
       // Reload so every request the page already made is retried with the unlock in place.
       window.location.reload();
     } catch {
@@ -129,26 +213,27 @@ export function ProfileLockPrompt() {
     } finally {
       setBusy(false);
     }
-  }, [locked, pin]);
+  }
 
   if (!locked) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-start justify-center px-4 pt-[16vh]">
+    <div ref={overlayRef} className="fixed inset-0 z-[200] flex items-start justify-center px-4 pt-[16vh]">
       <div aria-hidden="true" className="absolute inset-0 bg-[rgba(10,11,15,0.5)]" />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Profile locked"
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && pin.length === 4) submit();
-        }}
+        aria-describedby={error ? "profile-lock-hint profile-lock-error" : "profile-lock-hint"}
+        tabIndex={-1}
+        onKeyDown={handleDialogKeyDown}
         className="plane plane-5 relative w-full max-w-sm rounded-[var(--radius-xl)] px-5 py-5 text-center"
       >
         <h2 className="text-[15px] font-semibold text-primary">
           {name ? `${name} is locked` : "This profile is locked"}
         </h2>
-        <p className="mt-1 text-[11.5px] text-tertiary">Enter the 4-digit PIN to continue</p>
+        <p id="profile-lock-hint" className="mt-1 text-[11.5px] text-tertiary">Enter the 4-digit PIN to continue</p>
 
         <input
           ref={inputRef}
@@ -160,12 +245,12 @@ export function ProfileLockPrompt() {
           className="mx-auto mt-3 block w-36 rounded-md border border-[var(--border)] bg-surface px-3 py-2 text-center text-[18px] tabular-nums tracking-[0.5em] text-primary outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
         />
 
-        {error && <p className="mt-2 text-[12px] text-[var(--error)]">{error}</p>}
+        {error && <p id="profile-lock-error" role="alert" aria-live="assertive" className="mt-2 text-[12px] text-[var(--error)]">{error}</p>}
 
         <div className="mt-4 flex justify-center gap-2">
           <Link
             href="/"
-            className="rounded-md border border-[var(--border)] px-3 py-1.5 text-[12.5px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
+            className="inline-flex min-h-11 items-center rounded-md border border-[var(--border)] px-3 text-[12.5px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
           >
             Switch profile
           </Link>
@@ -173,7 +258,7 @@ export function ProfileLockPrompt() {
             type="button"
             onClick={submit}
             disabled={busy || pin.length !== 4}
-            className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
+            className="min-h-11 rounded-md bg-[var(--accent)] px-3 text-[12.5px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
           >
             {busy ? "Unlocking…" : "Unlock"}
           </button>

@@ -92,7 +92,9 @@ export function WorkflowStepper({
   }
 
   const arrow =
-    "absolute top-1/2 z-10 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md bg-[var(--z3-bg)] text-[13px] text-tertiary shadow-[0_0_10px_6px_var(--z3-bg)] transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-0";
+    "group absolute top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center text-[13px] text-tertiary active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-0";
+  const arrowVisual =
+    "grid h-7 w-7 place-items-center rounded-md bg-[var(--z3-bg)] shadow-[0_0_10px_6px_var(--z3-bg)] transition-colors duration-150 ease-out group-hover:bg-[var(--surface-hover)] group-hover:text-primary";
 
   return (
     <nav
@@ -109,7 +111,7 @@ export function WorkflowStepper({
         aria-label="Scroll workflow steps left"
         className={`${arrow} left-1`}
       >
-        <span aria-hidden="true">‹</span>
+        <span aria-hidden="true" className={arrowVisual}>‹</span>
       </button>
 
       <ol
@@ -195,7 +197,7 @@ export function WorkflowStepper({
         aria-label="Scroll workflow steps right"
         className={`${arrow} right-1`}
       >
-        <span aria-hidden="true">›</span>
+        <span aria-hidden="true" className={arrowVisual}>›</span>
       </button>
     </nav>
   );

@@ -27,6 +27,14 @@ test("WorkflowStepper paging is presentational and keeps one workspace instance"
   assert.ok(stepper.includes("onClick={() => page(-1)}"));
   assert.ok(stepper.includes("onClick={() => page(1)}"));
   assert.ok(stepper.includes("onClick={() => navigable && onSelect(step.key)}"));
+  assert.match(stepper, /h-11 w-11/);
+  assert.match(stepper, /h-7 w-7/);
+});
+
+test("job bucket paging keeps compact arrows inside comfortable hit targets", () => {
+  const strip = read("src/app/jobs/ScrollStrip.tsx");
+  assert.match(strip, /h-11 w-11/);
+  assert.match(strip, /h-7 w-7/);
 });
 
 test("Home overview links replace outline suppression with a visible focus ring", () => {

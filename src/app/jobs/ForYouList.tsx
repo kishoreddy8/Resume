@@ -285,10 +285,17 @@ export function ForYouList({
   }, [selectionVisible, entries.length]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Enter" && e.key !== " ") return;
     const target = e.target as HTMLElement;
     if (target.closest("input, select, textarea, button, a, [contenteditable]")) return;
     if (entries.length === 0) return;
+
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (selectedJobId !== null) openJob(selectedJobId);
+      return;
+    }
+
     e.preventDefault();
     setSharedLayout(false);
     const i = entries.findIndex((entry) => entry.job.id === selectedJobId);
@@ -477,6 +484,7 @@ export function ForYouList({
           ref={listRef}
           role="listbox"
           aria-label="Recommended jobs"
+          aria-activedescendant={selectedJobId !== null ? `recommended-job-${selectedJobId}` : undefined}
           tabIndex={0}
           onKeyDown={handleKeyDown}
           onPointerDown={() => setSharedLayout(true)}
@@ -491,6 +499,7 @@ export function ForYouList({
               selected={job.id === selectedJobId}
               onOpen={openJob}
               sharedLayout={sharedLayout}
+              optionId={`recommended-job-${job.id}`}
               meta={<RecommendationMeta ranking={ranking} prefs={data?.preferences ?? null} />}
             />
           ))}

@@ -152,6 +152,7 @@ export const JobRow = memo(function JobRow({
   onOpen,
   sharedLayout,
   meta,
+  optionId,
 }: {
   job: RowJob;
   thresholds: LifecycleThresholds;
@@ -162,9 +163,12 @@ export const JobRow = memo(function JobRow({
   sharedLayout: boolean;
   /** View-specific context. For You puts its bucket + rank here; All Jobs passes nothing. */
   meta?: ReactNode;
+  /** Gives a focused listbox a stable aria-activedescendant target without adding another control. */
+  optionId?: string;
 }) {
   return (
     <div
+      id={optionId}
       role="option"
       aria-selected={selected}
       tabIndex={-1}

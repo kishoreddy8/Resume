@@ -22,3 +22,8 @@ test("NotificationBell uses the resolved candidate for every notification mutati
   const guards = source.match(/if \(candidateId === null\) return;/g) ?? [];
   assert.equal(guards.length, 3, "list, mark-one, and mark-all must all reject an unresolved candidate");
 });
+
+test("NotificationBell keeps row actions visible and comfortably sized for coarse pointers", () => {
+  assert.match(source, /\[@media\(pointer:coarse\)\]:opacity-100/);
+  assert.match(source, /\[@media\(pointer:coarse\)\]:min-h-11/);
+});

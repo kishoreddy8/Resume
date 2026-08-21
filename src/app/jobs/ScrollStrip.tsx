@@ -82,7 +82,9 @@ export function ScrollStrip({
    * there is nothing to scroll — disabled means transparent AND non-interactive — and when there is,
    * an arrow over a faded edge is what the fade is already saying. */
   const arrow =
-    "absolute top-1/2 z-10 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md bg-[var(--z1-bg)] text-[13px] text-tertiary shadow-[0_0_10px_6px_var(--z1-bg)] transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.94] disabled:pointer-events-none disabled:opacity-0";
+    "group absolute top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center text-[13px] text-tertiary active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-0";
+  const arrowVisual =
+    "grid h-7 w-7 place-items-center rounded-md bg-[var(--z1-bg)] shadow-[0_0_10px_6px_var(--z1-bg)] transition-colors duration-150 ease-out group-hover:bg-[var(--surface-hover)] group-hover:text-primary";
 
   return (
     <div className="relative flex items-center">
@@ -93,7 +95,7 @@ export function ScrollStrip({
         aria-label={`Scroll ${label} left`}
         className={`${arrow} left-0`}
       >
-        <span aria-hidden="true">‹</span>
+        <span aria-hidden="true" className={arrowVisual}>‹</span>
       </button>
 
       <div
@@ -113,7 +115,7 @@ export function ScrollStrip({
         aria-label={`Scroll ${label} right`}
         className={`${arrow} right-0`}
       >
-        <span aria-hidden="true">›</span>
+        <span aria-hidden="true" className={arrowVisual}>›</span>
       </button>
     </div>
   );
