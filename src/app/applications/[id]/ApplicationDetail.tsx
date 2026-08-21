@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
-import { LoadingRegion, PageHeader, SkeletonRows, Surface } from "@/components/ui";
+import { BTN_SECONDARY, LoadingRegion, PageHeader, Pill, SkeletonRows, Surface } from "@/components/ui";
 import { MARKER_CLASS, MARKER_TEXT, STATUS_PRESENTATION, presentStatus } from "../runStatus";
 import type { RunStatus } from "@/lib/apply/runState";
 
@@ -81,10 +81,39 @@ function eventLabel(eventType: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+/** Section headings on this page use the same weight as every other destination surface. Only the
+ *  typography changed; the sections, their order and their contents are untouched. */
+/** Deterministic company mark. */
+function markInitials(name: string | null | undefined): string {
+  if (!name) return "?";
+  const w = name.replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).filter(Boolean);
+  if (w.length === 0) return "?";
+  if (w.length === 1) return w[0]!.slice(0, 2).toUpperCase();
+  return (w[0]![0]! + w[1]![0]!).toUpperCase();
+}
+
+/** Wording only, never a decision. */
+function relative(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  return hrs < 24 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
+}
+
+/** The marker's tone, in the shared Pill vocabulary. The engine's word still carries the meaning. */
+function pillTone(marker: string, needsUser: boolean): "success" | "warning" | "info" | "neutral" {
+  if (marker === "done") return "success";
+  if (marker === "unknown" || needsUser) return "warning";
+  if (marker === "stopped") return "neutral";
+  return "info";
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-2">
-      <h2 className="section-title">{title}</h2>
+    <section className="space-y-2.5">
+      <h2 className="text-[15px] font-bold tracking-[-0.01em] text-primary">{title}</h2>
       {children}
     </section>
   );
@@ -191,14 +220,44 @@ export function ApplicationDetail({
   return (
     <div className={`flex w-full flex-col gap-6 ${embedded ? "" : "mx-auto max-w-3xl"}`}>
       {!embedded && (
-        <div>
-          <Link href="/applications" className="text-[11.5px] text-tertiary underline-offset-2 hover:underline">
-            ← All applications
+        <div className="flex flex-col gap-4">
+          <Link
+            href="/applications"
+            className="inline-flex h-[30px] w-fit items-center gap-1 text-[12.5px] font-medium text-secondary transition-colors duration-150 ease-out hover:text-primary"
+          >
+            ‹ Back to Applications
           </Link>
-          <PageHeader
-            title={run.title}
-            description={[run.company, run.ats].filter(Boolean).join(" · ") || "Application run"}
-          />
+
+          {/* Identity, state and the one link out — the same row the list row came from, so
+           *  arriving here confirms you opened what you meant to. */}
+          <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+            <span
+              aria-hidden="true"
+              className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[14px] bg-[var(--tile-lav-bg)] text-[16px] font-bold text-[var(--tile-lav-fg)]"
+            >
+              {markInitials(run.company)}
+            </span>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-[24px] font-bold leading-tight tracking-[-0.02em] text-primary">
+                {run.title}
+              </h1>
+              <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[13px] text-tertiary">
+                <span className="font-medium text-secondary">{run.company ?? "Company unknown"}</span>
+                {run.ats && <span>· {run.ats}</span>}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              <Pill tone={pillTone(p.marker, p.needsUser)}>{p.label}</Pill>
+              {run.updatedAt && (
+                <span className="text-[11.5px] text-tertiary">Updated {relative(run.updatedAt)}</span>
+              )}
+            </div>
+            {run.applyUrl && (
+              <a href={run.applyUrl} target="_blank" rel="noopener noreferrer" className={BTN_SECONDARY}>
+                View job posting ↗
+              </a>
+            )}
+          </div>
         </div>
       )}
 

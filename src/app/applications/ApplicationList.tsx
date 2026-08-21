@@ -147,7 +147,7 @@ export function ApplicationList({ candidateId }: { candidateId: number }) {
 
               <p className="mt-1 text-[11.5px] leading-relaxed text-secondary">{a.nextAction}</p>
 
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-tertiary">
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-tertiary">
                 {a.generatedFileCount > 0 ? (
                   <span>
                     {a.generatedFileCount} generated document{a.generatedFileCount === 1 ? "" : "s"}
@@ -166,7 +166,7 @@ export function ApplicationList({ candidateId }: { candidateId: number }) {
                   type="button"
                   onClick={() => setOpen(expanded ? null : a.dedupeKey)}
                   aria-expanded={expanded}
-                  className="ml-auto rounded px-1.5 py-0.5 text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
+                  className="ml-auto inline-flex min-h-[30px] items-center rounded-[8px] px-2 text-[12px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
                 >
                   {expanded ? "Hide history" : "History"}
                 </button>
