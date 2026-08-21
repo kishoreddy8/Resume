@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { computeFreshnessTier, rankForYou, type ForYouJobInput } from "../forYou";
 
+/**
+ * Every fixture date is generated relative to this instant, so every rankForYou call must evaluate
+ * freshness against it too.
+ *
+ * Omitting it let the ranker use the real clock while the fixtures used a date pinned in the past.
+ * The gap widened by one day per day until a "9 days ago" job crossed the 20-day STALE threshold in
+ * real time and was filtered out — a test that had been passing for days began failing with no code
+ * change behind it. The ranking logic was never wrong; the test was measuring against two different
+ * clocks.
+ */
 const NOW = new Date("2026-08-09T00:00:00Z");
 function daysAgo(n: number): string {
   return new Date(NOW.getTime() - n * 24 * 60 * 60 * 1000).toISOString();
@@ -53,7 +63,7 @@ test("A vs B: same ~90s band, A has explicit positive sponsorship, B only histor
     sponsorshipMentioned: false, sponsorshipPolarity: "none", h1bCombinedConfidence: "Very High",
     match: match({ decision: "READY_FOR_TAILORING", overallScore: 95, employerEvidencedShare: 0.8, requirementCoverage: 0.9 }),
   });
-  const ranked = rankForYou([b, a]); // insert B first to prove sort actually reorders
+  const ranked = rankForYou([b, a], { now: NOW }); // insert B first to prove sort actually reorders
   assert.deepEqual(ranked.map((j) => j.jobId), [1, 2], "A (explicit sponsorship) must rank above B within the same score band");
 });
 
@@ -66,7 +76,7 @@ test("92% strong fit + historical sponsor beats 55% poor fit + Very High histori
     jobId: 2, h1bCombinedConfidence: "Very High",
     match: match({ decision: "NEEDS_REVIEW", overallScore: 55, employerEvidencedShare: 0.3, requirementCoverage: 0.5 }),
   });
-  const ranked = rankForYou([poorFitStrongSponsor, strongFitWeakerSponsor]);
+  const ranked = rankForYou([poorFitStrongSponsor, strongFitWeakerSponsor], { now: NOW });
   assert.deepEqual(ranked.map((j) => j.jobId), [1, 2], "fit must dominate a large gap regardless of sponsorship strength");
 });
 
@@ -98,7 +108,7 @@ test("Stage 24B E vs F: a stronger off-preference job (94 READY) now ranks above
     jobId: 2, title: "Data Engineer", roleFamilyTier: "NONE",
     match: match({ decision: "READY_FOR_TAILORING", overallScore: 94, employerEvidencedShare: 0.9, requirementCoverage: 0.95 }),
   });
-  const ranked = rankForYou([inFamily, offFamily]);
+  const ranked = rankForYou([inFamily, offFamily], { now: NOW });
   assert.deepEqual(ranked.map((j) => j.jobId), [2, 1]);
   // Critically: preference never touched the underlying score — both numbers are exactly as given.
   assert.equal(ranked[0].match?.overallScore, 94);
@@ -114,7 +124,7 @@ test("Stage 24B: declared role-family preference still breaks ties WITHIN a scor
     jobId: 2, roleFamilyTier: "NONE",
     match: match({ decision: "READY_FOR_TAILORING", overallScore: 95, employerEvidencedShare: 0.8, requirementCoverage: 0.9 }),
   });
-  const ranked = rankForYou([offFamily, inFamily]);
+  const ranked = rankForYou([offFamily, inFamily], { now: NOW });
   assert.deepEqual(ranked.map((j) => j.jobId), [1, 2], "same 90s band -> the candidate's declared target role wins");
 });
 
@@ -156,7 +166,7 @@ test("Stage 24B Phase 14: a 95 match from 5 days ago outranks a 50 match posted 
 test("G: a candidate-not-interested job is excluded entirely from that candidate's ranked list", () => {
   const visible = job({ jobId: 1, notInterested: false });
   const hidden = job({ jobId: 2, notInterested: true });
-  const ranked = rankForYou([visible, hidden]);
+  const ranked = rankForYou([visible, hidden], { now: NOW });
   assert.deepEqual(ranked.map((j) => j.jobId), [1]);
 });
 
@@ -166,7 +176,7 @@ test("NOT_EVALUATED jobs (no match yet) are never fabricated a score and fall ba
   const needsReview = job({
     jobId: 3, match: match({ decision: "NEEDS_REVIEW", overallScore: 50, employerEvidencedShare: 0.2, requirementCoverage: 0.4 }),
   });
-  const ranked = rankForYou([notEvaluatedOlder, needsReview, notEvaluatedFresh]);
+  const ranked = rankForYou([notEvaluatedOlder, needsReview, notEvaluatedFresh], { now: NOW });
   // NEEDS_REVIEW (decisionRank 1) outranks NOT_EVALUATED (decisionRank 2) outright.
   assert.equal(ranked[0].jobId, 3);
   // Within NOT_EVALUATED, freshest first.
@@ -177,17 +187,17 @@ test("NOT_EVALUATED jobs (no match yet) are never fabricated a score and fall ba
 test("BLOCKED jobs rank below READY/NEEDS_REVIEW/NOT_EVALUATED regardless of their raw score", () => {
   const blocked = job({ jobId: 1, match: match({ decision: "BLOCKED", overallScore: 99, employerEvidencedShare: 1, requirementCoverage: 1 }) });
   const notEvaluated = job({ jobId: 2, match: undefined });
-  const ranked = rankForYou([blocked, notEvaluated]);
+  const ranked = rankForYou([blocked, notEvaluated], { now: NOW });
   assert.deepEqual(ranked.map((j) => j.jobId), [2, 1]);
 });
 
 test("stale (>20 day) jobs are excluded by default but included when includeStale is passed (All Jobs view)", () => {
   const stale = job({ jobId: 1, postedAt: daysAgo(30) });
   const fresh = job({ jobId: 2, postedAt: daysAgo(1) });
-  const defaultView = rankForYou([stale, fresh]);
+  const defaultView = rankForYou([stale, fresh], { now: NOW });
   assert.deepEqual(defaultView.map((j) => j.jobId), [2], "stale job excluded from default For You");
 
-  const allJobsView = rankForYou([stale, fresh], { includeStale: true });
+  const allJobsView = rankForYou([stale, fresh], { includeStale: true, now: NOW });
   assert.deepEqual(allJobsView.map((j) => j.jobId), [2, 1], "stale job included, but still ranked after the fresh one");
 });
 
@@ -195,7 +205,7 @@ test("a pinned/in-pipeline job older than 20 days is exempt from the STALE filte
   const staleUnprotected = job({ jobId: 1, postedAt: daysAgo(30) });
   const stalePinned = job({ jobId: 2, postedAt: daysAgo(30), protectedFromStale: true });
   const fresh = job({ jobId: 3, postedAt: daysAgo(1) });
-  const ranked = rankForYou([staleUnprotected, stalePinned, fresh]);
+  const ranked = rankForYou([staleUnprotected, stalePinned, fresh], { now: NOW });
   // Job 1 (stale, unprotected) is excluded entirely; job 3 (PRIMARY freshness) outranks job 2
   // (still tiered STALE for freshness purposes — protection only exempts it from the exclusion
   // filter, it does not pretend the job is fresh).
@@ -211,15 +221,15 @@ test("explicit no-sponsorship never gets premium placement even at a high raw sc
     jobId: 2, h1bCombinedConfidence: "Unknown",
     match: match({ decision: "READY_FOR_TAILORING", overallScore: 90, employerEvidencedShare: 0.8, requirementCoverage: 0.9 }),
   });
-  const ranked = rankForYou([noSponsor, unknownSponsor]);
+  const ranked = rankForYou([noSponsor, unknownSponsor], { now: NOW });
   assert.deepEqual(ranked.map((j) => j.jobId), [2, 1], "within the identical band, unknown sponsorship still outranks explicit non-sponsorship");
 });
 
 test("deterministic tie-break: identical everything else falls back to posted_at then id, never random order", () => {
   const a = job({ jobId: 5, postedAt: daysAgo(3) });
   const b = job({ jobId: 3, postedAt: daysAgo(3) });
-  const ranked1 = rankForYou([a, b]);
-  const ranked2 = rankForYou([b, a]);
+  const ranked1 = rankForYou([a, b], { now: NOW });
+  const ranked2 = rankForYou([b, a], { now: NOW });
   assert.deepEqual(ranked1.map((j) => j.jobId), ranked2.map((j) => j.jobId), "sort order must not depend on input order");
   assert.deepEqual(ranked1.map((j) => j.jobId), [5, 3], "identical dates fall back to higher id first, deterministically");
 });
