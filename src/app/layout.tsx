@@ -22,6 +22,22 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "JobHunt",
   description: "Personal job-search pipeline",
+  /**
+   * Stop iOS Safari rewriting our own text into links.
+   *
+   * iOS runs data detectors over rendered text and silently converts anything that looks like a
+   * phone number, a date, an email or an address into an <a> — mutating a DOM React believes it
+   * owns, which surfaces as "Text content does not match server-rendered HTML". This app is full of
+   * exactly that bait: the profile identity card prints a phone number and an email, application
+   * rows print relative times, and the resume library prints dates.
+   *
+   * This is not a hydration-warning suppression. suppressHydrationWarning tells React to ignore a
+   * real difference; this tells the BROWSER not to create one, so server and client keep rendering
+   * the same text. Contact details stay selectable and copyable — they simply stop being
+   * auto-linked, which is also why the phone number no longer becomes a tap-to-call target on a
+   * page whose job is to show you what a resume says.
+   */
+  formatDetection: { telephone: false, date: false, email: false, address: false },
 };
 
 /**
