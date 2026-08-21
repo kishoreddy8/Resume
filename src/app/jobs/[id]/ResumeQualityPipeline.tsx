@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { summarizeResumeStage, type ResumeStageSummary } from "./resumeStage";
+import Link from "next/link";
 import { presentDisposition } from "@/lib/resumeQuality/dispositionPresentation";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import type { StructuredResumeReview, RequiredCorrection } from "@/lib/resumeQuality/types";
@@ -115,6 +116,8 @@ interface QualityWorkflowResponse {
       | "UNAUTHORIZED_APPROVAL_STALE";
     detail: string;
     schedulerEnabled: boolean;
+    /** The writer's own switch, distinct from the master automation switch above. */
+    writerEnabled: boolean;
     withinWindow: boolean;
     intervalMinutes: number;
     batchSize: number;
@@ -641,20 +644,49 @@ export function ResumeQualityPipeline({
         </div>
       )}
 
-      {/* 1. Unstarted or Unapproved State */}
-      {!workflow && (
+      {/* 1. Unstarted, unapproved — or a terminal FAILED workflow that may be retried.
+       *
+       * This block used to be gated on `!workflow` alone, so once a workflow existed and ended
+       * FAILED there was no way to run tailoring again from anywhere in the product — even though
+       * evaluateWorkflowRetry has supported CREATE_RETRY the whole time. Three of the real
+       * workflows are in exactly that state, and Resume Studio's "Re-tailor" led here and offered
+       * nothing to press.
+       *
+       * A retry needs a FRESH approval: evaluateWorkflowRetry refuses one recorded before the
+       * failed workflow was created, so the retry path below always passes an approvalType, which
+       * makes handleStartTailoring record the approval before creating the workflow. Nothing about
+       * the approval boundary is bypassed — it is re-asserted, which is the point. */}
+      {(!workflow || workflow.status === "FAILED") && (
         <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-4 dark:border-zinc-800 dark:bg-zinc-800/30 space-y-3">
           <div>
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Tailoring Authorization</h3>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              {workflow ? "Re-tailor this resume" : "Tailoring Authorization"}
+            </h3>
             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-              {authorization.isAuthorized
-                ? "This posting is approved and ready for automated deterministic tailoring."
-                : authorization.blockingReason ?? "Tailoring approval required."}
+              {workflow
+                ? "This attempt finished without a sendable resume. Starting again creates a new attempt beside it — the version above and its review history are kept, never overwritten."
+                : authorization.isAuthorized
+                  ? "This posting is approved and ready for automated deterministic tailoring."
+                  : authorization.blockingReason ?? "Tailoring approval required."}
             </p>
           </div>
 
           <div className="flex flex-wrap gap-2 pt-1">
-            {authorization.isAuthorized ? (
+            {workflow ? (
+              /* Always with an approvalType: a retry without a fresh approval is refused by
+               * evaluateWorkflowRetry as STALE_APPROVAL_FOR_RETRY. */
+              <button
+                onClick={() =>
+                  handleStartTailoring(
+                    authorization.matchDecision === "NEEDS_REVIEW" ? "NEEDS_REVIEW_OVERRIDE" : "READY_DIRECT"
+                  )
+                }
+                disabled={actionBusy}
+                className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm font-semibold text-[var(--accent-fg)] transition-colors hover:bg-[var(--accent-hover)] disabled:opacity-50"
+              >
+                {actionBusy ? "Starting…" : "Re-tailor resume"}
+              </button>
+            ) : authorization.isAuthorized ? (
               <button
                 onClick={() => handleStartTailoring()}
                 disabled={actionBusy}
@@ -1033,6 +1065,33 @@ export function ResumeQualityPipeline({
                 {WRITER_STATE_LABEL[writer.state] ?? writer.state}: {writer.detail}
               </p>
             </div>
+            {/* The writer's OWN switch, reported where you actually watch it work.
+             *
+             * This line used to be absent entirely, and the status sentence above reports the
+             * MASTER automation switch — so turning the resume writer on in Settings changed
+             * nothing visible here and looked like the setting had not saved. It had: the tick
+             * genuinely honours `scheduler.writerEnabled`, it simply was not on the wire.
+             *
+             * Read-only on purpose. Settings owns the control; duplicating it here would be a
+             * second place to change one boolean, and stopping work already in flight is a
+             * separate question this does not answer. */}
+            <div className="flex shrink-0 items-center gap-2">
+              <span
+                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                  writer.writerEnabled
+                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                    : "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
+                }`}
+              >
+                Resume writer {writer.writerEnabled ? "on" : "off"}
+              </span>
+              <Link
+                href="/settings"
+                className="text-[11px] font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+              >
+                Manage
+              </Link>
+            </div>
             {iterationBudget && (
               <div className="text-right">
                 <div className="text-[11px] text-zinc-500">Writer attempt</div>
@@ -1269,10 +1328,13 @@ export function ResumeQualityPipeline({
                           ? "text-emerald-600 dark:text-emerald-400"
                           : status === "FAIL"
                           ? "text-red-600 dark:text-red-400"
+                          : status === "NOT_APPLICABLE"
+                          ? "text-zinc-400 dark:text-zinc-500"
                           : "text-amber-600 dark:text-amber-400"
                       }
                     >
-                      {status === "PASS" ? "✓" : status === "FAIL" ? "✗" : "⚠"}
+                      {/* A dash, never a tick: "did not apply" must not read as "satisfied". */}
+                      {status === "PASS" ? "✓" : status === "FAIL" ? "✗" : status === "NOT_APPLICABLE" ? "–" : "⚠"}
                     </span>
                     <span className="text-zinc-600 dark:text-zinc-400">
                       {name.replace(/([a-z0-9])([A-Z])/g, "$1 $2")}

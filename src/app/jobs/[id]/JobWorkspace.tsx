@@ -318,7 +318,23 @@ export function JobWorkspace({ jobId }: { jobId: number }) {
               {activeStep.state === "locked" || activeStep.state === "blocked" ? (
                 <LockedStep title="Tailoring Results" reason={activeStep.lockedReason} />
               ) : (
-                <TailoringResultsStep plan={plan.state === "ready" ? plan.plan : null} data={qualityData} />
+                <>
+                  <TailoringResultsStep plan={plan.state === "ready" ? plan.plan : null} data={qualityData} />
+                  {/* The controls that actually START tailoring live in ResumeQualityPipeline —
+                   *  approve, retry the writer, re-tailor a terminal workflow. They were reachable
+                   *  only from the Validation step, behind a closed disclosure, so arriving here
+                   *  (which is the DEFAULT landing step — see defaultStep) offered no way to run
+                   *  anything. Rendering the same component here, open, gives this step its actions
+                   *  without a second implementation of the approval boundary. */}
+                  <div className="mt-4">
+                    <ResumeQualityPipeline
+                      jobId={jobId}
+                      jobTitle={job.title}
+                      companyName={job.company_name}
+                      onStageChange={setResume}
+                    />
+                  </div>
+                </>
               )}
             </div>
           )}
