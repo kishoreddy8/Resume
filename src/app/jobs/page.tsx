@@ -10,7 +10,7 @@ import { ForYouList } from "./ForYouList";
 import { JobList } from "./JobList";
 import { JobListSkeleton, LoadingRegion } from "./Skeletons";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { AppToolbarSlot } from "@/components/AppToolbarSlot";
+import { AppToolbarActions, AppToolbarSlot } from "@/components/AppToolbarSlot";
 import { useLifecycleThresholds } from "./useLifecycleThresholds";
 
 type JobsView = "forYou" | "all";
@@ -189,20 +189,76 @@ export default function JobsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Title and the page's primary action live in the application toolbar, which used to hold
-       *  only the notification bell. Merging the two bands removes a whole row of chrome and hands
-       *  that height back to the jobs list. */}
+      {/* The toolbar carries what this page IS. What it can DO sits on the other side of the
+       *  search, and what it FILTERS sits in the page's own control row below — see the comment on
+       *  APP_TOOLBAR_ACTIONS_SLOT_ID. Portalling all three into one left-hand anchor put the page's
+       *  search field and its Scan button underneath the global one. */}
       <AppToolbarSlot>
         {/* The aperture's one additional placement. It is a wayfinding mark, not an indicator —
          *  identical on every screen and in every state. */}
         <span className="flex shrink-0 items-center gap-2">
           <Aperture variant="mark" />
-          <h1 className="text-[14px] font-semibold tracking-[-0.01em] text-primary">Jobs</h1>
+          <h1 className="text-[16px] font-semibold tracking-[-0.01em] text-primary">Jobs</h1>
         </span>
+      </AppToolbarSlot>
 
-        {/* Segmented view control — one capsule with a sliding lit indicator, rather than two
-         *  underlined tabs floating in the content area. */}
-        <div className="ml-1 hidden shrink-0 items-center rounded-[9px] bg-[var(--z0-bg)] p-[3px] shadow-[inset_0_1px_2px_var(--edge-lo)] sm:flex">
+      <AppToolbarActions>
+        {view === "all" && (
+          <div ref={filterAnchorRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-controls="jobs-filter-panel"
+              aria-haspopup="dialog"
+              className={`flex h-10 items-center gap-2 rounded-[10px] px-3.5 text-[14px] font-medium transition-colors duration-150 ease-out active:scale-[0.98] ${
+                filtersOpen ? "bg-[var(--z0-bg)] text-primary shadow-[inset_0_1px_2px_var(--edge-lo)]" : "text-secondary hover:text-primary"
+              }`}
+            >
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--accent)] px-1.5 text-[11.5px] font-semibold tabular-nums text-[var(--accent-fg)]">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
+            {/* Z5 — emerges from its trigger, not from the viewport. */}
+            <AnimatePresence>
+              {filtersOpen && (
+                <motion.div
+                  id="jobs-filter-panel"
+                  role="dialog"
+                  aria-label="Job filters"
+                  style={{ transformOrigin: "top right" }}
+                  initial={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: -6 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.98, y: -4 }}
+                  transition={reduced ? { duration: 0.11 } : { type: "spring", duration: 0.22, bounce: 0 }}
+                  className="plane plane-5 absolute right-0 top-[calc(100%+8px)] z-50 max-h-[min(70vh,560px)] w-[min(94vw,26rem)] overflow-y-auto"
+                >
+                  <JobFilterSidebar filters={filters} onChange={setFilters} companies={companies} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={runScan}
+          disabled={scanning}
+          className="h-10 rounded-[10px] bg-[var(--accent)] px-4 text-[14px] font-semibold text-[var(--accent-fg)] shadow-[var(--lift-1),inset_0_1px_0_rgba(255,255,255,0.22)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
+        >
+          {scanning ? "Scanning…" : "Scan now"}
+        </button>
+      </AppToolbarActions>
+
+      {/* The page's own control row, aligned to the page container rather than to the toolbar.
+       *  The view switch and the feed's search live here because they filter what is directly
+       *  below them — and because the toolbar already holds a search that means something else:
+       *  the global one navigates, this one narrows the list you are looking at. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex shrink-0 items-center rounded-[12px] bg-[var(--z0-bg)] p-[3px] shadow-[inset_0_1px_2px_var(--edge-lo)]">
           {(["forYou", "all"] as JobsView[]).map((v) => (
             <button
               key={v}
@@ -212,7 +268,7 @@ export default function JobsPage() {
                 setSelectedJobId(null);
               }}
               aria-pressed={view === v}
-              className={`relative rounded-[7px] px-2.5 py-1 text-[12px] font-medium transition-colors duration-150 ease-out ${
+              className={`relative h-10 rounded-[9px] px-5 text-[14.5px] font-medium transition-colors duration-150 ease-out ${
                 view === v
                   ? "bg-[var(--z3-bg)] text-primary shadow-[var(--lift-1),inset_0_1px_0_var(--edge-hi)]"
                   : "text-tertiary hover:text-primary"
@@ -226,12 +282,12 @@ export default function JobsPage() {
         {/* A recessed well, not a bordered box. The field measured 1.08:1 against the command bar
          *  on tone alone; a 3:1 outline would read as an enterprise form control, so the field is
          *  identified by sinking (well tone + inset edge) plus a persistent glyph. */}
-        <label className="relative min-w-0 flex-1 md:max-w-sm">
-          <span className="sr-only">Search jobs by title, company or description</span>
+        <label className="relative min-w-0 flex-1 sm:max-w-[440px]">
+          <span className="sr-only">Narrow this list by title, company or description</span>
           <svg
             aria-hidden="true"
             viewBox="0 0 16 16"
-            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-tertiary"
+            className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-tertiary"
           >
             <circle cx="7" cy="7" r="4.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
             <path d="M10.2 10.2 L13.5 13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -240,88 +296,19 @@ export default function JobsPage() {
             type="search"
             value={searchDraft}
             onChange={(e) => setSearchDraft(e.target.value)}
-            placeholder="Search title, company, description…"
-            className="w-full rounded-[9px] bg-[var(--well-bg)] py-1.5 pl-8 pr-3 text-[12.5px] text-primary shadow-[var(--well-edge)] outline-none transition-shadow duration-150 ease-out placeholder:text-tertiary focus:shadow-[var(--well-edge),0_0_0_2px_var(--accent-soft)]"
+            placeholder="Narrow this list…"
+            className="h-11 w-full rounded-[11px] bg-[var(--well-bg)] pl-11 pr-3.5 text-[14.5px] text-primary shadow-[var(--well-edge)] outline-none transition-shadow duration-150 ease-out placeholder:text-tertiary focus:shadow-[var(--well-edge),0_0_0_2px_var(--accent-soft)]"
           />
         </label>
+
         {scanResult && (
-          <span className="hidden min-w-0 truncate text-[11px] tabular-nums text-tertiary xl:block">
+          <span className="min-w-0 truncate text-[11.5px] tabular-nums text-tertiary">
             +{scanResult.jobsNew} new · {scanResult.jobsUpdated} updated ·{" "}
             {scanResult.jobsClosed} closed · {scanResult.jobsArchived} archived ·{" "}
             {scanResult.jobsSuppressed} suppressed · {scanResult.jobsDeletedByAge} aged out
             {scanResult.errors > 0 && ` · ${scanResult.errors} errors`}
           </span>
         )}
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          {view === "all" && (
-            <div ref={filterAnchorRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setFiltersOpen((o) => !o)}
-                aria-expanded={filtersOpen}
-                aria-controls="jobs-filter-panel"
-                aria-haspopup="dialog"
-                className={`flex items-center gap-1.5 rounded-[9px] px-2.5 py-1.5 text-[12.5px] font-medium transition-colors duration-150 ease-out active:scale-[0.98] ${
-                  filtersOpen ? "bg-[var(--z0-bg)] text-primary shadow-[inset_0_1px_2px_var(--edge-lo)]" : "text-secondary hover:text-primary"
-                }`}
-              >
-                Filters
-                {activeFilterCount > 0 && (
-                  <span className="grid h-4 min-w-4 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold tabular-nums text-[var(--accent-fg)]">
-                    {activeFilterCount}
-                  </span>
-                )}
-              </button>
-
-              {/* Z5 — emerges from its trigger, not from the viewport. */}
-              <AnimatePresence>
-                {filtersOpen && (
-                  <motion.div
-                    id="jobs-filter-panel"
-                    role="dialog"
-                    aria-label="Job filters"
-                    style={{ transformOrigin: "top right" }}
-                    initial={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: -6 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.98, y: -4 }}
-                    transition={reduced ? { duration: 0.11 } : { type: "spring", duration: 0.22, bounce: 0 }}
-                    className="plane plane-5 absolute right-0 top-[calc(100%+8px)] z-50 max-h-[min(70vh,560px)] w-[min(94vw,26rem)] overflow-y-auto"
-                  >
-                    <JobFilterSidebar filters={filters} onChange={setFilters} companies={companies} />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={runScan}
-            disabled={scanning}
-            className="rounded-[9px] bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--accent-fg)] shadow-[var(--lift-1),inset_0_1px_0_rgba(255,255,255,0.22)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
-          >
-            {scanning ? "Scanning…" : "Scan now"}
-          </button>
-        </div>
-      </AppToolbarSlot>
-
-      <div className="flex items-center gap-1 border-b border-[var(--separator)] sm:hidden">
-        {(["forYou", "all"] as JobsView[]).map((v) => (
-          <button
-            key={v}
-            type="button"
-            onClick={() => {
-              setView(v);
-              setSelectedJobId(null);
-            }}
-            className={`-mb-px border-b-2 px-3 py-1.5 text-sm font-medium ${
-              view === v
-                ? "border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100"
-                : "border-transparent text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
-            }`}
-          >
-            {v === "forYou" ? "For You" : "All Jobs"}
-          </button>
-        ))}
       </div>
 
       {view === "forYou" ? (

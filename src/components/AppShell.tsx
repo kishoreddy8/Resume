@@ -29,7 +29,7 @@ export function AppShell({
   if (bare) {
     return (
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[1600px] px-6 py-6 lg:px-8 lg:py-7">{children}</div>
+        <div className="mx-auto w-full max-w-[var(--home-max-w)] px-[var(--shell-pad)] py-6 lg:py-7">{children}</div>
       </main>
     );
   }
@@ -43,7 +43,7 @@ export function AppShell({
          *  concludes the app is broken while their profile is still being read. */}
         <SetupProgressStrip />
         <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[1600px] px-6 py-6 lg:px-8 lg:py-7">{children}</div>
+          <div className="mx-auto w-full max-w-[var(--home-max-w)] px-[var(--shell-pad)] py-6 lg:py-7">{children}</div>
         </main>
       </div>
     </>

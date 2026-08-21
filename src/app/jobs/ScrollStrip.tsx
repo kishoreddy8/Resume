@@ -76,17 +76,22 @@ export function ScrollStrip({
     el.scrollBy({ left: direction * Math.max(120, el.clientWidth * 0.75), behavior: reduced ? "auto" : "smooth" });
   }
 
+  /* Over the track's ends rather than beside them. In the flow they were 24px wide plus padding
+   * even while disabled and invisible, so the first tab began 34px inside the page's gutter and the
+   * strip sat visibly out of line with every other row on the page. Overlaying costs nothing when
+   * there is nothing to scroll — disabled means transparent AND non-interactive — and when there is,
+   * an arrow over a faded edge is what the fade is already saying. */
   const arrow =
-    "grid h-6 w-6 shrink-0 place-items-center rounded-md text-[13px] text-tertiary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.94] disabled:pointer-events-none disabled:opacity-0";
+    "absolute top-1/2 z-10 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md bg-[var(--z1-bg)] text-[13px] text-tertiary shadow-[0_0_10px_6px_var(--z1-bg)] transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.94] disabled:pointer-events-none disabled:opacity-0";
 
   return (
-    <div className="flex items-center gap-0.5 px-2">
+    <div className="relative flex items-center">
       <button
         type="button"
         onClick={() => page(-1)}
         disabled={!overflow.left}
         aria-label={`Scroll ${label} left`}
-        className={arrow}
+        className={`${arrow} left-0`}
       >
         <span aria-hidden="true">‹</span>
       </button>
@@ -94,7 +99,7 @@ export function ScrollStrip({
       <div
         ref={trackRef}
         // The fade stays, but only as a hint that the track continues — the arrows do the work.
-        className={`flex min-w-0 flex-1 gap-1 overflow-x-auto py-2 ${
+        className={`flex min-w-0 flex-1 gap-1.5 overflow-x-auto py-2 ${
           overflow.right ? "scroll-fade-x" : "scroll-fade-none"
         }`}
       >
@@ -106,7 +111,7 @@ export function ScrollStrip({
         onClick={() => page(1)}
         disabled={!overflow.right}
         aria-label={`Scroll ${label} right`}
-        className={arrow}
+        className={`${arrow} right-0`}
       >
         <span aria-hidden="true">›</span>
       </button>

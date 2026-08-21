@@ -57,6 +57,11 @@
   --pill-amber-fg: #A65D0E;
   --pill-blue-bg: #E8F3FF;
   --pill-blue-fg: #2270C0;
+  /* The blocked decision had no pill pair, so it borrowed --error, which is tuned for text on the
+   * page background rather than on a tint. #B42318 measures 5.76:1 on this tint, 6.57:1 on white
+   * and 6.00:1 on the #F4F4FA canvas — clear of 4.5:1 on all three surfaces a pill can land on. */
+  --pill-red-bg: #FDECEC;
+  --pill-red-fg: #B42318;
 
   /* Icon containers, bound to the four overview CONCEPTS rather than to whichever metric occupies
    * a slot. Approved values exactly — and every pair clears 4.5:1 on its own background, so the
@@ -89,7 +94,7 @@
    * bottom of the window. Derived, not guessed:
    *     header h-12 (48px) + main py-6 (24px x 2) = 96px
    * If either the header height or the page padding changes, change this with it. */
-  --workspace-chrome: 6.5rem;
+  --workspace-chrome: 6.75rem;
   --well-bg: #e2e5ee;
   --well-edge: inset 0 1px 2px rgba(30, 41, 59, 0.10), inset 0 0 0 1px rgba(30, 41, 59, 0.05);
 
@@ -348,6 +353,8 @@ table {
     --pill-amber-fg: #fcd34d;
     --pill-blue-bg: rgba(96, 165, 250, 0.14);
     --pill-blue-fg: #93c5fd;
+    --pill-red-bg: rgba(248, 113, 113, 0.14);
+    --pill-red-fg: #fca5a5;
     --tile-lav-bg: rgba(99, 102, 241, 0.16);
     --tile-lav-fg: #a5b4fc;
     --tile-green-bg: rgba(52, 211, 153, 0.14);
@@ -420,32 +427,71 @@ table {
     --home-rail-gap: 28px;
   }
 }
+/* Once the page stops capping (below), the main column takes every extra pixel on its own. The rail
+ * grows with it so the right of the page keeps its share instead of becoming a thin strip beside an
+ * ever-wider column. */
+@media (min-width: 2000px) {
+  :root {
+    --home-rail-w: 360px;
+    --home-rail-gap: 32px;
+  }
+}
 
-/* Home's outer measure and search width, as tokens for the same reason the rail width is one:
- * stacked min-width Tailwind variants did not order reliably. On a 16" or 27" Mac the page was
- * capped at 1340px and the search at 620px, so the workspace stopped short of the viewport and the
- * field looked undersized against it. These step up with the display; below 1600px every value is
- * exactly what it was, so the approved 1512 composition is untouched. */
+/* The shell's outer measure, gutter and search width, as tokens for the same reason the rail width
+ * is one: stacked min-width Tailwind variants did not order reliably. On a 16" or 27" Mac the page
+ * was capped at 1340px and the search at 620px, so the workspace stopped short of the viewport and
+ * the field looked undersized against it. These step up with the display; below 1600px every value
+ * is exactly what it was, so the approved 1512 composition is untouched.
+ *
+ * --home-max-w and --shell-pad are read by BOTH the toolbar and the page body, and that is the
+ * point. They were previously different sums — the header capped at --home-max-w and padded
+ * outside it, the body capped at a hard-coded 1600px and padded inside — so the two bands never
+ * lined up. Measured at 2000px the body ran 340..1876 while the toolbar ran 278..1938: the search
+ * was 62px off the column it was documented to centre over, and the bell overhung the rail it sits
+ * above by the same amount. One measure, one gutter, applied the same way in both places.
+ *
+ * At 1800px and up the measure opens to 1800 and the gutter to 40. The old 1660 cap could not be
+ * reached at all — the body clamped it to 1600 first — so a 2000px display carried a 124px dead
+ * margin down each side of the page while the content was squeezed. */
 :root {
   --home-max-w: 1340px;
   --home-search-max: 620px;
+  --shell-pad: 24px;
 }
-@media (min-width: 1600px) {
+@media (min-width: 1024px) {
   :root {
-    --home-max-w: 1500px;
-    --home-search-max: 700px;
+    --shell-pad: 32px;
   }
 }
-@media (min-width: 1800px) {
+/* Above 1600 the page stops being capped and simply fills the window, minus a fixed gutter.
+ *
+ * Every fixed cap we tried left a dead margin down both sides on a large display — 124px at 1600,
+ * and worse the wider the window or the further out the browser zoom, because a cap does not scale
+ * with either. Chasing it with more breakpoints only moves the width at which the strip reappears.
+ * A gutter does scale: it is the same 40px at 1900, at 2400 and at 90% zoom, and there is no width
+ * at which empty bands open up beside the content. Below 1600 the caps are exactly what they were,
+ * so the approved 1512 composition is untouched. */
+@media (min-width: 1600px) {
   :root {
-    --home-max-w: 1660px;
-    --home-search-max: 780px;
+    --home-max-w: 100%;
+    --home-search-max: 760px;
+    --shell-pad: 40px;
+  }
+}
+@media (min-width: 1900px) {
+  :root {
+    --home-search-max: 860px;
+  }
+}
+@media (min-width: 2200px) {
+  :root {
+    --home-search-max: 960px;
   }
 }
 
-/* lg raises both: header h-[72px] + main py-7 (28px x 2) = 128px. */
+/* lg raises both: header h-[80px] + main py-7 (28px x 2) = 136px. */
 @media (min-width: 1024px) {
-  :root { --workspace-chrome: 8rem; }
+  :root { --workspace-chrome: 8.5rem; }
 }
 
 /* Scroll-edge fade for a horizontally scrolling strip. The bucket tabs were already scrollable,

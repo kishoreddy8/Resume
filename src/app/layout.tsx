@@ -6,7 +6,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { AppSidebar } from "@/components/AppSidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { HeaderSearch } from "@/components/HeaderSearch";
-import { APP_TOOLBAR_SLOT_ID } from "@/components/AppToolbarSlot";
+import { APP_TOOLBAR_ACTIONS_SLOT_ID, APP_TOOLBAR_SLOT_ID } from "@/components/AppToolbarSlot";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -47,26 +47,35 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             /* Toolbar. Pages portal their title and primary actions into the slot (see
              *  AppToolbarSlot); the bell stays pinned right. A page that renders nothing into the
              *  slot simply leaves it empty, exactly as before. */
-            <header className="relative z-30 flex h-14 shrink-0 items-center border-b border-[var(--header-border)] bg-[color-mix(in_oklab,var(--z1-bg)_92%,transparent)] px-4 backdrop-blur-sm lg:h-[72px] lg:px-8">
-              {/* Pages portal their title and primary actions here. It is pinned to the left edge
-               *  rather than placed in the row so that adding a long page title cannot shift the
-               *  search field off the main column's centre line. */}
-              <div
-                id={APP_TOOLBAR_SLOT_ID}
-                className="pointer-events-none absolute inset-y-0 left-4 flex max-w-[26%] items-center gap-3 lg:left-8 [&>*]:pointer-events-auto"
-              />
-              {/* The same container geometry as the page body — max width, gutter, rail width and
-               *  gap — so the field centres over the MAIN column, not over the viewport. Centring
-               *  it on the viewport put it visibly right of where the content actually is. */}
-              <div className="mx-auto flex h-full w-full max-w-[var(--home-max-w)] items-center gap-[var(--home-rail-gap)]">
+            <header className="relative z-30 flex h-[60px] shrink-0 items-center border-b border-[var(--header-border)] bg-[color-mix(in_oklab,var(--z1-bg)_92%,transparent)] backdrop-blur-sm lg:h-[80px]">
+              {/* EXACTLY the page body's container maths — cap first, then pad inside it, from the
+               *  same two tokens AppShell reads. The header used to pad outside its cap while the
+               *  body padded inside a different one, so the two bands were 62px out of step at
+               *  2000px and the bell overhung the rail it is supposed to sit above. */}
+              <div className="mx-auto flex h-full w-full max-w-[var(--home-max-w)] items-center gap-3 px-[var(--shell-pad)]">
+                {/* Left of the search: the page's identity. In the flow, not absolutely placed, so
+                 *  it can never be overlapped by the field beside it. It shrinks before the search
+                 *  does and truncates rather than pushing. */}
+                <div
+                  id={APP_TOOLBAR_SLOT_ID}
+                  className="flex min-w-0 shrink items-center gap-3 empty:hidden"
+                />
+                {/* Centres over the MAIN column rather than the viewport, because the right cell
+                 *  below reserves the rail's width. Centring on the viewport put the field visibly
+                 *  right of where the content actually is. */}
                 <div className="flex min-w-0 flex-1 justify-center">
                   <HeaderSearch />
                 </div>
-                {/* ONE instance. A second copy for the narrow layout mounted a second bell, and
-                 *  each one fetches its own notifications — two identical requests per page load
-                 *  for a control that is only ever visible once. It is one element that changes
-                 *  width instead. */}
-                <div className="flex shrink-0 justify-end xl:w-[var(--home-rail-w)]">
+                <div className="flex shrink-0 items-center justify-end gap-2 xl:w-[var(--home-rail-w)]">
+                  {/* Right of the search: what the page can do. */}
+                  <div
+                    id={APP_TOOLBAR_ACTIONS_SLOT_ID}
+                    className="flex shrink-0 items-center gap-1.5 empty:hidden"
+                  />
+                  {/* ONE instance. A second copy for the narrow layout mounted a second bell, and
+                   *  each one fetches its own notifications — two identical requests per page load
+                   *  for a control that is only ever visible once. It is one element that changes
+                   *  width instead. */}
                   <NotificationBell />
                 </div>
               </div>
