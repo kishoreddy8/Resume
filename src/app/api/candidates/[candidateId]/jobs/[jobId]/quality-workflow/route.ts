@@ -19,6 +19,7 @@ import { evaluateWorkflowRetry } from "@/lib/resumeQuality/workflowRetry";
 import { getResumeWriterHealth, type ResumeWriterHealth } from "@/lib/resumeQuality/writers/writerHealth";
 import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
 import { evaluateApplicationReadiness, type ApplicationReadinessResult } from "@/lib/resumeQuality/applicationReadiness";
+import { isLegacyReviewMissingTypedSafetyAnalysis, canRevalidate } from "@/lib/resumeQuality/legacyReview";
 import { startTailoringRun, type TailoringRunAuthorizationError } from "@/lib/tailoringExecution";
 import { selectBestResumeQualityAttempt, type ResumeQualityAttemptSummary } from "@/lib/resumeQuality/bestAttemptSelection";
 import { determineFinalDisposition, type FinalDispositionResult } from "@/lib/resumeQuality/finalDisposition";
@@ -80,6 +81,7 @@ export async function GET(
   // Iterations & Review data
   let iterations: ReturnType<typeof listResumeQualityIterations> = [];
   let latestReview: StructuredResumeReview | null = null;
+  let revalidation: { isLegacyMissingAnalysis: boolean; canRevalidate: boolean } | null = null;
   let qualityGate: {
     passed: boolean;
     outcome: string;
@@ -172,6 +174,13 @@ export async function GET(
               .filter(([, status]) => status !== "PASS")
               .map(([name]) => name)
           : [];
+        /* Whether the ONE recoverable blocking condition applies: a review written before today's
+         * safety analyses existed, which can be re-run rather than only reported. This is a
+         * property of the review, never a clearance — readiness below is unaffected by it. */
+        revalidation = {
+          isLegacyMissingAnalysis: isLegacyReviewMissingTypedSafetyAnalysis(latestReview),
+          canRevalidate: canRevalidate(workflow),
+        };
         applicationReadiness = evaluateApplicationReadiness(
           latestReview,
           latestIter.iteration_number,
@@ -405,6 +414,7 @@ export async function GET(
     authorization,
     iterations,
     latestReview,
+    revalidation,
     qualityGate,
     applicationReadiness,
     bestAttempt,

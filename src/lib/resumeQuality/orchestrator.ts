@@ -60,6 +60,7 @@ import {
   getWorkspaceDirectory,
   type QualityWorkflowLocation,
 } from "./workspace";
+import { resolveDeterministicReviewContext } from "./reviewInputContext";
 import { buildWorkspacePackage } from "./workspacePackage";
 
 /**
@@ -347,29 +348,19 @@ export async function executeResumeQualityIteration(
     assertValidWorkflowTransition(currentStatus, "REVIEW_RUNNING");
   }
 
-  // Resolve Master Resume Profile and Job Requirements if not explicitly provided
-  let masterResumeProfile = input.masterResumeProfile;
-  if (!masterResumeProfile) {
-    const profileRes = loadCandidateProfile(candidateId);
-    if (profileRes.status === "ok") {
-      masterResumeProfile = profileRes.profile;
-    }
-  }
-
-  let jobRequirements = input.jobRequirements;
-  if (!jobRequirements) {
-    const extractedReqPath = path.join(workspaceDir, "extracted_job_requirements.json");
-    if (fs.existsSync(extractedReqPath)) {
-      try {
-        const rawReqs = JSON.parse(fs.readFileSync(extractedReqPath, "utf-8"));
-        if (Array.isArray(rawReqs)) {
-          jobRequirements = rawReqs as RequirementUnit[];
-        }
-      } catch {
-        // Fall back to undefined if unparseable
-      }
-    }
-  }
+  // Master Resume Profile, extracted job requirements, the prior iteration's resume and the job's
+  // own posted title — resolved by the shared helper so legacy revalidation reviews against exactly
+  // the same context this path does. Same sources, same guards, same order; see reviewInputContext.
+  const reviewContext = resolveDeterministicReviewContext({
+    candidateId,
+    location,
+    iterationNumber,
+    dedupeKey: workflow.dedupe_key,
+    masterResumeProfile: input.masterResumeProfile,
+    jobRequirements: input.jobRequirements,
+  });
+  const masterResumeProfile = reviewContext.masterResumeProfile;
+  const jobRequirements = reviewContext.jobRequirements;
 
   try {
     // 0. Render/copy DOCX outputs FIRST — the reviewer needs the real rendered files (when they
@@ -467,19 +458,9 @@ export async function executeResumeQualityIteration(
       }
     }
 
-    // Load the immediately prior iteration's resume (when one exists) so the deep-rewrite check
-    // can compare against genuine before/after content rather than only JD-orientation heuristics.
-    let priorResume: ResumeContent | undefined;
-    if (iterationNumber > 1) {
-      const priorResumePath = path.join(getIterationDirectory(location, iterationNumber - 1), "resume_content.json");
-      if (fs.existsSync(priorResumePath)) {
-        try {
-          priorResume = JSON.parse(fs.readFileSync(priorResumePath, "utf-8")) as ResumeContent;
-        } catch {
-          // Fall back to undefined if unparseable
-        }
-      }
-    }
+    // The immediately prior iteration's resume, so the deep-rewrite check compares against genuine
+    // before/after content rather than only JD-orientation heuristics. Resolved above.
+    const priorResume = reviewContext.priorResume;
 
     // 1. Invoke Reviewer
     const reviewer = input.reviewer ?? new DeterministicResumeReviewer();
@@ -487,8 +468,8 @@ export async function executeResumeQualityIteration(
     const jobDescriptionPath = path.join(workspaceDir, "job_description.md");
     // Stage 21 — the job's OWN posted title is P0 role identity for the JD Priority Matrix/Positioning
     // Engine; never derived from jobRequirements or the resume itself (see types.ts's own doc comment
-    // on ResumeReviewerInput.targetRoleTitle).
-    const targetRoleTitle = getJobByDedupeKey(workflow.dedupe_key)?.title;
+    // on ResumeReviewerInput.targetRoleTitle). Resolved above.
+    const targetRoleTitle = reviewContext.targetRoleTitle;
 
     const reviewerInput: ResumeReviewerInput = {
       applicationId: workflow.application_id,
