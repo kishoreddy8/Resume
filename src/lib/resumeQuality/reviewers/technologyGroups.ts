@@ -44,6 +44,15 @@ export interface TechnologyContradiction {
   foundMembers: string[];
 }
 
+/**
+ * "Snowflake schema" is a dimensional-modeling pattern, not a reference to the Snowflake warehouse
+ * platform. Remove only that complete lexical term before scanning; an independent Snowflake
+ * platform mention elsewhere in the same block remains visible to the detector.
+ */
+function disambiguateTechnologyTerms(text: string): string {
+  return text.replace(/\bsnowflake(?:\s+|-)schemas?\b/gi, " ");
+}
+
 /** Scans one block of text (typically one bullet) for 2+ members of the same competing group,
  *  skipping any block that has a migration signal. Conservative by construction: only flags a
  *  contradiction when the SAME group's members are found together in the SAME text block, never
@@ -51,13 +60,15 @@ export interface TechnologyContradiction {
 export function findTechnologyContradictions(text: string): TechnologyContradiction[] {
   if (hasMigrationSignal(text)) return [];
 
+  const technologyText = disambiguateTechnologyTerms(text);
+
   const canonicalInText = new Set<string>();
   for (const group of COMPETING_TECHNOLOGY_GROUPS) {
     for (const member of group.members) {
       const resolved = resolveSkillForReview(member);
       const canonical = resolved?.canonical ?? member;
       const regex = new RegExp(`(?<![\\w-])${canonical.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`, "i");
-      if (regex.test(text)) canonicalInText.add(canonical);
+      if (regex.test(technologyText)) canonicalInText.add(canonical);
     }
   }
 

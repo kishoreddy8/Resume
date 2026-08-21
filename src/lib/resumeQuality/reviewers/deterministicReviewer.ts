@@ -183,13 +183,16 @@ export function reviewResumeDeterministically(
   const bulletCaps = evaluateBulletCaps(resume.experience);
   const verbTense = evaluateVerbTense(resume.experience);
 
-  // Cover-letter-side technology contradictions — same detection logic as architectureChecks.ts
-  // (findTechnologyContradictions), applied to cover letter paragraphs instead of resume bullets, per
-  // the canonical instructions' explicit "scan resume AND cover letter" scope for this ONE guardrail
-  // (noContradictingTechnologies) specifically. Not folded into architectureIntegrity, which stays
-  // resume-experience-scoped exactly as Stage 8 originally defined it.
-  const coverLetterContradictions = (coverLetter?.paragraphs ?? []).flatMap((paragraph) =>
-    findTechnologyContradictions(paragraph).map(
+  // Cover-letter-side technology contradictions — same detection logic as architectureChecks.ts,
+  // but evaluated per sentence. A cover-letter paragraph commonly summarizes several employers;
+  // treating the whole paragraph as one responsibility collapses truthful, chronologically distinct
+  // architectures into a false contradiction. Sentence scope preserves real same-responsibility
+  // conflicts while keeping separate employer sentences independent.
+  const coverLetterSentences = (coverLetter?.paragraphs ?? []).flatMap((paragraph) =>
+    paragraph.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean)
+  );
+  const coverLetterContradictions = coverLetterSentences.flatMap((sentence) =>
+    findTechnologyContradictions(sentence).map(
       (c) => `Cover letter: "${c.foundMembers.join(" + ")}" (${c.group.label}) with no migration/integration framing.`
     )
   );

@@ -4,9 +4,10 @@ import type { ResumeContent } from "../../../../tools/tailoring-engine/types";
 
 /**
  * YEARS-OF-EXPERIENCE AND EDUCATION HONESTY. Two independently checkable directions:
- *   - Inflation: an explicit "N+ years" claim in the resume text that exceeds the REAL total years
- *     derivable from CandidateProfile.experience (Phase 2's own computeTotalYearsExperience —
- *     reused verbatim, not reimplemented) is deterministically provable and always flagged.
+ *   - Inflation: an explicit "N+ years" claim in the resume text is checked first against an
+ *     authoritative total explicitly stated by the Master Resume (CandidateProfile's
+ *     totalYearsExperience). When no stated total exists, Phase 2's own
+ *     computeTotalYearsExperience is reused verbatim as the fallback.
  *     Downplaying (claiming FEWER years than actual) has no analogous deterministic proof — a resume
  *     is never required to state a years figure at all, so silence is never evidence of dishonesty —
  *     and is intentionally not flagged, matching the spec's own "detected where deterministically
@@ -26,25 +27,36 @@ const YEARS_CLAIM_RE = /\b(\d{1,2})\+?\s*years?\b/gi;
 
 export function evaluateYearsExperienceAndEducationHonesty(
   resume: ResumeContent,
-  masterResumeProfile: CandidateProfile | undefined
+  masterResumeProfile: CandidateProfile | undefined,
+  now: Date = new Date()
 ): YearsExperienceCheckResult {
   if (!masterResumeProfile) {
     return { inflationIssues: [], educationHidden: false, insufficientProfileData: true };
   }
 
-  const realYears = computeTotalYearsExperience(masterResumeProfile.experience);
+  const statedYears = masterResumeProfile.totalYearsExperience;
+  const hasAuthoritativeTotal = statedYears !== null && Number.isFinite(statedYears) && statedYears > 0;
+  const supportedYears = hasAuthoritativeTotal
+    ? statedYears
+    : computeTotalYearsExperience(masterResumeProfile.experience, now);
   const inflationIssues: string[] = [];
 
-  if (realYears !== null) {
+  if (supportedYears !== null) {
     const searchText = [...resume.summary, ...resume.skillGroups.flatMap((g) => g.items)].join(" ");
     let match: RegExpExecArray | null;
     const re = new RegExp(YEARS_CLAIM_RE);
     while ((match = re.exec(searchText)) !== null) {
       const claimedYears = Number(match[1]);
-      // A generous +1 tolerance for rounding ("8 years" for 7.4 actual) — only genuine inflation
-      // beyond ordinary rounding is flagged, never a one-year rounding difference.
-      if (claimedYears > realYears + 1) {
-        inflationIssues.push(`Resume claims "${match[0]}" but the Master Resume's own chronology supports only ~${Math.floor(realYears)} years of total experience.`);
+      // An explicit Master Resume total is already the controlling rounded career claim, so it is a
+      // hard ceiling. Derived chronology keeps the existing +1 tolerance for ordinary rounding.
+      const exceedsEvidence = hasAuthoritativeTotal
+        ? claimedYears > supportedYears
+        : claimedYears > supportedYears + 1;
+      if (exceedsEvidence) {
+        const evidenceDescription = hasAuthoritativeTotal
+          ? `the Master Resume explicitly supports ${supportedYears} years of total experience`
+          : `the Master Resume's own chronology supports only ~${supportedYears.toFixed(1)} years of total experience`;
+        inflationIssues.push(`Resume claims "${match[0]}" but ${evidenceDescription}.`);
       }
     }
   }

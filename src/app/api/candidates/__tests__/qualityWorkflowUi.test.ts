@@ -245,11 +245,9 @@ before(async () => {
         {
           employer: "Acme Corp",
           title: "Senior Data Engineer",
-          // Started early enough that the real chronology (computeTotalYearsExperience, which Phase
-          // 2 derives from startDate/endDate, never from the stored totalYearsExperience field below)
-          // comfortably supports PERFECT_RESUME's "8+ years" summary claim — Resume Quality
-          // Hardening's yearsExperienceEducationHonesty check flags a claim that exceeds derivable
-          // chronology.
+          // Started early enough that fallback chronology also supports PERFECT_RESUME's "8+ years"
+          // claim. The explicit total below is the controlling Master Resume evidence for the resume
+          // honesty reviewer; chronology remains the fallback when that field is null.
           startDate: "2015-01-01",
           endDate: null,
           // Matches every technology PERFECT_RESUME claims below (Resume Quality Hardening's
@@ -259,7 +257,7 @@ before(async () => {
       ],
       education: [{ level: "B.S.", field: "Computer Science", institution: "University of California" }],
       certifications: [{ name: "Azure Solutions Architect Expert" }],
-      totalYearsExperience: 5,
+      totalYearsExperience: 8,
     };
     fs.writeFileSync(path.join(dir, "candidate-profile.json"), JSON.stringify(profile));
   }

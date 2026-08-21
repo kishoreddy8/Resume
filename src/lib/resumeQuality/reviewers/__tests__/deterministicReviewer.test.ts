@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
 import { evaluateQualityGate } from "../../qualityGate";
 import { structuredResumeReviewSchema } from "../../types";
-import type { ResumeContent } from "../../../../../tools/tailoring-engine/types";
+import type { CoverLetterContent, ResumeContent } from "../../../../../tools/tailoring-engine/types";
 import { DeterministicResumeReviewer, reviewResumeDeterministically } from "../deterministicReviewer";
 
 function unit(overrides: Partial<RequirementUnit>): RequirementUnit {
@@ -72,6 +72,18 @@ const STRONG_REQUIREMENTS: RequirementUnit[] = [
   unit({ memberSkillNames: ["Azure Data Factory"], label: "Azure Data Factory" }),
   unit({ memberSkillNames: ["Databricks"], label: "Databricks" }),
 ];
+
+function coverLetter(paragraphs: string[]): CoverLetterContent {
+  return {
+    name: "Test Candidate",
+    location: "Remote",
+    phone: "312-555-9821",
+    email: "test@gmail.com",
+    salutation: "Dear Hiring Team,",
+    paragraphs,
+    closing: "Sincerely,\nTest Candidate",
+  };
+}
 
 test("30. deterministic repeatability: identical input always produces an identical review", () => {
   const input = { resume: STRONG_RESUME, jobRequirements: STRONG_REQUIREMENTS, masterResumeProfile: masterProfile() };
@@ -185,4 +197,60 @@ test("missing job requirements AND missing master profile together still produce
   assert.equal(parsed.success, true);
   assert.ok(review.requiredCorrections.some((c) => c.description.includes("No job requirements")));
   assert.ok(review.requiredCorrections.some((c) => c.description.includes("No Master Resume profile")));
+});
+
+test("cover-letter technology checks preserve separate-employer sentence boundaries within one paragraph", () => {
+  const review = reviewResumeDeterministically({
+    resume: STRONG_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+    coverLetter: coverLetter([
+      "At Fiserv, the candidate published curated datasets through Azure Synapse Analytics. Earlier at Microgate Technologies, the candidate loaded transformed data into Snowflake. At Fiserv, Azure DevOps managed delivery. At Microgate Technologies, Jenkins automated deployment of Spark jobs.",
+    ]),
+  });
+
+  assert.equal(review.instructionCompliance?.checks.technologyAdaptation, "PASS");
+  assert.equal(review.instructionCompliance?.checks.migrationIntegrity, "PASS");
+  assert.equal(review.instructionCompliance?.checks.noContradictingTechnologies, "PASS");
+});
+
+test("cover-letter technology checks still fail same-responsibility competing warehouses", () => {
+  const review = reviewResumeDeterministically({
+    resume: STRONG_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+    coverLetter: coverLetter([
+      "The candidate built the same warehouse layer using Azure Synapse Analytics and Snowflake as competing primary platforms.",
+    ]),
+  });
+
+  assert.equal(review.instructionCompliance?.checks.technologyAdaptation, "FAIL");
+  assert.equal(review.instructionCompliance?.checks.migrationIntegrity, "FAIL");
+  assert.equal(review.instructionCompliance?.checks.noContradictingTechnologies, "FAIL");
+});
+
+test("cover-letter technology checks still fail same-responsibility competing CI/CD platforms", () => {
+  const review = reviewResumeDeterministically({
+    resume: STRONG_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+    coverLetter: coverLetter([
+      "The candidate used Azure DevOps and Jenkins as simultaneous primary tools for the same deployment responsibility.",
+    ]),
+  });
+
+  assert.equal(review.instructionCompliance?.checks.noContradictingTechnologies, "FAIL");
+});
+
+test("cover-letter technology checks do not treat Snowflake Schema as the Snowflake platform", () => {
+  const review = reviewResumeDeterministically({
+    resume: STRONG_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+    coverLetter: coverLetter([
+      "At Fiserv, the candidate modeled a Snowflake Schema in Azure Synapse Analytics for dimensional reporting.",
+    ]),
+  });
+
+  assert.equal(review.instructionCompliance?.checks.noContradictingTechnologies, "PASS");
 });
