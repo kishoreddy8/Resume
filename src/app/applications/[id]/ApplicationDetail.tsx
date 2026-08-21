@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import { LoadingRegion, PageHeader, SkeletonRows, Surface } from "@/components/ui";
-import { MARKER_CLASS, MARKER_TEXT, presentStatus } from "../runStatus";
+import { MARKER_CLASS, MARKER_TEXT, STATUS_PRESENTATION, presentStatus } from "../runStatus";
+import type { RunStatus } from "@/lib/apply/runState";
 
 /**
  * One application run: what it is, what it did, and what it needs.
@@ -64,6 +65,22 @@ interface RunEvent {
 
 const fileName = (p: string | null) => (p ? p.split("/").pop() ?? p : null);
 
+/**
+ * A recorded event, in a candidate's words.
+ *
+ * The timeline printed `event_type` with its underscores swapped for spaces, so a real run showed
+ * rows reading "WAITING FOR ANSWER" and "SUBMISSION UNCONFIRMED" — engine constants, shouted, on a
+ * candidate's screen. Event types largely mirror run statuses, so the run-status presentation
+ * mapping is reused first and is authoritative where it applies; anything it does not know falls
+ * back to sentence case rather than being guessed at or hidden.
+ */
+function eventLabel(eventType: string): string {
+  const known = STATUS_PRESENTATION[eventType as RunStatus];
+  if (known) return known.label;
+  const words = eventType.replace(/_/g, " ").toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-2">
@@ -73,7 +90,17 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-export function ApplicationDetail({ runId }: { runId: number }) {
+export function ApplicationDetail({
+  runId,
+  embedded = false,
+}: {
+  runId: number;
+  /** Rendered inside a page that already has its own h1 and already names the job — the Job
+   *  Workspace's Application step. Drops this component's own title and back-link so the page
+   *  keeps exactly one h1; everything else, including every state mapping and every action, is
+   *  identical to the dedicated route. */
+  embedded?: boolean;
+}) {
   const candidateId = useResolvedCandidateId();
   const [run, setRun] = useState<RunDetail | null>(null);
   const [review, setReview] = useState<Review | null>(null);
@@ -162,16 +189,18 @@ export function ApplicationDetail({ runId }: { runId: number }) {
   const p = presentStatus(run.status);
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-      <div>
-        <Link href="/applications" className="text-[11.5px] text-tertiary underline-offset-2 hover:underline">
-          ← All applications
-        </Link>
-        <PageHeader
-          title={run.title}
-          description={[run.company, run.ats].filter(Boolean).join(" · ") || "Application run"}
-        />
-      </div>
+    <div className={`flex w-full flex-col gap-6 ${embedded ? "" : "mx-auto max-w-3xl"}`}>
+      {!embedded && (
+        <div>
+          <Link href="/applications" className="text-[11.5px] text-tertiary underline-offset-2 hover:underline">
+            ← All applications
+          </Link>
+          <PageHeader
+            title={run.title}
+            description={[run.company, run.ats].filter(Boolean).join(" · ") || "Application run"}
+          />
+        </div>
+      )}
 
       {/* ── status ─────────────────────────────────────────────────────────────────────────── */}
       <Surface level="z3" className="rounded-[var(--radius-xl)] px-5 py-4">
@@ -371,7 +400,7 @@ export function ApplicationDetail({ runId }: { runId: number }) {
                   {new Date(e.created_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
                 </span>
                 <span className="text-secondary">
-                  {e.event_type.replace(/_/g, " ")}
+                  {eventLabel(e.event_type)}
                   {e.detail && <span className="text-tertiary"> — {e.detail}</span>}
                 </span>
               </li>

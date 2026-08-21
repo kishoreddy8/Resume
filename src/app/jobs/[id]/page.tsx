@@ -1,17 +1,16 @@
 "use client";
 
 import { use } from "react";
-import { JobReview } from "./JobReview";
+import { JobWorkspace } from "./JobWorkspace";
 
 /**
- * The full-page job review route.
+ * The Job Workspace route — one job, one workflow, one step at a time.
  *
- * Workbench Phase 1 moved the body of this page into JobReview so the Workbench's persistent detail
- * pane can render exactly the same review — same sections, same actions, same Stage 2 decision-first
- * ordering — instead of a second copy that would drift. This route keeps the two-column `page`
- * layout it has always had, and remains a valid deep link for a single job.
+ * This deep link now opens the workspace (see JobWorkspace) rather than the stacked review. The
+ * review itself is unchanged and still serves the Workbench's persistent detail pane on /jobs, so
+ * the discovery experience is untouched by this route's change.
  */
 export default function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  return <JobReview jobId={Number(id)} layout="page" />;
+  return <JobWorkspace jobId={Number(id)} />;
 }
