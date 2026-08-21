@@ -708,7 +708,11 @@ export default function HomePage() {
               style={{ ["--tile-cols" as string]: "4" }}
             >
               {tiles.map((t) => (
-                <Link key={t.key} href={t.href} className="block focus-visible:outline-none">
+                <Link
+                  key={t.key}
+                  href={t.href}
+                  className="block rounded-[14px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2"
+                >
                   <div
                     className={`${CARD} flex h-full min-h-[172px] flex-col p-5 transition-[box-shadow,border-color] duration-150 ease-out hover:border-[#D8DBE6] hover:shadow-[var(--shadow-card)] dark:hover:border-[var(--border-control)]`}
                   >

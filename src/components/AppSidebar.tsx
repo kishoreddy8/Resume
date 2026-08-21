@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { CandidateSelector } from "@/components/CandidateSelector";
 import { AdminRailLink } from "@/components/AdminRailLink";
@@ -140,6 +140,47 @@ export function AppSidebar() {
   const groups = inAdmin ? ADMIN_NAV : USER_NAV;
   const collapsed = desktop && !open;
 
+  /* Below `lg` this nav is a horizontal strip, not a column, and six destinations do not all fit at
+   * 390px — Resume Studio/Profile/Settings clipped clean off the edge with no sign anything was
+   * off-screen. Same fix as the job workflow stepper: a fade that only appears when there is
+   * genuinely more, plus real arrow controls, so a mouse-only visitor (not just a swipe/keyboard
+   * one) can reach every destination. Both are suppressed at `lg` and up, where this same element
+   * is a vertical column and horizontal overflow does not apply. */
+  const navRef = useRef<HTMLElement>(null);
+  const [overflow, setOverflow] = useState({ left: false, right: false });
+
+  const measure = useCallback(() => {
+    const el = navRef.current;
+    if (!el) return;
+    setOverflow({
+      left: el.scrollLeft > 1,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+    });
+  }, []);
+
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    for (const child of Array.from(el.children)) ro.observe(child);
+    el.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("scroll", measure);
+    };
+  }, [measure, groups]);
+
+  function pageNav(direction: -1 | 1) {
+    const el = navRef.current;
+    if (!el) return;
+    el.scrollBy({ left: direction * Math.max(120, el.clientWidth * 0.75), behavior: reduced ? "auto" : "smooth" });
+  }
+
+  const navArrow =
+    "absolute top-1/2 z-10 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md bg-[var(--z1-bg)] text-[13px] text-tertiary shadow-[0_0_10px_6px_var(--z1-bg)] transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-0 lg:hidden";
+
   return (
     <motion.aside
       initial={false}
@@ -191,11 +232,24 @@ export function AppSidebar() {
         </button>
       </div>
 
-      <nav
-        hidden={collapsed}
-        aria-label="Primary"
-        className="flex gap-1 overflow-x-auto px-3 pb-2 lg:mt-[30px] lg:flex-col lg:gap-0 lg:overflow-x-visible lg:overflow-y-auto lg:px-4 lg:pb-4"
-      >
+      <div hidden={collapsed} className="relative">
+        <button
+          type="button"
+          onClick={() => pageNav(-1)}
+          disabled={!overflow.left}
+          aria-label="Scroll navigation left"
+          className={`${navArrow} left-1`}
+        >
+          <span aria-hidden="true">‹</span>
+        </button>
+
+        <nav
+          ref={navRef}
+          aria-label="Primary"
+          className={`flex gap-1 overflow-x-auto px-3 pb-2 lg:mt-[30px] lg:flex-col lg:gap-0 lg:overflow-x-visible lg:overflow-y-auto lg:px-4 lg:pb-4 ${
+            !desktop && overflow.right ? "scroll-fade-x" : "scroll-fade-none"
+          }`}
+        >
         {groups.map((group) => (
           // `contents` lets the items join the horizontal row directly on narrow
           // screens while staying a block in the sidebar.
@@ -238,7 +292,18 @@ export function AppSidebar() {
             </div>
           </div>
         ))}
-      </nav>
+        </nav>
+
+        <button
+          type="button"
+          onClick={() => pageNav(1)}
+          disabled={!overflow.right}
+          aria-label="Scroll navigation right"
+          className={`${navArrow} right-1`}
+        >
+          <span aria-hidden="true">›</span>
+        </button>
+      </div>
 
       {/* The lower utility cluster: assistant, account, admin — in that order.
        *

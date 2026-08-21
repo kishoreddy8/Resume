@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import { IconCheckCircle } from "@/components/icons";
 import { isStepNavigable, type StepKey, type WorkflowStep } from "./workflowSteps";
 
@@ -17,6 +18,15 @@ import { isStepNavigable, type StepKey, type WorkflowStep } from "./workflowStep
  *
  * STATE IS NEVER COLOUR ALONE: every node carries a number or a tick, its label, and a spoken
  * state, so it reads identically in greyscale.
+ *
+ * DISCOVERABLE AT 390px. Below the point where five labels stop fitting, the track scrolls rather
+ * than wrapping into five stacked boxes — but a bare `overflow-x-auto` only says "there is more" to
+ * someone who happens to swipe it, so a mouse-only visitor at narrow widths could not reach
+ * Validation or Application at all. This mirrors ScrollStrip's fix for the same failure mode on the
+ * job bucket tabs (src/app/jobs/ScrollStrip.tsx): a fade edge that appears only when there is
+ * genuinely more to see, plus real arrow controls outside the track. Kept local rather than reusing
+ * ScrollStrip directly, since that component's track is a fixed-height `<div>` tuned for bucket
+ * chips — this stepper needs its own `<ol>`/`<li>` structure and 60px row height.
  */
 
 const STATE_WORD: Record<WorkflowStep["state"], string> = {
@@ -36,14 +46,76 @@ export function WorkflowStepper({
   active: StepKey;
   onSelect: (key: StepKey) => void;
 }) {
+  const trackRef = useRef<HTMLOListElement>(null);
+  const [overflow, setOverflow] = useState({ left: false, right: false });
+
+  const measure = useCallback(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    // 1px tolerance: sub-pixel layout otherwise leaves a permanently "enabled" arrow at the end.
+    setOverflow({
+      left: el.scrollLeft > 1,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+    });
+  }, []);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    for (const child of Array.from(el.children)) ro.observe(child);
+    el.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("scroll", measure);
+    };
+  }, [measure]);
+
+  // The active step is kept fully in view whenever it changes, so switching steps by any means
+  // (click, keyboard, the engine advancing the workflow) always leaves the current one visible.
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const current = el.querySelector<HTMLElement>("[data-step-active='true']");
+    if (!current) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    current.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "nearest", inline: "nearest" });
+  }, [active]);
+
+  function page(direction: -1 | 1) {
+    const el = trackRef.current;
+    if (!el) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollBy({ left: direction * Math.max(120, el.clientWidth * 0.75), behavior: reduced ? "auto" : "smooth" });
+  }
+
+  const arrow =
+    "absolute top-1/2 z-10 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md bg-[var(--z3-bg)] text-[13px] text-tertiary shadow-[0_0_10px_6px_var(--z3-bg)] transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-0";
+
   return (
     <nav
       aria-label="Job workflow"
-      className="rounded-[14px] border border-[var(--border)] bg-[var(--z3-bg)] px-2 shadow-[var(--shadow-row)]"
+      className="relative rounded-[14px] border border-[var(--border)] bg-[var(--z3-bg)] px-2 shadow-[var(--shadow-row)]"
     >
-      {/* Horizontally scrollable below the point where five labels stop fitting, rather than
-       *  wrapping into five stacked boxes. */}
-      <ol className="scroll-fade-none flex h-[60px] items-stretch gap-1 overflow-x-auto">
+      {/* Arrows overlay the track's ends rather than sitting beside it, so they cost nothing when
+       *  there is nothing to scroll (disabled means transparent and non-interactive) and never push
+       *  the first step out of line with the rest of the page. */}
+      <button
+        type="button"
+        onClick={() => page(-1)}
+        disabled={!overflow.left}
+        aria-label="Scroll workflow steps left"
+        className={`${arrow} left-1`}
+      >
+        <span aria-hidden="true">‹</span>
+      </button>
+
+      <ol
+        ref={trackRef}
+        className={`flex h-[60px] items-stretch gap-1 overflow-x-auto ${overflow.right ? "scroll-fade-x" : "scroll-fade-none"}`}
+      >
         {steps.map((step, i) => {
           const navigable = isStepNavigable(step);
           const isActive = step.key === active;
@@ -74,6 +146,7 @@ export function WorkflowStepper({
                 aria-current={isActive ? "step" : undefined}
                 aria-describedby={step.lockedReason ? `step-reason-${step.key}` : undefined}
                 title={step.lockedReason ?? undefined}
+                data-step-active={isActive ? "true" : undefined}
                 className={`relative flex h-full items-center gap-2.5 rounded-[10px] px-3 text-[13px] font-semibold transition-colors duration-150 ease-out ${tone} ${
                   isActive ? "bg-[var(--accent-tint)]" : navigable ? "hover:bg-[var(--surface-hover)]" : "cursor-not-allowed"
                 }`}
@@ -114,6 +187,16 @@ export function WorkflowStepper({
           );
         })}
       </ol>
+
+      <button
+        type="button"
+        onClick={() => page(1)}
+        disabled={!overflow.right}
+        aria-label="Scroll workflow steps right"
+        className={`${arrow} right-1`}
+      >
+        <span aria-hidden="true">›</span>
+      </button>
     </nav>
   );
 }
