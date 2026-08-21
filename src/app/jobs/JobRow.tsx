@@ -50,25 +50,25 @@ export type RowJob = Pick<
  *  states, their wording and their meaning are untouched. */
 function MatchFit({ summary }: { summary: ListMatchSummary | undefined }) {
   if (!summary) {
-    return <span className="shrink-0 text-[11px] italic text-tertiary">Not evaluated</span>;
+    return <span className="shrink-0 text-[12.5px] italic text-tertiary">Not evaluated</span>;
   }
   if (summary.insufficientJdSignal) {
     return (
       <span
-        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-[var(--warning)]"
+        className="inline-flex h-[26px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-[var(--pill-amber-bg)] px-2.5 text-[12px] font-medium text-[var(--pill-amber-fg)]"
         title="This posting did not yield enough structured requirements to score reliably."
       >
-        <span aria-hidden="true" className="h-1 w-1 rounded-full bg-[var(--warning)]" />
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--pill-amber-fg)]" />
         Insufficient data
       </span>
     );
   }
   const tone =
     summary.decision === "READY_FOR_TAILORING"
-      ? "text-[var(--success)]"
+      ? "bg-[var(--pill-success-bg)] text-[var(--pill-success-fg)]"
       : summary.decision === "NEEDS_REVIEW"
-        ? "text-[var(--warning)]"
-        : "text-[var(--error)]";
+        ? "bg-[var(--pill-amber-bg)] text-[var(--pill-amber-fg)]"
+        : "bg-[var(--pill-red-bg)] text-[var(--pill-red-fg)]";
   const label =
     summary.decision === "READY_FOR_TAILORING"
       ? "Ready"
@@ -76,11 +76,19 @@ function MatchFit({ summary }: { summary: ListMatchSummary | undefined }) {
         ? "Review"
         : "Blocked";
   return (
-    <span className="flex shrink-0 items-baseline gap-2 whitespace-nowrap">
-      {/* Decision as semantic text, score as a number. Two different concepts should not
-       *  share one pill shape — the number is the thing you scan, the word qualifies it. */}
-      <span className={`text-[11px] font-semibold uppercase tracking-[0.05em] ${tone}`}>{label}</span>
-      <span className="w-[3ch] text-right text-[14px] font-semibold tabular-nums leading-none text-primary">
+    <span className="flex shrink-0 items-center gap-2.5 whitespace-nowrap">
+      {/* Decision and score are still two marks, not one — the word is tinted and enclosed, the
+       *  number is bare. What changed is weight: at 11px beside a 14px figure the pair read as
+       *  footnotes on a row wide enough to hold a sentence. The number is what you scan down the
+       *  column, so it carries the size, and the word sits in a tint so the column has an edge to
+       *  scan against rather than three lengths of grey text. Colour still never carries the
+       *  meaning alone — the word is always present and always spelled out. */}
+      <span
+        className={`inline-flex h-[26px] items-center rounded-full px-2.5 text-[12px] font-semibold uppercase tracking-[0.04em] ${tone}`}
+      >
+        {label}
+      </span>
+      <span className="w-[3ch] text-right text-[20px] font-bold tabular-nums leading-none text-primary">
         {Math.round(summary.overallScore)}
       </span>
     </span>
@@ -106,8 +114,8 @@ function WorkflowCue({ job }: { job: RowJob }) {
   if (!approved && !applied) return null;
   // Text, not colour alone — the dot repeats the word, it never replaces it.
   return (
-    <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[10px] uppercase tracking-[0.06em] text-[var(--accent)]">
-      <span aria-hidden="true" className="h-1 w-1 rounded-full bg-[var(--accent)] shadow-[0_0_6px_var(--accent)]" />
+    <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--accent)]">
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] shadow-[0_0_6px_var(--accent)]" />
       {applied ? job.pipeline_status : "Tailoring"}
     </span>
   );
@@ -120,7 +128,7 @@ function AgeLabel({ job, thresholds }: { job: RowJob; thresholds: LifecycleThres
   const fresh = getJobAgeBand(days, thresholds) === "fresh";
   return (
     <span
-      className={`shrink-0 tabular-nums text-[11px] ${fresh ? "font-medium text-[var(--accent)]" : "text-tertiary"}`}
+      className={`shrink-0 tabular-nums text-[12.5px] ${fresh ? "font-semibold text-[var(--accent)]" : "text-tertiary"}`}
       title={fresh ? `Posted ${days} day${days === 1 ? "" : "s"} ago — high priority` : `${days} days old`}
     >
       {days}d
@@ -165,7 +173,7 @@ export const JobRow = memo(function JobRow({
       /* Selection lifts the row toward the viewer: its own surface tone, a lit top
        *  edge and a contact shadow. Hover is a 1px rise, transform-only, and gated
        *  to real pointers so a touch tap never leaves a row stuck raised. */
-      className={`relative cursor-pointer select-none border-b border-[var(--separator)] py-[11px] pl-4 pr-3.5 row-lift transition-[background-color,box-shadow] duration-150 ease-out ${
+      className={`relative cursor-pointer select-none border-b border-[var(--separator)] py-[15px] pl-5 pr-5 row-lift transition-[background-color,box-shadow] duration-150 ease-out ${
         selected
           ? "z-[1] bg-[var(--z3-bg)] shadow-[var(--lift-2)]"
           : "hover:bg-[var(--surface-hover)]"
@@ -185,11 +193,11 @@ export const JobRow = memo(function JobRow({
           <span aria-hidden="true" className="absolute inset-y-0 left-0 w-[3px] bg-[var(--accent)]" />
         ))}
 
-      <div className="flex items-baseline gap-3">
+      <div className="flex items-center gap-3.5">
         {/* Title carries the weight: 13.5px, tightened tracking, and it is the only
          *  element that grows in weight on selection. */}
         <span
-          className={`min-w-0 flex-1 truncate text-[13.5px] leading-[1.3] tracking-[-0.008em] ${
+          className={`min-w-0 flex-1 truncate text-[15.5px] leading-[1.3] tracking-[-0.008em] ${
             selected ? "font-semibold text-primary" : "font-medium text-primary"
           }`}
           title={job.title}
@@ -200,7 +208,7 @@ export const JobRow = memo(function JobRow({
         <MatchFit summary={summary} />
       </div>
 
-      <div className="mt-1 flex items-center gap-2 text-[11px] leading-none">
+      <div className="mt-[5px] flex items-center gap-2.5 text-[12.5px] leading-none">
         <span className="min-w-0 truncate text-secondary">
           {job.company_name}
           {job.location ? <span className="text-tertiary"> · {job.location}</span> : null}

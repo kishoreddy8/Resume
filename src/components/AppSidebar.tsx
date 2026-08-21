@@ -142,7 +142,7 @@ export function AppSidebar() {
   return (
     <motion.aside
       initial={false}
-      animate={desktop ? { width: open ? 216 : 48 } : {}}
+      animate={desktop ? { width: open ? 248 : 48 } : {}}
       transition={reduced ? { duration: 0 } : { type: "spring", duration: 0.28, bounce: 0 }}
       className="flex w-full shrink-0 flex-col overflow-hidden border-b border-[var(--rail-border)] bg-[var(--z1-bg)] lg:h-full lg:min-h-dvh lg:border-b-0 lg:border-r lg:pb-[18px] lg:pt-[20px]"
     >

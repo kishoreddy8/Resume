@@ -57,9 +57,9 @@ export function HeaderSearch() {
         <span className="sr-only">Search jobs, companies and skills</span>
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute left-[18px] text-tertiary transition-colors duration-150 ease-out group-focus-within:text-[var(--accent)]"
+          className="pointer-events-none absolute left-[20px] text-tertiary transition-colors duration-150 ease-out group-focus-within:text-[var(--accent)]"
         >
-          <IconSearch size={19} />
+          <IconSearch size={22} />
         </span>
         <input
           ref={inputRef}
@@ -68,11 +68,11 @@ export function HeaderSearch() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search jobs, companies, skills..."
           enterKeyHint="search"
-          className="h-[46px] w-full rounded-[14px] border border-[#E2E5ED] bg-[var(--z3-bg)] pl-12 pr-14 text-[14.5px] text-primary shadow-[var(--shadow-row)] transition-[border-color,box-shadow] duration-150 ease-out placeholder:text-tertiary focus:border-[var(--accent)] focus:outline-none dark:border-[var(--border)] [&::-webkit-search-cancel-button]:hidden"
+          className="h-[56px] w-full rounded-[16px] border border-[#E2E5ED] bg-[var(--z3-bg)] pl-[54px] pr-16 text-[16px] text-primary shadow-[var(--shadow-row)] transition-[border-color,box-shadow] duration-150 ease-out placeholder:text-tertiary focus:border-[var(--accent)] focus:outline-none dark:border-[var(--border)] [&::-webkit-search-cancel-button]:hidden"
         />
         <kbd
           aria-hidden="true"
-          className="pointer-events-none absolute right-3.5 grid h-[26px] min-w-[26px] place-items-center rounded-[8px] border border-[var(--border)] px-2 text-[12px] leading-none text-tertiary"
+          className="pointer-events-none absolute right-4 grid h-[30px] min-w-[30px] place-items-center rounded-[9px] border border-[var(--border)] px-2 text-[13.5px] leading-none text-tertiary"
         >
           /
         </kbd>

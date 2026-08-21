@@ -25,7 +25,7 @@ const TEXT: Record<H1bJobConfidence, string> = {
 export function H1bBadge({ confidence }: { confidence: H1bJobConfidence }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] ${TEXT[confidence]}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-[12.5px] ${TEXT[confidence]}`}
       title={`H1B sponsorship confidence: ${confidence}`}
     >
       <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[confidence]}`} />

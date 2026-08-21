@@ -338,6 +338,11 @@ function Monogram({ name, size = "md" }: { name: string | null; size?: "sm" | "m
 
 /** The shared card shell: white plane, one hairline, one very soft lift. */
 /** The shared card shell: white plane, one hairline, one restrained shadow. */
+/* The home API returns six activity entries and the rail was rendering four of them, so the column
+ * ran out of content while the main column kept going and the page ended on a band of empty rail.
+ * Six is what there is; nothing is invented to fill the space. */
+const ACTIVITY_SHOWN = 6;
+
 const CARD = "rounded-[14px] border border-[var(--border)] bg-[var(--z3-bg)] shadow-[var(--shadow-card)]";
 /** A recommendation row sits one step lighter than a card — smaller radius, softer lift. */
 const ROW = "rounded-[12px] border border-[#E7E9F0] bg-[var(--z3-bg)] shadow-[var(--shadow-row)] dark:border-[var(--border)]";
@@ -368,6 +373,31 @@ function IconTile({
   }[tone];
   const box = size === "lg" ? "h-10 w-10 rounded-[12px]" : "h-9 w-9 rounded-[10px]";
   return <span className={`grid shrink-0 place-items-center ${box} ${tint}`}>{children}</span>;
+}
+
+/**
+ * One presentation for every empty rail section.
+ *
+ * A single grey sentence measured 109px tall between a 271px card and a 436px one, so the middle of
+ * the rail read as a rendering failure rather than as the good news it is. The height comes from
+ * the same icon tile the populated rows use — an empty section is recognisably the same kind of
+ * thing as a full one, not a collapsed version of it. Nothing is padded with invented content.
+ */
+function RailEmpty({
+  tone,
+  icon,
+  children,
+}: {
+  tone: "accent" | "success" | "warning" | "info";
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-3 flex min-h-[76px] items-center gap-3">
+      <IconTile tone={tone}>{icon}</IconTile>
+      <p className="min-w-0 text-[12.5px] leading-relaxed text-tertiary">{children}</p>
+    </div>
+  );
 }
 
 /**
@@ -799,12 +829,12 @@ export default function HomePage() {
        *  data happens to exist cannot be learned. An empty section says so in one line. */}
       <motion.aside {...rise(0.2)} className="flex min-w-0 flex-col gap-4">
         {/* 1 — priorities */}
-        <section aria-label="Priorities" className={`${CARD} px-5 py-[19px]`}>
+        <section aria-label="Priorities" className={`${CARD} flex min-h-[168px] flex-col px-5 py-[19px]`}>
           <RailHeading>Priorities</RailHeading>
           {todo.length === 0 ? (
-            <p className="mt-3 text-[12.5px] leading-relaxed text-tertiary">
+            <RailEmpty tone="success" icon={<IconCheckCircle size={17} />}>
               Nothing needs you right now.
-            </p>
+            </RailEmpty>
           ) : (
             <ul className="mt-3 flex flex-col divide-y divide-[#F0F1F5] dark:divide-[var(--separator)]">
               {todo.map((t) => (
@@ -842,12 +872,25 @@ export default function HomePage() {
         </section>
 
         {/* 2 — applications that stopped for a person */}
-        <section aria-label="Applications needing action" className={`${CARD} px-5 py-[19px]`}>
+        <section aria-label="Applications needing action" className={`${CARD} flex min-h-[168px] flex-col px-5 py-[19px]`}>
           <RailHeading>Applications needing action</RailHeading>
           {summary.applications.waiting.length === 0 ? (
-            <p className="mt-3 text-[12.5px] leading-relaxed text-tertiary">
-              You&apos;re all caught up — no application needs your action.
-            </p>
+            <>
+              <RailEmpty tone="success" icon={<IconCheckCircle size={17} />}>
+                You&apos;re all caught up — no application needs your action.
+              </RailEmpty>
+              {/* The one section whose empty state has somewhere to send you: unlike priorities,
+               *  which are drawn from two places, every application lives on one page. */}
+              <Link
+                href="/applications"
+                className="mt-auto flex items-center gap-1 pt-3 text-[12.5px] font-medium text-[var(--accent)] transition-colors duration-150 ease-out hover:text-[var(--accent-hover)]"
+              >
+                View all applications
+                <span aria-hidden="true">
+                  <IconChevronRight size={14} />
+                </span>
+              </Link>
+            </>
           ) : (
             <>
               <ul className="mt-3 flex flex-col divide-y divide-[#F0F1F5] dark:divide-[var(--separator)]">
@@ -898,15 +941,15 @@ export default function HomePage() {
         </section>
 
         {/* 3 — what actually happened */}
-        <section aria-label="Recent activity" className={`${CARD} px-5 py-[19px]`}>
+        <section aria-label="Recent activity" className={`${CARD} flex min-h-[168px] flex-col px-5 py-[19px]`}>
           <RailHeading>Recent activity</RailHeading>
           {summary.activity.length === 0 ? (
-            <p className="mt-3 text-[12.5px] leading-relaxed text-tertiary">
+            <RailEmpty tone="info" icon={<IconTrend size={17} />}>
               Activity appears here as you review jobs, build resumes and start applications.
-            </p>
+            </RailEmpty>
           ) : (
             <ol className="mt-4 flex flex-col">
-              {summary.activity.slice(0, 4).map((a, i, arr) => {
+              {summary.activity.slice(0, ACTIVITY_SHOWN).map((a, i, arr) => {
                 const shown = presentActivity(a);
                 return (
                   /* The recorded text stays on the row, so the shortened heading never becomes the

@@ -99,7 +99,7 @@ export function NotificationBell() {
         ref={triggerRef}
         type="button"
         onClick={handleOpen}
-        className="relative grid h-9 w-9 place-items-center rounded-full text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.97] active:bg-[var(--surface-active)]"
+        className="relative grid h-11 w-11 place-items-center rounded-full text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.97] active:bg-[var(--surface-active)]"
         title="Notifications"
         aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
         aria-haspopup="dialog"
@@ -107,11 +107,11 @@ export function NotificationBell() {
       >
         {/* A line glyph on the same grid as the rail's icons, replacing the emoji — an emoji renders
          *  in the platform's own style and weight, which is the one thing an icon set cannot have. */}
-        <IconBell size={19} />
+        <IconBell size={22} />
         {unreadCount > 0 && (
           <span
             aria-hidden="true"
-            className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--error)] px-1 text-[10px] font-semibold leading-none text-white ring-2 ring-[var(--z1-bg)]"
+            className="absolute right-0.5 top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--error)] px-1.5 text-[11px] font-semibold leading-none text-white ring-2 ring-[var(--z1-bg)]"
           >
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
