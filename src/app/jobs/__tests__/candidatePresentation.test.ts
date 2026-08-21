@@ -40,3 +40,39 @@ test("Settings deduplicates role chips without changing the established removal 
     "the UI must not normalize secondary roles before applying the established transition"
   );
 });
+
+test("candidate Jobs omits the operational scan action while admin retains it", () => {
+  const candidateJobs = fs.readFileSync(path.resolve("src/app/jobs/page.tsx"), "utf8");
+  const adminCompanies = fs.readFileSync(path.resolve("src/app/admin/companies/page.tsx"), "utf8");
+  const adminNavigation = fs.readFileSync(path.resolve("src/components/AppSidebar.tsx"), "utf8");
+
+  assert.doesNotMatch(candidateJobs, /Scan now/);
+  assert.doesNotMatch(candidateJobs, /fetch\("\/api\/scan"/);
+  assert.match(adminCompanies, /fetch\("\/api\/scan"/);
+  assert.match(adminCompanies, />\s*Scan\s*</);
+  assert.match(adminNavigation, /href: "\/admin\/companies", label: "Companies"/);
+});
+
+test("candidate Settings omits writer operations while admin Settings remains authoritative", () => {
+  const candidateSettings = fs.readFileSync(path.resolve("src/app/settings/page.tsx"), "utf8");
+  const adminSettings = fs.readFileSync(path.resolve("src/app/admin/settings/page.tsx"), "utf8");
+
+  assert.doesNotMatch(candidateSettings, /Resume writer/);
+  assert.doesNotMatch(candidateSettings, /writerEnabled/);
+  assert.doesNotMatch(candidateSettings, /scheduler:\s*\{\s*writerEnabled/);
+  assert.match(adminSettings, /function ResumeWriterControl/);
+  assert.match(adminSettings, /scheduler:\s*\{\s*writerEnabled: next\s*\}/);
+  assert.match(adminSettings, /<ResumeWriterControl/);
+});
+
+test("candidate privacy and approval copy state the supported trust boundary", () => {
+  const settings = fs.readFileSync(path.resolve("src/app/settings/page.tsx"), "utf8");
+
+  assert.doesNotMatch(settings, /Everything stays on this machine/);
+  assert.doesNotMatch(settings, /nothing is uploaded/);
+  assert.match(settings, /Your JobHunt data is stored locally on this Mac\./);
+  assert.match(settings, /Some AI-assisted features may send the content needed for a task/);
+  assert.match(settings, /Always required before submission/);
+  assert.match(settings, /there is no setting that\s+changes that\./);
+  assert.doesNotMatch(settings, /label="Final approval"[\s\S]{0,500}<input/);
+});

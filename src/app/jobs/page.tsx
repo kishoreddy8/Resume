@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
-import type { Company, JobWithCompany, ScanSummary } from "@/types";
+import type { Company, JobWithCompany } from "@/types";
 import { DEFAULT_FILTERS, JobFilterSidebar, type JobFilterState } from "./JobFilterSidebar";
 import { Aperture } from "./Aperture";
 import type { QueueItem } from "./queue";
@@ -60,8 +60,6 @@ export default function JobsPage() {
   const [jobs, setJobs] = useState<JobWithCompany[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState(false);
-  const [scanResult, setScanResult] = useState<ScanSummary | null>(null);
   // The highlighted row. Deep-linkable via ?job=<id> so the URL reflects the current state, and
   // intentionally NOT persisted anywhere else. Selection now only drives the highlight and
   // arrow-key movement — opening a job navigates to its workspace.
@@ -174,25 +172,12 @@ export default function JobsPage() {
     loadJobs();
   }, [loadJobs, view]);
 
-  async function runScan() {
-    setScanning(true);
-    setScanResult(null);
-    try {
-      const res = await fetch("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      const summary = (await res.json()) as ScanSummary;
-      setScanResult(summary);
-      if (view === "all") await loadJobs();
-    } finally {
-      setScanning(false);
-    }
-  }
-
   return (
     <div className="flex flex-col gap-4">
       {/* The toolbar carries what this page IS. What it can DO sits on the other side of the
        *  search, and what it FILTERS sits in the page's own control row below — see the comment on
        *  APP_TOOLBAR_ACTIONS_SLOT_ID. Portalling all three into one left-hand anchor put the page's
-       *  search field and its Scan button underneath the global one. */}
+       *  search field and filter control underneath the global one. */}
       <AppToolbarSlot>
         {/* The aperture's one additional placement. It is a wayfinding mark, not an indicator —
          *  identical on every screen and in every state. */}
@@ -243,14 +228,6 @@ export default function JobsPage() {
             </AnimatePresence>
           </div>
         )}
-        <button
-          type="button"
-          onClick={runScan}
-          disabled={scanning}
-          className="h-10 rounded-[10px] bg-[var(--accent)] px-4 text-[14px] font-semibold text-[var(--accent-fg)] shadow-[var(--lift-1),inset_0_1px_0_rgba(255,255,255,0.22)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
-        >
-          {scanning ? "Scanning…" : "Scan now"}
-        </button>
       </AppToolbarActions>
 
       {/* The page's own control row, aligned to the page container rather than to the toolbar.
@@ -301,14 +278,6 @@ export default function JobsPage() {
           />
         </label>
 
-        {scanResult && (
-          <span className="min-w-0 truncate text-[11.5px] tabular-nums text-tertiary">
-            +{scanResult.jobsNew} new · {scanResult.jobsUpdated} updated ·{" "}
-            {scanResult.jobsClosed} closed · {scanResult.jobsArchived} archived ·{" "}
-            {scanResult.jobsSuppressed} suppressed · {scanResult.jobsDeletedByAge} aged out
-            {scanResult.errors > 0 && ` · ${scanResult.errors} errors`}
-          </span>
-        )}
       </div>
 
       {view === "forYou" ? (

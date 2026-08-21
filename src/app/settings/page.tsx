@@ -58,7 +58,6 @@ import {
 
 interface AppSettingsShape {
   lifecycle: { freshDays: number };
-  scheduler: { writerEnabled: boolean; enabled: boolean };
 }
 
 interface CandidateRecord {
@@ -247,10 +246,7 @@ export default function SettingsPage() {
               {category === "applications" && (
                 <ApplicationsPanel
                   blurb={active.blurb}
-                  writerEnabled={data.app?.scheduler?.writerEnabled ?? null}
-                  automationEnabled={data.app?.scheduler?.enabled ?? null}
                   savedAnswers={data.settings.applicationAnswers?.count ?? null}
-                  onSaved={load}
                 />
               )}
               {category === "career-copilot" && <CareerCopilotPanel blurb={active.blurb} />}
@@ -613,145 +609,58 @@ function NotificationsPanel({ blurb }: { blurb: string }) {
 /* ── Applications ───────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Two real controls and one deliberate non-control.
- *
- * The resume writer toggle writes a real setting and is the only one that spends the Claude
- * subscription, so turning it ON asks for confirmation and states what will happen. Final approval
- * is rendered as a locked fact, not a switch: the engine requires a person to approve every
- * submission, and a settings page that appeared able to turn that off would be describing a product
- * that does not exist.
+ * Two truthful, read-only application facts. Final approval is rendered as a locked fact, not a
+ * switch: the engine requires a person to approve every submission, and a settings page that
+ * appeared able to turn that off would be describing a product that does not exist. Saved answers
+ * reflect the candidate's existing store without exposing operational background-worker settings.
  */
 function ApplicationsPanel({
   blurb,
-  writerEnabled,
-  automationEnabled,
   savedAnswers,
-  onSaved,
 }: {
   blurb: string;
-  writerEnabled: boolean | null;
-  automationEnabled: boolean | null;
   savedAnswers: number | null;
-  onSaved: () => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function setWriter(next: boolean) {
-    setBusy(true);
-    setErr(null);
-    try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ scheduler: { writerEnabled: next } }),
-      });
-      if (!res.ok) throw new Error("We couldn't change this. Nothing was changed.");
-      await onSaved();
-      setConfirming(false);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "We couldn't change this.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
-    <>
-      <Panel title="Applications" description={blurb}>
-        <Field
-          label="Resume writer"
-          hint="Whether JobHunt may write tailored resumes in the background for jobs you have already approved. It approves nothing, creates no new tailoring work, and never submits an application. Turning it off stops new work being picked up on the next pass; a pass already running finishes."
-        >
-          {writerEnabled === null ? (
-            <p className="text-[12.5px] text-tertiary">Not available.</p>
-          ) : (
-            <div className="flex flex-wrap items-center gap-3">
-              <Pill tone={writerEnabled ? "success" : "neutral"}>{writerEnabled ? "On" : "Off"}</Pill>
-              {writerEnabled ? (
-                <button type="button" onClick={() => setWriter(false)} disabled={busy} className={BTN_SECONDARY}>
-                  {busy ? "Saving…" : "Turn off"}
-                </button>
-              ) : confirming ? (
-                <>
-                  <button type="button" onClick={() => setWriter(true)} disabled={busy} className={BTN_PRIMARY}>
-                    {busy ? "Saving…" : "Confirm — start writing"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirming(false)}
-                    disabled={busy}
-                    className={BTN_SECONDARY}
-                  >
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <button type="button" onClick={() => setConfirming(true)} disabled={busy} className={BTN_SECONDARY}>
-                  Turn on
-                </button>
-              )}
+    <Panel title="Applications" description={blurb}>
+      {/* Not a toggle, and never will be one. */}
+      <Field label="Final approval">
+        <div className="flex items-start gap-2.5 rounded-[10px] bg-[var(--tile-green-bg)] px-4 py-3">
+          <span aria-hidden="true" className="mt-px shrink-0 text-[var(--pill-success-fg)]">
+            <IconShield size={17} />
+          </span>
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold text-[var(--pill-success-fg)]">
+              Always required before submission
             </div>
-          )}
-          {confirming && !writerEnabled && (
-            <p className="mt-2.5 max-w-[68ch] text-[12.5px] leading-relaxed text-[var(--pill-amber-fg)]">
-              Jobs you have already approved will begin being written on the next scheduled pass,
-              using your Claude subscription. You still review and send every application yourself.
+            <p className="mt-1 max-w-[68ch] text-[12.5px] leading-relaxed text-secondary">
+              JobHunt fills in what it can evidence and stops for anything it cannot. Nothing is
+              ever submitted to an employer until you approve it, and there is no setting that
+              changes that.
             </p>
-          )}
-          {automationEnabled === false && writerEnabled && (
-            <p className="mt-2.5 text-[12.5px] leading-relaxed text-tertiary">
-              Background automation is currently off, so nothing will run until it&apos;s enabled in
-              system settings.
-            </p>
-          )}
-          {err && (
-            <p role="alert" className="mt-2 text-[12.5px] text-[var(--error)]">
-              {err}
-            </p>
-          )}
-        </Field>
-
-        {/* Not a toggle, and never will be one. */}
-        <Field label="Final approval">
-          <div className="flex items-start gap-2.5 rounded-[10px] bg-[var(--tile-green-bg)] px-4 py-3">
-            <span aria-hidden="true" className="mt-px shrink-0 text-[var(--pill-success-fg)]">
-              <IconShield size={17} />
-            </span>
-            <div className="min-w-0">
-              <div className="text-[13px] font-semibold text-[var(--pill-success-fg)]">
-                Always required before submission
-              </div>
-              <p className="mt-1 max-w-[68ch] text-[12.5px] leading-relaxed text-secondary">
-                JobHunt fills in what it can evidence and stops for anything it cannot. Nothing is
-                ever submitted to an employer until you approve it, and there is no setting that
-                changes that.
-              </p>
-            </div>
           </div>
-        </Field>
+        </div>
+      </Field>
 
-        <Field
-          label="Saved application answers"
-          hint="Answers you give during an application are kept so JobHunt can offer them again on a similar question."
-        >
-          {savedAnswers === null ? (
-            <p className="text-[12.5px] text-tertiary">Not available.</p>
-          ) : savedAnswers === 0 ? (
-            <p className="text-[12.5px] leading-relaxed text-tertiary">
-              No reusable answers saved yet. They appear here once you answer a question during an
-              application.
-            </p>
-          ) : (
-            <p className="text-[13px] text-primary">
-              <span className="font-semibold tabular-nums">{savedAnswers}</span>{" "}
-              {savedAnswers === 1 ? "answer" : "answers"} saved.
-            </p>
-          )}
-        </Field>
-      </Panel>
-    </>
+      <Field
+        label="Saved application answers"
+        hint="Answers you give during an application are kept so JobHunt can offer them again on a similar question."
+      >
+        {savedAnswers === null ? (
+          <p className="text-[12.5px] text-tertiary">Not available.</p>
+        ) : savedAnswers === 0 ? (
+          <p className="text-[12.5px] leading-relaxed text-tertiary">
+            No reusable answers saved yet. They appear here once you answer a question during an
+            application.
+          </p>
+        ) : (
+          <p className="text-[13px] text-primary">
+            <span className="font-semibold tabular-nums">{savedAnswers}</span>{" "}
+            {savedAnswers === 1 ? "answer" : "answers"} saved.
+          </p>
+        )}
+      </Field>
+    </Panel>
   );
 }
 
@@ -812,7 +721,10 @@ function DataPrivacyPanel({ blurb, candidate }: { blurb: string; candidate: Cand
           </div>
         </Field>
 
-        <Field label="What JobHunt stores" hint="Everything stays on this machine — there is no JobHunt account and nothing is uploaded.">
+        <Field
+          label="What JobHunt stores"
+          hint="Your JobHunt data is stored locally on this Mac. Some AI-assisted features may send the content needed for a task to the configured AI service."
+        >
           <ul className="flex flex-col gap-1.5">
             {[
               "Your master resume and skills inventory",
