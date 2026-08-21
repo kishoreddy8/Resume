@@ -2,10 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { CandidateSelector } from "@/components/CandidateSelector";
 import { AdminRailLink } from "@/components/AdminRailLink";
+import {
+  IconBriefcase,
+  IconDocument,
+  IconHome,
+  IconInbox,
+  IconSettings,
+  IconSparkle,
+  IconUser,
+} from "@/components/icons";
 
 /**
  * JobHunt's primary navigation.
@@ -19,47 +28,53 @@ import { AdminRailLink } from "@/components/AdminRailLink";
  * The admin rail is not hidden to be secret. The real boundary is server-side, on the APIs those
  * pages call; this is about what a person should be asked to think about.
  *
- * Text-only by design. The project has no icon set, and inventing one or
- * installing a library for it would cost more than the labels are worth —
- * labels also name their contents directly, which is what makes a destination
- * predictable before you click it.
+ * NO CATEGORY HEADINGS ON THE CANDIDATE RAIL. Six destinations do not need to be sorted into
+ * "Search" and "You" — the headings were shelf labels on a shelf with three things on it, and they
+ * are the single detail that made a consumer product read as an internal console. The operator rail
+ * keeps its groups, because thirteen system destinations genuinely do need sorting.
  *
- * One component serves both layouts. Below `lg` the same tree reflows into a
- * stacked strip along the top (the group headings drop out and the items become
- * one scrollable row); at `lg` and above it is the persistent left column. It is
- * built this way rather than as two components so that CandidateSelector mounts
- * exactly once — a second copy hidden by CSS would still run its own fetches and
- * hold its own state, which is a behaviour change, not a layout one.
+ * ICONS ARE THE RAIL'S OWN (see components/icons.tsx) — one grid, one stroke weight, no library.
+ * Each one sits beside its label rather than replacing it: the label is what makes a destination
+ * predictable before you click it, and the glyph is what makes it findable at a glance.
+ *
+ * One component serves both layouts. Below `lg` the same tree reflows into a stacked strip along
+ * the top (the items become one scrollable row); at `lg` and above it is the persistent left
+ * column. It is built this way rather than as two components so that CandidateSelector mounts
+ * exactly once — a second copy hidden by CSS would still run its own fetches and hold its own
+ * state, which is a behaviour change, not a layout one.
  */
 
 interface NavItem {
   href: string;
   label: string;
+  icon?: ReactNode;
   /** Sub-routes that should keep this item selected (e.g. a job detail page). */
   matchPrefix?: RegExp;
 }
 
 interface NavGroup {
   title: string;
+  /** Operator groups print their heading. The candidate rail does not — see the note above. */
+  showTitle?: boolean;
   items: NavItem[];
 }
 
 /** What a job seeker sees. Six destinations, each about their own search. */
 const USER_NAV: NavGroup[] = [
   {
-    title: "Search",
+    title: "Primary",
     items: [
-      { href: "/home", label: "Home" },
-      { href: "/jobs", label: "Jobs", matchPrefix: /^\/jobs\/\d+$/ },
-      { href: "/applications", label: "Applications", matchPrefix: /^\/applications\/\d+$/ },
-    ],
-  },
-  {
-    title: "You",
-    items: [
-      { href: "/resume", label: "Resume" },
-      { href: "/profile", label: "Profile" },
-      { href: "/settings", label: "Settings" },
+      { href: "/home", label: "Home", icon: <IconHome size={19} /> },
+      { href: "/jobs", label: "Jobs", icon: <IconBriefcase size={19} />, matchPrefix: /^\/jobs\/\d+$/ },
+      {
+        href: "/applications",
+        label: "Applications",
+        icon: <IconInbox size={19} />,
+        matchPrefix: /^\/applications\/\d+$/,
+      },
+      { href: "/resume", label: "Resume Studio", icon: <IconDocument size={19} /> },
+      { href: "/profile", label: "Profile", icon: <IconUser size={19} /> },
+      { href: "/settings", label: "Settings", icon: <IconSettings size={19} /> },
     ],
   },
 ];
@@ -68,6 +83,7 @@ const USER_NAV: NavGroup[] = [
 const ADMIN_NAV: NavGroup[] = [
   {
     title: "Operations",
+    showTitle: true,
     items: [
       { href: "/admin", label: "Overview" },
       { href: "/admin/scanner", label: "ATS Scanner" },
@@ -77,6 +93,7 @@ const ADMIN_NAV: NavGroup[] = [
   },
   {
     title: "System",
+    showTitle: true,
     items: [
       { href: "/admin/pipeline", label: "Pipeline" },
       { href: "/admin/operations", label: "Health" },
@@ -84,8 +101,6 @@ const ADMIN_NAV: NavGroup[] = [
     ],
   },
 ];
-
-
 
 /**
  * Exact match, plus an optional pattern for detail routes. Deliberately not a
@@ -129,34 +144,38 @@ export function AppSidebar() {
       initial={false}
       animate={desktop ? { width: open ? 216 : 48 } : {}}
       transition={reduced ? { duration: 0 } : { type: "spring", duration: 0.28, bounce: 0 }}
-      className="flex w-full shrink-0 flex-col overflow-hidden border-b border-[var(--separator)] bg-[var(--z1-bg)] lg:h-full lg:border-b-0 lg:border-r"
+      className="flex w-full shrink-0 flex-col overflow-hidden border-b border-[var(--rail-border)] bg-[var(--z1-bg)] lg:h-full lg:min-h-dvh lg:border-b-0 lg:border-r lg:pb-[18px] lg:pt-[20px]"
     >
-      <div className="flex h-12 shrink-0 items-center gap-1 px-4 lg:h-14 lg:px-3">
+      <div className="flex h-12 shrink-0 items-center gap-1 px-4 lg:h-[42px] lg:px-4">
         {!collapsed && (
           <Link
             href={inAdmin ? "/admin" : "/home"}
-            className="group flex min-w-0 items-center gap-2 rounded-md px-2 transition-transform duration-150 ease-out active:scale-[0.98]"
+            className="group flex min-w-0 items-center gap-2.5 rounded-md transition-transform duration-150 ease-out active:scale-[0.98]"
           >
-            {/* The mark: a small illuminated aperture. JobHunt' own object rather than a wordmark
+            {/* The mark: a small illuminated aperture. JobHunt's own object rather than a wordmark
              *  in the default weight every SaaS rail uses. */}
             <span
               aria-hidden="true"
-              className="relative grid h-5 w-5 shrink-0 place-items-center rounded-[6px] bg-[var(--accent)] shadow-[0_0_14px_var(--accent-soft)]"
+              className="relative grid h-8 w-8 shrink-0 place-items-center rounded-[8px] bg-[var(--accent)] text-[15px] font-bold text-white"
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-white/95" />
+              J
             </span>
-            <span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-primary">
+            <span className="truncate text-[18px] font-bold tracking-[-0.018em] text-primary">
               JobHunt
-              {inAdmin && <span className="ml-1.5 text-[10px] font-normal uppercase tracking-[0.09em] text-tertiary">admin</span>}
+              {inAdmin && (
+                <span className="ml-1.5 text-[10px] font-normal uppercase tracking-[0.09em] text-tertiary">
+                  admin
+                </span>
+              )}
             </span>
           </Link>
         )}
         {collapsed && (
           <span
             aria-hidden="true"
-            className="mx-auto grid h-5 w-5 place-items-center rounded-[6px] bg-[var(--accent)] shadow-[0_0_14px_var(--accent-soft)]"
+            className="mx-auto grid h-8 w-8 place-items-center rounded-[8px] bg-[var(--accent)] text-[15px] font-bold text-white"
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-white/95" />
+            J
           </span>
         )}
         <button
@@ -167,24 +186,26 @@ export function AppSidebar() {
           title={open ? "Collapse navigation" : "Expand navigation"}
           className="ml-auto hidden shrink-0 rounded-md px-1.5 py-1 text-[11px] text-tertiary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98] lg:block"
         >
-          <span aria-hidden="true">{open ? "\u25C0" : "\u25B6"}</span>
+          <span aria-hidden="true">{open ? "◀" : "▶"}</span>
         </button>
       </div>
 
       <nav
         hidden={collapsed}
         aria-label="Primary"
-        className="flex gap-1 overflow-x-auto px-3 pb-2 lg:flex-1 lg:flex-col lg:gap-0 lg:overflow-x-visible lg:overflow-y-auto lg:pb-4"
+        className="flex gap-1 overflow-x-auto px-3 pb-2 lg:mt-[30px] lg:flex-col lg:gap-0 lg:overflow-x-visible lg:overflow-y-auto lg:px-4 lg:pb-4"
       >
         {groups.map((group) => (
           // `contents` lets the items join the horizontal row directly on narrow
-          // screens while staying a titled block in the sidebar.
+          // screens while staying a block in the sidebar.
           <div key={group.title} className="contents lg:mb-5 lg:block lg:last:mb-0">
-            <h2 className="mb-1.5 hidden items-center gap-2 px-2.5 text-[9px] font-semibold uppercase tracking-[0.13em] text-tertiary lg:flex">
-              <span aria-hidden="true" className="h-px w-2.5 bg-[var(--border)]" />
-              {group.title}
-            </h2>
-            <div className="contents lg:flex lg:flex-col lg:gap-px">
+            {group.showTitle && (
+              <h2 className="mb-1.5 hidden items-center gap-2 px-2.5 text-[9px] font-semibold uppercase tracking-[0.13em] text-tertiary lg:flex">
+                <span aria-hidden="true" className="h-px w-2.5 bg-[var(--border)]" />
+                {group.title}
+              </h2>
+            )}
+            <div className="contents lg:flex lg:flex-col lg:gap-[5px]">
               {group.items.map((item) => {
                 const active = isNavItemActive(item, pathname);
                 return (
@@ -192,17 +213,22 @@ export function AppSidebar() {
                     key={item.href}
                     href={item.href}
                     aria-current={active ? "page" : undefined}
-                    className={`relative shrink-0 rounded-[7px] px-2.5 py-[7px] text-[13px] leading-5 transition-[background-color,color,box-shadow] duration-150 ease-out lg:block ${
+                    className={`relative flex h-11 shrink-0 items-center gap-3 rounded-[10px] px-3 text-[14px] font-medium leading-5 transition-[background-color,color] duration-150 ease-out ${
                       active
-                        ? "bg-[var(--z3-bg)] font-medium text-primary shadow-[var(--lift-1),inset_0_1px_0_var(--edge-hi)]"
-                        : "font-normal text-secondary hover:bg-[var(--surface-hover)] hover:text-primary active:bg-[var(--surface-active)]"
+                        ? "bg-[var(--accent-tint)] text-[var(--accent)]"
+                        : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary active:bg-[var(--surface-active)]"
                     }`}
                   >
                     {active && (
                       <span
                         aria-hidden="true"
-                        className="absolute inset-y-1.5 -left-[7px] hidden w-[2px] rounded-full bg-[var(--accent)] shadow-[0_0_10px_var(--accent)] lg:block"
+                        className="absolute inset-y-2.5 -left-4 hidden w-[3px] rounded-r-full bg-[var(--accent)] lg:block"
                       />
+                    )}
+                    {item.icon && (
+                      <span aria-hidden="true" className="shrink-0">
+                        {item.icon}
+                      </span>
                     )}
                     {item.label}
                   </Link>
@@ -213,19 +239,51 @@ export function AppSidebar() {
         ))}
       </nav>
 
-      {/* Account area — the active candidate is persistent context, not a page
-       *  action, so it sits at the foot of the shell rather than in the toolbar. */}
-      <div hidden={collapsed} className="shrink-0 p-3">
-        {/* Inset identity block: recessed rather than raised, so persistent context reads as part
-         *  of the rail's floor instead of competing with the navigation above it. */}
-        <div className="rounded-[var(--radius-lg)] bg-[var(--z0-bg)] p-2.5 shadow-[inset_0_1px_2px_var(--edge-lo)]">
-          <h2 className="mb-1.5 hidden text-[9px] font-semibold uppercase tracking-[0.13em] text-tertiary lg:block">
-            Candidate
-          </h2>
+      {/* The lower utility cluster: assistant, account, admin — in that order.
+       *
+       *  ONE `mt-auto` HOLDS ALL THREE. They were previously two siblings, one of which carried the
+       *  auto margin, which is what let the Copilot drift up against the navigation. Grouping them
+       *  means the free space in the column collects in exactly one place — above this cluster —
+       *  so the whole group sits at the foot of a tall rail and stays together on a short one.
+       *  Nothing here is absolutely positioned; it is ordinary flex flow.
+       *
+       *  Each child keeps the padding it already had, so grouping them moves the cluster without
+       *  resizing anything inside it. */}
+      <div hidden={collapsed} className="shrink-0 lg:mt-auto">
+        {/* IT RUNS ONLY WHEN ASKED. There is no assistant on this page — nothing is prefetched, no
+         *  model is called on load, and this card is a door. The assistant itself is grounded in
+         *  one job's evidence and lives on the job (see jobs/[id]/AskAboutJob), which is why the
+         *  door opens onto Jobs and the copy says so rather than promising a chat that is not
+         *  there. */}
+        {!inAdmin && (
+          <div className="hidden shrink-0 px-3 pb-2.5 lg:block">
+            <div className="rounded-[14px] border border-[#E7E5FF] bg-[var(--accent-tint-weak)] p-[15px] dark:border-[var(--border)]">
+              <h2 className="flex items-center gap-2 text-[13px] font-bold text-primary">
+                <span aria-hidden="true" className="text-[var(--accent)]">
+                  <IconSparkle size={16} />
+                </span>
+                AI Career Copilot
+              </h2>
+              <p className="mt-2 text-[12px] leading-[1.5] text-tertiary">
+                Ask why a job matches your evidence, from any job.
+              </p>
+              <Link
+                href="/jobs"
+                className="mt-3 grid h-[39px] place-items-center rounded-[8px] bg-[var(--accent)] text-center text-[13px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
+              >
+                Ask Copilot
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* Account area — the active candidate is persistent context, not a page
+         *  action, so it sits at the foot of the shell rather than in the toolbar. */}
+        <div className="shrink-0 px-3 pb-0 pt-1 lg:px-4">
           <CandidateSelector />
+          {/* Owner-only, and the way back out again. Without it admin had no door at all. */}
+          <AdminRailLink />
         </div>
-        {/* Owner-only, and the way back out again. Without it admin had no door at all. */}
-        <AdminRailLink />
       </div>
     </motion.aside>
   );

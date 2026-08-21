@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
+import { IconShield } from "@/components/icons";
 
 /**
  * The way into (and out of) system operations.
@@ -48,12 +49,14 @@ export function AdminRailLink() {
   return (
     <Link
       href={inAdmin ? "/home" : "/admin"}
-      className="mt-2 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] text-tertiary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
+      className="mt-2.5 flex h-[42px] items-center gap-2.5 rounded-[9px] border border-[var(--header-border)] bg-[var(--surface-muted)] px-3 text-[12.5px] text-tertiary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
     >
-      <span aria-hidden="true" className="text-[10px]">
-        {inAdmin ? "◀" : "⚙"}
+      {/* On the same outlined grid as the rail's navigation, and deliberately quieter than it:
+       *  this is a door out of the candidate product, not a seventh destination inside it. */}
+      <span aria-hidden="true" className="shrink-0">
+        <IconShield size={16} />
       </span>
-      {inAdmin ? "Back to JobHunt" : "System operations"}
+      {inAdmin ? "Back to JobHunt" : "Admin Console"}
     </Link>
   );
 }

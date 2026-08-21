@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { IconSettings } from "@/components/icons";
 
 interface CandidateOption {
   id: number;
@@ -14,6 +15,12 @@ interface CandidateOption {
  * settings.candidate_ui.active_candidate_id (see src/db/queries/candidates.ts), which every page's
  * useActiveCandidateId() hook reads as its default. It does NOT rescan shared companies/jobs — those
  * stay global; only which candidate's match results/preferences/job-state the UI shows changes.
+ *
+ * PRESENTATION NOTE. It reads as an account block — avatar, name, preferences — because that is
+ * what sits at the foot of a rail in a product a person uses to look for work. It is still one
+ * native <select>: the control, its values, its handler and its destinations are unchanged, and no
+ * status is invented beside the name. A "plan" or "tier" line would be decoration standing where a
+ * fact should be, so the block carries the name and nothing else.
  */
 export function CandidateSelector() {
   const router = useRouter();
@@ -56,16 +63,31 @@ export function CandidateSelector() {
 
   if (loading) return null;
 
-  // Stage 1 restyle only: this lives in the shell's sidebar account area now, so
-  // the control stacks instead of sitting in a header row. Every value, handler
-  // and destination below is unchanged.
+  const activeName = candidates.find((c) => c.id === activeId)?.display_name ?? "";
+  const initials =
+    activeName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]!.toUpperCase())
+      .join("") || "?";
+
   return (
-    <div className="flex flex-row items-center gap-2 lg:flex-col lg:items-stretch lg:gap-1.5">
+    <div className="flex h-[52px] items-center gap-2.5 rounded-[12px] border border-[var(--border)] bg-[var(--z3-bg)] px-2.5">
+      <span
+        aria-hidden="true"
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--accent-tint)] text-[12px] font-bold text-[var(--accent)]"
+      >
+        {initials}
+      </span>
       <select
         value={activeId ?? ""}
         onChange={(e) => handleChange(e.target.value)}
-        className="min-w-0 flex-1 rounded-md border border-[var(--border)] bg-surface px-2 py-1.5 text-[13px] text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] lg:w-full lg:flex-none"
-        title="Current candidate — switching does not rescan shared jobs/companies"
+        className="min-w-0 flex-1 truncate rounded-md border-0 bg-transparent px-0 py-0.5 text-[13px] font-semibold text-primary transition-colors duration-150 ease-out focus:outline-none"
+        /* The rail is a fixed 216px and a long name is ellipsised rather than widening it. The
+         * full name stays reachable: the control is labelled with it, and the browser shows it. */
+        aria-label={activeName ? `Active candidate: ${activeName}` : "Active candidate"}
+        title={activeName || "Current candidate — switching does not rescan shared jobs/companies"}
       >
         {candidates.map((c) => (
           <option key={c.id} value={c.id}>
@@ -77,10 +99,11 @@ export function CandidateSelector() {
       {activeId && (
         <Link
           href={`/candidates/${activeId}/settings`}
+          aria-label="Preferences (target roles, eligibility)"
           title="Preferences (target roles, eligibility)"
-          className="shrink-0 rounded-md px-2.5 py-1 text-[12px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:bg-[var(--surface-active)]"
+          className="shrink-0 rounded-md p-1 text-tertiary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:bg-[var(--surface-active)]"
         >
-          Preferences
+          <IconSettings size={15} />
         </Link>
       )}
     </div>

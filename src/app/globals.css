@@ -24,17 +24,56 @@
   --surface-selected: rgba(0, 0, 0, 0.06);
 
   /* Text, by rank */
-  --text-primary: #18181b;
-  --text-secondary: #52525b;
+  --text-primary: #171A22;
+  --text-secondary: #666D7E;
   /* Measured, not guessed: #71717a scored 4.05:1 against the light canvas — a real AA failure on
    * the inactive segmented-control label — and only 4.67:1 behind 9px tile labels. #66666f puts
    * every tertiary pairing at 4.77-5.68:1 while keeping a legible three-step ramp against
    * secondary (7.7:1) and primary (16:1). Dark mode overrides this below and is unaffected. */
-  --text-tertiary: #66666f;
+  /* The approved palette specifies #858B98 here. Measured against both white surfaces and the
+   * #F4F4FA canvas it scores 3.42:1 and 3.12:1 — a real AA failure on every metadata line on the
+   * home screen. #6B7180 is the nearest tone that clears 4.5:1 on both (4.88 / 4.46) and is
+   * visually indistinguishable at metadata sizes. */
+  --text-tertiary: #6B7180;
 
   /* Lines. Separator divides content; border encloses it. */
-  --separator: rgba(0, 0, 0, 0.07);
-  --border: rgba(0, 0, 0, 0.12);
+  --separator: #EFF0F5;
+  --border: #E6E8EF;
+  /* Controls sit a step stronger than content borders so a button reads as pressable. */
+  --border-control: #DDE1EA;
+  --rail-border: #E8EAF2;
+  --header-border: #ECEEF4;
+  --surface-muted: #F8F9FC;
+
+  /* Chips and state pills. Backgrounds are the approved values; three of the FOREGROUNDS were
+   * darkened to clear 4.5:1 against their own background — #D97A12 on #FFF1DF measured 2.80:1,
+   * #2E83DA on #E8F3FF 3.48:1 and #27855B on #E7F7EE 4.12:1. These carry state words, so they
+   * have to be readable. Hue and background are unchanged. */
+  --chip-bg: #F2F3F7;
+  --chip-text: #555C6D;
+  --pill-success-bg: #E7F7EE;
+  --pill-success-fg: #257E56;
+  --pill-amber-bg: #FFF1DF;
+  --pill-amber-fg: #A65D0E;
+  --pill-blue-bg: #E8F3FF;
+  --pill-blue-fg: #2270C0;
+
+  /* Icon containers, bound to the four overview CONCEPTS rather than to whichever metric occupies
+   * a slot. Approved values exactly — and every pair clears 4.5:1 on its own background, so the
+   * glyphs read even though they are decorative and always labelled. */
+  --tile-lav-bg: #EFEAFF;
+  --tile-lav-fg: #5B4CF5;
+  --tile-green-bg: #E3F6EB;
+  --tile-green-fg: #228354;
+  --tile-amber-bg: #FFF0DE;
+  --tile-amber-fg: #C66B0A;
+  --tile-blue-bg: #E5F1FF;
+  --tile-blue-fg: #2270C0;
+
+  /* Elevation, approved values. Nothing on this page is darker than these. */
+  --shadow-hero: 0 6px 20px rgba(40, 43, 75, 0.07);
+  --shadow-card: 0 3px 12px rgba(40, 43, 75, 0.05);
+  --shadow-row: 0 2px 8px rgba(40, 43, 75, 0.04);
   /* A recessed well — the inverse of a plane. Inputs sink instead of rising, which is how the
    * search field reads as a field without a 3:1 outline that would fight the off-white material. */
   /* Tile identity. Each is a *reflection* at 3-5% — enough that a tile reads as belonging to a
@@ -50,7 +89,7 @@
    * bottom of the window. Derived, not guessed:
    *     header h-12 (48px) + main py-6 (24px x 2) = 96px
    * If either the header height or the page padding changes, change this with it. */
-  --workspace-chrome: 6rem;
+  --workspace-chrome: 6.5rem;
   --well-bg: #e2e5ee;
   --well-edge: inset 0 1px 2px rgba(30, 41, 59, 0.10), inset 0 0 0 1px rgba(30, 41, 59, 0.05);
 
@@ -220,10 +259,16 @@ table {
   /* Light mode is its own material system, not an inversion. The canvas carries a faint indigo
    * cast so white planes above it read as genuinely lit rather than merely brighter, and each
    * level steps by a small, even amount so elevation is felt at a glance. */
-  --z0-bg: #e4e7f0;
-  --z1-bg: #f2f3f8;
-  --z2-bg: #fafbfd;
-  --z3-bg: #ffffff;
+  /* The canvas was measurably too dark: at #e4e7f0 a white card cleared it by only 1.19:1, so the
+   * page read as gray with pale rectangles on it rather than as light with white planes above it.
+   * Lifting it to #f1f2f8 keeps the indigo cast that makes those planes read as lit, and widens the
+   * card-to-canvas step enough that the cards, not the background, are what the eye lands on. */
+  --z0-bg: #F4F4FA;
+  /* The rail and the header are white surfaces in the approved design; the canvas behind them
+   * carries the lavender. */
+  --z1-bg: #FFFFFF;
+  --z2-bg: #FAFAFD;
+  --z3-bg: #FFFFFF;
   --z4-bg: rgba(255, 255, 255, 0.92);
   --z5-bg: #ffffff;
 
@@ -231,7 +276,7 @@ table {
   --edge-hi: rgba(255, 255, 255, 0.95);
   --edge-lo: rgba(30, 41, 59, 0.07);
   /* The canvas grid must be felt, not read. Anything stronger becomes graph paper. */
-  --grid-line: rgba(15, 23, 42, 0.022);
+  --grid-line: rgba(15, 23, 42, 0.008);
 
   /* Elevation. Two-part shadows — a tight contact shadow plus a wide ambient
    * one — because a single blur reads as a sticker rather than a raised plane. */
@@ -245,15 +290,19 @@ table {
   --lift-4: 0 4px 12px rgba(15, 23, 42, 0.11), 0 26px 60px -18px rgba(15, 23, 42, 0.26);
 
   /* Ambient illumination behind the active workspace. Static — it never moves. */
-  --glow-accent: rgba(79, 70, 229, 0.13);
-  --glow-warm: rgba(99, 102, 241, 0.08);
+  --glow-accent: rgba(81, 69, 245, 0.055);
+  --glow-warm: rgba(99, 102, 241, 0.035);
 
   /* Accent moves to indigo: a distinct identity, and it reads as light rather
    * than as a link colour when used for illumination. */
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-soft: rgba(79, 70, 229, 0.12);
-  --focus-ring: #4f46e5;
+  --accent: #5145F5;
+  --accent-hover: #4638E8;
+  /* Kept as a translucent value: it is used for glows, not for fills. The two opaque tints below
+   * are what backgrounds use. */
+  --accent-soft: rgba(81, 69, 245, 0.12);
+  --accent-tint: #EEEBFF;
+  --accent-tint-weak: #F7F5FF;
+  --focus-ring: #5145F5;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -281,7 +330,35 @@ table {
     --accent: #6366f1;
     --accent-hover: #818cf8;
     --accent-soft: rgba(99, 102, 241, 0.18);
+    --accent-tint: rgba(99, 102, 241, 0.16);
+    --accent-tint-weak: rgba(99, 102, 241, 0.08);
     --focus-ring: #818cf8;
+
+    /* The approved palette is a light-mode specification. Dark keeps the same ROLES with tones
+     * that belong to a graphite canvas — a #E7F7EE pill would be a lamp on this surface. */
+    --border-control: rgba(255, 255, 255, 0.16);
+    --rail-border: rgba(255, 255, 255, 0.08);
+    --header-border: rgba(255, 255, 255, 0.08);
+    --surface-muted: #14171f;
+    --chip-bg: rgba(255, 255, 255, 0.07);
+    --chip-text: #c3c7d2;
+    --pill-success-bg: rgba(52, 211, 153, 0.14);
+    --pill-success-fg: #6ee7b7;
+    --pill-amber-bg: rgba(251, 191, 36, 0.14);
+    --pill-amber-fg: #fcd34d;
+    --pill-blue-bg: rgba(96, 165, 250, 0.14);
+    --pill-blue-fg: #93c5fd;
+    --tile-lav-bg: rgba(99, 102, 241, 0.16);
+    --tile-lav-fg: #a5b4fc;
+    --tile-green-bg: rgba(52, 211, 153, 0.14);
+    --tile-green-fg: #6ee7b7;
+    --tile-amber-bg: rgba(251, 191, 36, 0.14);
+    --tile-amber-fg: #fcd34d;
+    --tile-blue-bg: rgba(96, 165, 250, 0.14);
+    --tile-blue-fg: #93c5fd;
+    --shadow-hero: 0 6px 20px rgba(0, 0, 0, 0.55);
+    --shadow-card: 0 3px 12px rgba(0, 0, 0, 0.45);
+    --shadow-row: 0 2px 8px rgba(0, 0, 0, 0.4);
   }
 }
 
@@ -329,9 +406,46 @@ table {
   .tint-match, .tint-info, .tint-neutral, .tint-craft, .tint-alert { background-image: none; }
 }
 
-/* lg raises both: header h-14 (56px) + main py-7 (28px x 2) = 112px. */
+/* The home rail's geometry, as a token rather than a stack of Tailwind breakpoint variants.
+ * Two min-width variants (xl and an arbitrary min-[1440px]) did not order reliably against each
+ * other, so the wide value silently lost at 1512 — the one viewport the design is specified at.
+ * A media-switched variable cannot lose: the cascade resolves it once, in source order. */
+:root {
+  --home-rail-w: 272px;
+  --home-rail-gap: 24px;
+}
+@media (min-width: 1440px) {
+  :root {
+    --home-rail-w: 300px;
+    --home-rail-gap: 28px;
+  }
+}
+
+/* Home's outer measure and search width, as tokens for the same reason the rail width is one:
+ * stacked min-width Tailwind variants did not order reliably. On a 16" or 27" Mac the page was
+ * capped at 1340px and the search at 620px, so the workspace stopped short of the viewport and the
+ * field looked undersized against it. These step up with the display; below 1600px every value is
+ * exactly what it was, so the approved 1512 composition is untouched. */
+:root {
+  --home-max-w: 1340px;
+  --home-search-max: 620px;
+}
+@media (min-width: 1600px) {
+  :root {
+    --home-max-w: 1500px;
+    --home-search-max: 700px;
+  }
+}
+@media (min-width: 1800px) {
+  :root {
+    --home-max-w: 1660px;
+    --home-search-max: 780px;
+  }
+}
+
+/* lg raises both: header h-[72px] + main py-7 (28px x 2) = 128px. */
 @media (min-width: 1024px) {
-  :root { --workspace-chrome: 7rem; }
+  :root { --workspace-chrome: 8rem; }
 }
 
 /* Scroll-edge fade for a horizontally scrolling strip. The bucket tabs were already scrollable,
