@@ -70,6 +70,17 @@ export interface ResumeWriterHealth {
    *  never a process-liveness claim the architecture can no longer support. */
   detail: string;
   schedulerEnabled: boolean;
+  /**
+   * The resume writer's OWN switch (`scheduler.writerEnabled`), reported alongside the master one.
+   *
+   * These are two different flags and only one of them was ever surfaced. Settings toggles
+   * `writerEnabled` — the single control that spends the Claude subscription — and the writer tick
+   * genuinely honours it (see tick.ts), but every status readout in the product showed
+   * `scheduler.enabled` instead. Turning the writer on therefore changed nothing anyone could see,
+   * and turning it off gave no confirmation that anything had stopped. Read-only here: this reports
+   * the setting, it does not decide anything with it.
+   */
+  writerEnabled: boolean;
   withinWindow: boolean;
   intervalMinutes: number;
   batchSize: number;
@@ -145,6 +156,7 @@ export function getResumeWriterHealth(now: Date = new Date(), workflowId?: numbe
 
   const base = {
     schedulerEnabled: settings.scheduler.enabled,
+    writerEnabled: settings.scheduler.writerEnabled,
     withinWindow,
     intervalMinutes: RESUME_WRITER_INTERVAL_MINUTES,
     batchSize: RESUME_WRITER_BATCH_SIZE,
