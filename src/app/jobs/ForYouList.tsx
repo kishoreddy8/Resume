@@ -141,7 +141,7 @@ function RecommendationMeta({
     <span className="ml-auto flex shrink-0 items-center gap-2">
       {family && (
         <span
-          className={`truncate text-[10px] uppercase tracking-[0.06em] ${
+          className={`truncate text-[12px] uppercase tracking-[0.06em] ${
             tier === "PRIMARY" ? "font-semibold text-[var(--accent)]" : "text-tertiary"
           }`}
         >
@@ -149,7 +149,7 @@ function RecommendationMeta({
         </span>
       )}
       {bucket && (
-        <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium text-secondary">
+        <span className="inline-flex h-[24px] items-center gap-1.5 whitespace-nowrap rounded-full border border-[var(--border)] px-2.5 text-[12px] font-medium text-secondary">
           <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${bucket.dot}`} />
           {bucket.label}
         </span>
@@ -185,6 +185,7 @@ interface ForYouApiResponse {
   candidateId: number;
   preferences: CandidateRankingPreferences;
   bucketCounts: ForYouBucketCounts;
+  bucketCountsUnfiltered: ForYouBucketCounts;
   entries: ForYouResponseEntry[];
 }
 
@@ -258,6 +259,14 @@ export function ForYouList({
   }, [load]);
 
   const entries = data?.entries ?? [];
+  /* How many jobs this tab would hold with the sticky filters off. Equal to the shown count unless
+   * a filter is actually removing something, which is the only case the empty state needs it for. */
+  const activeCountKey = TABS.find((t) => t.id === activeTab)?.countKey;
+  const hiddenByFilters =
+    activeCountKey && data
+      ? Math.max((data.bucketCountsUnfiltered?.[activeCountKey] ?? 0) - (data.bucketCounts?.[activeCountKey] ?? 0), 0)
+      : 0;
+  const stickyFilterOn = roleScope === "matched" || minScore !== "";
 
   /* Publish the rendered order for Previous/Next. Same keying discipline as JobList. */
   const queueKey = entries.map((e) => e.job.id).join(",");
@@ -300,7 +309,7 @@ export function ForYouList({
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-[var(--separator)]">
         {!hasPreferences && (
-          <div className="border-b border-[var(--separator)] px-4 py-2 text-[11px] text-tertiary">
+          <div className="border-b border-[var(--separator)] py-2 text-[12px] text-tertiary">
             No target role set yet — jobs are ranked by fit/freshness only.{" "}
             <Link href={`/candidates/${candidateId}/settings`} className="underline">
               Set your target roles
@@ -322,14 +331,20 @@ export function ForYouList({
                 onClick={() => setActiveTab(tab.id)}
                 aria-pressed={isActive}
                 data-bucket-active={isActive ? "true" : undefined}
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors duration-150 ease-out active:scale-[0.98] ${
+                className={`inline-flex h-11 shrink-0 items-center gap-2 rounded-[11px] px-4 text-[14.5px] font-medium transition-colors duration-150 ease-out active:scale-[0.98] ${
                   isActive
                     ? "bg-[var(--accent)] text-[var(--accent-fg)]"
                     : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary"
                 }`}
               >
                 <span>{tab.label}</span>
-                <span className={`tabular-nums text-[10px] ${isActive ? "opacity-80" : "text-tertiary"}`}>
+                {/* The count sits in its own pill rather than running on as small grey digits, so
+                 *  "Ready for Tailoring 10" cannot be misread as a single label. */}
+                <span
+                  className={`grid h-[22px] min-w-[22px] place-items-center rounded-full px-2 text-[12.5px] font-semibold tabular-nums ${
+                    isActive ? "bg-[color-mix(in_oklab,var(--accent-fg)_22%,transparent)] text-[var(--accent-fg)]" : "bg-[var(--z0-bg)] text-tertiary"
+                  }`}
+                >
                   {count}
                 </span>
               </button>
@@ -337,12 +352,12 @@ export function ForYouList({
           })}
         </ScrollStrip>
 
-        <div className="flex items-center gap-3 px-4 pb-2 text-[11px]">
+        <div className="flex flex-wrap items-center gap-3 pb-3 text-[13.5px]">
           <select
             value={minScore}
             onChange={(e) => setMinScore(e.target.value)}
             aria-label="Minimum match score"
-            className="rounded-md border border-[var(--border)] bg-surface px-2 py-1 text-[11px] text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)]"
+            className="h-10 rounded-[10px] border border-[var(--border)] bg-surface px-3 text-[13.5px] text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)]"
           >
             <option value="">Any Score</option>
             <option value="90">90+ Score</option>
@@ -356,16 +371,21 @@ export function ForYouList({
             value={roleScope}
             onChange={(e) => setRoleScope(e.target.value as "matched" | "all")}
             aria-label="Role scope"
-            className="rounded-md border border-[var(--border)] bg-surface px-2 py-1 text-[11px] text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)]"
+            className="h-10 rounded-[10px] border border-[var(--border)] bg-surface px-3 text-[13.5px] text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)]"
           >
             <option value="matched">My target roles</option>
             <option value="all">All roles</option>
           </select>
-          <label className="flex items-center gap-1.5 text-secondary">
-            <input type="checkbox" checked={includeStale} onChange={(e) => setIncludeStale(e.target.checked)} />
+          <label className="flex items-center gap-2 text-secondary">
+            <input type="checkbox" className="h-[17px] w-[17px] accent-[var(--accent)]" checked={includeStale} onChange={(e) => setIncludeStale(e.target.checked)} />
             Include stale (&gt;20d)
           </label>
-          <span className="ml-auto tabular-nums text-tertiary">{entries.length}</span>
+          {/* Was a bare figure floated to the far right — a number with nothing saying what it
+           *  counted, sitting alone at the edge of the row. */}
+          <span className="ml-auto text-tertiary">
+            <span className="font-semibold tabular-nums text-secondary">{entries.length}</span>{" "}
+            {entries.length === 1 ? "job" : "jobs"} shown
+          </span>
         </div>
       </div>
 
@@ -391,6 +411,43 @@ export function ForYouList({
             </Link>
           }
         />
+      ) : entries.length === 0 && !search.trim() && hiddenByFilters > 0 ? (
+        /* The bucket is not empty — a filter emptied it. Saying "this bucket is empty" over 57
+         *  jobs that arrived today reads as a broken feed, and the person has no way to find out
+         *  it was their own role scope that hid them. Name the number, name the filter, and put
+         *  the switch that reverses it directly under the sentence. */
+        <EmptyState
+          title={`Nothing here matches your ${roleScope === "matched" ? "target roles" : "score filter"}`}
+          body={
+            roleScope === "matched" && minScore !== ""
+              ? `${hiddenByFilters} ${hiddenByFilters === 1 ? "job sits" : "jobs sit"} in this stage, but none are in your target roles at ${minScore}+ match.`
+              : roleScope === "matched"
+                ? `${hiddenByFilters} ${hiddenByFilters === 1 ? "job sits" : "jobs sit"} in this stage, but none are ${data?.preferences.primaryTargetRole ? `close to ${data.preferences.primaryTargetRole}` : "in your target roles"}.`
+                : `${hiddenByFilters} ${hiddenByFilters === 1 ? "job sits" : "jobs sit"} in this stage, but none score ${minScore} or above.`
+          }
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {roleScope === "matched" && (
+                <button
+                  type="button"
+                  onClick={() => setRoleScope("all")}
+                  className="rounded-[9px] bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--accent-fg)] shadow-[var(--lift-1)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
+                >
+                  Show all roles
+                </button>
+              )}
+              {minScore !== "" && (
+                <button
+                  type="button"
+                  onClick={() => setMinScore("")}
+                  className="rounded-[9px] px-3 py-1.5 text-[12.5px] font-semibold text-secondary transition-colors duration-150 ease-out hover:text-primary active:scale-[0.98]"
+                >
+                  Clear score filter
+                </button>
+              )}
+            </div>
+          }
+        />
       ) : entries.length === 0 ? (
         <EmptyState
           title={search.trim() ? "No recommendations match that search" : activeTab === "all" ? "No recommendations yet" : "This bucket is empty"}
@@ -398,7 +455,9 @@ export function ForYouList({
             search.trim()
               ? `Nothing in your feed matches “${search.trim()}”. Clear the search to see the full recommendation set.`
               : activeTab === "all"
-                ? "Once jobs are scanned and evaluated against your profile, your strongest matches appear here."
+                ? stickyFilterOn
+                  ? "Nothing is waiting for you right now. Widening your role scope or clearing the score filter will show more."
+                  : "Once jobs are scanned and evaluated against your profile, your strongest matches appear here."
                 : "No job currently sits in this stage. Other buckets may still have work waiting."
           }
           action={

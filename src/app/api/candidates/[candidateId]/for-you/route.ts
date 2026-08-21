@@ -82,6 +82,14 @@ export interface ForYouApiResponse {
   candidateId: number;
   preferences: ReturnType<typeof getRankingPreferences>;
   bucketCounts: ForYouBucketCounts;
+  /**
+   * The same buckets counted WITHOUT the sticky view filters (role scope, minimum score).
+   *
+   * `bucketCounts` promises what a tab will show; this says what the tab is hiding. The two are
+   * only ever different because a filter is on, which is exactly what an empty bucket needs to be
+   * able to explain — "57 arrived today, none in your target roles" instead of a silent zero.
+   */
+  bucketCountsUnfiltered: ForYouBucketCounts;
   entries: ForYouResponseEntry[];
 }
 
@@ -168,7 +176,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
   const totalActive = countActiveUnarchivedJobs();
   const notInterestedCount = Object.values(candidateStates).filter((s) => s.not_interested === 1).length;
 
-  const bucketCounts: ForYouBucketCounts = {
+  const emptyCounts = (): ForYouBucketCounts => ({
     all: Math.max(totalActive - notInterestedCount, 0),
     newToday: 0,
     topMatches: 0,
@@ -177,7 +185,34 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
     readyToApply: 0,
     applied: 0,
     interviewing: 0,
-  };
+  });
+
+  /**
+   * A tab's number has to be the number of things behind that tab.
+   *
+   * These were counted before the sticky filters ran and the list was built after them, so the two
+   * disagreed whenever a filter was on. On the live feed that produced "New Today 57" over an empty
+   * list: all 57 of the day's postings — Cashier I, Assistant Controller, Lead Material Planner —
+   * are NONE-tier against a Data Engineer target, and For You defaults to your target roles. The
+   * list was right; the count was advertising jobs the tab would never show.
+   *
+   * `all` stays a corpus total in both: it is a total, and the list under it is capped at `limit`,
+   * so it has never been a promise about row count.
+   */
+  const bucketCounts = emptyCounts();
+  const bucketCountsUnfiltered = emptyCounts();
+
+  /* The filters a tab's count must respect: the ones that persist across tab changes and can empty
+   * a bucket without the person having typed anything. Text search is deliberately NOT here — it
+   * is transient, it is visible in the field, and it has its own empty state that names it. */
+  const roleFamilyWanted = roleFamilyFilter && roleFamilyFilter.length > 0 ? new Set(roleFamilyFilter) : null;
+  function passesStickyFilters(title: string, match: { overallScore: number; insufficientJdSignal?: boolean } | undefined): boolean {
+    if (roleFamilyWanted && !roleFamilyWanted.has(computeRoleFamilyTier(title, preferences))) return false;
+    if (minScore !== null && (match === undefined || match.insufficientJdSignal || match.overallScore < minScore)) {
+      return false;
+    }
+    return true;
+  }
 
   // Collect candidate relevant dedupe keys
   const candidateKeys = new Set<string>();
@@ -234,14 +269,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
     };
 
     const bucket = classifyCandidateJobBucket(input);
+    const counted = passesStickyFilters(job.title, input.match);
     if (bucket) {
       jobsByBucket[bucket].push(job);
-      if (bucket === "NEW_TODAY") bucketCounts.newToday++;
-      else if (bucket === "READY_FOR_TAILORING") bucketCounts.readyForTailoring++;
-      else if (bucket === "NEEDS_REVIEW") bucketCounts.needsReview++;
-      else if (bucket === "READY_TO_APPLY") bucketCounts.readyToApply++;
-      else if (bucket === "APPLIED") bucketCounts.applied++;
-      else if (bucket === "INTERVIEWING") bucketCounts.interviewing++;
+      const tally = (c: ForYouBucketCounts) => {
+        if (bucket === "NEW_TODAY") c.newToday++;
+        else if (bucket === "READY_FOR_TAILORING") c.readyForTailoring++;
+        else if (bucket === "NEEDS_REVIEW") c.needsReview++;
+        else if (bucket === "READY_TO_APPLY") c.readyToApply++;
+        else if (bucket === "APPLIED") c.applied++;
+        else if (bucket === "INTERVIEWING") c.interviewing++;
+      };
+      tally(bucketCountsUnfiltered);
+      if (counted) tally(bucketCounts);
     }
 
     // STAGE 25A — "Top Matches" is a BADGE tab, not a primary-bucket tab. classifyCandidateJobBucket
@@ -254,7 +294,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
     // bucket's membership or count changes — a Top Match job still belongs to its decision bucket too.
     const topMatchBadge = computeCandidateJobBadges(input).isTopMatch;
     if (topMatchBadge) {
-      bucketCounts.topMatches++;
+      bucketCountsUnfiltered.topMatches++;
+      if (counted) bucketCounts.topMatches++;
       if (bucket !== "TOP_MATCH") jobsByBucket.TOP_MATCH.push(job);
     }
   }
@@ -585,6 +626,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
     candidateId,
     preferences,
     bucketCounts,
+    bucketCountsUnfiltered,
     entries,
   });
 }
