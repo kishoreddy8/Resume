@@ -6,6 +6,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import { LoadingRegion, SkeletonRows } from "@/components/ui";
 import { presentStatus } from "@/app/applications/runStatus";
+import { NOTIFICATION_PRESENTATION, notificationTitle } from "@/lib/notifications/presentation";
 import {
   IconArrowUpRight,
   IconCheckCircle,
@@ -230,18 +231,12 @@ function presentActivity(a: { type: string; text: string }): { title: string; co
   /* Most titles are "<what happened> — <employer> <role>"; the subject is the half worth keeping. */
   const dash = a.text.indexOf(" — ");
   const subject = dash >= 0 ? a.text.slice(dash + 3) : a.text;
-  switch (a.type) {
-    case "HIGH_VALUE_JOB_MATCH":
-      return { title: "New strong match", context: a.text };
-    case "RESUME_READY":
-      return { title: "Resume ready", context: subject };
-    case "HUMAN_REVIEW_REQUIRED":
-      return { title: "Resume needs your review", context: subject };
-    case "QUALITY_FAILURE":
-      return { title: "Resume review needs attention", context: subject };
-    default:
-      return { title: a.text, context: null };
-  }
+  /* Titles come from the shared notification map, so Settings and this rail cannot drift into
+   * calling the same event two different things. The context half stays local: only this rail
+   * splits the recorded text, and only a match keeps the whole line. */
+  if (!(a.type in NOTIFICATION_PRESENTATION)) return { title: a.text, context: null };
+  const title = notificationTitle(a.type);
+  return { title, context: a.type === "HIGH_VALUE_JOB_MATCH" ? a.text : subject };
 }
 
 /* ── presentation helpers ──────────────────────────────────────────────────────────────────── */

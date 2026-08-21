@@ -10,6 +10,7 @@ import {
   updateCandidateSettings,
 } from "@/db/queries/candidateSettings";
 import { resolveCandidateContact } from "@/lib/resumeQuality/candidateContact";
+import { listAnswers } from "@/db/queries/applicationVault";
 import { computeCandidateSettingsHash } from "@/lib/match/candidateSettingsHash";
 import { rematchCandidateJobsPage, type RematchCandidatePageResult } from "@/lib/match/rematchCandidate";
 
@@ -88,6 +89,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
       isComplete: contactValidation.isComplete,
       problems: contactValidation.problems,
     },
+    /**
+     * How many reusable application answers exist — a COUNT, never the answers.
+     *
+     * Settings needs to say "3 saved answers" or "none yet", and there was no read path for that
+     * at all. It is added here rather than as its own route because this handler already resolves
+     * and guards the same candidate, so a second endpoint would be a second access surface for one
+     * integer. Values, questions and sensitivity are deliberately not returned: the vault holds
+     * demographic and work-authorization responses, and a settings page needs to know the count to
+     * decide what to render, not what any of them say.
+     */
+    applicationAnswers: { count: listAnswers(candidateId).length },
   });
 }
 

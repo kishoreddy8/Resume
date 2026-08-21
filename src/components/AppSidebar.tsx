@@ -95,6 +95,7 @@ const ADMIN_NAV: NavGroup[] = [
     title: "System",
     showTitle: true,
     items: [
+      { href: "/admin/settings", label: "System Settings" },
       { href: "/admin/pipeline", label: "Pipeline" },
       { href: "/admin/operations", label: "Health" },
       { href: "/settings", label: "Configuration" },
