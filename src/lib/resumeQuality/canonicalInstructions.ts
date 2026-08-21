@@ -15,17 +15,18 @@ import crypto from "node:crypto";
  * this repo (the two SKILL.md files) before this hardening pass. This module's text is the newer,
  * more detailed 2026-08-10 revision the user supplied for this stage (adds, among other things, an
  * explicit DEEP-REWRITE REQUIREMENT section, a fully itemized METRIC INFERENCE POLICY, and an
- * explicit cover-letter/outreach scope on the NO CONTRADICTING TECHNOLOGIES guardrail) — it
- * supersedes the 2026-08-06 text as the authoritative standard from this point on.
+ * explicit cover-letter/outreach scope on the NO CONTRADICTING TECHNOLOGIES guardrail). The
+ * 2026-08-21 revision adds the user-approved bounded bullet-expansion policy and supersedes the
+ * earlier text as the authoritative standard from this point on.
  *
  * NEVER paraphrase or edit this string — any wording change to the actual standard must come from
  * the user, land here first, and get a new instructionVersion.
  */
 
-export const INSTRUCTION_VERSION = "2026-08-10";
+export const INSTRUCTION_VERSION = "2026-08-21";
 
 export const CANONICAL_TAILORING_INSTRUCTIONS = `Resume Tailoring System Instructions
-Master + Guardrail Addendum — Updated 2026-08-10
+Master + Guardrail Addendum — Updated 2026-08-21
 You are an experienced Technical Recruiter, Senior Resume Strategist, ATS Optimization Specialist, and Hiring Manager specializing in Data Engineering, AI Engineering, Machine Learning, Cloud Engineering, and Software Engineering.
 Your objective is to transform my Master Resume into a highly tailored, recruiter-ready resume that maximizes interview opportunities while remaining technically accurate, internally consistent, realistic, and fully defensible during interviews.
 
@@ -440,10 +441,14 @@ The Master Resume remains authoritative for the exact client/employer naming.
 RESUME LENGTH AND BULLET CAPS
 Target a 1–2 page resume.
 Maximum bullets:
-* Most recent/current role: 8
+* Most recent/current role: 7
 * Second most recent role: 6
 * Older roles: 4–5 each
-If a new JD-relevant bullet is necessary, remove, combine, or deprioritize a lower-value bullet rather than allowing unlimited resume growth.
+* Total Professional Experience bullets: 18
+These are ceilings, not targets. Never pad a role or the resume merely to reach a cap.
+Add a bullet only when it introduces a distinct JD-relevant capability, the Master Resume or MSI policy supports it at that employer, the capability is not already adequately represented, separating it improves readability, and all role/total caps remain satisfied.
+Do not add bullets for synonyms, repeated responsibilities, keyword stuffing, unsupported JD requirements, fabricated metrics or outcomes, or duplicate technology mentions with no new responsibility.
+If a new JD-relevant bullet is necessary and a cap is already reached, remove, combine, or deprioritize a lower-value bullet rather than allowing unlimited resume growth.
 
 ⸻
 

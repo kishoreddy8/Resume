@@ -1,5 +1,11 @@
 import type { RequiredCorrection } from "../types";
 import type { ExperienceEntry } from "../../../../tools/tailoring-engine/types";
+import {
+  CURRENT_ROLE_BULLET_CAP,
+  OLDER_ROLE_BULLET_CAP,
+  SECOND_ROLE_BULLET_CAP,
+  TOTAL_EXPERIENCE_BULLET_CAP,
+} from "../writerOutputQuality";
 
 /**
  * RESUME LENGTH AND BULLET CAPS + VERB TENSE CONSISTENCY — two independent canonical guardrails,
@@ -10,8 +16,7 @@ import type { ExperienceEntry } from "../../../../tools/tailoring-engine/types";
  * instructions specify per position, not per any other ordering.
  */
 
-const BULLET_CAPS = [8, 6] as const; // index 0 = current role, index 1 = second most recent
-const OLDER_ROLE_MAX_BULLETS = 5; // "4-5 each" — 5 is the permitted ceiling, not a violation on its own
+const BULLET_CAPS = [CURRENT_ROLE_BULLET_CAP, SECOND_ROLE_BULLET_CAP] as const;
 
 export interface BulletCapCheckResult {
   compliant: boolean;
@@ -22,7 +27,7 @@ export function evaluateBulletCaps(experience: ExperienceEntry[]): BulletCapChec
   const corrections: RequiredCorrection[] = [];
 
   experience.forEach((role, index) => {
-    const cap = index < BULLET_CAPS.length ? BULLET_CAPS[index] : OLDER_ROLE_MAX_BULLETS;
+    const cap = index < BULLET_CAPS.length ? BULLET_CAPS[index] : OLDER_ROLE_BULLET_CAP;
     if (role.bullets.length > cap) {
       const roleLabel = index === 0 ? "current/most recent role" : index === 1 ? "second most recent role" : `role #${index + 1}`;
       corrections.push({
@@ -31,6 +36,16 @@ export function evaluateBulletCaps(experience: ExperienceEntry[]): BulletCapChec
       });
     }
   });
+
+  const total = experience.reduce((sum, role) => sum + role.bullets.length, 0);
+  if (total > TOTAL_EXPERIENCE_BULLET_CAP) {
+    corrections.push({
+      priority: "MEDIUM",
+      description:
+        `Professional Experience has ${total} bullets, exceeding the ${TOTAL_EXPERIENCE_BULLET_CAP}-bullet total cap. ` +
+        "Keep only distinct, JD-relevant, evidence-supported responsibilities; never pad to the cap.",
+    });
+  }
 
   return { compliant: corrections.length === 0, corrections };
 }

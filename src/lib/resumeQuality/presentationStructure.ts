@@ -1,6 +1,11 @@
 import type { CandidateProfile } from "@/lib/match/types";
 import { buildEmployerEvidenceMap } from "./employerEvidence";
 import { extractCanonicalSkillsFromText } from "./reviewers/skillAliases";
+import {
+  PROJECT_DESCRIPTION_MAX_SENTENCES,
+  PROJECT_DESCRIPTION_MAX_TECHNOLOGIES,
+  renderWriterOutputQualitySection,
+} from "./writerOutputQuality";
 import type { ExperienceEntry, ResumeContent } from "../../../tools/tailoring-engine/types";
 
 /**
@@ -196,7 +201,7 @@ export interface PresentationStructureIssue {
    * capped (see PRESENTATION_STRUCTURE_DEDUCTION_CAP) and instead carry HIGH priority corrections,
    * which is the lever that actually changes what the writer produces on the next iteration.
    */
-  kind: "TRUNCATED_BULLET" | "MISSING_ANNOTATION" | "ENVIRONMENT_DUMP";
+  kind: "TRUNCATED_BULLET" | "MISSING_ANNOTATION" | "ENVIRONMENT_DUMP" | "PROJECT_DESCRIPTION_DENSE";
   message: string;
 }
 
@@ -254,6 +259,25 @@ export function evaluatePresentationStructure(
     const hasProject = Boolean(role.projectDescription && role.projectDescription.trim().length > 0);
     const hasEnvironment = Boolean(role.environment && role.environment.length > 0);
 
+    if (hasProject) {
+      const project = role.projectDescription!.trim();
+      const sentenceCount = project
+        .split(/[.!?]+(?:\s|$)/)
+        .map((sentence) => sentence.trim())
+        .filter(Boolean).length;
+      const technologies = extractCanonicalSkillsFromText(project);
+      if (sentenceCount > PROJECT_DESCRIPTION_MAX_SENTENCES || technologies.size > PROJECT_DESCRIPTION_MAX_TECHNOLOGIES) {
+        issues.push({
+          severity: "MEDIUM",
+          kind: "PROJECT_DESCRIPTION_DENSE",
+          message:
+            `Project line for ${role.company} has ${sentenceCount} sentence(s) and ${technologies.size} named ` +
+            `technologies. Keep it to at most ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences and ` +
+            `${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies; move detail into bullets or Environment.`,
+        });
+      }
+    }
+
     if (!hasProject) {
       // With no profile at all, nothing can be said about what the evidence supports — report it,
       // but do not assert a requirement that has not been checked.
@@ -298,7 +322,8 @@ export function evaluatePresentationStructure(
  * reproduced. What the writer is being asked to match is the shape of the document.
  */
 export function renderPresentationStandardSection(profile: CandidateProfile | undefined): string {
-  let out = "## RESUME PRESENTATION STANDARD (STRUCTURE ONLY)\n\n";
+  let out = renderWriterOutputQualitySection();
+  out += "## RESUME PRESENTATION STANDARD (STRUCTURE ONLY)\n\n";
   out +=
     "The resume renders in this exact section order: **name → headline → contact line → Professional " +
     "Summary → Technical Skills → Certifications → Professional Experience → Key Projects → Education**. " +
@@ -337,7 +362,8 @@ export function renderPresentationStandardSection(profile: CandidateProfile | un
     "Resume states one) with the dates right-aligned; the job title beneath; then two labelled lines around " +
     "the bullets:\n\n";
   out +=
-    "  - `projectDescription` — ONE sentence naming what this role's work was, so a reader knows the scope " +
+    `  - \`projectDescription\` — ONE sentence, or at most ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences, ` +
+    `naming what this role's work was with no more than ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies, so a reader knows the scope ` +
     "before the bullets. It is a restatement, not an addition: every system, domain, client, technology and " +
     "figure in it must already appear in THIS role's own bullets. Introducing anything new here is a " +
     "truthfulness failure and is checked automatically.\n";
@@ -438,7 +464,8 @@ export function renderRoleProjectEvidenceSection(evidence: RoleProjectEvidence[]
     out += `- Reviewed bullets available for this role: ${role.bulletCount}\n`;
     out += `- Technologies evidenced at this employer (${role.evidencedTechnologies.length}): ${role.evidencedTechnologies.join(", ") || "none recorded"}\n`;
     out += role.supportsProjectLine
-      ? `- **Project line: REQUIRED.** Write one or two lines naming what this role's work was, built only from the ` +
+      ? `- **Project line: REQUIRED.** Write one sentence, or at most ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences, ` +
+        `naming what this role's work was with no more than ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies, built only from the ` +
         `bullets you wrote for it and the technologies above. No new client, system, domain or metric.\n\n`
       : `- **Project line: OMIT.** CareerOps has no recorded technologies or bullets for this role, so there is ` +
         `nothing to describe. Leave \`projectDescription\` out rather than inventing scope.\n\n`;

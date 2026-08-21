@@ -34,6 +34,7 @@ import { evaluateQualityGate, type QualityGateOutcome } from "./qualityGate";
 import { renderReviewFeedbackMarkdown } from "./reviewFeedback";
 import { DeterministicResumeReviewer } from "./reviewers/deterministicReviewer";
 import { assertValidWorkflowTransition } from "./stateMachine";
+import { normalizeResumeWriterOutput } from "./writerOutputQuality";
 import { generateTailoringOutputs } from "../../../tools/tailoring-engine/generate";
 import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring-engine/types";
 import { validateDocx } from "../../../tools/tailoring-engine/validate-docx";
@@ -1145,6 +1146,8 @@ export async function executeResumeImprovementIteration(
     transitionWorkflowStatus(candidateId, workflowId, "FAILED", { failureReason });
     throw new ResumeQualityOrchestrationError("INVALID_WRITER_OUTPUT", failureReason);
   }
+
+  writerOutput = normalizeResumeWriterOutput(writerOutput);
 
   // 2. Transition and drive next review iteration
   return executeResumeQualityIteration({

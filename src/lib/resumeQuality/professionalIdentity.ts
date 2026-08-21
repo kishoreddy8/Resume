@@ -228,9 +228,9 @@ export function renderProfessionalIdentitySection(
     "title never replaces the candidate's own, and never invent seniority the evidence does not show.\n\n";
   out +=
     "**Summary opening rule.** The summary must open by naming that same professional identity and then the " +
-    "specialization this JD cares about. Use the shape `<Identity> specializing in <JD-relevant specialization " +
-    "backed by evidence>…` — for example \"Data Engineer specializing in Azure Databricks, PySpark, Delta Lake " +
-    "and scalable cloud data platforms…\".\n\n" +
+    "specialization this JD cares about, but write a natural sentence rather than filling the template " +
+    "`<Identity> specializing in ...`. Name the governed platform, engineering scope, or business domain the " +
+    "candidate actually delivers.\n\n" +
     "NEVER open with the identity followed immediately by \"with\". All of these are rejected automatically: " +
     "\"Data Engineer with…\", \"Engineer with…\", \"Professional with…\", \"Candidate with…\", " +
     "\"<identity> with nearly X years…\", \"<identity> with X+ years…\", \"Experienced professional…\", " +
@@ -253,9 +253,9 @@ export function renderProfessionalIdentitySection(
     "  - what genuinely distinguishes this engineer from another with the same tool list.\n\n";
   out +=
     "**Register.** Write it as confident professional prose, in full sentences that flow \u2014 not as clipped " +
-    "fragments and not as a bulleted list flattened into a paragraph. Capability-led openings are welcome " +
-    "(\"Expertise in\u2026\", \"Proven ability to\u2026\", \"Experienced in\u2026\"); just do not let every " +
-    "sentence share the same frame AND the same emptiness. Substance is what makes a stem acceptable.\n\n" +
+    "fragments and not as a bulleted list flattened into a paragraph. Avoid stock capability stems such as " +
+    "\"Expertise spans\u2026\", \"Proven ability to\u2026\", and \"Experienced in\u2026\"; vary the construction and lead with " +
+    "the work, its context, or a supported outcome.\n\n" +
     "Weak \u2014 a keyword dump in four identical frames, and the exact failure this candidate\u2019s last " +
     "resume shipped with: \"Data Engineer specializing in Spark-based distributed processing, Python and SQL " +
     "pipeline development, and cloud data ingestion across Azure Databricks, Delta Lake and Snowflake. " +
@@ -263,21 +263,16 @@ export function renderProfessionalIdentitySection(
     "architecture lakehouse layers, with CDC-driven incremental loads, SCD history tracking and dimensional " +
     "models. Hands-on experience with PySpark performance tuning\u2026 Skilled in partnering with\u2026\" " +
     "Thirteen product names; nothing about the person.\n\n" +
-    "Strong \u2014 the register to aim for: \"Data Engineer with N years of hands-on experience in " +
-    "designing, developing, and maintaining data infrastructure and analytics solutions. Expertise in data " +
-    "ingestion, storage, processing, and analysis, coupled with a strong foundation in software engineering " +
-    "and database design. Proven ability to deliver high-performance, scalable, and reliable data solutions " +
-    "that drive business insights. My dual expertise in both the engineering and infrastructural realms of " +
-    "data means that I don\u2019t just patch together solutions; I craft pipelines that are as strategic as " +
-    "they are systematic, serving as the lifeblood for insightful analysis and business insight.\"\n\n" +
-    "Note what that does: it names ZERO products, it describes the DISCIPLINE rather than the toolchain, it " +
-    "leads with an evidence-backed years figure, and it closes in the first person with a genuine " +
-    "differentiator. Take its SHAPE and register \u2014 never its wording, and never a claim this " +
-    "candidate\u2019s evidence does not support. N must be the verified figure CareerOps supplies below; if " +
-    "none is supplied, omit the years clause entirely and open differently.\n\n";
+    "Strong \u2014 the register to aim for: \"Data Engineer building governed data platforms for banking and " +
+    "payments teams. Pipeline ownership spans ingestion, transformation, testing, and dependable production " +
+    "delivery. Platform design balances scalable processing with traceable data controls. Delivery experience " +
+    "connects engineering decisions to the analysts and operations teams that rely on the data.\"\n\n" +
+    "That shape describes role identity, scope, engineering strengths, and delivery context without turning " +
+    "the summary into a product list or marketing pitch. Never copy its wording or add a claim the candidate\u2019s " +
+    "evidence does not support.\n\n";
   out +=
-    "**Voice.** First person is permitted and welcome in the closing, differentiating sentence " +
-    "(\"My dual expertise\u2026 means I craft pipelines that\u2026\"). What is NOT permitted is " +
+    "**Voice.** Prefer concise implied-first-person resume language. A restrained first-person sentence is " +
+    "permitted only when it remains concrete and professional, never conversational or promotional. What is NOT permitted is " +
     "third-person narration of the candidate: never open a sentence with \"Owns\u2026\", " +
     "\"Works\u2026\", \"Builds\u2026\", \"Develops\u2026\", \"Manages\u2026\", \"Leads\u2026\", " +
     "\"Creates\u2026\", \"Implements\u2026\" or \"Maintains\u2026\", which reads as a third party " +

@@ -462,13 +462,11 @@ test("S311C-46 the writer is told to position rather than list, and not to stack
   const section = renderProfessionalIdentitySection(deriveProfessionalIdentity(PROFILE), null);
   assert.match(section, /POSITIONING, not inventory/);
   assert.match(section, /at most SEVEN technologies/);
-  // Stage 31.1's fourth pass replaced the stem prohibition with a register the candidate specified:
-  // capability-led openings are welcome, provided the sentences behind them carry substance.
-  assert.match(section, /Capability-led openings are welcome/);
-  assert.match(section, /do not let every sentence share the same frame AND the same emptiness/);
+  assert.match(section, /Avoid stock capability stems/);
+  assert.match(section, /lead with the work, its context, or a supported outcome/);
   // It must show a worked contrast, not just a prohibition.
   assert.match(section, /Weak \u2014 a keyword dump|Weak — a keyword dump/);
   assert.match(section, /Strong \u2014 the register to aim for|Strong — the register to aim for/);
-  assert.match(section, /names ZERO products/);
-  assert.match(section, /omit the years clause entirely/, "no verified figure means no years clause");
+  assert.match(section, /without turning the summary into a product list or marketing pitch/);
+  assert.match(section, /do NOT state one/, "no verified figure means no years claim");
 });

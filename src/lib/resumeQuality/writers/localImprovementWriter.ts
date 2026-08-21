@@ -1,5 +1,6 @@
 import type { ResumeContent, CoverLetterContent } from "../../../../tools/tailoring-engine/types";
 import type { ResumeWriterAgent, ResumeWriterInput, ResumeWriterOutput } from "../types";
+import { resolveSkillForReview } from "../reviewers/skillAliases";
 
 export interface LocalImprovementWriterOptions {
   /** Optional custom transform function for testing specific responses */
@@ -93,8 +94,15 @@ export class LocalImprovementWriter implements ResumeWriterAgent {
     if (input.latestReview?.missingRequiredSkills && input.latestReview.missingRequiredSkills.length > 0) {
       if (improvedResume.skillGroups.length > 0) {
         const firstCategory = improvedResume.skillGroups[0];
+        const evidenced = new Set(
+          [
+            ...(input.masterProfile?.skills.map((skill) => skill.rawSkillName) ?? []),
+            ...(input.masterProfile?.experience.flatMap((entry) => entry.technologies) ?? []),
+          ].map((skill) => resolveSkillForReview(skill)?.canonical ?? skill)
+        );
         for (const skill of input.latestReview.missingRequiredSkills) {
-          if (!firstCategory.items.includes(skill)) {
+          const canonical = resolveSkillForReview(skill)?.canonical ?? skill;
+          if (evidenced.has(canonical) && !firstCategory.items.some((item) => (resolveSkillForReview(item)?.canonical ?? item) === canonical)) {
             firstCategory.items.push(skill);
           }
         }
