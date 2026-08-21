@@ -141,7 +141,7 @@ export const JobRow = memo(function JobRow({
   thresholds,
   summary,
   selected,
-  onSelect,
+  onOpen,
   sharedLayout,
   meta,
 }: {
@@ -149,7 +149,8 @@ export const JobRow = memo(function JobRow({
   thresholds: LifecycleThresholds;
   summary: ListMatchSummary | undefined;
   selected: boolean;
-  onSelect: (id: number) => void;
+  /** Opens the job's workspace. Arrow-key selection is separate and stays on the list. */
+  onOpen: (id: number) => void;
   sharedLayout: boolean;
   /** View-specific context. For You puts its bucket + rank here; All Jobs passes nothing. */
   meta?: ReactNode;
@@ -160,7 +161,7 @@ export const JobRow = memo(function JobRow({
       aria-selected={selected}
       tabIndex={-1}
       data-job-row={job.id}
-      onClick={() => onSelect(job.id)}
+      onClick={() => onOpen(job.id)}
       /* Selection lifts the row toward the viewer: its own surface tone, a lit top
        *  edge and a contact shadow. Hover is a 1px rise, transform-only, and gated
        *  to real pointers so a touch tap never leaves a row stuck raised. */

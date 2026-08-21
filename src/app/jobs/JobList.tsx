@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { QueueItem } from "./queue";
 import { useRouter } from "next/navigation";
 import { JobRow } from "./JobRow";
@@ -90,6 +90,17 @@ export function JobList({
   const decisions = useMatchDecisions(jobs, candidateId);
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>("All");
   const router = useRouter();
+
+  /* Clicking a row opens the job's workspace — the same destination Enter has always reached, and
+   * the same one the home screen's recommendations link to. Selection is kept in step so the row
+   * the user came from is still the highlighted one when they come back. */
+  const openJob = useCallback(
+    (id: number) => {
+      onSelect(id);
+      router.push(`/jobs/${id}`);
+    },
+    [onSelect, router]
+  );
   const listRef = useRef<HTMLDivElement>(null);
   // Shared-layout travel is allowed for pointer selection and suppressed for keyboard selection:
   // Arrow-key traversal is the app's highest-frequency action and must stay instant.
@@ -254,7 +265,7 @@ export function JobList({
               thresholds={thresholds}
               summary={decisions[job.dedupe_key]}
               selected={job.id === selectedJobId}
-              onSelect={onSelect}
+              onOpen={openJob}
               sharedLayout={sharedLayout}
             />
           ))}

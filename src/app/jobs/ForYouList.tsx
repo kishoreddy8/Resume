@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { QueueItem } from "./queue";
 import { ScrollStrip } from "./ScrollStrip";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { JobRow } from "./JobRow";
 import { JobListSkeleton, LoadingRegion } from "./Skeletons";
 import { EmptyState } from "./EmptyState";
@@ -204,6 +205,17 @@ export function ForYouList({
   /** Same contract as JobList: the rendered order, so Previous/Next never recomputes neighbours. */
   onQueueChange?: (queue: QueueItem[]) => void;
 }) {
+  const router = useRouter();
+  /* Clicking a recommendation opens its workspace — the same destination the home screen's
+   * recommendation cards link to, so a job opens the same way wherever it was found. */
+  const openJob = useCallback(
+    (id: number) => {
+      onSelect(id);
+      router.push(`/jobs/${id}`);
+    },
+    [onSelect, router]
+  );
+
   const [data, setData] = useState<ForYouApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   /** Non-null only while setup is unfinished — otherwise the ordinary empty states apply. */
@@ -418,7 +430,7 @@ export function ForYouList({
               thresholds={thresholds}
               summary={toSummary(ranking)}
               selected={job.id === selectedJobId}
-              onSelect={onSelect}
+              onOpen={openJob}
               sharedLayout={sharedLayout}
               meta={<RecommendationMeta ranking={ranking} prefs={data?.preferences ?? null} />}
             />

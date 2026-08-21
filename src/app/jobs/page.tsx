@@ -8,7 +8,6 @@ import { Aperture } from "./Aperture";
 import type { QueueItem } from "./queue";
 import { ForYouList } from "./ForYouList";
 import { JobList } from "./JobList";
-import { Workbench } from "./Workbench";
 import { JobListSkeleton, LoadingRegion } from "./Skeletons";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AppToolbarSlot } from "@/components/AppToolbarSlot";
@@ -63,12 +62,14 @@ export default function JobsPage() {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<ScanSummary | null>(null);
-  // Selected job for the Workbench master/detail pair. Deep-linkable via ?job=<id> so the URL
-  // reflects the current state, and intentionally NOT persisted anywhere else.
+  // The highlighted row. Deep-linkable via ?job=<id> so the URL reflects the current state, and
+  // intentionally NOT persisted anywhere else. Selection now only drives the highlight and
+  // arrow-key movement — opening a job navigates to its workspace.
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
-  /* The visible ordered queue, published by whichever list is mounted. Previous/Next reads this —
-   * never its own ordering — so click, Prev/Next and arrow keys can never disagree. */
-  const [queue, setQueue] = useState<QueueItem[]>([]);
+  /* The visible ordered queue, published by whichever list is mounted. Its consumer was the
+   * detail pane's Previous/Next; with jobs now opening in their own workspace nothing reads it, but
+   * the lists still publish unconditionally, so the setter stays and the value is not bound. */
+  const [, setQueue] = useState<QueueItem[]>([]);
   // The filter surface is now a popover, so it starts closed. Discoverability lives in the command
   // bar instead: the trigger is always visible and carries a live count of what is active.
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -327,20 +328,13 @@ export default function JobsPage() {
         !thresholdsLoaded ? (
           <WorkspaceLoading />
         ) : (
-          <Workbench
+          <ForYouList
+            candidateId={candidateId}
+            thresholds={thresholds}
+            search={filters.search}
             selectedJobId={selectedJobId}
-            queue={queue}
             onSelect={setSelectedJobId}
-            list={
-              <ForYouList
-                candidateId={candidateId}
-                thresholds={thresholds}
-                search={filters.search}
-                selectedJobId={selectedJobId}
-                onSelect={setSelectedJobId}
-                onQueueChange={setQueue}
-              />
-            }
+            onQueueChange={setQueue}
           />
         )
       ) : (
@@ -349,19 +343,12 @@ export default function JobsPage() {
             {loading || !thresholdsLoaded ? (
               <WorkspaceLoading />
             ) : (
-              <Workbench
+              <JobList
+                jobs={jobs}
+                thresholds={thresholds}
                 selectedJobId={selectedJobId}
-                queue={queue}
                 onSelect={setSelectedJobId}
-                list={
-                  <JobList
-                    jobs={jobs}
-                    thresholds={thresholds}
-                    selectedJobId={selectedJobId}
-                    onSelect={setSelectedJobId}
-                    onQueueChange={setQueue}
-                  />
-                }
+                onQueueChange={setQueue}
               />
             )}
           </div>
