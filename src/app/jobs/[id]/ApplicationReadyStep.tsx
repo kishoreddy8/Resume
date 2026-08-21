@@ -5,6 +5,7 @@ import type { JobWithCompany } from "@/types";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import type { QualityWorkflowData } from "./useQualityWorkflow";
 import { FactRow, StepSectionHeading, WsCard } from "./WorkspaceUI";
+import { sourceLabel } from "../sourceLabel";
 
 /**
  * Step 5 — Application, before a run exists: four columns read across.
@@ -54,12 +55,6 @@ function CheckRow({ label, state }: { label: string; state: RowState }) {
       <span className={`shrink-0 text-[11px] font-medium ${STATE_TONE[state]}`}>{STATE_WORD[state]}</span>
     </li>
   );
-}
-
-/** The board a person could recognise. `built_in` is an internal seed marker, not a place. */
-function sourceLabel(source: string | null): string | null {
-  if (!source || source === "built_in") return null;
-  return source.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function domainOf(url: string | null): string | null {

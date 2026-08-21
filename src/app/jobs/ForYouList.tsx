@@ -131,7 +131,7 @@ function RecommendationMeta({
   const family =
     tier === "PRIMARY"
       ? prefs?.primaryTargetRole
-        ? `P · ${prefs.primaryTargetRole}`
+        ? `${ROLE_FAMILY_LABEL.PRIMARY} · ${prefs.primaryTargetRole}`
         : ROLE_FAMILY_LABEL.PRIMARY
       : tier === "SECONDARY"
         ? ROLE_FAMILY_LABEL.SECONDARY
@@ -311,7 +311,7 @@ export function ForYouList({
         {!hasPreferences && (
           <div className="border-b border-[var(--separator)] py-2 text-[12px] text-tertiary">
             No target role set yet — jobs are ranked by fit/freshness only.{" "}
-            <Link href={`/candidates/${candidateId}/settings`} className="underline">
+            <Link href="/settings" className="underline">
               Set your target roles
             </Link>
           </div>

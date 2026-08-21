@@ -5,6 +5,7 @@ import { LoadingRegion, SkeletonRows, Surface } from "@/components/ui";
 import { useEffect, useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import type { JobWithCompany } from "@/types";
+import { sourceLabel } from "../sourceLabel";
 
 const ARCHIVED_LIMIT = 100;
 const ARCHIVED_STEP = 200;
@@ -108,7 +109,7 @@ export default function ArchivedJobsPage() {
                       {job.title}
                     </Link>
                     <div className="text-xs text-zinc-500">
-                      {job.company_name} · {job.source_type}
+                      {[job.company_name, sourceLabel(job.source_type)].filter(Boolean).join(" · ")}
                     </div>
                   </td>
                   <td className="px-3 py-2">

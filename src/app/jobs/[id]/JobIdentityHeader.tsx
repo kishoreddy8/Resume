@@ -5,6 +5,7 @@ import type { JobMatchResult } from "@/lib/match/types";
 import type { JobWithCompany } from "@/types";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { IconArrowUpRight, IconPin } from "@/components/icons";
+import { sourceLabel } from "../sourceLabel";
 
 /**
  * Who this job is, in one compact band.
@@ -58,12 +59,6 @@ function freshness(job: Pick<JobWithCompany, "posted_at" | "first_seen_at">): st
   if (days === 0) return `${verb} today`;
   if (days === 1) return `${verb} yesterday`;
   return `${verb} ${days} days ago`;
-}
-
-/** The board a person could recognise. `built_in` is an internal seed marker, not a place. */
-function sourceLabel(source: string | null): string | null {
-  if (!source || source === "built_in") return null;
-  return source.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /** The engine's decision, in a candidate's words. Never an enum. */

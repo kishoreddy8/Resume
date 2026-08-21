@@ -300,7 +300,10 @@ function JobSearchPanel({
     [prefs, auth, settings]
   );
 
-  const roles = [prefs.primaryTargetRole, ...prefs.secondaryTargetRoles].filter(Boolean) as string[];
+  // Deduplicated for display, order preserved: primaryTargetRole can also appear in
+  // secondaryTargetRoles (upstream data, not reshaped here), which used to render the same chip
+  // twice with a duplicate React key.
+  const roles = Array.from(new Set([prefs.primaryTargetRole, ...prefs.secondaryTargetRoles].filter(Boolean))) as string[];
 
   function removeRole(role: string) {
     if (role === prefs.primaryTargetRole) {
