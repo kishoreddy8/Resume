@@ -54,6 +54,10 @@ export interface ClaudeCliInvokeOptions {
  *     transient — bounded retry is correct.
  *   MALFORMED_OUTPUT        — the process succeeded but produced no writer_output.json, or one that
  *     is not parseable JSON. Bounded retry.
+ *   REPAIR_SCOPE_VIOLATION  — a TARGETED_REPAIR pass edited content outside its authorized editable
+ *     paths. The rejected output is never accepted as a quality iteration and can never become the
+ *     best attempt — but the pass itself still cost a real Claude invocation, so it must consume the
+ *     same bounded technical budget as any other failed attempt rather than retrying unboundedly.
  *   TRANSIENT_TECHNICAL_FAILURE — anything else (spawn error, timeout, unexplained non-zero exit).
  */
 export type WriterFailureClass =
@@ -61,6 +65,7 @@ export type WriterFailureClass =
   | "AUTH_REQUIRED"
   | "PROVIDER_UNAVAILABLE"
   | "MALFORMED_OUTPUT"
+  | "REPAIR_SCOPE_VIOLATION"
   | "TRANSIENT_TECHNICAL_FAILURE";
 
 /** Classes the operator (not time, and not a retry) must resolve before the writer can make progress.

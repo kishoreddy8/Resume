@@ -372,12 +372,37 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
       generate: async (): Promise<ResumeWriterOutput> => importResult.writerOutput,
     };
 
-    const improvementResult = await executeResumeImprovementIteration({
-      candidateId,
-      workflowId,
-      writer: staticWriter,
-      reviewer: new DeterministicResumeReviewer(),
-    });
+    let improvementResult: Awaited<ReturnType<typeof executeResumeImprovementIteration>>;
+    try {
+      improvementResult = await executeResumeImprovementIteration({
+        candidateId,
+        workflowId,
+        writer: staticWriter,
+        reviewer: new DeterministicResumeReviewer(),
+      });
+    } catch (err) {
+      // A REPAIR_SCOPE_VIOLATION already cost a real Claude invocation, so — same as every other
+      // writer failure class above — it must consume the bounded technical budget rather than
+      // retrying unboundedly on every scheduler tick. The rejected output was never persisted as a
+      // quality iteration (the throw happens before that in the orchestrator) and can never become
+      // the best attempt; only the failure bookkeeping changes here.
+      if (err instanceof ResumeQualityOrchestrationError && err.code === "REPAIR_SCOPE_VIOLATION") {
+        const reason = err.message;
+        const passCount = recordTechnicalFailure(handoffDir, reason, "REPAIR_SCOPE_VIOLATION");
+        if (passCount >= MAX_TECHNICAL_PASSES) {
+          notifyWriterFailure({ ...notifyCtx, technicalRetry: passCount });
+        }
+        return {
+          workflowId,
+          candidateId,
+          outcome: "TECHNICAL_FAILURE",
+          iterationNumber: targetIteration,
+          error: reason,
+          failureClass: "REPAIR_SCOPE_VIOLATION",
+        };
+      }
+      throw err;
+    }
 
     const reviewAndRenderMs = Date.now() - reviewStartedMs;
     const timings: IterationTimings = {
