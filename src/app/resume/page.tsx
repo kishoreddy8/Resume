@@ -134,7 +134,7 @@ export default function ResumeStudioPage() {
 
   if (error) {
     return (
-      <div className="mx-auto flex w-full max-w-[1340px] flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-6">
         <PageHeader size="lg" title="Resume Studio" />
         <Panel>
           <PanelEmpty action={<button type="button" onClick={load} className={`${BTN_SECONDARY} min-h-11`}>Retry</button>}>
@@ -147,7 +147,7 @@ export default function ResumeStudioPage() {
 
   if (candidateId === null || entries === null) {
     return (
-      <div className="mx-auto flex w-full max-w-[1340px] flex-col gap-5">
+      <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-5">
         <PageHeader
           size="lg"
           title="Resume Studio"
@@ -166,7 +166,7 @@ export default function ResumeStudioPage() {
   const hasSkillsInventory = Boolean(manifest?.skills);
 
   return (
-    <div className="mx-auto flex w-full max-w-[1340px] flex-col gap-6 pb-12">
+    <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-6 pb-12">
       <PageHeader
         size="lg"
         title="Resume Studio"
@@ -298,13 +298,13 @@ function SummaryTile({
     blue: "bg-[var(--tile-blue-bg)] text-[var(--tile-blue-fg)]",
     amber: "bg-[var(--tile-orange-bg)] text-[var(--tile-orange-fg)]",
   };
-  const actionClass = "inline-flex min-h-11 items-center gap-1.5 text-[13px] font-semibold text-[var(--accent)] transition-colors hover:text-[var(--accent-hover)]";
+  const actionClass = "inline-flex min-h-11 items-center gap-1.5 text-[14px] font-semibold text-[var(--accent)] transition-colors hover:text-[var(--accent-hover)]";
   return (
     <article className="premium-hover-lift flex min-h-[168px] flex-col rounded-[16px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 shadow-[var(--lift-1)] sm:rounded-[18px] sm:p-5">
       <div className={`grid h-10 w-10 place-items-center rounded-[12px] sm:h-11 sm:w-11 sm:rounded-[13px] ${tones[tone]}`}>{icon}</div>
-      <h2 className="mt-3 text-[13px] font-semibold leading-5 text-secondary sm:mt-4 sm:text-[14px]">{title}</h2>
-      <div className="mt-1 text-[18px] font-bold leading-6 tracking-[-0.02em] text-primary sm:text-[21px]">{value}</div>
-      <p className="mt-1 text-[12px] leading-[1.45] text-tertiary sm:text-[13px] sm:leading-5">{detail}</p>
+      <h2 className="mt-3 text-[14px] font-semibold leading-5 text-secondary sm:mt-4 sm:text-[15px]">{title}</h2>
+      <div className="mt-1 text-[22px] font-bold leading-7 tracking-[-0.02em] text-primary sm:text-[25px]">{value}</div>
+      <p className="mt-1 text-[13px] leading-5 text-tertiary sm:text-[14px]">{detail}</p>
       <div className="mt-auto pt-2">
         {href && actionLabel ? (
           <Link href={href} className={actionClass}>{actionLabel}<IconArrowUpRight size={14} /></Link>

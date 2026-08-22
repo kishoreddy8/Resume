@@ -179,7 +179,7 @@ export default function JobsPage() {
   }, [loadJobs, view]);
 
   return (
-    <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 pb-10">
+    <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-5 pb-10">
       {/* The toolbar carries what this page IS. What it can DO sits on the other side of the
        *  search, and what it FILTERS sits in the page's own control row below — see the comment on
        *  APP_TOOLBAR_ACTIONS_SLOT_ID. Portalling all three into one left-hand anchor put the page's
@@ -244,7 +244,7 @@ export default function JobsPage() {
           <span className="absolute right-5 top-3 h-16 w-16 rotate-45 rounded-[18px] border border-[color-mix(in_oklab,var(--accent)_18%,transparent)] bg-[color-mix(in_oklab,var(--accent-soft)_35%,transparent)]" />
         </div>
         <div className="relative max-w-2xl">
-          <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Candidate workspace</p>
+          <p className="text-[13px] font-bold uppercase tracking-[0.12em] text-[var(--accent)]">Candidate workspace</p>
           <h1 className="mt-2 text-[30px] font-semibold leading-tight tracking-[-0.035em] text-primary md:text-[38px]">Find work worth pursuing.</h1>
           <p className="mt-3 max-w-xl text-[14.5px] leading-relaxed text-secondary md:text-[15.5px]">Prioritized matches, saved opportunities, and resume work—organized around the next decision you need to make.</p>
         </div>

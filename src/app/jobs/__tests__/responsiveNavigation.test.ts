@@ -17,7 +17,7 @@ test("responsive navigation keeps one tree and disables unavailable paging contr
   assert.match(sidebar, /behavior: reduced \? "auto" : "smooth"/);
   assert.match(
     sidebar,
-    /animate=\{\{ width: desktop \? \(open \? 248 : 48\) : "100%" \}\}/,
+    /animate=\{\{ width: desktop \? \(open \? 264 : 48\) : "100%" \}\}/,
     "the desktop motion width must be explicitly cleared when the rail becomes mobile",
   );
 });
@@ -48,6 +48,45 @@ test("candidate account text remains readable while operational metadata stays q
   assert.match(selector, /text-\[13\.5px\]/);
   assert.match(adminLink, /h-11/);
   assert.match(adminLink, /text-\[13px\] text-tertiary/);
+});
+
+test("candidate destinations share the wider desktop canvas and readable summary typography", () => {
+  const css = read("src/app/globals.css");
+  assert.match(css, /--candidate-page-max: 1680px/);
+
+  for (const file of [
+    "src/app/jobs/page.tsx",
+    "src/app/resume/page.tsx",
+    "src/app/applications/page.tsx",
+    "src/app/profile/page.tsx",
+    "src/app/settings/page.tsx",
+  ]) {
+    assert.match(read(file), /max-w-\[var\(--candidate-page-max\)\]/, `${file} must use the shared canvas`);
+  }
+
+  const resume = read("src/app/resume/page.tsx");
+  const applications = read("src/app/applications/page.tsx");
+  const settings = read("src/app/settings/page.tsx");
+  const profile = read("src/app/profile/page.tsx");
+  assert.doesNotMatch(resume, /text-\[12px\][^\n]*\{detail\}/);
+  assert.doesNotMatch(applications, /text-\[12px\][^\n]*\{hint\}/);
+  assert.match(applications, /min-h-\[360px\]/);
+  assert.match(settings, /lg:min-h-\[calc\(100dvh-var\(--workspace-chrome\)-8rem\)\]/);
+  assert.match(settings, /\[&>\.candidate-panel\]:lg:flex-1/);
+  assert.match(profile, /items-start gap-3 xl:grid-cols/);
+});
+
+test("profile selection and PIN surfaces scale for desktop while retaining touch targets", () => {
+  const picker = read("src/app/page.tsx");
+  const lockPrompt = read("src/components/ProfileLockPrompt.tsx");
+  assert.match(picker, /max-w-6xl/);
+  assert.match(picker, /min-h-24/);
+  assert.match(picker, /max-w-lg/);
+  assert.match(picker, /h-14 w-48/);
+  assert.match(lockPrompt, /items-center justify-center/);
+  assert.match(lockPrompt, /max-w-lg/);
+  assert.match(lockPrompt, /h-14 w-48/);
+  assert.match(lockPrompt, /min-h-11/);
 });
 
 test("WorkflowStepper paging is presentational and keeps one workspace instance", () => {

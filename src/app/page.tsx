@@ -142,37 +142,38 @@ export default function HomePage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-[70vh] w-full max-w-3xl flex-col justify-center py-10">
-      <div className="mb-7 text-center">
-        <h1 className="page-title">Who&apos;s working?</h1>
-        <p className="mt-1.5 text-[12.5px] text-tertiary">
+    <div className="relative isolate mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-6xl flex-col justify-center px-4 py-12 sm:px-6 lg:py-16">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-[12%] top-[20%] -z-10 h-64 rounded-full bg-[radial-gradient(circle,var(--accent-soft),transparent_68%)] opacity-45 blur-3xl" />
+      <div className="mb-9 text-center sm:mb-11">
+        <h1 className="text-[clamp(2rem,4vw,2.875rem)] font-semibold leading-tight tracking-[-0.035em] text-primary">Who&apos;s working?</h1>
+        <p className="mx-auto mt-2.5 max-w-2xl text-[14px] leading-6 text-tertiary sm:text-[15px]">
           Choose a profile. Everything except companies and job postings is kept separate per person.
         </p>
       </div>
 
-      {candidates === null && <p className="text-center text-[12.5px] text-tertiary">Loading profiles…</p>}
+      {candidates === null && <p className="text-center text-[14px] text-tertiary">Loading profiles…</p>}
 
       {candidates && !selected && (
         <>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             {candidates.map((c) => (
               <Surface
                 key={c.id}
                 level="z3"
-                className="group flex items-center gap-3 rounded-[var(--radius-xl)] px-4 py-3.5 transition-transform duration-150 ease-out hover:-translate-y-px"
+                className="group flex min-h-24 items-center gap-4 rounded-[var(--radius-xl)] px-5 py-4 shadow-[var(--lift-1)] transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--accent)_30%,var(--border))] hover:shadow-[var(--lift-2)]"
               >
                 <button
                   type="button"
                   onClick={() => choose(c)}
                   disabled={busy}
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:opacity-50"
+                  className="flex min-h-14 min-w-0 flex-1 items-center gap-4 text-left disabled:opacity-50"
                 >
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--accent-soft)] text-[13px] font-semibold text-[var(--accent)]">
+                  <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[var(--accent-soft)] text-[16px] font-semibold text-[var(--accent)]">
                     {initials(c.display_name)}
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate text-[13.5px] font-semibold text-primary">{c.display_name}</span>
-                    <span className="mt-0.5 block text-[11px] text-tertiary">
+                    <span className="block truncate text-[16px] font-semibold text-primary sm:text-[17px]">{c.display_name}</span>
+                    <span className="mt-1 block text-[13px] text-tertiary">
                       {c.is_owner === 1 ? "Owner · " : ""}
                       {c.has_pin ? "PIN required" : "No PIN — open"}
                     </span>
@@ -184,7 +185,7 @@ export default function HomePage() {
                     onClick={() => removeProfile(c)}
                     disabled={busy}
                     aria-label={`Delete ${c.display_name}`}
-                    className="shrink-0 rounded-md border border-[var(--error)]/35 px-2 py-1 text-[11px] font-medium text-[var(--error)] opacity-0 transition-opacity duration-150 ease-out hover:bg-[color-mix(in_oklab,var(--error)_10%,transparent)] focus-visible:opacity-100 group-hover:opacity-100"
+                    className="min-h-11 shrink-0 rounded-md border border-[var(--error)]/35 px-3 text-[13px] font-medium text-[var(--error)] opacity-0 transition-opacity duration-150 ease-out hover:bg-[color-mix(in_oklab,var(--error)_10%,transparent)] focus-visible:opacity-100 group-hover:opacity-100"
                   >
                     Delete
                   </button>
@@ -193,7 +194,7 @@ export default function HomePage() {
             ))}
           </div>
 
-          <div className="mt-5 flex items-center justify-center gap-4 text-[12px]">
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[14px]">
             <Link href="/candidates/new" className="text-secondary hover:text-primary">
               + Add a profile
             </Link>
@@ -205,12 +206,12 @@ export default function HomePage() {
       )}
 
       {selected && (
-        <Surface level="z3" className="mx-auto w-full max-w-sm rounded-[var(--radius-xl)] px-5 py-5 text-center">
-          <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[var(--accent-soft)] text-[15px] font-semibold text-[var(--accent)]">
+        <Surface level="z3" className="mx-auto w-full max-w-lg rounded-[24px] px-6 py-8 text-center shadow-[var(--lift-3)] sm:px-10 sm:py-10">
+          <span className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-[var(--accent-soft)] text-[19px] font-semibold text-[var(--accent)]">
             {initials(selected.display_name)}
           </span>
-          <h2 className="mt-3 text-[15px] font-semibold text-primary">{selected.display_name}</h2>
-          <p className="mt-1 text-[11.5px] text-tertiary">Enter the 4-digit PIN</p>
+          <h2 className="mt-4 text-[21px] font-semibold text-primary">{selected.display_name}</h2>
+          <p className="mt-1.5 text-[14px] text-tertiary">Enter the 4-digit PIN</p>
 
           <input
             ref={pinRef}
@@ -223,16 +224,16 @@ export default function HomePage() {
             inputMode="numeric"
             autoComplete="off"
             aria-label={`PIN for ${selected.display_name}`}
-            className="mx-auto mt-3 block w-36 rounded-md border border-[var(--border)] bg-surface px-3 py-2 text-center text-[18px] tabular-nums tracking-[0.5em] text-primary outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
+            className="mx-auto mt-5 block h-14 w-48 rounded-xl border border-[var(--border)] bg-surface px-4 text-center text-[24px] tabular-nums tracking-[0.5em] text-primary outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
           />
 
-          {error && <p className="mt-2 text-[12px] text-[var(--error)]">{error}</p>}
+          {error && <p className="mt-3 text-[13px] text-[var(--error)]">{error}</p>}
 
-          <div className="mt-4 flex justify-center gap-2">
+          <div className="mt-6 flex justify-center gap-3">
             <button
               type="button"
               onClick={() => setSelected(null)}
-              className="rounded-md border border-[var(--border)] px-3 py-1.5 text-[12.5px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
+              className="min-h-11 rounded-lg border border-[var(--border)] px-5 text-[14px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
             >
               Back
             </button>
@@ -240,7 +241,7 @@ export default function HomePage() {
               type="button"
               onClick={submitPin}
               disabled={busy || pin.length !== 4}
-              className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
+              className="min-h-11 rounded-lg bg-[var(--accent)] px-5 text-[14px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
             >
               {busy ? "Unlocking…" : "Unlock"}
             </button>

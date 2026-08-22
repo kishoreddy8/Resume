@@ -218,7 +218,7 @@ export function ProfileLockPrompt() {
   if (!locked) return null;
 
   return (
-    <div ref={overlayRef} className="fixed inset-0 z-[200] flex items-start justify-center px-4 pt-[16vh]">
+    <div ref={overlayRef} className="fixed inset-0 z-[200] flex items-center justify-center px-4 py-8">
       <div aria-hidden="true" className="absolute inset-0 bg-[rgba(10,11,15,0.5)]" />
       <div
         ref={dialogRef}
@@ -228,12 +228,12 @@ export function ProfileLockPrompt() {
         aria-describedby={error ? "profile-lock-hint profile-lock-error" : "profile-lock-hint"}
         tabIndex={-1}
         onKeyDown={handleDialogKeyDown}
-        className="plane plane-5 relative w-full max-w-sm rounded-[var(--radius-xl)] px-5 py-5 text-center"
+        className="plane plane-5 relative w-full max-w-lg rounded-[24px] px-6 py-8 text-center shadow-[var(--lift-3)] sm:px-10 sm:py-10"
       >
-        <h2 className="text-[15px] font-semibold text-primary">
+        <h2 className="text-[21px] font-semibold text-primary">
           {name ? `${name} is locked` : "This profile is locked"}
         </h2>
-        <p id="profile-lock-hint" className="mt-1 text-[11.5px] text-tertiary">Enter the 4-digit PIN to continue</p>
+        <p id="profile-lock-hint" className="mt-1.5 text-[14px] text-tertiary">Enter the 4-digit PIN to continue</p>
 
         <input
           ref={inputRef}
@@ -242,15 +242,15 @@ export function ProfileLockPrompt() {
           inputMode="numeric"
           autoComplete="off"
           aria-label="PIN"
-          className="mx-auto mt-3 block w-36 rounded-md border border-[var(--border)] bg-surface px-3 py-2 text-center text-[18px] tabular-nums tracking-[0.5em] text-primary outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
+          className="mx-auto mt-5 block h-14 w-48 rounded-xl border border-[var(--border)] bg-surface px-4 text-center text-[24px] tabular-nums tracking-[0.5em] text-primary outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
         />
 
-        {error && <p id="profile-lock-error" role="alert" aria-live="assertive" className="mt-2 text-[12px] text-[var(--error)]">{error}</p>}
+        {error && <p id="profile-lock-error" role="alert" aria-live="assertive" className="mt-3 text-[13px] text-[var(--error)]">{error}</p>}
 
-        <div className="mt-4 flex justify-center gap-2">
+        <div className="mt-6 flex justify-center gap-3">
           <Link
             href="/"
-            className="inline-flex min-h-11 items-center rounded-md border border-[var(--border)] px-3 text-[12.5px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
+            className="inline-flex min-h-11 items-center rounded-lg border border-[var(--border)] px-5 text-[14px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
           >
             Switch profile
           </Link>
@@ -258,7 +258,7 @@ export function ProfileLockPrompt() {
             type="button"
             onClick={submit}
             disabled={busy || pin.length !== 4}
-            className="min-h-11 rounded-md bg-[var(--accent)] px-3 text-[12.5px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
+            className="min-h-11 rounded-lg bg-[var(--accent)] px-5 text-[14px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:opacity-50"
           >
             {busy ? "Unlocking…" : "Unlock"}
           </button>

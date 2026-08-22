@@ -187,7 +187,7 @@ export function AppSidebar() {
       /* Motion retains the last animated inline width when `animate` becomes an empty object.
        * Explicitly return to 100% below `lg`, otherwise resizing from desktop can leave the rail
        * wider than the mobile viewport and push the workspace off-screen. */
-      animate={{ width: desktop ? (open ? 248 : 48) : "100%" }}
+      animate={{ width: desktop ? (open ? 264 : 48) : "100%" }}
       transition={reduced ? { duration: 0 } : { type: "spring", duration: 0.28, bounce: 0 }}
       className="flex w-full shrink-0 flex-col overflow-hidden border-b border-[var(--rail-border)] bg-[var(--z1-bg)] lg:h-full lg:min-h-dvh lg:border-b-0 lg:border-r lg:pb-[18px] lg:pt-[20px]"
     >
@@ -335,12 +335,12 @@ export function AppSidebar() {
                 </span>
                 AI Career Copilot
               </h2>
-              <p className="mt-2 text-[12px] leading-[1.5] text-tertiary">
+              <p className="mt-2 text-[13px] leading-[1.5] text-tertiary">
                 Ask why a job matches your evidence, from any job.
               </p>
               <Link
                 href="/jobs"
-                className="mt-3 grid h-[39px] place-items-center rounded-[8px] bg-[var(--accent)] text-center text-[13px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
+                className="mt-3 grid h-11 place-items-center rounded-[9px] bg-[var(--accent)] text-center text-[14px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
               >
                 Ask Copilot
               </Link>

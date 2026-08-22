@@ -139,7 +139,7 @@ export default function ApplicationsPage() {
 
   if (error) {
     return (
-      <div className="mx-auto flex w-full max-w-[1340px] flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-6">
         <PageHeader size="lg" title="Applications" />
         <Panel><PanelEmpty action={<button type="button" onClick={load} className={`${BTN_SECONDARY} min-h-11`}>Retry</button>}>We couldn&apos;t load your applications.</PanelEmpty></Panel>
       </div>
@@ -148,7 +148,7 @@ export default function ApplicationsPage() {
 
   if (candidateId === null || runs === null) {
     return (
-      <div className="mx-auto flex w-full max-w-[1340px] flex-col gap-5">
+      <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-5">
         <PageHeader size="lg" title="Applications" description="Track applications and complete anything that needs your attention." />
         <LoadingRegion label="Loading applications" />
         <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">{[0, 1, 2, 3].map((index) => <Panel key={index} compact><SkeletonRows rows={2} /></Panel>)}</div>
@@ -158,7 +158,7 @@ export default function ApplicationsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-[1340px] flex-col gap-6 pb-12">
+    <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-6 pb-12">
       <PageHeader
         size="lg"
         title="Applications"
@@ -181,7 +181,7 @@ export default function ApplicationsPage() {
       </section>
 
       {runs.length === 0 ? (
-        <section className="rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] px-6 py-16 text-center shadow-[var(--lift-1)]">
+        <section className="premium-gradient-surface flex min-h-[360px] flex-col items-center justify-center rounded-[18px] border border-[var(--border)] px-6 py-16 text-center shadow-[var(--lift-1)]">
           <span aria-hidden="true" className="mx-auto grid h-14 w-14 place-items-center rounded-[17px] bg-[var(--tile-lav-bg)] text-[var(--tile-lav-fg)]"><IconDocument size={25} /></span>
           <h2 className="mt-4 text-[19px] font-bold tracking-[-0.01em] text-primary">No applications yet</h2>
           <p className="mx-auto mt-2 max-w-[52ch] text-[15px] leading-6 text-secondary">When a resume is ready, you can start an application from the Job Workspace. Nothing is submitted without your approval.</p>
@@ -235,10 +235,10 @@ function SummaryTile({ icon, group, label, value, hint, onClick }: { icon: React
   return (
     <article className="premium-hover-lift flex min-h-[166px] flex-col rounded-[16px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 shadow-[var(--lift-1)] sm:rounded-[18px] sm:p-5">
       <span aria-hidden="true" className={`grid h-10 w-10 place-items-center rounded-[12px] sm:h-11 sm:w-11 ${tone}`}>{icon}</span>
-      <h2 className="mt-3 text-[13px] font-semibold leading-5 text-secondary sm:text-[14px]">{label}</h2>
-      <div className="mt-1 text-[22px] font-bold tracking-[-0.02em] text-primary">{value}</div>
-      <p className="mt-1 text-[12px] leading-5 text-tertiary sm:text-[13px]">{hint}</p>
-      <button type="button" onClick={onClick} className="mt-auto inline-flex min-h-11 w-fit items-center gap-1.5 pt-2 text-[13px] font-semibold text-[var(--accent)] transition-colors hover:text-[var(--accent-hover)]">View {label.toLowerCase()}<IconArrowUpRight size={14} /></button>
+      <h2 className="mt-3 text-[14px] font-semibold leading-5 text-secondary sm:text-[15px]">{label}</h2>
+      <div className="mt-1 text-[25px] font-bold tracking-[-0.02em] text-primary">{value}</div>
+      <p className="mt-1 text-[13px] leading-5 text-tertiary sm:text-[14px]">{hint}</p>
+      <button type="button" onClick={onClick} className="mt-auto inline-flex min-h-11 w-fit items-center gap-1.5 pt-2 text-[14px] font-semibold text-[var(--accent)] transition-colors hover:text-[var(--accent-hover)]">View {label.toLowerCase()}<IconArrowUpRight size={14} /></button>
     </article>
   );
 }

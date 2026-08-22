@@ -152,7 +152,7 @@ export default function SettingsPage() {
 
   if (error) {
     return (
-      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-6">
         <PageHeader size="lg" title="Settings" />
         <Panel>
           <PanelEmpty
@@ -170,18 +170,18 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-6 pb-12">
+    <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-6 pb-12">
       <PageHeader
         size="lg"
         title="Settings"
         description="Choose how JobHunt behaves for your search, applications, and privacy."
       />
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[250px_minmax(0,1fr)] lg:gap-7">
+      <div className="grid grid-cols-1 gap-5 lg:min-h-[calc(100dvh-var(--workspace-chrome)-8rem)] lg:grid-cols-[270px_minmax(0,1fr)] lg:items-stretch lg:gap-5">
         {/* ── category rail ──────────────────────────────────────────────────────────────────── */}
         {/* Horizontal and scrollable below lg, a persistent rail above it. A 236px column on a
          *  390px screen would leave 150px for the panel it controls. */}
-        <nav aria-label="Settings categories" className="lg:sticky lg:top-2 lg:self-start">
+        <nav aria-label="Settings categories" className="lg:sticky lg:top-2 lg:h-fit lg:min-h-full lg:rounded-[18px] lg:border lg:border-[var(--border)] lg:bg-[var(--z3-bg)] lg:p-3 lg:shadow-[var(--lift-1)]">
           <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
             {SETTINGS_CATEGORIES.map((c) => (
               <div key={c.id} className="shrink-0 lg:shrink lg:w-full">
@@ -197,7 +197,7 @@ export default function SettingsPage() {
         </nav>
 
         {/* ── panel ──────────────────────────────────────────────────────────────────────────── */}
-        <div className="min-w-0">
+        <div className="min-w-0 lg:min-h-full">
           {candidateId === null || data === null ? (
             <>
               <LoadingRegion label="Loading settings" />
@@ -206,7 +206,7 @@ export default function SettingsPage() {
               </Panel>
             </>
           ) : (
-            <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-5 lg:min-h-full [&>.candidate-panel]:lg:flex-1">
               {category === "job-search" && (
                 <JobSearchPanel blurb={active.blurb} settings={data.settings} />
               )}
@@ -263,8 +263,8 @@ function JobSearchPanel({ blurb, settings }: { blurb: string; settings: Candidat
 function SummaryRow({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[12px] font-semibold uppercase tracking-[0.07em] text-tertiary">{label}</dt>
-      <dd className="mt-1.5 text-[14px] leading-6 text-primary">
+      <dt className="text-[13px] font-semibold uppercase tracking-[0.065em] text-tertiary">{label}</dt>
+      <dd className="mt-1.5 text-[15px] leading-6 text-primary">
         {value ?? <span className="text-tertiary">Not provided</span>}
       </dd>
     </div>

@@ -119,11 +119,11 @@ function EmptyLine({ children }: { children: React.ReactNode }) {
 function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string | null }) {
   return (
     <div className="min-w-0">
-      <div className="text-[12px] font-semibold uppercase tracking-[0.07em] text-tertiary">{label}</div>
-      <div className="mt-1.5 text-[22px] font-bold leading-none tracking-[-0.02em] tabular-nums text-primary">
+      <div className="text-[13px] font-semibold uppercase tracking-[0.065em] text-tertiary">{label}</div>
+      <div className="mt-1.5 text-[25px] font-bold leading-none tracking-[-0.02em] tabular-nums text-primary">
         {value}
       </div>
-      {sub && <div className="mt-1.5 truncate text-[13px] text-tertiary">{sub}</div>}
+      {sub && <div className="mt-1.5 truncate text-[14px] text-tertiary">{sub}</div>}
     </div>
   );
 }
@@ -174,7 +174,7 @@ export default function ProfilePage() {
 
   if (error) {
     return (
-      <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-6">
         <PageHeader size="lg" title="Profile" />
         <Panel>
           <PanelEmpty
@@ -193,7 +193,7 @@ export default function ProfilePage() {
 
   if (candidateId === null || data === null) {
     return (
-      <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-5">
+      <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-5">
         <PageHeader
           size="lg"
           title="Profile"
@@ -226,7 +226,7 @@ export default function ProfilePage() {
   const certifications = evidence?.certifications ?? [];
 
   return (
-    <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-6 pb-12">
+    <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-6 pb-12">
       <PageHeader
         size="lg"
         title="Profile"
@@ -245,7 +245,7 @@ export default function ProfilePage() {
             {initials(name)}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--accent)]">Professional profile</p>
+            <p className="text-[13px] font-semibold uppercase tracking-[0.075em] text-[var(--accent)]">Professional profile</p>
             <h2 id="profile-identity-title" className="mt-1 text-[26px] font-bold leading-tight tracking-[-0.025em] text-primary sm:text-[30px]">{name}</h2>
             <p className="mt-1 text-[15px] font-medium text-secondary">
               {prefs.primaryTargetRole ?? <span className="text-tertiary">No target role selected</span>}
@@ -298,13 +298,14 @@ export default function ProfilePage() {
 
       {/* ── quick sections ───────────────────────────────────────────────────────────────────── */}
       <div>
-        <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--accent)]">Candidate facts</p>
+        <p className="text-[13px] font-semibold uppercase tracking-[0.075em] text-[var(--accent)]">Candidate facts</p>
         <h2 className="mt-1 text-[22px] font-bold tracking-[-0.02em] text-primary">Professional information</h2>
         <p className="mt-1 text-[14px] leading-6 text-secondary">Edit only information you provide directly. Resume evidence remains read-only.</p>
       </div>
-      {/* Equal height across the row, as in the reference: four cards of different content
-       *  lengths reading as one band rather than a ragged staircase. */}
-      <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 [&>*]:h-full">
+      {/* The compact gap keeps the two factual columns reading as one workspace rather than two
+       * separate islands. Cards still stretch within each row, so editing one never creates a
+       * ragged alignment beside it. */}
+      <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-2 [&>*]:h-full">
         {/* Remounted by the header's "Edit profile", which is what opens it — a new key rebuilds
          *  the draft from the persisted value, so no effect is needed to force the state. */}
         <EditableSection<ContactValues>
@@ -554,7 +555,7 @@ export default function ProfilePage() {
       </div>
 
       {/* ── lower grid ───────────────────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
+      <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
         {/* left: what you have done */}
         <div className="flex flex-col gap-5">
           <Panel

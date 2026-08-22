@@ -617,6 +617,7 @@ table {
  * margin down each side of the page while the content was squeezed. */
 :root {
   --home-max-w: 1340px;
+  --candidate-page-max: 1680px;
   --home-search-max: 620px;
   --shell-pad: 24px;
 }
