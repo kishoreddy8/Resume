@@ -48,10 +48,11 @@ export interface SourceBadgeAsset {
   pixelHeight: number;
 }
 
-// The header reserves the same two slots (headline, contact) that the generic fallback cards use —
-// source images take the identical layout, just with real artwork instead of a colored label.
+// All badges ride the headline line as one horizontal row (see resume-template.ts's headerBlock) —
+// three is the reference resume's own count and a reasonable ceiling before the row starts to
+// visually outweigh the candidate's own identity text, which must stay dominant.
 // Exported so validate-docx.ts can enforce the same ceiling as a second, independent check.
-export const MAX_SOURCE_BADGES = 2;
+export const MAX_SOURCE_BADGES = 3;
 // Real logo/badge exports are small; anything bigger is almost certainly not a compact badge, and
 // embedding it would risk an oversized header — skip rather than guess at how to shrink it sanely.
 const MAX_SOURCE_IMAGE_BYTES = 2 * 1024 * 1024;

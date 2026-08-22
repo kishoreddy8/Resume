@@ -61,17 +61,15 @@ function run(text: string): TextRun {
   return new TextRun({ text, font: FONT, color: BLACK, size: SIZE_BODY });
 }
 
-/**
- * Real clickable hyperlink with readable display text, not a raw tracking URL. Displayed text is
- * black, not the conventional hyperlink blue — the link still resolves and is still underlined, so
- * it remains visually identifiable and functionally clickable; only its color is brought in line
- * with the rest of the document's all-black text requirement.
- */
+const HYPERLINK_BLUE = "0563C1";
+
+/** Real clickable hyperlink with readable display text, not a raw tracking URL — the conventional
+ *  hyperlink blue, underlined, per the reference document's own contact-line styling. */
 function link(displayText: string, url: string, size = SIZE_CONTACT): ExternalHyperlink {
   return new ExternalHyperlink({
     link: url,
     children: [
-      new TextRun({ text: displayText, size, font: FONT, color: BLACK, underline: {} }),
+      new TextRun({ text: displayText, size, font: FONT, color: HYPERLINK_BLUE, underline: {} }),
     ],
   });
 }
@@ -81,13 +79,14 @@ function link(displayText: string, url: string, size = SIZE_CONTACT): ExternalHy
  * which is also what keeps the name, headline and contact line reading as one unit instead of
  * three separately-centred fragments of differing width.
  *
- * Phase H (clarified) — an optional certification badge run right-tab-stopped to the content
- * margin. Tables, text boxes and floating shapes are forbidden for resume layout (validate-docx.ts
- * — an existing ATS-safety gate this change does not touch), so "beside the header, at the top
- * right" is built the same way `companyLine`'s dates already sit at the right margin: a real
- * paragraph-level right tab stop, never a second column. Attaching a badge run each to the headline
- * and contact lines is what stacks them into a block that reads as sitting beside the header,
- * without ever introducing a table.
+ * Phase H (clarified) — the candidate's certification badges, right tab-stopped to the content
+ * margin, as one horizontal row on the headline line (see headlineLine below) — top-right, beside
+ * the header, matching the reference resume's own badge placement. Tables, text boxes and floating
+ * shapes are forbidden for resume layout (validate-docx.ts — an existing ATS-safety gate this
+ * change does not touch), so "beside the header, at the top right" is built the same way
+ * `companyLine`'s dates already sit at the right margin: a real paragraph-level right tab stop,
+ * never a second column — several ImageRun/TextRun badges simply flow left-to-right after that one
+ * tab, exactly like any other inline run.
  *
  * The name line NEVER carries a badge run, deliberately: `texts[0]` of the rendered document is a
  * protected invariant elsewhere (stage311NameAndVoice.test.ts's "the display name survives
@@ -103,26 +102,30 @@ function nameLine(text: string): Paragraph {
   });
 }
 
-/** The headline: bold, not italic, and left-aligned under the name — as the reference sets it. */
-function headlineLine(text: string, badgeRun?: TextRun | ImageRun): Paragraph {
+/** The headline: bold, not italic, and left-aligned under the name — as the reference sets it. The
+ *  badge row (when present) rides the same line, right tab-stopped, as one horizontal group. */
+function headlineLine(text: string, badgeRuns: (TextRun | ImageRun)[]): Paragraph {
   const children: (TextRun | ImageRun)[] = [new TextRun({ text, bold: true, size: SIZE_TAGLINE, font: FONT, color: BLACK })];
-  if (badgeRun) children.push(new TextRun({ children: [new Tab()] }), badgeRun);
+  if (badgeRuns.length > 0) {
+    children.push(new TextRun({ children: [new Tab()] }));
+    badgeRuns.forEach((badge, i) => {
+      if (i > 0) children.push(new TextRun({ text: "  ", size: SIZE_CONTACT, font: FONT }));
+      children.push(badge);
+    });
+  }
   return new Paragraph({
     alignment: AlignmentType.LEFT,
     keepNext: true,
     spacing: { after: 20 },
-    ...(badgeRun ? { tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_WIDTH }] } : {}),
+    ...(badgeRuns.length > 0 ? { tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_WIDTH }] } : {}),
     children,
   });
 }
 
 /** location | phone | email (mailto: link) | LinkedIn (https: link, readable text not a raw URL) */
-function contactLine(
-  params: { location: string; phone: string; email: string; linkedin?: string; github?: string },
-  badgeRun?: TextRun | ImageRun
-): Paragraph {
+function contactLine(params: { location: string; phone: string; email: string; linkedin?: string; github?: string }): Paragraph {
   const sep = () => new TextRun({ text: "  |  ", size: SIZE_CONTACT, font: FONT, color: BLACK });
-  const children: (TextRun | ExternalHyperlink | ImageRun)[] = [
+  const children: (TextRun | ExternalHyperlink)[] = [
     new TextRun({ text: params.location, size: SIZE_CONTACT, font: FONT, color: BLACK }),
     sep(),
     new TextRun({ text: params.phone, size: SIZE_CONTACT, font: FONT, color: BLACK }),
@@ -138,38 +141,29 @@ function contactLine(
     const url = params.github.startsWith("http") ? params.github : `https://${params.github}`;
     children.push(sep(), link(params.github, url));
   }
-  if (badgeRun) children.push(new TextRun({ children: [new Tab()] }), badgeRun);
-  return new Paragraph({
-    alignment: AlignmentType.LEFT,
-    spacing: { after: 60 },
-    ...(badgeRun ? { tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_WIDTH }] } : {}),
-    children,
-  });
+  return new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 60 }, children });
 }
 
 /**
  * The header block: name, headline, contact — exactly as before Phase H when there are no
- * recognized certification badges. With one or two recognized badges, the first badge run lands on
- * the headline line and the second on the contact line, each right tab-stopped to the content
- * margin — a compact, top-right, secondary block beside the header that never touches, displaces,
- * or resizes the candidate's own name. Each badge run is either a real ImageRun (a preserved Master
- * Resume badge — see sourceBadgeAssets.ts) or a generic shaded TextRun (certificationBadges.ts's
- * fallback); the caller decides which set to pass in, this function only places them.
+ * recognized certification badges. With one or more recognized badges, they all ride the headline
+ * line as one horizontal row, right tab-stopped to the content margin — a compact, top-right,
+ * secondary group beside the header that never touches, displaces, or resizes the candidate's own
+ * name. Each badge run is either a real ImageRun (a preserved Master Resume badge — see
+ * sourceBadgeAssets.ts) or a generic shaded TextRun (certificationBadges.ts's fallback); the caller
+ * decides which set to pass in, this function only places them.
  */
 function headerBlock(content: ResumeContent, badgeRuns: (TextRun | ImageRun)[]): Paragraph[] {
   return [
     nameLine(content.name),
-    headlineLine(content.tagline, badgeRuns[0]),
-    contactLine(
-      {
-        location: content.location,
-        phone: content.phone,
-        email: content.email,
-        linkedin: content.linkedin,
-        github: content.github,
-      },
-      badgeRuns[1]
-    ),
+    headlineLine(content.tagline, badgeRuns),
+    contactLine({
+      location: content.location,
+      phone: content.phone,
+      email: content.email,
+      linkedin: content.linkedin,
+      github: content.github,
+    }),
   ];
 }
 

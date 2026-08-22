@@ -71,12 +71,12 @@ const BADGE_REGISTRY: BadgeRule[] = [
   { pattern: /Snowflake|SnowPro/i, badge: { label: "Snowflake", fill: "2F6E8C", textColor: "FFFFFF" } },
 ];
 
-// The header reserves the headline and contact lines for badge runs — the name line never carries
-// one (see nameLine's doc comment in resume-template.ts), so two is the practical ceiling. That
-// ceiling also keeps the block compact and secondary rather than visually outweighing the
-// candidate's own identity text (per the clarification: "candidate identity remains visually
-// dominant and the certification badges should be compact and secondary").
-const MAX_BADGES = 2;
+// All badges ride the headline line as one horizontal row (see resume-template.ts's headerBlock) —
+// the name line never carries one (see nameLine's doc comment there). Three keeps the block compact
+// and secondary rather than visually outweighing the candidate's own identity text (per the
+// clarification: "candidate identity remains visually dominant and the certification badges should
+// be compact and secondary"), and matches sourceBadgeAssets.ts's own ceiling.
+const MAX_BADGES = 3;
 
 export function matchCertificationBadge(certificationText: string): CertificationBadge | null {
   const rule = BADGE_REGISTRY.find((r) => r.pattern.test(certificationText));

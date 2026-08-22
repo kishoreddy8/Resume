@@ -70,7 +70,7 @@ test("Phase H: two certifications in the same vendor family produce one badge ru
   assert.equal(runs.length, 1, "duplicate families must collapse into a single compact badge");
 });
 
-test("Phase H: badge runs are capped at 2 even with more recognized families", () => {
+test("Phase H: badge runs are capped at 3 even with more recognized families", () => {
   const runs = buildCertificationBadgeRuns([
     "AWS Certified Cloud Practitioner",
     "Microsoft Certified: Azure Data Engineer Associate (DP-203)",
@@ -78,7 +78,7 @@ test("Phase H: badge runs are capped at 2 even with more recognized families", (
     "Databricks Certified Data Engineer Associate",
     "SnowPro Core Certification",
   ]);
-  assert.equal(runs.length, 2, "the header reserves only the headline and contact lines for badges — the name line is never touched, so more than 2 families must not be shown");
+  assert.equal(runs.length, 3, "the headline-line badge row is compact — more than 3 families must not be shown");
 });
 
 // --- Integration: the real DOCX renderer, real ATS text extraction, real XML structure -------------
@@ -172,7 +172,7 @@ test("Phase H: a candidate with zero certifications renders cleanly with no badg
   }
 });
 
-test("Phase H: multiple certifications across different vendor families all remain in text; only the first two badge", async () => {
+test("Phase H: multiple certifications across different vendor families all badge and all remain in text", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-certbadge-multi-"));
   try {
     const outputPath = path.join(tmpDir, "Resume.docx");
@@ -186,11 +186,10 @@ test("Phase H: multiple certifications across different vendor families all rema
     for (const cert of certs) {
       assert.ok(text.includes(cert), `full certification text must remain present: ${cert}`);
     }
-    // Only the header's two badge slots (headline, contact) are filled — the third recognized
-    // family still has its full name in the Certifications section, just no badge.
+    // All three ride the headline line's badge row (cap is 3).
     assert.match(text, /AZURE CERTIFIED/);
     assert.match(text, /DATABRICKS CERTIFIED/);
-    assert.doesNotMatch(text, /AWS CERTIFIED/);
+    assert.match(text, /AWS CERTIFIED/);
     const validation = await validateDocx(outputPath, "resume");
     assert.equal(validation.valid, true, `multiple badges must not break ATS validity: ${JSON.stringify(validation.violations)}`);
   } finally {
@@ -241,11 +240,11 @@ test("Phase H: a targeted repair that never touches certifications leaves the ba
   }
 });
 
-// --- Clarification: all resume text is black, no italics anywhere ----------------------------------
+// --- Clarification: resume text is black except hyperlinks (blue) and badge artwork, no italics ----
 
-const KNOWN_BADGE_TEXT_COLORS = new Set(["FFFFFF"]);
+const KNOWN_NON_BLACK_COLORS = new Set(["FFFFFF", "0563C1"]); // badge white; hyperlink blue
 
-test("Clarification: every run color in the resume is black, except the badge cards' own white text", async () => {
+test("Clarification: every run color is black except hyperlinks (blue, per the reference resume) and the badge cards' own white text", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-resume-color-"));
   try {
     const withBadge = path.join(tmpDir, "with-badge.docx");
@@ -257,15 +256,16 @@ test("Clarification: every run color in the resume is black, except the badge ca
     const withBadgeColors = new Set([...withBadgeXml.matchAll(/<w:color w:val="([0-9A-Fa-f]{6})"/g)].map((m) => m[1].toUpperCase()));
     for (const color of withBadgeColors) {
       assert.ok(
-        color === "000000" || KNOWN_BADGE_TEXT_COLORS.has(color),
-        `unexpected non-black, non-badge run color: ${color}`
+        color === "000000" || KNOWN_NON_BLACK_COLORS.has(color),
+        `unexpected non-black, non-badge, non-hyperlink run color: ${color}`
       );
     }
     assert.ok(withBadgeColors.has("000000"), "the identity/body text must still be explicitly black");
+    assert.ok(withBadgeColors.has("FFFFFF"), "the badge itself must still be white-on-color");
 
     const withoutBadgeXml = await documentXml(withoutBadge);
     const withoutBadgeColors = new Set([...withoutBadgeXml.matchAll(/<w:color w:val="([0-9A-Fa-f]{6})"/g)].map((m) => m[1].toUpperCase()));
-    assert.deepEqual(withoutBadgeColors, new Set(["000000"]), "with no badge card, every run color must be black, including hyperlink display text");
+    assert.deepEqual(withoutBadgeColors, new Set(["000000", "0563C1"]), "with no badge, every run color must be black except the hyperlink blue");
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

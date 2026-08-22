@@ -328,7 +328,7 @@ test("Adversarial: more embedded images than the allowed cap fails ATS validatio
       {
         children: [
           new Paragraph({
-            children: [1, 2, 3].map(
+            children: [1, 2, 3, 4].map(
               () =>
                 new ImageRun({
                   data: makePng(20, 20),
