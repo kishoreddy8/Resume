@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { IconSearch } from "@/components/icons";
 
 /**
@@ -21,10 +21,13 @@ import { IconSearch } from "@/components/icons";
  */
 export function HeaderSearch() {
   const router = useRouter();
+  const pathname = usePathname();
+  const inAdmin = pathname.startsWith("/admin");
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    if (inAdmin) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
@@ -39,7 +42,15 @@ export function HeaderSearch() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [inAdmin]);
+
+  if (inAdmin) {
+    return (
+      <div className="hidden w-full md:block" aria-label="Admin workspace">
+        <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-tertiary">Operational control center</p>
+      </div>
+    );
+  }
 
   return (
     <form

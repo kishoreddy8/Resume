@@ -2,7 +2,8 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Surface } from "@/components/ui";
+import { AdminCandidateProvider } from "@/lib/admin/AdminContext";
+import { AdminLoadingState } from "@/components/admin";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 
 /**
@@ -19,7 +20,7 @@ import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
  */
 export default function AdminLayout({ children }: { children: ReactNode }) {
   const candidateId = useResolvedCandidateId();
-  const [isOwner, setIsOwner] = useState<boolean | null>(null);
+  const [candidate, setCandidate] = useState<{ isOwner: boolean; displayName: string } | null>(null);
 
   useEffect(() => {
     if (candidateId === null) return;
@@ -28,43 +29,50 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
         if (cancelled) return;
-        setIsOwner(body ? Boolean(body.candidate?.is_owner) : false);
+        setCandidate(
+          body
+            ? { isOwner: Boolean(body.candidate?.is_owner), displayName: String(body.candidate?.display_name ?? "Owner") }
+            : { isOwner: false, displayName: "" }
+        );
       })
-      .catch(() => !cancelled && setIsOwner(false));
+      .catch(() => !cancelled && setCandidate({ isOwner: false, displayName: "" }));
     return () => {
       cancelled = true;
     };
   }, [candidateId]);
 
-  if (candidateId === null || isOwner === null) {
+  if (candidateId === null || candidate === null) {
     return (
-      <div className="mx-auto w-full max-w-4xl py-6">
-        <p role="status" className="text-[12.5px] text-tertiary">
-          Checking access…
-        </p>
+      <div className="mx-auto w-full max-w-4xl py-10">
+        <AdminLoadingState label="Verifying Admin access" />
       </div>
     );
   }
 
-  if (!isOwner) {
+  if (!candidate.isOwner) {
     return (
-      <div className="mx-auto w-full max-w-2xl py-10">
-        <Surface level="z3" className="rounded-[var(--radius-xl)] px-6 py-8 text-center">
-          <h1 className="text-[16px] font-semibold text-primary">System operations</h1>
-          <p className="mx-auto mt-2 max-w-[52ch] text-[12.5px] leading-relaxed text-tertiary">
+      <div className="mx-auto w-full max-w-2xl py-12">
+        <div className="admin-state admin-state-error">
+          <span aria-hidden="true">!</span>
+          <h1 className="mt-3 text-[24px] font-bold text-primary">Admin access required</h1>
+          <p>
             This area manages how JobHunt discovers jobs and keeps its connectors running. It is
-            available to the account that owns this installation.
+            available only to the PIN-unlocked owner of this installation.
           </p>
           <Link
             href="/home"
-            className="mt-5 inline-block rounded-md bg-[var(--accent)] px-3.5 py-2 text-[13px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
+            className="admin-button admin-button-primary mt-5"
           >
             Back to JobHunt
           </Link>
-        </Surface>
+        </div>
       </div>
     );
   }
 
-  return <>{children}</>;
+  return (
+    <AdminCandidateProvider value={{ candidateId, displayName: candidate.displayName }}>
+      {children}
+    </AdminCandidateProvider>
+  );
 }

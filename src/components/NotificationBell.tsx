@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
+import { usePathname } from "next/navigation";
 import { IconBell } from "@/components/icons";
 import type { NotificationResponseEntry } from "@/app/api/candidates/[candidateId]/notifications/route";
 
@@ -28,6 +29,8 @@ function ago(iso: string): string {
 }
 
 export function NotificationBell() {
+  const pathname = usePathname();
+  const inAdmin = pathname.startsWith("/admin");
   const candidateId = useResolvedCandidateId();
   const [notifications, setNotifications] = useState<NotificationResponseEntry[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -39,7 +42,7 @@ export function NotificationBell() {
   async function load() {
     // Nothing is fetched until the server has said which candidate this is — a request against the
     // optimistic guess 401s whenever that guess is someone else's PIN-locked profile.
-    if (candidateId === null) return;
+    if (candidateId === null || inAdmin) return;
     const res = await fetch(`/api/candidates/${candidateId}/notifications?limit=20`);
     if (!res.ok) return;
     const body = await res.json();
@@ -52,7 +55,7 @@ export function NotificationBell() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidateId]);
+  }, [candidateId, inAdmin]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -77,6 +80,8 @@ export function NotificationBell() {
       document.removeEventListener("keydown", handleKey);
     };
   }, []);
+
+  if (inAdmin) return null;
 
   async function handleOpen() {
     const next = !open;

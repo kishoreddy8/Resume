@@ -8,9 +8,15 @@ import { CandidateSelector } from "@/components/CandidateSelector";
 import { AdminRailLink } from "@/components/AdminRailLink";
 import {
   IconBriefcase,
+  IconBuilding,
+  IconDashboard,
   IconDocument,
   IconHome,
   IconInbox,
+  IconActivity,
+  IconPenTool,
+  IconScanner,
+  IconServer,
   IconSettings,
   IconSparkle,
   IconUser,
@@ -82,23 +88,23 @@ const USER_NAV: NavGroup[] = [
 /** What an operator sees. Only rendered under /admin. */
 const ADMIN_NAV: NavGroup[] = [
   {
-    title: "Operations",
+    title: "Monitor",
     showTitle: true,
     items: [
-      { href: "/admin", label: "Overview" },
-      { href: "/admin/scanner", label: "ATS Scanner" },
-      { href: "/admin/connectors", label: "Connectors" },
-      { href: "/admin/companies", label: "Companies" },
+      { href: "/admin", label: "Overview", icon: <IconDashboard size={20} /> },
+      { href: "/admin/companies", label: "Companies", icon: <IconBuilding size={20} /> },
+      { href: "/admin/scanner", label: "Scanner", icon: <IconScanner size={20} /> },
+      { href: "/admin/writer", label: "Resume Writer", icon: <IconPenTool size={20} /> },
+      { href: "/admin/applications", label: "Applications", icon: <IconBriefcase size={20} /> },
     ],
   },
   {
-    title: "System",
+    title: "Manage",
     showTitle: true,
     items: [
-      { href: "/admin/settings", label: "System Settings" },
-      { href: "/admin/pipeline", label: "Pipeline" },
-      { href: "/admin/operations", label: "Health" },
-      { href: "/settings", label: "Configuration" },
+      { href: "/admin/operations", label: "Operations", icon: <IconServer size={20} /> },
+      { href: "/admin/settings", label: "Settings", icon: <IconSettings size={20} /> },
+      { href: "/admin/activity", label: "Activity", icon: <IconActivity size={20} /> },
     ],
   },
 ];
@@ -139,6 +145,16 @@ export function AppSidebar() {
   const inAdmin = pathname.startsWith("/admin");
   const groups = inAdmin ? ADMIN_NAV : USER_NAV;
   const collapsed = desktop && !open;
+  const [adminMenuOpen, setAdminMenuOpen] = useState(false);
+  const adminDialogRef = useRef<HTMLDialogElement>(null);
+  const adminMenuButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const dialog = adminDialogRef.current;
+    if (!dialog) return;
+    if (inAdmin && adminMenuOpen && !dialog.open) dialog.showModal();
+    if ((!adminMenuOpen || !inAdmin) && dialog.open) dialog.close();
+  }, [adminMenuOpen, inAdmin]);
 
   /* Below `lg` this nav is a horizontal strip, not a column, and six destinations do not all fit at
    * 390px — Resume Studio/Profile/Settings clipped clean off the edge with no sign anything was
@@ -176,6 +192,100 @@ export function AppSidebar() {
     const el = navRef.current;
     if (!el) return;
     el.scrollBy({ left: direction * Math.max(120, el.clientWidth * 0.75), behavior: reduced ? "auto" : "smooth" });
+  }
+
+  if (inAdmin) {
+    const adminLinks = (onNavigate?: () => void) =>
+      ADMIN_NAV.map((group) => (
+        <div key={group.title} className="mb-6 last:mb-0">
+          <h2 className="mb-2 px-3 text-[12.5px] font-semibold uppercase tracking-[0.09em] text-tertiary">
+            {group.title}
+          </h2>
+          <div className="flex flex-col gap-1">
+            {group.items.map((item) => {
+              const active = isNavItemActive(item, pathname);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  onClick={onNavigate}
+                  className={`relative flex min-h-12 items-center gap-3 rounded-[11px] px-3 text-[15px] font-medium transition-[background-color,color,transform] duration-150 active:scale-[0.985] ${
+                    active
+                      ? "bg-[var(--accent-tint)] font-semibold text-[var(--accent)]"
+                      : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary"
+                  }`}
+                >
+                  {active && <span aria-hidden="true" className="absolute inset-y-3 -left-3 w-[3px] rounded-r-full bg-[var(--accent)]" />}
+                  <span aria-hidden="true" className="shrink-0">{item.icon}</span>
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ));
+
+    return (
+      <aside className="z-50 w-full shrink-0 border-b border-[var(--rail-border)] bg-[var(--z1-bg)] lg:h-dvh lg:w-64 lg:border-b-0 lg:border-r">
+        <div className="flex h-[60px] items-center justify-between px-4 lg:hidden">
+          <Link href="/admin" className="flex items-center gap-2.5 rounded-md">
+            <span aria-hidden="true" className="grid h-8 w-8 place-items-center rounded-[8px] bg-[var(--accent)] text-[15px] font-bold text-white">J</span>
+            <span className="text-[17px] font-bold tracking-[-0.018em] text-primary">JobHunt <span className="font-medium text-tertiary">Admin</span></span>
+          </Link>
+          <button
+            ref={adminMenuButtonRef}
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={adminMenuOpen}
+            onClick={() => setAdminMenuOpen(true)}
+            className="grid h-11 w-11 place-items-center rounded-[10px] border border-[var(--border)] bg-[var(--z2-bg)] text-[20px] text-primary"
+          >
+            <span className="sr-only">Open Admin navigation</span>
+            <span aria-hidden="true">☰</span>
+          </button>
+        </div>
+
+        <dialog
+          ref={adminDialogRef}
+          aria-label="Admin navigation"
+          className="fixed inset-y-0 left-0 m-0 h-dvh w-[min(320px,88vw)] max-h-none max-w-none border-0 bg-[var(--z1-bg)] p-0 text-primary shadow-2xl backdrop:bg-slate-950/45 lg:hidden"
+          onCancel={(event) => {
+            event.preventDefault();
+            setAdminMenuOpen(false);
+          }}
+          onClose={() => {
+            setAdminMenuOpen(false);
+            queueMicrotask(() => adminMenuButtonRef.current?.focus());
+          }}
+        >
+          <div className="flex h-full flex-col">
+            <div className="flex h-[68px] items-center justify-between border-b border-[var(--border)] px-5">
+              <span className="text-[18px] font-bold">Admin Console</span>
+              <button type="button" aria-label="Close Admin navigation" onClick={() => setAdminMenuOpen(false)} className="grid h-11 w-11 place-items-center rounded-[10px] hover:bg-[var(--surface-hover)]">×</button>
+            </div>
+            <nav aria-label="Admin" className="flex-1 overflow-y-auto px-5 py-6">{adminLinks(() => setAdminMenuOpen(false))}</nav>
+            <div className="border-t border-[var(--border)] p-4">
+              <Link href="/home" onClick={() => setAdminMenuOpen(false)} className="flex min-h-12 items-center rounded-[10px] px-3 text-[14px] font-semibold text-secondary hover:bg-[var(--surface-hover)] hover:text-primary">← Return to candidate workspace</Link>
+            </div>
+          </div>
+        </dialog>
+
+        <div className="hidden h-full flex-col lg:flex">
+          <div className="flex h-[80px] shrink-0 items-center gap-2.5 border-b border-[var(--separator)] px-5">
+            <span aria-hidden="true" className="grid h-9 w-9 place-items-center rounded-[9px] bg-[var(--accent)] text-[16px] font-bold text-white">J</span>
+            <div>
+              <p className="text-[17px] font-bold tracking-[-0.018em] text-primary">JobHunt</p>
+              <p className="text-[13px] font-medium text-tertiary">Admin Console</p>
+            </div>
+          </div>
+          <nav aria-label="Admin" className="flex-1 overflow-y-auto px-5 py-7">{adminLinks()}</nav>
+          <div className="border-t border-[var(--separator)] p-4">
+            <Link href="/home" className="flex min-h-12 items-center rounded-[10px] px-3 text-[14px] font-semibold text-secondary hover:bg-[var(--surface-hover)] hover:text-primary">← Candidate workspace</Link>
+          </div>
+        </div>
+      </aside>
+    );
   }
 
   const navArrow =

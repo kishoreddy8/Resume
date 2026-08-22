@@ -158,3 +158,47 @@ export const IconShield = (p: IconProps) => (
     <path d="m9.2 12.2 2 2 3.6-3.8" />
   </Icon>
 );
+
+export const IconDashboard = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="3.5" width="7" height="4.5" rx="1.5" />
+    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="10.5" width="7" height="10" rx="1.5" />
+  </Icon>
+);
+
+export const IconBuilding = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 21V5.5A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V21" />
+    <path d="M15 9h3.5a1.5 1.5 0 0 1 1.5 1.5V21M2.5 21h19M7 8h1m3 0h1M7 12h1m3 0h1M7 16h1m3 0h1" />
+  </Icon>
+);
+
+export const IconScanner = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" />
+    <path d="M7 12h10M9 9.5v5M12 8v8M15 10v4" />
+  </Icon>
+);
+
+export const IconPenTool = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m4 20 4.2-1 10.6-10.6a2.1 2.1 0 0 0-3-3L5.2 16z" />
+    <path d="m13.8 7.4 3 3M4 20l1.2-4 3 3z" />
+  </Icon>
+);
+
+export const IconServer = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3.5" y="4" width="17" height="6" rx="2" />
+    <rect x="3.5" y="14" width="17" height="6" rx="2" />
+    <path d="M7 7h.01M7 17h.01M11 7h6M11 17h6" />
+  </Icon>
+);
+
+export const IconActivity = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 12h4l2-6 4 12 2-6h6" />
+  </Icon>
+);
