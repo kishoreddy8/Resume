@@ -51,6 +51,7 @@ export function buildExternalWriterPrompt(input: {
   tailoringRunId: number;
   workflowId: number;
   iterationNumber: number;
+  writerMode?: ResumeWriterInput["writerMode"];
   selectedTrack: string | null;
   latestReview?: StructuredResumeReview;
   requiredCorrections?: ResumeWriterInput["requiredCorrections"];
@@ -91,6 +92,7 @@ export function buildExternalWriterPrompt(input: {
   atsCoverageReportText?: string;
 }): string {
   const { candidateName, iterationNumber, selectedTrack, latestReview, requiredCorrections, blockingIssues, blockingFailures } = input;
+  const writerMode = input.writerMode ?? (input.repairPlanSection ? "TARGETED_REPAIR" : "INITIAL_GENERATION");
   const complianceCorrections = input.complianceCorrections ?? [];
 
   // Stated as hard facts, in the same breath as the truthfulness guardrail, because that is exactly
@@ -149,7 +151,44 @@ export function buildExternalWriterPrompt(input: {
 - Formatting & Structural Completeness Score: ${latestReview.formattingScore}/100`
     : "Initial tailoring iteration (no prior review scores).";
 
+  const rewriteRule =
+    writerMode === "INITIAL_GENERATION"
+      ? `2. **Initial generation must be genuinely tailored — light keyword replacement is a failure mode**:
+   - Rewrite the summary, skills ordering, project descriptions, and experience bullets from the authoritative evidence so this first draft is specific to this JD and company.
+   - The summary must be 3-4 concise recruiter-facing sentences with varied construction: target role, strongest relevant platform/capability, supported domain context, and 2-4 grounded differentiators. Do not use repetitive "Expertise spans" / "Proven ability" templates or dump technologies.
+   - Give each employer its own evidence-backed engineering identity. Do not make every role sound like the same project. Project descriptions are 1-2 short sentences about objective and architecture, never stack dumps.
+   - Bullet ceilings remain 7 / 6 / 5 by role recency and 18 total; ceilings are not targets. Add a bullet only for distinct employer-supported evidence that materially improves JD alignment.`
+      : `2. **Surgical repair is mandatory — full/deep rewriting is forbidden**:
+   - Start from \`previous_resume_content.json\` and \`previous_cover_letter_content.json\`.
+   - Apply only the explicit repair operations and editable paths in the targeted-repair contract above.
+   - Do not rewrite, improve, reorder, re-tailor, or rephrase any frozen content, even if you prefer different wording.
+   - A substantially different resume is a failed repair. CareerOps deterministically rejects any collateral change before consuming a quality iteration.`;
+
+  const priorReviewSection =
+    writerMode === "INITIAL_GENERATION"
+      ? `## PRIOR QUALITY REVIEW FEEDBACK
+
+### Review Scores
+${scoresBlock}
+
+### Hard Blocking Failures — these alone prevent approval, resolve every one
+${blockingFailuresBlock}
+
+### Compliance Checks Blocking Approval — every one of these must reach PASS
+${complianceBlock}
+
+### Blocking Issues to Resolve
+${blockingBlock}
+
+### Required Corrections
+${correctionsBlock}`
+      : `## REPAIR REVIEW CONTRACT
+
+The normalized root findings and explicit operations in **TARGETED REPAIR** above are the complete content-edit instructions for this pass. Raw compliance statuses, duplicate reporting layers, and the derived \`finalValidation\` status are deliberately not repeated as separate writing tasks. The full CareerOps validator still runs after the repair.`;
+
   return `# External Resume Writer Agent Task — Iteration ${iterationNumber}
+
+**Writer mode: ${writerMode}.**
 
 ## Role & Context
 You are acting as an external expert resume tailoring agent for **${candidateName}**.
@@ -183,9 +222,7 @@ ${input.repairPlanSection ?? ""}${input.professionalIdentitySection ?? ""}${inpu
    - You must NEVER fabricate an employer, title, degree, certification, or client.
    - The Master Skills Inventory (\`master_skills_inventory.md\`) constrains what you may claim: only technologies genuinely present there (or in the Master Resume's own experience entries) may appear anywhere in the resume or cover letter — never introduce a technology solely because the JD mentions it.
 
-2. **Deep rewrite is required — light keyword replacement is a failure mode**:
-   - A pass that only swaps a few keywords into the existing bullets will be REJECTED by CareerOps's review. Rewrite the summary, skills ordering, and experience bullets so the resume reads as though it were written specifically for this JD and this company.
-   - Materially different Job Descriptions must produce materially different resumes — if your output would look nearly identical regardless of which JD it was tailored for, it has not done the job.
+${rewriteRule}
 
 3. **Architecture integrity takes priority over raw keyword coverage**:
    - Maintain a coherent, believable technology architecture within each employer/project. Do not combine competing tools (e.g. Azure Data Factory + AWS Glue, or Databricks + EMR) in the same bullet or the same project unless explicitly and legitimately framed as a migration.
@@ -234,22 +271,7 @@ ${input.atsCoverageReportText ? `### ATS Coverage Report (current draft, if any)
 
 ---
 
-## PRIOR QUALITY REVIEW FEEDBACK
-
-### Review Scores
-${scoresBlock}
-
-### Hard Blocking Failures — these alone prevent approval, resolve every one
-${blockingFailuresBlock}
-
-### Compliance Checks Blocking Approval — every one of these must reach PASS
-${complianceBlock}
-
-### Blocking Issues to Resolve
-${blockingBlock}
-
-### Required Corrections
-${correctionsBlock}
+${priorReviewSection}
 
 ---
 
@@ -526,6 +548,8 @@ export function exportExternalWriterPackage(
             }))
           : undefined,
         repairPlan: writerInput.repairPlan,
+        writerMode: writerInput.writerMode,
+        retryLineage: writerInput.retryLineage,
         currentResume: writerInput.currentResume,
         currentCoverLetter: writerInput.currentCoverLetter,
         latestReview: writerInput.latestReview,
@@ -573,6 +597,7 @@ export function exportExternalWriterPackage(
     tailoringRunId: workflow.tailoring_run_id,
     workflowId: workflow.id,
     iterationNumber: targetIterationNumber,
+    writerMode: writerInput.writerMode,
     selectedTrack: wsPkg.selectedTrack,
     latestReview: writerInput.latestReview,
     requiredCorrections: writerInput.requiredCorrections,

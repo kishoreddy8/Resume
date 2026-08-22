@@ -417,6 +417,11 @@ test("4. export creates review.json when improvement feedback exists", async () 
 
   const reviewJsonPath = path.join(exportRes.handoffDirectory, "review.json");
   assert(fs.existsSync(reviewJsonPath));
+  const prompt = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_prompt.md"), "utf-8");
+  assert.match(prompt, /Writer mode: TARGETED_REPAIR/);
+  assert.match(prompt, /Surgical repair is mandatory/);
+  assert.doesNotMatch(prompt, /Deep rewrite is required/);
+  assert.doesNotMatch(prompt, /### Compliance Checks Blocking Approval/, "derived compliance rows must not be separate repair tasks");
 });
 
 test("5. export creates review_feedback.md", async () => {

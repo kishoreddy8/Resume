@@ -998,7 +998,7 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
           : undefined;
         // Stage 28 — decided here, from CareerOps' own review, never by the writer. A narrow scope
         // means a narrower REWRITE only; the reconstructed pair is still fully re-reviewed.
-        repairPlan = planRepairScope(latestReview);
+        repairPlan = planRepairScope(latestReview, { resume: currentResume, coverLetter: currentCoverLetter });
       } catch {
         // Fall back to undefined if unparseable
       }
@@ -1051,6 +1051,7 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
     blockingFailures,
     complianceCorrections,
     repairPlan,
+    writerMode: repairPlan ? "TARGETED_REPAIR" : "INITIAL_GENERATION",
     // Stage 26B — the canonical contact source, never the previous resume (which, for a workflow
     // predating this, holds the fabricated placeholder values) and never a guess.
     candidateContact: resolveCandidateContact(candidateId).contact,

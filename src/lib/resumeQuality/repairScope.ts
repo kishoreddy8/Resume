@@ -1,4 +1,10 @@
-import type { InstructionComplianceChecks, StructuredResumeReview } from "./types";
+import type {
+  BlockingFailure,
+  CoverLetterContent,
+  InstructionComplianceChecks,
+  ResumeContent,
+  StructuredResumeReview,
+} from "./types";
 import { isComplianceBlocking } from "./instructionCompliance";
 
 /**
@@ -22,6 +28,49 @@ import { isComplianceBlocking } from "./instructionCompliance";
 
 export type RepairScope = "FULL" | "RESUME_ONLY" | "COVER_LETTER_ONLY";
 
+export type RepairOperationKind =
+  | "REMOVE_TEXT"
+  | "REPLACE_SENTENCE"
+  | "REPLACE_BULLET"
+  | "SHORTEN_PROJECT_DESCRIPTION"
+  | "MOVE_SUPPORTED_SKILL"
+  | "REMOVE_UNSUPPORTED_SKILL"
+  | "REMOVE_UNSUPPORTED_CLAIM"
+  | "FIX_EMPLOYER_ATTRIBUTION"
+  | "FIX_COVER_LETTER_SENTENCE"
+  | "FIX_FORMATTING"
+  | "FIX_SUMMARY_SENTENCE";
+
+export interface RootRepairFinding {
+  key: string;
+  description: string;
+  source: "BLOCKING_FAILURE" | "BLOCKING_ISSUE" | "REQUIRED_CORRECTION" | "COMPLIANCE";
+  evidenceSource: string[];
+  reason: string;
+  candidateInputRequired: boolean;
+}
+
+export interface RepairOperation {
+  operation: RepairOperationKind;
+  artifact: "resume" | "cover_letter";
+  section: string;
+  employer?: string;
+  originalText?: string;
+  proposedText?: string;
+  rootFinding: string;
+  evidenceSource: string[];
+  reason: string;
+  candidateInputRequired: boolean;
+  /** JSON-like path into the baseline. Everything outside these paths is frozen. Sentence paths use
+   *  `coverLetter.paragraphs[n].sentences[n]` and are validated sentence-by-sentence. */
+  editablePath: string;
+}
+
+export interface RepairBaseline {
+  resume?: ResumeContent;
+  coverLetter?: CoverLetterContent;
+}
+
 export interface RepairPlan {
   scope: RepairScope;
   /** Human/writer-facing reason the scope was chosen — always states what drove it. */
@@ -32,6 +81,220 @@ export interface RepairPlan {
   coverLetterFindings: string[];
   /** Findings that could not be attributed to one artifact — these force FULL scope. */
   unattributedFindings: string[];
+  /** Normalized content problems only. Derived/meta checks such as finalValidation never appear. */
+  rootFindings?: RootRepairFinding[];
+  /** Smallest deterministic edits CareerOps can identify from the baseline and review. */
+  operations?: RepairOperation[];
+  /** Complete allowlist. Every baseline path not covered here is frozen. */
+  editablePaths?: string[];
+}
+
+const META_COMPLIANCE_CHECKS: readonly (keyof InstructionComplianceChecks)[] = ["finalValidation"];
+const TECHNOLOGY_ROOT_CHECKS = new Set<keyof InstructionComplianceChecks>([
+  "architectureIntegrity",
+  "technologyAdaptation",
+  "migrationIntegrity",
+  "noContradictingTechnologies",
+  "onePrimaryTechnologyPerResponsibility",
+]);
+
+function normalizeFindingKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/^canonical instruction compliance\s*[—-]\s*[^:]+:\s*/i, "")
+    .replace(/\b(fail|review|pass)\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function quotedTerms(text: string): string[] {
+  return [...text.matchAll(/["“]([^"”]+)["”]/g)].map((m) => m[1]!.trim()).filter(Boolean);
+}
+
+function addRootFinding(target: RootRepairFinding[], finding: RootRepairFinding): void {
+  const normalized = normalizeFindingKey(finding.description);
+  if (!normalized) return;
+  const duplicate = target.some((existing) => {
+    const prior = normalizeFindingKey(existing.description);
+    if (prior === normalized || prior.includes(normalized) || normalized.includes(prior)) return true;
+    const priorQuotes = quotedTerms(existing.description).map((q) => q.toLowerCase());
+    const nextQuotes = quotedTerms(finding.description).map((q) => q.toLowerCase());
+    return priorQuotes.length > 0 && nextQuotes.length > 0 && nextQuotes.every((q) => priorQuotes.includes(q));
+  });
+  if (!duplicate) target.push({ ...finding, key: normalized });
+}
+
+function rootFromBlockingFailure(failure: BlockingFailure): RootRepairFinding {
+  return {
+    key: normalizeFindingKey(failure.description),
+    description: `${failure.type}: ${failure.description}`,
+    source: "BLOCKING_FAILURE",
+    evidenceSource: failure.evidenceSearched ?? [],
+    reason: failure.recommendedCorrection ?? failure.description,
+    candidateInputRequired: false,
+  };
+}
+
+/** Collapse the review's several reporting layers into actual content defects. Gate statuses remain
+ * untouched on the review; this only determines what the writer is asked to edit. */
+export function extractRootRepairFindings(review: StructuredResumeReview): RootRepairFinding[] {
+  const roots: RootRepairFinding[] = [];
+  for (const failure of review.blockingFailures ?? []) addRootFinding(roots, rootFromBlockingFailure(failure));
+  for (const issue of review.blockingIssues ?? []) {
+    addRootFinding(roots, {
+      key: normalizeFindingKey(issue),
+      description: issue,
+      source: "BLOCKING_ISSUE",
+      evidenceSource: [],
+      reason: issue,
+      candidateInputRequired: false,
+    });
+  }
+  for (const correction of review.requiredCorrections ?? []) {
+    if (/^Canonical instruction compliance — /.test(correction.description)) continue;
+    addRootFinding(roots, {
+      key: normalizeFindingKey(correction.description),
+      description: correction.description,
+      source: "REQUIRED_CORRECTION",
+      evidenceSource: [],
+      reason: correction.description,
+      candidateInputRequired: false,
+    });
+  }
+
+  const compliance = review.instructionCompliance;
+  if (!compliance) return roots;
+  const hasUnsupported = (review.blockingFailures ?? []).some((f) => f.type === "UNSUPPORTED_CLAIM");
+  const hasCrossDocumentRoot = (review.blockingFailures ?? []).some(
+    (f) => f.type === "EMPLOYER_CONTRADICTION" || f.type === "CROSS_ARTIFACT_CONTRADICTION"
+  );
+  const technologyNotesSeen = new Set<string>();
+  for (const [rawCheck, status] of Object.entries(compliance.checks) as [keyof InstructionComplianceChecks, InstructionComplianceChecks[keyof InstructionComplianceChecks]][]) {
+    if (status === "PASS" || status === "NOT_APPLICABLE" || META_COMPLIANCE_CHECKS.includes(rawCheck)) continue;
+    if (rawCheck === "masterSkillsInventoryCompliance" && hasUnsupported) continue;
+    if (rawCheck === "crossDocumentConsistency" && hasCrossDocumentRoot) continue;
+    const notes = compliance.checkNotes?.[rawCheck] ?? [];
+    if (notes.length === 0) continue;
+    for (const note of notes) {
+      const noteKey = normalizeFindingKey(note);
+      if (TECHNOLOGY_ROOT_CHECKS.has(rawCheck) && technologyNotesSeen.has(noteKey)) continue;
+      if (TECHNOLOGY_ROOT_CHECKS.has(rawCheck)) technologyNotesSeen.add(noteKey);
+      addRootFinding(roots, {
+        key: noteKey,
+        description: note,
+        source: "COMPLIANCE",
+        evidenceSource: [`instructionCompliance.${rawCheck}`],
+        reason: note,
+        candidateInputRequired: false,
+      });
+    }
+  }
+  return roots;
+}
+
+function splitSentences(text: string): string[] {
+  return text.trim().split(/(?<=[.!?])\s+(?=[A-Z0-9"“])/).map((s) => s.trim()).filter(Boolean);
+}
+
+function baselineTextUnits(baseline: RepairBaseline): Array<{ artifact: "resume" | "cover_letter"; section: string; path: string; text: string; employer?: string }> {
+  const units: Array<{ artifact: "resume" | "cover_letter"; section: string; path: string; text: string; employer?: string }> = [];
+  const resume = baseline.resume;
+  if (resume) {
+    resume.summary.forEach((text, i) => units.push({ artifact: "resume", section: "summary", path: `resume.summary[${i}]`, text }));
+    resume.skillGroups.forEach((group, gi) => group.items.forEach((text, ii) => units.push({ artifact: "resume", section: "skills", path: `resume.skillGroups[${gi}].items[${ii}]`, text })));
+    resume.experience.forEach((entry, ei) => {
+      if (entry.projectDescription) units.push({ artifact: "resume", section: "project_description", path: `resume.experience[${ei}].projectDescription`, text: entry.projectDescription, employer: entry.company });
+      entry.bullets.forEach((text, bi) => units.push({ artifact: "resume", section: "experience_bullet", path: `resume.experience[${ei}].bullets[${bi}]`, text, employer: entry.company }));
+    });
+    resume.certifications?.forEach((text, i) => units.push({ artifact: "resume", section: "certifications", path: `resume.certifications[${i}]`, text }));
+    resume.education.forEach((text, i) => units.push({ artifact: "resume", section: "education", path: `resume.education[${i}]`, text }));
+  }
+  baseline.coverLetter?.paragraphs.forEach((paragraph, pi) => {
+    const sentences = splitSentences(paragraph);
+    sentences.forEach((text, si) => units.push({ artifact: "cover_letter", section: "paragraph_sentence", path: `coverLetter.paragraphs[${pi}].sentences[${si}]`, text }));
+  });
+  return units;
+}
+
+function employerFromFinding(text: string, baseline: RepairBaseline): string | undefined {
+  return baseline.resume?.experience.find((entry) => text.toLowerCase().includes(entry.company.toLowerCase()))?.company;
+}
+
+function operationKind(finding: RootRepairFinding): RepairOperationKind {
+  const text = finding.description;
+  if (/UNSUPPORTED_CLAIM/i.test(text)) return "REMOVE_UNSUPPORTED_CLAIM";
+  if (/unsupported skill|skill inventory/i.test(text)) return "REMOVE_UNSUPPORTED_SKILL";
+  if (/employer_contradiction|attributes .+ to /i.test(text)) return "FIX_EMPLOYER_ATTRIBUTION";
+  if (/project line|project description/i.test(text)) return "SHORTEN_PROJECT_DESCRIPTION";
+  if (/summary/i.test(text)) return "FIX_SUMMARY_SENTENCE";
+  if (/skill group|skills ordering|technical skills/i.test(text)) return "MOVE_SUPPORTED_SKILL";
+  if (/format|spacing|punctuation|unicode|separator/i.test(text)) return "FIX_FORMATTING";
+  if (/cover letter/i.test(text)) return "FIX_COVER_LETTER_SENTENCE";
+  if (/bullet/i.test(text)) return "REPLACE_BULLET";
+  return "REPLACE_SENTENCE";
+}
+
+function operationsForFinding(finding: RootRepairFinding, baseline: RepairBaseline): RepairOperation[] {
+  const units = baselineTextUnits(baseline);
+  const description = finding.description;
+  const kind = operationKind(finding);
+  const employer = employerFromFinding(description, baseline);
+  const quoted = quotedTerms(description);
+  const needles = [...quoted, ...(employer ? [employer] : [])].filter((v) => v.length > 1);
+  let matches = units.filter((unit) => needles.some((needle) => unit.text.toLowerCase().includes(needle.toLowerCase())));
+
+  if (kind === "FIX_EMPLOYER_ATTRIBUTION" || kind === "FIX_COVER_LETTER_SENTENCE") {
+    const claim = quoted[0];
+    matches = units.filter(
+      (unit) =>
+        unit.artifact === "cover_letter" &&
+        (!claim || unit.text.toLowerCase().includes(claim.toLowerCase())) &&
+        (!employer || unit.text.toLowerCase().includes(employer.toLowerCase()))
+    );
+  } else if (kind === "SHORTEN_PROJECT_DESCRIPTION") {
+    matches = units.filter((unit) => unit.section === "project_description" && (!employer || unit.employer === employer));
+  } else if (kind === "FIX_SUMMARY_SENTENCE") {
+    matches = units.filter((unit) => unit.section === "summary");
+  } else if (kind === "MOVE_SUPPORTED_SKILL" || kind === "REMOVE_UNSUPPORTED_SKILL") {
+    return [{
+      operation: kind,
+      artifact: "resume",
+      section: "skills",
+      originalText: undefined,
+      rootFinding: finding.key,
+      evidenceSource: finding.evidenceSource,
+      reason: finding.reason,
+      candidateInputRequired: finding.candidateInputRequired,
+      editablePath: "resume.skillGroups",
+    }];
+  }
+
+  if (matches.length === 0) {
+    return [{
+      operation: kind,
+      artifact: /cover letter/i.test(description) ? "cover_letter" : "resume",
+      section: "unresolved",
+      employer,
+      rootFinding: finding.key,
+      evidenceSource: finding.evidenceSource,
+      reason: finding.reason,
+      candidateInputRequired: true,
+      editablePath: "",
+    }];
+  }
+
+  return matches.map((match) => ({
+    operation: kind,
+    artifact: match.artifact,
+    section: match.section,
+    employer: match.employer ?? employer,
+    originalText: match.text,
+    rootFinding: finding.key,
+    evidenceSource: finding.evidenceSource,
+    reason: finding.reason,
+    candidateInputRequired: finding.candidateInputRequired,
+    editablePath: match.path,
+  }));
 }
 
 /**
@@ -77,7 +340,39 @@ function mentionsResume(text: string): boolean {
  *   3. any resume-structural compliance check is non-PASS
  *   4. findings exist on both artifacts
  */
-export function planRepairScope(review: StructuredResumeReview): RepairPlan {
+export function planRepairScope(review: StructuredResumeReview, baseline?: RepairBaseline): RepairPlan {
+  const rootFindings = extractRootRepairFindings(review);
+  if (baseline?.resume || baseline?.coverLetter) {
+    const operations = rootFindings.flatMap((finding) => operationsForFinding(finding, baseline));
+    const editablePaths = [...new Set(operations.map((operation) => operation.editablePath).filter(Boolean))];
+    const resumeFindings = rootFindings
+      .filter((finding) => operations.some((operation) => operation.rootFinding === finding.key && operation.artifact === "resume"))
+      .map((finding) => finding.description);
+    const coverLetterFindings = rootFindings
+      .filter((finding) => operations.some((operation) => operation.rootFinding === finding.key && operation.artifact === "cover_letter"))
+      .map((finding) => finding.description);
+    const unattributedFindings = rootFindings
+      .filter((finding) => operations.some((operation) => operation.rootFinding === finding.key && !operation.editablePath))
+      .map((finding) => finding.description);
+    const hasResume = operations.some((operation) => operation.artifact === "resume" && operation.editablePath);
+    const hasCover = operations.some((operation) => operation.artifact === "cover_letter" && operation.editablePath);
+    const scope: RepairScope = hasResume && hasCover ? "FULL" : hasCover ? "COVER_LETTER_ONLY" : hasResume ? "RESUME_ONLY" : "FULL";
+    const reason =
+      unattributedFindings.length > 0
+        ? `${unattributedFindings.length} root finding(s) need candidate clarification before any content can safely change.`
+        : `CareerOps identified ${operations.length} surgical operation(s) across ${editablePaths.length} editable path(s); every other path is frozen.`;
+    return {
+      scope,
+      reason,
+      resumeFindings,
+      coverLetterFindings,
+      unattributedFindings,
+      rootFindings,
+      operations,
+      editablePaths,
+    };
+  }
+
   const resumeFindings: string[] = [];
   const coverLetterFindings: string[] = [];
   const unattributedFindings: string[] = [];
@@ -146,6 +441,7 @@ export function planRepairScope(review: StructuredResumeReview): RepairPlan {
       resumeFindings,
       coverLetterFindings,
       unattributedFindings,
+      rootFindings,
     };
   }
   // A resume-structural check failing puts the RESUME in scope (its finding is already recorded in
@@ -158,6 +454,7 @@ export function planRepairScope(review: StructuredResumeReview): RepairPlan {
       resumeFindings,
       coverLetterFindings,
       unattributedFindings,
+      rootFindings,
     };
   }
   if (hasCover) {
@@ -167,6 +464,7 @@ export function planRepairScope(review: StructuredResumeReview): RepairPlan {
       resumeFindings,
       coverLetterFindings,
       unattributedFindings,
+      rootFindings,
     };
   }
   if (hasResume) {
@@ -179,6 +477,7 @@ export function planRepairScope(review: StructuredResumeReview): RepairPlan {
       resumeFindings,
       coverLetterFindings,
       unattributedFindings,
+      rootFindings,
     };
   }
   return {
@@ -187,6 +486,7 @@ export function planRepairScope(review: StructuredResumeReview): RepairPlan {
     resumeFindings,
     coverLetterFindings,
     unattributedFindings,
+    rootFindings,
   };
 }
 
@@ -205,7 +505,29 @@ export function renderRepairPlanSection(plan: RepairPlan): string {
       "The cover letter below was already reviewed and its remaining findings are zero. Reproduce it EXACTLY as given. " +
       "Repair only the resume.\n\n";
   } else {
-    out += "Both documents are in scope for this repair.\n\n";
+    out +=
+      "Both documents contain at least one listed repair, but this is NOT permission to regenerate either document. " +
+      "Only the explicit editable paths below may change; all other content in both documents remains frozen.\n\n";
+  }
+
+  if (plan.operations && plan.operations.length > 0) {
+    out += "### Explicit repair operations\n";
+    for (const operation of plan.operations) {
+      out += `- **${operation.operation}** \`${operation.editablePath || "NO_SAFE_PATH"}\``;
+      if (operation.employer) out += ` (${operation.employer})`;
+      out += ` — ${operation.reason}${operation.candidateInputRequired ? " **CANDIDATE INPUT REQUIRED; do not guess.**" : ""}\n`;
+    }
+    out += "\n";
+  }
+  if (plan.editablePaths) {
+    out += "### Frozen-content contract\n";
+    out += plan.editablePaths.length > 0
+      ? `The ONLY editable paths are:\n${plan.editablePaths.map((path) => `- \`${path}\``).join("\n")}\n\n`
+      : "No path is safely editable without candidate input. Return the baseline unchanged.\n\n";
+    out +=
+      "Every other summary sentence, skill group/item/order, project description, experience bullet, metric, employer, " +
+      "date, education/certification entry, contact field, and cover-letter sentence is FROZEN and must remain " +
+      "byte-for-byte unchanged. CareerOps verifies this deterministically and rejects collateral rewrites before review.\n\n";
   }
 
   if (plan.resumeFindings.length > 0) {

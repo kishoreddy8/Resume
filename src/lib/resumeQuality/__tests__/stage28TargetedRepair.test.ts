@@ -14,7 +14,7 @@ import {
   workerProcessOwnsScheduler,
 } from "@/lib/scheduler/host";
 import { INSTRUCTION_COMPLIANCE_CHECK_NAMES } from "../types";
-import type { ComplianceStatus, InstructionComplianceChecks, StructuredResumeReview } from "../types";
+import type { ComplianceStatus, CoverLetterContent, InstructionComplianceChecks, ResumeContent, StructuredResumeReview } from "../types";
 
 /**
  * Stage 28 (continuation) — targeted repair, scheduler ownership, and safe-attempt publication.
@@ -58,6 +58,36 @@ function review(overrides: Partial<StructuredResumeReview> = {}, checkOverrides:
     ...overrides,
   } as StructuredResumeReview;
 }
+
+const BASELINE_RESUME: ResumeContent = {
+  name: "Sai Reddy",
+  tagline: "Data Engineer",
+  location: "Dallas, TX",
+  phone: "5551112222",
+  email: "sai@example.com",
+  summary: ["Data Engineer building supported cloud data platforms for banking teams."],
+  skillGroups: [{ label: "Cloud", items: ["Azure", "Snowflake"] }],
+  experience: [
+    {
+      title: "Data Engineer",
+      company: "Fiserv",
+      dates: "2022 - Present",
+      projectDescription: "Built Azure data pipelines for payments reporting.",
+      bullets: ["Engineered Azure pipelines for payments reporting."],
+    },
+  ],
+  education: ["MS, Example University - 2022"],
+};
+
+const BASELINE_COVER: CoverLetterContent = {
+  name: "Sai Reddy",
+  location: "Dallas, TX",
+  phone: "5551112222",
+  email: "sai@example.com",
+  salutation: "Dear Hiring Team,",
+  paragraphs: ["At Fiserv, I built Snowflake pipelines. I also supported payments reporting."],
+  closing: "Sincerely,\nSai Reddy",
+};
 
 // =================================================================================================
 // A. Repair scope is decided deterministically by CareerOps
@@ -139,6 +169,54 @@ test("S28-36 a clean review needs no repair scope narrowing decision at all", ()
   assert.equal(plan.resumeFindings.length, 0);
   assert.equal(plan.coverLetterFindings.length, 0);
   assert.equal(plan.scope, "FULL", "with nothing attributed, the conservative default is a full rewrite");
+});
+
+test("root repair normalization excludes finalValidation and deduplicates its originating failure", () => {
+  const plan = planRepairScope(
+    review(
+      {
+        blockingFailures: [
+          {
+            type: "UNSUPPORTED_CLAIM",
+            description: '"Data Governance" is claimed on the resume but is not grounded in candidate evidence.',
+            evidenceSearched: ["Master Resume", "Master Skills Inventory"],
+          },
+        ],
+        requiredCorrections: [
+          { priority: "CRITICAL", description: "Canonical instruction compliance — masterSkillsInventoryCompliance: FAIL. This is a hard-gate check." },
+          { priority: "CRITICAL", description: "Canonical instruction compliance — finalValidation: FAIL. This is a hard-gate check." },
+        ],
+      },
+      { masterSkillsInventoryCompliance: "FAIL", finalValidation: "FAIL" },
+      { masterSkillsInventoryCompliance: ["Technologies with no grounding: Data Governance"] }
+    ),
+    { resume: { ...BASELINE_RESUME, summary: ["Data Engineer focused on Data Governance."] }, coverLetter: BASELINE_COVER }
+  );
+  assert.equal(plan.rootFindings?.length, 1);
+  assert.doesNotMatch(JSON.stringify(plan.rootFindings), /finalValidation/);
+  assert.deepEqual(plan.editablePaths, ["resume.summary[0]"]);
+});
+
+test("employer attribution becomes one cover-letter sentence repair and freezes the resume", () => {
+  const plan = planRepairScope(
+    review(
+      {
+        blockingFailures: [
+          {
+            type: "EMPLOYER_CONTRADICTION",
+            description: 'Cover letter attributes "Snowflake" to Fiserv, but Fiserv evidence does not support it.',
+          },
+        ],
+      },
+      { crossDocumentConsistency: "FAIL", finalValidation: "FAIL" },
+      { crossDocumentConsistency: ['Cover letter attributes "Snowflake" to Fiserv.'] }
+    ),
+    { resume: BASELINE_RESUME, coverLetter: BASELINE_COVER }
+  );
+  assert.equal(plan.scope, "COVER_LETTER_ONLY");
+  assert.deepEqual(plan.editablePaths, ["coverLetter.paragraphs[0].sentences[0]"]);
+  assert.equal(plan.rootFindings?.length, 1, "the compliance echo must not become a second repair");
+  assert.match(renderRepairPlanSection(plan), /Every other summary sentence.*FROZEN/s);
 });
 
 // =================================================================================================

@@ -452,6 +452,17 @@ export interface ResumeWriterInput {
    *  PRIOR review by CareerOps (see repairScope.ts). Absent on iteration 1, which writes from
    *  scratch. Narrows what the writer REWRITES; never narrows what CareerOps reviews afterwards. */
   repairPlan?: import("./repairScope").RepairPlan;
+  /** INITIAL_GENERATION is allowed to tailor the complete package. TARGETED_REPAIR is governed by
+   *  repairPlan.editablePaths: every path not listed there is frozen against the supplied baseline. */
+  writerMode?: "INITIAL_GENERATION" | "TARGETED_REPAIR";
+  /** Persisted outside the database in the retry workflow's workspace. Present only when a terminal
+   *  workflow was re-tailored from its safest prior reviewed attempt. */
+  retryLineage?: {
+    parentWorkflowId: number;
+    parentIterationNumber: number;
+    baselineReviewPath: string;
+    resolvedFindingKeys: string[];
+  };
   dedupeKey?: string;
   iterationNumber?: number;
   masterProfile?: CandidateProfile;
