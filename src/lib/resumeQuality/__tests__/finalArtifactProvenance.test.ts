@@ -308,7 +308,17 @@ test("writer_validation.json is written only when the external writer supplied a
 
   const dishonestWriter: ResumeWriterAgent = {
     generate: async (): Promise<ResumeWriterOutput> => ({
-      resume: PERFECT_RESUME,
+      resume: {
+        ...flawedResume,
+        summary: PERFECT_RESUME.summary,
+        skillGroups: PERFECT_RESUME.skillGroups,
+        experience: [
+          {
+            ...flawedResume.experience[0],
+            bullets: [PERFECT_RESUME.experience[0].bullets[0]],
+          },
+        ],
+      },
       coverLetter: COVER_LETTER,
       // A writer that self-reports full PASS — CareerOps must independently verify this rather than
       // trusting it, and must still persist it as provenance-only data when the workflow reaches READY.
