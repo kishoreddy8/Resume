@@ -16,6 +16,7 @@ import { loadCandidateProfile } from "@/lib/match/candidateProfile";
 import { matchesCurrentInstructions } from "@/lib/resumeQuality/canonicalInstructions";
 import { evaluateTailoringAuthorization } from "@/lib/resumeQuality/tailoringAuthorization";
 import { evaluateWorkflowRetry } from "@/lib/resumeQuality/workflowRetry";
+import { selectRetryBaseline, writeRetryLineage } from "@/lib/resumeQuality/retryLineage";
 import { getResumeWriterHealth, type ResumeWriterHealth } from "@/lib/resumeQuality/writers/writerHealth";
 import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
 import { isComplianceBlocking } from "@/lib/resumeQuality/instructionCompliance";
@@ -465,6 +466,8 @@ export async function POST(
 
   const candidate = getCandidate(candidateId);
   if (!candidate) return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
+  const requestBody = await req.json().catch(() => ({})) as { freshRewrite?: unknown };
+  const freshRewrite = requestBody.freshRewrite === true;
 
   const state = getCandidateJobState(candidateId, job.dedupe_key);
   if (!state || !state.marked_for_tailoring) {
@@ -507,6 +510,10 @@ export async function POST(
   }
 
   let workflow = retryDecision.action === "REUSE_EXISTING" ? existingWorkflow : undefined;
+  const retryBaseline =
+    retryDecision.action === "CREATE_RETRY" && !freshRewrite
+      ? selectRetryBaseline(candidateId, job.dedupe_key)
+      : null;
 
   if (!workflow) {
     // 1. Ensure tailoring run exists
@@ -582,6 +589,13 @@ export async function POST(
       const allReqs = [...skillUnits, ...certUnits, ...(eduUnit ? [eduUnit] : []), ...unclaimed];
       fs.writeFileSync(path.join(wsDir, "extracted_job_requirements.json"), JSON.stringify(allReqs, null, 2));
 
+      if (retryBaseline) {
+        writeRetryLineage(
+          { candidateId, dedupeKey: job.dedupe_key, runId, workflowId: createdWorkflow.id },
+          retryBaseline
+        );
+      }
+
       // Stage 26 — the workflow stops here, in CREATED, and the autonomous writer produces
       // iteration 1 from the real Master Resume / Skills Inventory / candidate profile evidence
       // this workspace points at.
@@ -628,5 +642,12 @@ export async function POST(
     action: retryDecision.action,
     actionReason: retryDecision.reason,
     previousWorkflowId: retryDecision.action === "CREATE_RETRY" ? (existingWorkflow?.id ?? null) : null,
+    retryBaseline: retryBaseline
+      ? {
+          workflowId: retryBaseline.lineage.parentWorkflowId,
+          iterationNumber: retryBaseline.lineage.parentIterationNumber,
+        }
+      : null,
+    freshRewrite,
   });
 }

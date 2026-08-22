@@ -26,6 +26,7 @@ import { resolveCandidateContact } from "./candidateContact";
 import { gateBlockingComplianceCorrections } from "./instructionCompliance";
 import { planRepairScope, type RepairPlan } from "./repairScope";
 import { validateRepairPreservation } from "./repairPreservation";
+import { readRetryLineage } from "./retryLineage";
 import { generateColdFollowUpEmail } from "./coldFollowUpEmail";
 import { publishFinalApplicationArtifacts, type PublishedApplication } from "./finalPublication";
 import { generateHumanReviewPackage } from "./humanReviewPackage";
@@ -953,6 +954,7 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
   let complianceCorrections: RequiredCorrection[] | undefined;
   /** Stage 28 — the deterministic repair scope for this attempt, derived from the PRIOR review. */
   let repairPlan: RepairPlan | undefined;
+  let retryLineage: ResumeWriterInput["retryLineage"];
 
   if (workflow.current_iteration > 0) {
     const priorIterNum = workflow.current_iteration;
@@ -1004,6 +1006,48 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
         // Fall back to undefined if unparseable
       }
     }
+  } else {
+    // A re-tailor workflow starts at iteration 1 in its own immutable history, but its writer
+    // baseline is the selected package from the prior workflow. The lineage file is the explicit
+    // opt-in; a normal first workflow has no such file and remains INITIAL_GENERATION.
+    const retry = readRetryLineage(location);
+    if (retry) {
+      const parentDir = getIterationDirectory(retry.parentLocation, retry.lineage.parentIterationNumber);
+      const parentResumeJson = path.join(parentDir, "resume_content.json");
+      const parentCoverJson = path.join(parentDir, "cover_letter_content.json");
+      const parentReviewJson = path.join(parentDir, "review.json");
+      const parentFeedbackMd = path.join(parentDir, "review_feedback.md");
+      if (fs.existsSync(parentResumeJson) && fs.existsSync(parentReviewJson)) {
+        try {
+          currentResume = JSON.parse(fs.readFileSync(parentResumeJson, "utf-8")) as ResumeContent;
+          currentCoverLetter = fs.existsSync(parentCoverJson)
+            ? JSON.parse(fs.readFileSync(parentCoverJson, "utf-8")) as CoverLetterContent
+            : undefined;
+          latestReview = JSON.parse(fs.readFileSync(parentReviewJson, "utf-8")) as StructuredResumeReview;
+          priorIteration = {
+            iterationNumber: retry.lineage.parentIterationNumber,
+            resumePath: parentResumeJson,
+            reviewFeedbackPath: parentFeedbackMd,
+          };
+          requiredCorrections = latestReview.requiredCorrections;
+          blockingIssues = latestReview.blockingIssues;
+          blockingFailures = latestReview.blockingFailures;
+          complianceCorrections = latestReview.instructionCompliance
+            ? gateBlockingComplianceCorrections(latestReview.instructionCompliance)
+            : undefined;
+          repairPlan = planRepairScope(latestReview, { resume: currentResume, coverLetter: currentCoverLetter });
+          retryLineage = {
+            parentWorkflowId: retry.lineage.parentWorkflowId,
+            parentIterationNumber: retry.lineage.parentIterationNumber,
+            baselineReviewPath: retry.lineage.baselineReviewPath,
+            resolvedFindingKeys: retry.lineage.resolvedFindingKeys,
+          };
+        } catch {
+          // An unusable lineage package falls back to a fresh initial generation. The prior
+          // artifacts remain untouched and no claim is inferred from a partial package.
+        }
+      }
+    }
   }
 
   let jobRequirements: RequirementUnit[] | undefined;
@@ -1052,6 +1096,7 @@ export function buildResumeWriterInput(candidateId: number, workflowId: number):
     blockingFailures,
     complianceCorrections,
     repairPlan,
+    retryLineage,
     writerMode: repairPlan ? "TARGETED_REPAIR" : "INITIAL_GENERATION",
     // Stage 26B — the canonical contact source, never the previous resume (which, for a workflow
     // predating this, holds the fabricated placeholder values) and never a guess.

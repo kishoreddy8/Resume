@@ -32,6 +32,9 @@ let executeResumeImprovementIteration: typeof import("../orchestrator").executeR
 let runResumeQualityLoop: typeof import("../orchestrator").runResumeQualityLoop;
 let startAndRunResumeQualityLoop: typeof import("../orchestrator").startAndRunResumeQualityLoop;
 let ResumeQualityOrchestrationError: typeof import("../orchestrator").ResumeQualityOrchestrationError;
+let buildResumeWriterInput: typeof import("../orchestrator").buildResumeWriterInput;
+let selectRetryBaseline: typeof import("../retryLineage").selectRetryBaseline;
+let writeRetryLineage: typeof import("../retryLineage").writeRetryLineage;
 
 let candidateAliceId: number;
 let candidateBobId: number;
@@ -186,8 +189,10 @@ before(async () => {
     executeResumeImprovementIteration,
     runResumeQualityLoop,
     startAndRunResumeQualityLoop,
+    buildResumeWriterInput,
     ResumeQualityOrchestrationError,
   } = await import("../orchestrator"));
+  ({ selectRetryBaseline, writeRetryLineage } = await import("../retryLineage"));
   getDb();
 
   candidateAliceId = createCandidate({ firstName: "Alice", lastName: "Smith" }).id;
@@ -1624,4 +1629,46 @@ test("41. repair scope violation is rejected before consuming a quality iteratio
   const after = getResumeQualityWorkflow(candidateAliceId, wf.id)!;
   assert.equal(after.current_iteration, 1, "a writer contract violation must not consume iteration 2");
   assert.equal(listResumeQualityIterations(candidateAliceId, wf.id).length, 1);
+});
+
+test("42. retry lineage starts iteration 1 from the best prior reviewed attempt", () => {
+  const selection = selectRetryBaseline(candidateAliceId, jobOne.dedupe_key);
+  assert(selection, "the completed test workflows must provide a reviewed baseline");
+  const child = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  writeRetryLineage(
+    {
+      candidateId: candidateAliceId,
+      dedupeKey: jobOne.dedupe_key,
+      runId: runAliceJobOneId,
+      workflowId: child.id,
+    },
+    selection
+  );
+
+  const input = buildResumeWriterInput(candidateAliceId, child.id);
+  assert.equal(input.writerMode, "TARGETED_REPAIR");
+  assert.equal(input.iterationNumber, 1, "the retry keeps its own immutable iteration numbering");
+  assert.equal(input.retryLineage?.parentWorkflowId, selection.lineage.parentWorkflowId);
+  assert.equal(input.priorIteration?.iterationNumber, selection.lineage.parentIterationNumber);
+  assert(input.currentResume, "the writer must receive the complete selected prior resume");
+  assert.deepEqual(input.retryLineage?.resolvedFindingKeys, selection.lineage.resolvedFindingKeys);
+  assert(!input.retryLineage?.baselineReviewPath.startsWith("/"), "persisted lineage must not expose an absolute path");
+});
+
+test("43. a workflow without lineage remains a fresh initial generation", () => {
+  const fresh = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobTwoId,
+    tailoringRunId: runAliceJobTwoId,
+    dedupeKey: jobTwo.dedupe_key,
+  });
+  const input = buildResumeWriterInput(candidateAliceId, fresh.id);
+  assert.equal(input.writerMode, "INITIAL_GENERATION");
+  assert.equal(input.retryLineage, undefined);
+  assert.equal(input.currentResume, undefined);
 });

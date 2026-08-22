@@ -95,6 +95,16 @@ const FLAWED_RESUME: ResumeContent = {
   certifications: [],
 };
 
+const SURGICAL_FLAWED_RESUME: ResumeContent = {
+  ...PERFECT_RESUME,
+  experience: PERFECT_RESUME.experience.map((entry, index) => ({
+    ...entry,
+    bullets: index === 0
+      ? ["Built the same pipeline using Azure Data Factory and AWS Glue as competing primary platforms.", ...entry.bullets.slice(1)]
+      : [...entry.bullets],
+  })),
+};
+
 const STRONG_REQUIREMENTS: RequirementUnit[] = [
   {
     kind: "skill",
@@ -496,7 +506,12 @@ test("12. export action uses Stage 11 exporter", async () => {
   });
   initWorkflowWorkspace(candidateAliceId, wf.id, runAliceJobOneId, jobOne.dedupe_key);
 
-  await executeResumeQualityIteration({ candidateId: candidateAliceId, workflowId: wf.id, resume: FLAWED_RESUME });
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: SURGICAL_FLAWED_RESUME,
+    coverLetter: COVER_LETTER,
+  });
 
   const req = new NextRequest(`http://localhost/api/candidates/${candidateAliceId}/jobs/${jobOne.id}/quality-workflow/export`, {
     method: "POST",
@@ -534,7 +549,12 @@ test("14. import uses Stage 11 importer", async () => {
   });
   initWorkflowWorkspace(candidateAliceId, wf.id, runAliceJobOneId, jobOne.dedupe_key);
 
-  await executeResumeQualityIteration({ candidateId: candidateAliceId, workflowId: wf.id, resume: FLAWED_RESUME });
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: SURGICAL_FLAWED_RESUME,
+    coverLetter: COVER_LETTER,
+  });
 
   const validOutput: ExternalWriterOutput = {
     schemaVersion: 1,
@@ -571,7 +591,7 @@ test("15. invalid writer output rejected", async () => {
   });
   initWorkflowWorkspace(candidateAliceId, wf.id, runAliceJobOneId, jobOne.dedupe_key);
 
-  await executeResumeQualityIteration({ candidateId: candidateAliceId, workflowId: wf.id, resume: FLAWED_RESUME });
+  await executeResumeQualityIteration({ candidateId: candidateAliceId, workflowId: wf.id, resume: SURGICAL_FLAWED_RESUME });
 
   const invalidOutput = { schemaVersion: 1, invalidField: true };
 
@@ -717,7 +737,7 @@ test("20. successful import continues Stage 10 flow", async () => {
   });
   initWorkflowWorkspace(candidateAliceId, wf.id, runAliceJobOneId, jobOne.dedupe_key);
 
-  await executeResumeQualityIteration({ candidateId: candidateAliceId, workflowId: wf.id, resume: FLAWED_RESUME });
+  await executeResumeQualityIteration({ candidateId: candidateAliceId, workflowId: wf.id, resume: SURGICAL_FLAWED_RESUME });
 
   const validOutput: ExternalWriterOutput = {
     schemaVersion: 1,
