@@ -355,7 +355,7 @@ before(async () => {
 
   companyId = createCompany({ name: "Stage26 Test Co", source_type: "greenhouse", ats_board_token: "stage26" }).id;
 
-  for (let i = 1; i <= 6; i++) {
+  for (let i = 1; i <= 7; i++) {
     const dedupeKey = dedupeKeyForAts("greenhouse", companyId, `s26-job-${i}`);
     upsertJob({
       companyId,
@@ -1288,6 +1288,11 @@ test("S26B-41 once real contact is saved, it reaches the writer package as hard 
 
   const result = exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, overwriteExisting: true });
   const prompt = fs.readFileSync(path.join(result.handoffDirectory, "writer_prompt.md"), "utf-8");
+  const exportedInput = JSON.parse(fs.readFileSync(path.join(result.handoffDirectory, "writer_input.json"), "utf8")) as {
+    runtimeContract?: { contractVersion?: string; sourceRevision?: string };
+  };
+  assert.ok(exportedInput.runtimeContract?.contractVersion, "the consumed handoff must identify its runtime contract");
+  assert.ok(exportedInput.runtimeContract?.sourceRevision, "the consumed handoff must identify its loaded source revision");
   assert.match(prompt, /CANDIDATE CONTACT DETAILS — VERIFIED HARD FACTS/);
   assert.match(prompt, /alice\.smith@gmail\.com/);
   assert.match(prompt, /\(214\) 987-6543/);
@@ -1303,4 +1308,30 @@ test("S26B-42 with valid contact the writer runs normally again — the block is
   if (wf.status === "READY" || wf.status === "FAILED") return; // already terminal in this fixture run
   const outcome = await processOneWorkflow(wf, { cliOptions: cliSuccess(perfectResume("Alice Smith", "alice.smith@gmail.com")) });
   assert.notEqual(outcome.outcome, "CANDIDATE_CONTACT_REQUIRED", "a configured candidate must no longer be blocked");
+});
+
+test("S26B-43 a mixed source fingerprint is rejected before writer invocation or iteration use", async () => {
+  const job = jobs[6];
+  authorizeJob(candidateAliceId, job);
+  await approveOrThrow(candidateAliceId, job.id);
+  const wf = getLatestResumeQualityWorkflowForJob(candidateAliceId, job.dedupe_key)!;
+  const location = {
+    candidateId: candidateAliceId,
+    dedupeKey: job.dedupe_key,
+    runId: wf.tailoring_run_id,
+    workflowId: wf.id,
+  };
+  const workspace = getWorkspaceDirectory(location);
+  const contractPath = path.join(workspace, "runtime_contract.json");
+  const producer = JSON.parse(fs.readFileSync(contractPath, "utf8")) as { sourceRevision: string };
+  fs.writeFileSync(contractPath, JSON.stringify({ ...producer, sourceRevision: "stale-worker-revision" }, null, 2));
+
+  const outcome = await processOneWorkflow(wf, {
+    cliOptions: cliSuccess(perfectResume("Alice Smith", "alice@gmail.com")),
+  });
+
+  assert.equal(outcome.outcome, "ERROR");
+  assert.match(outcome.error ?? "", /RUNTIME_VERSION_MISMATCH/);
+  assert.equal(listResumeQualityIterations(candidateAliceId, wf.id).length, 0, "version skew must consume no quality iteration");
+  assert.equal(fs.existsSync(getHandoffDirectory(location, 1)), false, "the writer must be refused before claim/export/transmission");
 });

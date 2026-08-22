@@ -20,7 +20,12 @@ import { importExternalWriterResult } from "../handoff/importer";
 import { executeResumeImprovementIteration, ResumeQualityOrchestrationError } from "../orchestrator";
 import { DeterministicResumeReviewer } from "../reviewers/deterministicReviewer";
 import type { ResumeWriterAgent, ResumeWriterOutput } from "../types";
-import { getHandoffDirectory, type QualityWorkflowLocation } from "../workspace";
+import { getHandoffDirectory, getWorkspaceDirectory, type QualityWorkflowLocation } from "../workspace";
+import {
+  assertResumeWriterRuntimeContract,
+  ensureResumeWriterRuntimeContract,
+  ResumeWriterRuntimeMismatchError,
+} from "../runtimeContract";
 import {
   CLAUDE_CLI_PROVIDER,
   ClaudeCliTechnicalFailure,
@@ -183,6 +188,7 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
     workflowId,
   };
   const handoffDir = getHandoffDirectory(location, targetIteration);
+  const workspaceDir = getWorkspaceDirectory(location);
 
   const jobBasic = getJobByDedupeKey(workflow.dedupe_key);
   const job = jobBasic ? getJob(jobBasic.id) : undefined;
@@ -242,6 +248,30 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
     };
   }
 
+  // Fail closed before claim/export/spend when the API producer and this long-lived worker loaded
+  // different source/contract versions. Legacy unstamped workflows are adopted exactly once by the
+  // current runtime; every workflow created after this guard is stamped by the POST route.
+  try {
+    ensureResumeWriterRuntimeContract(workspaceDir);
+  } catch (error) {
+    if (error instanceof ResumeWriterRuntimeMismatchError) {
+      return {
+        workflowId,
+        candidateId,
+        outcome: "ERROR",
+        iterationNumber: targetIteration,
+        error: `${error.code}: ${error.message}`,
+      };
+    }
+    return {
+      workflowId,
+      candidateId,
+      outcome: "ERROR",
+      iterationNumber: targetIteration,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
   const claim = claimHandoff(handoffDir);
   if (!claim) {
     return { workflowId, candidateId, outcome: "SKIPPED_CLAIMED", iterationNumber: targetIteration };
@@ -272,12 +302,25 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
       exportExternalWriterPackage({ candidateId, workflowId, targetIterationNumber: targetIteration, overwriteExisting: true });
       exportMs = Date.now() - startedAtMs;
       promptBytes = safeFileSize(path.join(handoffDir, "writer_prompt.md"));
+      // Re-check immediately before transmission: export cannot silently replace the immutable stamp.
+      assertResumeWriterRuntimeContract(workspaceDir);
       const claudeStartedMs = Date.now();
       const invocation = await invokeClaudeWriter({ handoffDir, ...options.cliOptions });
       claudeMs = Date.now() - claudeStartedMs;
       outputBytes = safeFileSize(invocation.outputPath);
       cliMetadata = invocation.metadata;
+      // A checkout/runtime switch during the model call cannot be accepted as a valid iteration.
+      assertResumeWriterRuntimeContract(workspaceDir);
     } catch (err) {
+      if (err instanceof ResumeWriterRuntimeMismatchError) {
+        return {
+          workflowId,
+          candidateId,
+          outcome: "ERROR",
+          iterationNumber: targetIteration,
+          error: `${err.code}: ${err.message}`,
+        };
+      }
       const reason = err instanceof Error ? err.message : String(err);
       const failureClass: WriterFailureClass =
         err instanceof ClaudeCliTechnicalFailure ? err.failureClass : "TRANSIENT_TECHNICAL_FAILURE";

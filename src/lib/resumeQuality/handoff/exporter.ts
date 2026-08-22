@@ -14,7 +14,8 @@ import { buildJdPriorityMatrix, type JdPriorityMatrix } from "../jdPriorityMatri
 import { recommendedPositioningSummary } from "../positioningEngine";
 import { recommendedSkillOrder } from "../skillRanking";
 import { buildWorkspacePackage } from "../workspacePackage";
-import { getIterationDirectory, getHandoffDirectory, type QualityWorkflowLocation } from "../workspace";
+import { getIterationDirectory, getHandoffDirectory, getWorkspaceDirectory, type QualityWorkflowLocation } from "../workspace";
+import { ensureResumeWriterRuntimeContract } from "../runtimeContract";
 import { buildEmployerEvidenceMap, renderEmployerEvidenceSection } from "../employerEvidence";
 import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orchestrator";
 import { renderRepairPlanSection } from "../repairScope";
@@ -469,6 +470,7 @@ export function exportExternalWriterPackage(
     runId: workflow.tailoring_run_id,
     workflowId: workflow.id,
   };
+  const runtimeContract = ensureResumeWriterRuntimeContract(getWorkspaceDirectory(location));
 
   const handoffDir = getHandoffDirectory(location, targetIterationNumber);
 
@@ -535,6 +537,7 @@ export function exportExternalWriterPackage(
         dedupeKey: workflow.dedupe_key,
         instructionVersion: INSTRUCTION_VERSION,
         instructionHash: INSTRUCTION_HASH,
+        runtimeContract,
         requiredCorrections: writerInput.requiredCorrections ?? [],
         blockingIssues: writerInput.blockingIssues ?? [],
         blockingFailures: writerInput.blockingFailures ?? [],

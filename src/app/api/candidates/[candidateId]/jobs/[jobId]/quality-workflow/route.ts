@@ -23,6 +23,7 @@ import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
 import { isComplianceBlocking } from "@/lib/resumeQuality/instructionCompliance";
 import { evaluateApplicationReadiness, type ApplicationReadinessResult } from "@/lib/resumeQuality/applicationReadiness";
 import { isLegacyReviewMissingTypedSafetyAnalysis, canRevalidate } from "@/lib/resumeQuality/legacyReview";
+import { ensureResumeWriterRuntimeContract } from "@/lib/resumeQuality/runtimeContract";
 import { startTailoringRun, type TailoringRunAuthorizationError } from "@/lib/tailoringExecution";
 import { selectBestResumeQualityAttempt, type ResumeQualityAttemptSummary } from "@/lib/resumeQuality/bestAttemptSelection";
 import { determineFinalDisposition, type FinalDispositionResult } from "@/lib/resumeQuality/finalDisposition";
@@ -567,6 +568,9 @@ export async function POST(
         workflowId: createdWorkflow.id,
       });
       fs.mkdirSync(wsDir, { recursive: true });
+      // Immutable producer fingerprint. A writer loaded from a different checkout/contract refuses
+      // this workflow before transmitting anything, instead of silently mixing route and worker code.
+      ensureResumeWriterRuntimeContract(wsDir);
       fs.writeFileSync(path.join(wsDir, "job_description.md"), `# ${job.title}\n\n${job.description_text ?? ""}`);
 
       const skills = getJobSkills(job.id);
