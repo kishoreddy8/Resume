@@ -1,0 +1,2 @@
+import {NextRequest,NextResponse} from "next/server";import {requireAdminOwner} from "@/lib/auth/guard";import {listAdminWriterWorkflows} from "@/lib/admin/writer";
+export async function GET(req:NextRequest){const auth=requireAdminOwner(req);if(!auth.ok)return auth.response;const q=req.nextUrl.searchParams;const page=Math.max(1,Number(q.get("page")??1)||1);const limit=Math.min(100,Math.max(10,Number(q.get("limit")??25)||25));return NextResponse.json(listAdminWriterWorkflows({page,limit,status:(q.get("status")??"").slice(0,64)}));}
