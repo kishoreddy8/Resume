@@ -91,7 +91,7 @@ function SaveJobButton({
       const response = await fetch(`/api/jobs/${job.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidateId, pinned: next ? 1 : 0 }),
+        body: JSON.stringify({ candidateId, pinned: next }),
       });
       if (!response.ok) throw new Error("Could not update saved job");
     } catch {
@@ -105,7 +105,8 @@ function SaveJobButton({
   return (
     <motion.button
       type="button"
-      aria-label={saved ? `Remove ${job.title} from saved jobs` : `Save ${job.title}`}
+      aria-label={saved ? "Remove saved job" : "Save job"}
+      title={saved ? `Remove ${job.title} from saved jobs` : `Save ${job.title}`}
       aria-pressed={saved}
       disabled={saving}
       onClick={(event) => {

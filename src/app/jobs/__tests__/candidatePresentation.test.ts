@@ -44,8 +44,12 @@ test("saved jobs use the existing candidate pin field with optimistic rollback",
   const route = fs.readFileSync(path.resolve("src/app/api/candidates/[candidateId]/for-you/route.ts"), "utf8");
   assert.match(row, /job\.pinned === 1/);
   assert.match(row, /method: "PATCH"/);
-  assert.match(row, /body: JSON\.stringify\(\{ candidateId, pinned: next \? 1 : 0 \}\)/);
+  assert.match(row, /body: JSON\.stringify\(\{ candidateId, pinned: next \}\)/);
   assert.match(row, /setSaved\(previous\)/);
+  assert.match(row, /event\.stopPropagation\(\)/);
+  assert.match(row, /aria-label=\{saved \? "Remove saved job" : "Save job"\}/);
+  assert.match(row, /className={`grid h-11 w-11/);
+  assert.match(row, /useReducedMotion\(\)/);
   assert.equal(row.match(/fetch\(`/g)?.length, 1, "saving should be the row's only request");
   assert.match(row, /async function toggle\(\)[\s\S]*fetch\(`/);
   assert.match(feed, /params\.set\("savedOnly", "true"\)/);
