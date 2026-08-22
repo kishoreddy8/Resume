@@ -262,7 +262,15 @@ export function extractRootRepairFindings(review: StructuredResumeReview): RootR
   return roots;
 }
 
-function splitSentences(text: string): string[] {
+/**
+ * The ONE canonical sentence boundary rule for cover-letter paragraphs. Exported so
+ * repairPreservation.ts's comparator uses the exact same segmentation this module used to generate
+ * `coverLetter.paragraphs[N].sentences[M]` editable paths in the first place — two independently
+ * maintained copies of this regex previously existed (identical today, but with no guarantee of
+ * staying that way), which is exactly the class of drift that could let a repair path address one
+ * sentence boundary while the preservation comparator checked a different one.
+ */
+export function splitSentences(text: string): string[] {
   return text.trim().split(/(?<=[.!?])\s+(?=[A-Z0-9"“])/).map((s) => s.trim()).filter(Boolean);
 }
 

@@ -1,5 +1,5 @@
 import type { CoverLetterContent, ResumeContent } from "./types";
-import type { RepairPlan } from "./repairScope";
+import { splitSentences, type RepairPlan } from "./repairScope";
 
 export interface RepairPreservationInput {
   baselineResume: ResumeContent;
@@ -18,10 +18,6 @@ type PackageContent = { resume: ResumeContent; coverLetter?: CoverLetterContent 
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function splitSentences(text: string): string[] {
-  return text.trim().split(/(?<=[.!?])\s+(?=[A-Z0-9"“])/).map((sentence) => sentence.trim()).filter(Boolean);
 }
 
 function pathTokens(path: string): Array<string | number> {
