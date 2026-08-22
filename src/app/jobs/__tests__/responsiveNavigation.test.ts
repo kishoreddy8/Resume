@@ -15,6 +15,11 @@ test("responsive navigation keeps one tree and disables unavailable paging contr
   assert.match(sidebar, /disabled={!overflow\.right}/);
   assert.match(sidebar, /lg:hidden/);
   assert.match(sidebar, /behavior: reduced \? "auto" : "smooth"/);
+  assert.match(
+    sidebar,
+    /animate=\{\{ width: desktop \? \(open \? 248 : 48\) : "100%" \}\}/,
+    "the desktop motion width must be explicitly cleared when the rail becomes mobile",
+  );
 });
 
 test("candidate navigation follows the approved journey without changing the admin rail", () => {

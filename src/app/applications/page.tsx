@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import {
@@ -13,46 +13,32 @@ import {
   PanelEmpty,
   Pill,
   SkeletonRows,
-  StatTile,
 } from "@/components/ui";
 import {
   IconArrowUpRight,
   IconCheckCircle,
   IconDocument,
   IconInbox,
+  IconSearch,
   IconStar,
   IconTrend,
 } from "@/components/icons";
-import { MARKER_TEXT, presentStatus } from "./runStatus";
-import { ApplicationList } from "./ApplicationList";
+import { sourceLabel } from "@/app/jobs/sourceLabel";
+import { presentStatus } from "./runStatus";
 import {
   APPLICATION_GROUPS,
+  applicationContext,
   groupForStatus,
   primaryActionLabel,
   type ApplicationGroupId,
 } from "./grouping";
-
-/**
- * The application command centre.
- *
- * SORTED BY WHAT NEEDS A PERSON, NOT BY DATE. A run stopped on a CAPTCHA is the only thing on this
- * page with a pending action attached to it, and burying it under last week's submissions is how an
- * application sits unfinished for a week.
- *
- * EVERY STATE IS THE ENGINE'S OWN. Nothing here infers a status, merges two, or renames one:
- * `presentStatus` supplies the word, `WAITING_PROMPT` (already on the wire as `prompt`) supplies the
- * sentence, and `groupForStatus` reads only those. A paused run is never described as failed — the
- * system is working correctly and simply cannot proceed without a person.
- *
- * BOUNDED. One row per run, capped server-side, and no timeline, review payload, answer vault or
- * browser session is loaded here. Opening a run is a separate fetch on a separate page.
- */
 
 interface RunRow {
   id: number;
   jobId: number;
   title: string;
   company: string | null;
+  location: string | null;
   ats: string | null;
   status: string;
   prompt: string | null;
@@ -62,46 +48,56 @@ interface RunRow {
   updatedAt: string;
 }
 
+const EMPTY_COPY: Record<ApplicationGroupId | "all", string> = {
+  all: "No applications yet",
+  "needs-action": "Nothing needs your action.",
+  "in-progress": "No applications are in progress.",
+  submitted: "No confirmed submissions yet.",
+  completed: "No completed applications.",
+};
+
+const SUMMARY_ICON: Record<ApplicationGroupId, ReactNode> = {
+  "needs-action": <IconStar size={22} />,
+  "in-progress": <IconTrend size={22} />,
+  submitted: <IconInbox size={22} />,
+  completed: <IconCheckCircle size={22} />,
+};
+
 function initials(name: string | null): string {
   if (!name) return "?";
-  const w = name.replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).filter(Boolean);
-  if (w.length === 0) return "?";
-  if (w.length === 1) return w[0]!.slice(0, 2).toUpperCase();
-  return (w[0]![0]! + w[1]![0]!).toUpperCase();
+  const words = name.replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
+  return (words[0]![0]! + words[1]![0]!).toUpperCase();
 }
 
-/** "2h ago" / "3d ago". Wording only — never used for a decision. */
-function ago(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.round(hrs / 24)}d ago`;
+function formatDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-const TONE_ICON = {
-  "needs-action": <IconStar size={17} />,
-  "in-progress": <IconTrend size={17} />,
-  submitted: <IconInbox size={17} />,
-  closed: <IconCheckCircle size={17} />,
-} as const;
+function statusTone(marker: string, needsUser: boolean): "success" | "warning" | "info" | "neutral" {
+  if (marker === "done") return "success";
+  if (marker === "unknown" || needsUser) return "warning";
+  if (marker === "stopped") return "neutral";
+  return "info";
+}
 
 export default function ApplicationsPage() {
   const candidateId = useResolvedCandidateId();
   const [runs, setRuns] = useState<RunRow[] | null>(null);
   const [error, setError] = useState(false);
-  const [filter, setFilter] = useState<ApplicationGroupId | "all">("all");
+  const [tab, setTab] = useState<ApplicationGroupId | "all">("all");
   const [search, setSearch] = useState("");
 
   const load = useCallback(async () => {
     if (candidateId === null) return;
     setError(false);
     try {
-      const res = await fetch(`/api/candidates/${candidateId}/application-runs?scope=all&limit=100`);
-      if (!res.ok) return setError(true);
-      const body = await res.json();
+      const response = await fetch(`/api/candidates/${candidateId}/application-runs?scope=all&limit=100`);
+      if (!response.ok) return setError(true);
+      const body = await response.json();
       setRuns(body.runs ?? []);
     } catch {
       setError(true);
@@ -109,278 +105,167 @@ export default function ApplicationsPage() {
   }, [candidateId]);
 
   useEffect(() => {
-    // Fetch-on-mount; `load` is stable per candidate.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
 
   const grouped = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const all = (runs ?? []).filter(
-      (r) => !q || r.title.toLowerCase().includes(q) || (r.company ?? "").toLowerCase().includes(q)
-    );
-    const byGroup: Record<ApplicationGroupId, RunRow[]> = {
+    const next: Record<ApplicationGroupId, RunRow[]> = {
       "needs-action": [],
       "in-progress": [],
       submitted: [],
-      closed: [],
+      completed: [],
     };
-    for (const r of all) byGroup[groupForStatus(r.status)].push(r);
-    /* Within a group, most recently touched first. Ordering never re-ranks across groups: what
-     * needs a person stays above what does not, regardless of age. */
-    for (const key of Object.keys(byGroup) as ApplicationGroupId[]) {
-      byGroup[key].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+    for (const run of runs ?? []) next[groupForStatus(run.status)].push(run);
+    for (const group of APPLICATION_GROUPS) {
+      next[group.id].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     }
-    return byGroup;
-  }, [runs, search]);
+    return next;
+  }, [runs]);
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: 0 };
-    for (const g of APPLICATION_GROUPS) {
-      c[g.id] = grouped[g.id].length;
-      c.all! += grouped[g.id].length;
-    }
-    return c;
-  }, [grouped]);
+    const next: Record<ApplicationGroupId | "all", number> = { all: runs?.length ?? 0, "needs-action": 0, "in-progress": 0, submitted: 0, completed: 0 };
+    /* The fallback also keeps Fast Refresh safe when this presentation table and the grouping
+     * module update in adjacent frames; production data still always has all four buckets. */
+    for (const group of APPLICATION_GROUPS) next[group.id] = grouped[group.id]?.length ?? 0;
+    return next;
+  }, [grouped, runs]);
+
+  const visible = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const source = tab === "all" ? (runs ?? []) : grouped[tab];
+    return source.filter((run) => !query || `${run.title} ${run.company ?? ""}`.toLowerCase().includes(query));
+  }, [grouped, runs, search, tab]);
 
   if (error) {
     return (
-      <div className="flex flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-[1340px] flex-col gap-6">
         <PageHeader size="lg" title="Applications" />
-        <Panel>
-          <PanelEmpty
-            action={
-              <button type="button" onClick={load} className={BTN_SECONDARY}>
-                Retry
-              </button>
-            }
-          >
-            We couldn&apos;t load your applications.
-          </PanelEmpty>
-        </Panel>
+        <Panel><PanelEmpty action={<button type="button" onClick={load} className={`${BTN_SECONDARY} min-h-11`}>Retry</button>}>We couldn&apos;t load your applications.</PanelEmpty></Panel>
       </div>
     );
   }
 
   if (candidateId === null || runs === null) {
     return (
-      <div className="flex flex-col gap-5">
-        <PageHeader
-          size="lg"
-          title="Applications"
-          description="Track applications, respond to requests, and keep your job search moving."
-        />
+      <div className="mx-auto flex w-full max-w-[1340px] flex-col gap-5">
+        <PageHeader size="lg" title="Applications" description="Track applications and complete anything that needs your attention." />
         <LoadingRegion label="Loading applications" />
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {[0, 1, 2, 3].map((i) => (
-            <Panel key={i} compact>
-              <SkeletonRows rows={2} />
-            </Panel>
-          ))}
-        </div>
-        <Panel>
-          <SkeletonRows rows={4} />
-        </Panel>
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">{[0, 1, 2, 3].map((index) => <Panel key={index} compact><SkeletonRows rows={2} /></Panel>)}</div>
+        <Panel><SkeletonRows rows={4} /></Panel>
       </div>
     );
   }
 
-  const total = runs.length;
-  const visibleGroups = APPLICATION_GROUPS.filter(
-    (g) => (filter === "all" || filter === g.id) && grouped[g.id].length > 0
-  );
-
   return (
-    <div className="flex flex-col gap-5 pb-10">
+    <div className="mx-auto flex w-full max-w-[1340px] flex-col gap-6 pb-12">
       <PageHeader
         size="lg"
         title="Applications"
-        description="Track applications, respond to requests, and keep your job search moving."
-        actions={
-          <Link href="/jobs" className={BTN_PRIMARY}>
-            Browse jobs
-          </Link>
-        }
+        description="Track applications and complete anything that needs your attention."
+        actions={runs.length > 0 ? <Link href="/jobs" className={`${BTN_PRIMARY} min-h-11`}>Browse jobs</Link> : undefined}
       />
 
-      {/* ── summary ──────────────────────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {APPLICATION_GROUPS.map((g) => (
-          <StatTile
-            key={g.id}
-            tone={g.tone}
-            icon={TONE_ICON[g.id]}
-            value={counts[g.id] ?? 0}
-            label={g.cardLabel}
-            hint={g.cardHint}
+      <section aria-label="Application overview" className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        {APPLICATION_GROUPS.map((group) => (
+          <SummaryTile
+            key={group.id}
+            icon={SUMMARY_ICON[group.id]}
+            group={group.id}
+            label={group.cardLabel}
+            value={counts[group.id]}
+            hint={group.cardHint}
+            onClick={() => setTab(group.id)}
           />
         ))}
-      </div>
+      </section>
 
-      {total === 0 ? (
-        /* The real state of this profile today: the engine has never run an application. */
-        <Panel>
-          <div className="flex flex-col items-center gap-3 px-6 py-16 text-center">
-            <span
-              aria-hidden="true"
-              className="grid h-[56px] w-[56px] place-items-center rounded-[16px] bg-[var(--tile-lav-bg)] text-[var(--tile-lav-fg)]"
-            >
-              <IconDocument size={26} />
-            </span>
-            <h2 className="text-[16px] font-bold text-primary">No applications yet</h2>
-            <p className="max-w-[48ch] text-[12.5px] leading-relaxed text-tertiary">
-              When you&apos;re ready to apply to a matched job, your application progress will appear
-              here. JobHunt fills what it can evidence, stops for anything it cannot, and never
-              submits without your approval.
-            </p>
-            <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
-              <Link href="/jobs" className={BTN_PRIMARY}>
-                Browse jobs
-              </Link>
-              <Link href="/jobs?bucket=ready_for_tailoring" className={BTN_SECONDARY}>
-                View ready-to-tailor jobs
-              </Link>
-            </div>
-          </div>
-        </Panel>
+      {runs.length === 0 ? (
+        <section className="rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] px-6 py-16 text-center shadow-[var(--lift-1)]">
+          <span aria-hidden="true" className="mx-auto grid h-14 w-14 place-items-center rounded-[17px] bg-[var(--tile-lav-bg)] text-[var(--tile-lav-fg)]"><IconDocument size={25} /></span>
+          <h2 className="mt-4 text-[19px] font-bold tracking-[-0.01em] text-primary">No applications yet</h2>
+          <p className="mx-auto mt-2 max-w-[52ch] text-[15px] leading-6 text-secondary">When a resume is ready, you can start an application from the Job Workspace. Nothing is submitted without your approval.</p>
+          <Link href="/jobs" className={`${BTN_PRIMARY} mt-5 min-h-11`}>Browse jobs</Link>
+        </section>
       ) : (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {([{ id: "all" as const, cardLabel: "All" }, ...APPLICATION_GROUPS] as {
-                id: ApplicationGroupId | "all";
-                cardLabel: string;
-              }[]).map((g) => (
-                <button
-                  key={g.id}
-                  type="button"
-                  onClick={() => setFilter(g.id)}
-                  aria-pressed={filter === g.id}
-                  className={`premium-active-tab inline-flex h-11 items-center gap-2 rounded-[10px] px-3.5 text-[13px] font-medium transition-colors duration-150 ease-out active:scale-[0.98] ${
-                    filter === g.id
-                      ? "bg-[var(--accent)] text-[var(--accent-fg)]"
-                      : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary"
-                  }`}
-                >
-                  {g.cardLabel}
-                  <span className={`tabular-nums ${filter === g.id ? "opacity-80" : "text-tertiary"}`}>
-                    {counts[g.id] ?? 0}
-                  </span>
-                </button>
-              ))}
+        <section aria-labelledby="application-runs-title" className="overflow-hidden rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] shadow-[var(--lift-1)]">
+          <div className="flex flex-col gap-5 border-b border-[var(--separator)] px-4 py-5 sm:px-6 lg:flex-row lg:items-end lg:justify-between lg:px-7">
+            <div>
+              <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--accent)]">Application lifecycle</p>
+              <h2 id="application-runs-title" className="mt-1 text-[22px] font-bold tracking-[-0.02em] text-primary">Your applications</h2>
+              <p className="mt-1 text-[14px] leading-6 text-secondary">One place for every active run, required action, and confirmed submission.</p>
             </div>
-            <label className="relative">
+            <label className="relative block w-full lg:w-[320px]">
               <span className="sr-only">Search applications by company or role</span>
-              <input
-                type="search"
-                className={`${INPUT} w-[260px]`}
-                placeholder="Search applications…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+              <span aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-tertiary"><IconSearch size={18} /></span>
+              <input type="search" className={`${INPUT} min-h-11 pl-11 text-[14px]`} placeholder="Search role or company" value={search} onChange={(event) => setSearch(event.target.value)} />
             </label>
           </div>
 
-          {visibleGroups.length === 0 ? (
-            <Panel>
-              <PanelEmpty>
-                {search.trim()
-                  ? `No application matches “${search.trim()}”.`
-                  : "No application is in this state right now."}
-              </PanelEmpty>
-            </Panel>
-          ) : (
-            visibleGroups.map((g) => (
-              <section key={g.id} aria-label={g.label} className="flex flex-col gap-3">
-                <h2 className="text-[15px] font-bold tracking-[-0.01em] text-primary">
-                  {g.label}{" "}
-                  <span className="text-[13px] font-semibold tabular-nums text-tertiary">
-                    {grouped[g.id].length}
-                  </span>
-                </h2>
-                <div className="flex flex-col gap-3">
-                  {grouped[g.id].map((run) => (
-                    <RunRowCard key={run.id} run={run} />
-                  ))}
-                </div>
-              </section>
-            ))
-          )}
-        </>
-      )}
+          <div className="border-b border-[var(--separator)] px-2 sm:px-4">
+            <div role="tablist" aria-label="Application status" className="flex min-w-max gap-1 overflow-x-auto py-2">
+              {[{ id: "all" as const, label: "All" }, ...APPLICATION_GROUPS.map((group) => ({ id: group.id, label: group.cardLabel }))].map((item) => (
+                <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)} className={`premium-active-tab inline-flex min-h-11 shrink-0 items-center gap-2 rounded-[11px] px-4 text-[14px] font-semibold transition-colors duration-150 ${tab === item.id ? "bg-[var(--accent)] text-[var(--accent-fg)]" : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary"}`}>
+                  {item.label}<span className={`tabular-nums ${tab === item.id ? "opacity-80" : "text-tertiary"}`}>{counts[item.id]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
 
-      {/* Jobs you moved through a stage by hand, with no automated run behind them. They are
-       *  applications too, and a list of runs alone would hide them. */}
-      <section aria-label="Tracked by you" className="flex flex-col gap-3">
-        <h2 className="text-[15px] font-bold tracking-[-0.01em] text-primary">Tracked by you</h2>
-        <ApplicationList candidateId={candidateId} />
-      </section>
+          {visible.length === 0 ? (
+            <div className="px-6 py-14 text-center"><h3 className="text-[17px] font-bold text-primary">{search.trim() ? `No application matches “${search.trim()}”.` : EMPTY_COPY[tab]}</h3><p className="mt-2 text-[14px] text-secondary">Application statuses update here as real runs progress.</p></div>
+          ) : (
+            <ul className="grid gap-3 bg-[var(--surface-muted)] p-3 sm:p-4 lg:p-5">
+              {visible.map((run) => <ApplicationCard key={run.id} run={run} />)}
+            </ul>
+          )}
+        </section>
+      )}
     </div>
   );
 }
 
-/**
- * One application.
- *
- * The row shows the engine's word, the engine's sentence, and one action. There is no second
- * button competing with it: everything else a person might want lives one click away on the detail
- * page, which is where the run's full state actually is.
- */
-function RunRowCard({ run }: { run: RunRow }) {
-  const p = presentStatus(run.status);
-  const tone =
-    p.marker === "done"
-      ? "success"
-      : p.marker === "unknown"
-        ? "warning"
-        : p.needsUser
-          ? "warning"
-          : p.marker === "stopped"
-            ? "neutral"
-            : "info";
-
+function SummaryTile({ icon, group, label, value, hint, onClick }: { icon: ReactNode; group: ApplicationGroupId; label: string; value: number; hint: string; onClick: () => void }) {
+  const tone = {
+    "needs-action": "bg-[var(--tile-orange-bg)] text-[var(--tile-orange-fg)]",
+    "in-progress": "bg-[var(--tile-lav-bg)] text-[var(--tile-lav-fg)]",
+    submitted: "bg-[var(--tile-blue-bg)] text-[var(--tile-blue-fg)]",
+    completed: "bg-[var(--tile-green-bg)] text-[var(--tile-green-fg)]",
+  }[group];
   return (
-    <div className="rounded-[14px] border border-[var(--border)] bg-[var(--z3-bg)] px-4 py-4 shadow-[var(--shadow-card)] transition-shadow duration-150 ease-out hover:shadow-[var(--shadow-hero)]">
-      <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
-        <span
-          aria-hidden="true"
-          className="grid h-[46px] w-[46px] shrink-0 place-items-center rounded-[13px] bg-[var(--z0-bg)] text-[14px] font-bold text-secondary"
-        >
-          {initials(run.company)}
-        </span>
+    <article className="premium-hover-lift flex min-h-[166px] flex-col rounded-[16px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 shadow-[var(--lift-1)] sm:rounded-[18px] sm:p-5">
+      <span aria-hidden="true" className={`grid h-10 w-10 place-items-center rounded-[12px] sm:h-11 sm:w-11 ${tone}`}>{icon}</span>
+      <h2 className="mt-3 text-[13px] font-semibold leading-5 text-secondary sm:text-[14px]">{label}</h2>
+      <div className="mt-1 text-[22px] font-bold tracking-[-0.02em] text-primary">{value}</div>
+      <p className="mt-1 text-[12px] leading-5 text-tertiary sm:text-[13px]">{hint}</p>
+      <button type="button" onClick={onClick} className="mt-auto inline-flex min-h-11 w-fit items-center gap-1.5 pt-2 text-[13px] font-semibold text-[var(--accent)] transition-colors hover:text-[var(--accent-hover)]">View {label.toLowerCase()}<IconArrowUpRight size={14} /></button>
+    </article>
+  );
+}
 
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-            <span className="truncate text-[15px] font-bold leading-snug text-primary">{run.title}</span>
-            <Pill tone={tone}>{p.label}</Pill>
+function ApplicationCard({ run }: { run: RunRow }) {
+  const presentation = presentStatus(run.status);
+  const ats = sourceLabel(run.ats);
+  return (
+    <li className={`premium-hover-lift rounded-[16px] border bg-[var(--z3-bg)] p-4 shadow-[var(--lift-1)] sm:p-5 lg:p-6 ${presentation.needsUser ? "border-[color-mix(in_srgb,var(--warning)_28%,var(--border))]" : "border-[var(--border)]"}`}>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.55fr)_minmax(210px,.8fr)_auto] lg:items-center lg:gap-6">
+        <div className="flex min-w-0 items-start gap-3.5 sm:gap-4">
+          <span aria-hidden="true" className="grid h-12 w-12 shrink-0 place-items-center rounded-[14px] bg-[var(--tile-lav-bg)] text-[14px] font-bold text-[var(--tile-lav-fg)] sm:h-14 sm:w-14">{initials(run.company)}</span>
+          <div className="min-w-0">
+            <h3 className="text-[17px] font-bold leading-[1.35] tracking-[-0.01em] text-primary sm:text-[18px]">{run.title}</h3>
+            <p className="mt-1 text-[14px] font-medium text-secondary">{run.company ?? "Company unknown"}{run.location ? ` · ${run.location}` : ""}</p>
+            <p className="mt-1 text-[13px] leading-5 text-tertiary">Updated {formatDate(run.updatedAt)}{ats ? ` · ${ats}` : ""}</p>
           </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[12.5px] text-tertiary">
-            <span className="text-secondary">{run.company ?? "Company unknown"}</span>
-            {run.ats && <span>· {run.ats}</span>}
-            <span>· {run.submittedAt ? `Submitted ${ago(run.submittedAt)}` : ago(run.updatedAt)}</span>
-          </div>
-
-          {/* The engine's own prompt, then the employer's own question. Neither is paraphrased. */}
-          {p.needsUser && run.prompt && (
-            <p className={`mt-2 text-[12.5px] leading-relaxed ${MARKER_TEXT[p.marker]}`}>{run.prompt}</p>
-          )}
-          {run.question && (
-            <p className="mt-1 text-[12.5px] leading-relaxed text-secondary">
-              &ldquo;{run.question}&rdquo;
-            </p>
-          )}
-          <p className="mt-1.5 text-[11.5px] text-tertiary">
-            {run.resumeFile ? "Resume attached" : "No resume attached"}
-          </p>
         </div>
-
-        <Link
-          href={`/applications/${run.id}`}
-          className={`${p.needsUser ? BTN_PRIMARY : BTN_SECONDARY} shrink-0`}
-        >
-          {primaryActionLabel(run.status)}
-          <IconArrowUpRight size={14} />
+        <div className="min-w-0">
+          <Pill tone={statusTone(presentation.marker, presentation.needsUser)}>{presentation.label}</Pill>
+          <p className="mt-2 text-[14px] leading-6 text-secondary">{applicationContext(run.status, run.prompt)}</p>
+          {run.question && <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-tertiary">“{run.question}”</p>}
+        </div>
+        <Link href={`/applications/${run.id}`} className={`${presentation.needsUser ? BTN_PRIMARY : BTN_SECONDARY} min-h-11 w-full text-[14px] lg:w-auto`}>
+          {primaryActionLabel(run.status)}<IconArrowUpRight size={15} />
         </Link>
       </div>
-    </div>
+    </li>
   );
 }

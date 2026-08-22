@@ -75,8 +75,9 @@ test("UI-6 terminal states never ask the user to act, except an unconfirmed one"
   }
 });
 
-test("UI-7 an unrecognised status is shown verbatim rather than guessed at", () => {
+test("UI-7 an unrecognised status uses neutral candidate copy without leaking the enum", () => {
   const p = presentStatus("SOME_FUTURE_STATE");
-  assert.match(p.label, /some future state/i, "a new engine state must not be silently mislabelled");
+  assert.equal(p.label, "Status updated");
+  assert.doesNotMatch(p.label, /some|future|state/i, "a new engine enum must not leak into candidate UI");
   assert.equal(p.needsUser, false, "and must not claim to need the user");
 });

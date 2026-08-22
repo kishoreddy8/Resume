@@ -25,18 +25,18 @@ export const STATUS_PRESENTATION: Record<RunStatus, StatusPresentation> = {
   QUEUED: { label: "Queued", marker: "waiting", needsUser: false },
   STARTING: { label: "Starting", marker: "running", needsUser: false },
   NAVIGATING: { label: "Opening application", marker: "running", needsUser: false },
-  ACCOUNT_REQUIRED: { label: "Account needed", marker: "waiting", needsUser: true },
+  ACCOUNT_REQUIRED: { label: "Account setup required", marker: "waiting", needsUser: true },
   FILLING: { label: "Filling in", marker: "running", needsUser: false },
-  WAITING_FOR_ANSWER: { label: "Needs your answer", marker: "waiting", needsUser: true },
-  WAITING_FOR_CAPTCHA: { label: "Needs a CAPTCHA", marker: "waiting", needsUser: true },
-  WAITING_FOR_MFA: { label: "Needs a verification code", marker: "waiting", needsUser: true },
-  WAITING_FOR_EMAIL_VERIFICATION: { label: "Needs email verification", marker: "waiting", needsUser: true },
-  READY_FOR_REVIEW: { label: "Ready for your review", marker: "waiting", needsUser: true },
-  WAITING_FOR_SUBMIT_APPROVAL: { label: "Awaiting your approval", marker: "waiting", needsUser: true },
+  WAITING_FOR_ANSWER: { label: "Needs input", marker: "waiting", needsUser: true },
+  WAITING_FOR_CAPTCHA: { label: "Verification required", marker: "waiting", needsUser: true },
+  WAITING_FOR_MFA: { label: "Verification required", marker: "waiting", needsUser: true },
+  WAITING_FOR_EMAIL_VERIFICATION: { label: "Verification required", marker: "waiting", needsUser: true },
+  READY_FOR_REVIEW: { label: "Final review", marker: "waiting", needsUser: true },
+  WAITING_FOR_SUBMIT_APPROVAL: { label: "Approval required", marker: "waiting", needsUser: true },
   SUBMITTING: { label: "Submitting", marker: "running", needsUser: false },
   SUBMITTED: { label: "Submitted", marker: "done", needsUser: false },
   /* Deliberately not "failed". The click happened; what is unknown is whether it landed. */
-  SUBMISSION_UNCONFIRMED: { label: "Submitted — unconfirmed", marker: "unknown", needsUser: true },
+  SUBMISSION_UNCONFIRMED: { label: "Submission unconfirmed", marker: "unknown", needsUser: true },
   FAILED: { label: "Stopped", marker: "stopped", needsUser: false },
   CANCELLED: { label: "Cancelled", marker: "stopped", needsUser: false },
 };
@@ -61,9 +61,9 @@ export const MARKER_TEXT: Record<Marker, string> = {
 export function presentStatus(status: string): StatusPresentation {
   return (
     STATUS_PRESENTATION[status as RunStatus] ?? {
-      /* An unrecognised state is shown verbatim rather than guessed at — if the engine gains one,
-       * the UI says what it is instead of quietly mislabelling it. */
-      label: status.replace(/_/g, " ").toLowerCase(),
+      /* Fail closed in candidate presentation. A newly-added engine enum must never leak raw into
+       * the UI; the neutral wording signals that the record changed without inventing meaning. */
+      label: "Status updated",
       marker: "unknown",
       needsUser: false,
     }
