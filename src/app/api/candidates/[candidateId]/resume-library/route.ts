@@ -12,6 +12,8 @@ import {
 import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
 import { evaluateApplicationReadiness } from "@/lib/resumeQuality/applicationReadiness";
 import { canRevalidate, isLegacyReviewMissingTypedSafetyAnalysis } from "@/lib/resumeQuality/legacyReview";
+import { evaluateTailoringAuthorization } from "@/lib/resumeQuality/tailoringAuthorization";
+import { evaluateWorkflowRetry } from "@/lib/resumeQuality/workflowRetry";
 import {
   finalCoverLetterFilename,
   finalResumeFilename,
@@ -59,6 +61,8 @@ export interface ResumeLibraryEntry {
   overallScore: number | null;
   isLegacyMissingAnalysis: boolean;
   canRevalidate: boolean;
+  /** Existing retry authority, projected for presentation. This never starts or authorizes work. */
+  canRetry: boolean;
   /**
    * Presence only — never a path, never contents.
    *
@@ -160,6 +164,17 @@ export async function GET(
       }
     }
 
+    const retryAuthorization = evaluateTailoringAuthorization(candidateId, dedupeKey);
+    const retryDecision = evaluateWorkflowRetry({
+      existingWorkflow: {
+        id: workflow.id,
+        status: workflow.status,
+        created_at: workflow.created_at,
+      },
+      tailoringMarkedAt: retryAuthorization.markedAt,
+      authorization: retryAuthorization,
+    });
+
     entries.push({
       jobId: job?.id ?? null,
       dedupeKey,
@@ -178,6 +193,7 @@ export async function GET(
       overallScore,
       isLegacyMissingAnalysis: isLegacy,
       canRevalidate: canRevalidate(workflow),
+      canRetry: retryDecision.action === "CREATE_RETRY",
       documents: documentPresence(
         { candidateId, dedupeKey, runId: workflow.tailoring_run_id, workflowId: workflow.id },
         firstName
