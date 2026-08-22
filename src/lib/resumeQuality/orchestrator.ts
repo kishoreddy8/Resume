@@ -66,6 +66,32 @@ import {
 import { resolveDeterministicReviewContext } from "./reviewInputContext";
 import { buildWorkspacePackage } from "./workspacePackage";
 
+// Certification-badge source clarification: resolves this candidate's own Master Resume .docx path
+// so generateTailoringOutputs can preserve its embedded certification badge images (see
+// sourceBadgeAssets.ts). Deliberately re-derived locally rather than imported — mirrors the exact
+// same "small local re-derivation over cross-module coupling" pattern this path convention already
+// uses in src/lib/tailoringExecution.ts, src/lib/match/candidateProfile.ts, and
+// src/lib/resumeQuality/workspacePackage.ts. Returns undefined (never throws) when the candidate has
+// no Master Resume yet, or it is a .md/.txt upload rather than a .docx — both fall back to the
+// generic text-card badge presentation exactly as before this feature existed.
+//
+// THIS orchestrator, not tailoringExecution.ts, is the primary in-app render path: every
+// INITIAL_GENERATION and TARGETED_REPAIR iteration's Resume.docx is produced by the
+// generateTailoringOutputs call below, not by executeTailoringRun (which only the external
+// Codex/Claude-Code skill-runner CLI bridge — execute-run.ts — ever calls). Found live: workflow 21
+// (candidate 13/Srikanth, job 33017) rendered two full iterations through this exact call with no
+// masterResumeDocxPath at all, so its real, embedded certification badge images were never even
+// attempted — every render silently fell back to the generic text-card path despite the candidate's
+// Master Resume having three real embedded PNGs. Wiring it here, not just in tailoringExecution.ts,
+// is what actually puts the feature in the path candidates go through.
+function resumeQualityCandidatesRoot(): string {
+  return process.env.CAREER_OPS_CANDIDATES_DIR ?? path.join(process.cwd(), "data", "candidates");
+}
+function resolveMasterResumeDocxPath(candidateId: number): string | undefined {
+  const candidate = path.join(resumeQualityCandidatesRoot(), String(candidateId), "master", "resume.docx");
+  return fs.existsSync(candidate) ? candidate : undefined;
+}
+
 /**
  * Phase 3 Stage 9 & 10 — Deterministic Multi-Iteration Resume Quality Orchestrator.
  *
@@ -432,6 +458,7 @@ export async function executeResumeQualityIteration(
               paragraphs: ["I am excited to apply for this position."],
               closing: `Sincerely,\n${resume.name}`,
             },
+            masterResumeDocxPath: resolveMasterResumeDocxPath(candidateId),
           },
           { outputDir: iterDir }
         );

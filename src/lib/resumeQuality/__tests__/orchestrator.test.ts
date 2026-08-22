@@ -4,9 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
+import JSZip from "jszip";
 import { generateCoverLetterDocx } from "../../../../tools/tailoring-engine/cover-letter-template";
 import { generateResumeDocx } from "../../../../tools/tailoring-engine/resume-template";
 import type { CoverLetterContent, ResumeContent } from "../../../../tools/tailoring-engine/types";
+import { makePng } from "../../../../tools/tailoring-engine/__tests__/pngFixture";
+import { writeMasterResumeDocxFixture } from "../../../../tools/tailoring-engine/__tests__/masterResumeFixture";
 import type { ResumeReviewerAgent, ResumeReviewerInput, ResumeReviewerOutput } from "../types";
 import { getFinalDirectory, getIterationDirectory, type QualityWorkflowLocation } from "../workspace";
 import { hashJobIdentity } from "@/lib/tailoringArtifacts";
@@ -56,6 +59,7 @@ function unit(overrides: Partial<RequirementUnit>): RequirementUnit {
     criticality: "CRITICAL",
     evidenceSnippets: [],
     experienceDepthRequired: false,
+    requestedYears: null,
     fromUnclaimedText: false,
     ...overrides,
   };
@@ -863,6 +867,49 @@ test("17. READY creates final artifacts in final/ directory", async () => {
   assert(fs.existsSync(path.join(res.finalDirectory, "Alice_Resume.docx")));
   assert(fs.existsSync(path.join(res.finalDirectory, "Alice_CoverLetter.docx")));
   assert(fs.existsSync(path.join(res.finalDirectory, "resume_review_feedback.md")));
+});
+
+test("17b. a candidate's real embedded Master Resume certification badge is preserved through the orchestrator's OWN render path (not just tailoringExecution.ts)", async () => {
+  // Found live during the Srikanth (candidate 13) certification run: orchestrator.ts's own
+  // generateTailoringOutputs call — the ONLY place a resume-quality workflow's Resume.docx is ever
+  // actually rendered — never passed masterResumeDocxPath at all, so every INITIAL_GENERATION/
+  // TARGETED_REPAIR iteration silently fell back to the generic text-card badges regardless of what
+  // the candidate's own Master Resume had embedded. tailoringExecution.ts's own wiring (already
+  // tested in src/lib/__tests__/tailoringExecution.test.ts) is a separate, rarely-used path — only
+  // the external Codex/Claude-Code CLI bridge (execute-run.ts) ever calls it.
+  const masterResumePath = path.join(tmpCandidatesDir, String(candidateAliceId), "master", "resume.docx");
+  const badge = makePng(100, 50, [20, 90, 150]);
+  await writeMasterResumeDocxFixture(masterResumePath, [{ bytes: badge, width: 40, height: 20 }]);
+
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+    maxIterations: 3,
+  });
+
+  const res = await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: PERFECT_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+
+  // Source-image badges never depend on ResumeContent.certifications at all — they come purely from
+  // the Master Resume's own embedded images (see sourceBadgeAssets.ts), so PERFECT_RESUME is used
+  // completely unmodified here specifically to prove that: no certification text is required for the
+  // candidate's real embedded badge to appear.
+  assert.equal(res.status, "READY");
+  const resumeDocxPath = path.join(res.finalDirectory!, "Alice_Resume.docx");
+  assert(fs.existsSync(resumeDocxPath));
+
+  const zip = await JSZip.loadAsync(fs.readFileSync(resumeDocxPath));
+  const mediaFiles = Object.keys(zip.files).filter((f) => /^word\/media\//.test(f) && !f.endsWith("/"));
+  assert.equal(mediaFiles.length, 1, "the candidate's real embedded badge must be preserved via the orchestrator's own render call");
+  const embedded = await zip.file(mediaFiles[0])!.async("nodebuffer");
+  assert.ok(embedded.equals(badge), "the embedded image must be byte-identical to the candidate's own Master Resume asset");
 });
 
 test("18. Final candidate filenames are safe", async () => {
