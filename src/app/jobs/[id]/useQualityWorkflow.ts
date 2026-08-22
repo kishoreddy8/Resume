@@ -27,7 +27,7 @@ export interface ReviewScores {
   missingRequiredSkills: string[];
   truthfulnessIssues: string[];
   blockingIssues: string[];
-  requiredCorrections: string[];
+  requiredCorrections: Array<{ priority?: string; description: string }>;
 }
 
 export interface QualityWorkflowData {

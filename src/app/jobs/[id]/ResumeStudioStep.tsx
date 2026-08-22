@@ -69,7 +69,7 @@ export function ResumeStudioStep({ plan }: { plan: TailoringPlan }) {
         blurb="What JobHunt will emphasise before anything is written. Nothing has been generated yet."
       />
 
-      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {/* 1 — job requirements */}
         <WsCard
           title="Job requirements"

@@ -40,18 +40,19 @@ test("Jobs exposes the approved five candidate views in order", () => {
 
 test("saved jobs use the existing candidate pin field with optimistic rollback", () => {
   const row = fs.readFileSync(path.resolve("src/app/jobs/JobRow.tsx"), "utf8");
+  const button = fs.readFileSync(path.resolve("src/app/jobs/SaveJobButton.tsx"), "utf8");
   const feed = fs.readFileSync(path.resolve("src/app/jobs/ForYouList.tsx"), "utf8");
   const route = fs.readFileSync(path.resolve("src/app/api/candidates/[candidateId]/for-you/route.ts"), "utf8");
-  assert.match(row, /job\.pinned === 1/);
-  assert.match(row, /method: "PATCH"/);
-  assert.match(row, /body: JSON\.stringify\(\{ candidateId, pinned: next \}\)/);
-  assert.match(row, /setSaved\(previous\)/);
-  assert.match(row, /event\.stopPropagation\(\)/);
-  assert.match(row, /aria-label=\{saved \? "Remove saved job" : "Save job"\}/);
-  assert.match(row, /className={`grid h-11 w-11/);
-  assert.match(row, /useReducedMotion\(\)/);
-  assert.equal(row.match(/fetch\(`/g)?.length, 1, "saving should be the row's only request");
-  assert.match(row, /async function toggle\(\)[\s\S]*fetch\(`/);
+  assert.match(row, /initialSaved=\{job\.pinned === 1\}/);
+  assert.match(button, /method: "PATCH"/);
+  assert.match(button, /body: JSON\.stringify\(\{ candidateId, pinned: next \}\)/);
+  assert.match(button, /setSaved\(previous\)/);
+  assert.match(button, /event\.stopPropagation\(\)/);
+  assert.match(button, /aria-label=\{saved \? "Remove saved job" : "Save job"\}/);
+  assert.match(button, /className={`grid h-11 w-11/);
+  assert.match(button, /useReducedMotion\(\)/);
+  assert.equal(button.match(/fetch\(`/g)?.length, 1, "saving should be the button's only request");
+  assert.match(button, /async function toggle\(\)[\s\S]*fetch\(`/);
   assert.match(feed, /params\.set\("savedOnly", "true"\)/);
   assert.match(route, /if \(savedOnly\) filtered = filtered\.filter\(\(item\) => item\.saved\)/);
 });

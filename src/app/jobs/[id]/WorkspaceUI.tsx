@@ -15,7 +15,7 @@ import type { ReactNode } from "react";
  */
 
 export const WS_CARD =
-  "rounded-[12px] border border-[#E8EAF0] bg-[var(--z3-bg)] shadow-[0_2px_8px_rgba(40,43,75,0.035)] dark:border-[var(--border)]";
+  "rounded-[18px] border border-[#E8EAF0] bg-[var(--z3-bg)] shadow-[var(--lift-1)] dark:border-[var(--border)]";
 
 /** A column in a step's horizontal grid. `stretch` keeps a row of cards visually aligned. */
 export function WsCard({
@@ -34,12 +34,12 @@ export function WsCard({
 }) {
   const ground =
     tone === "warm"
-      ? "rounded-[12px] border border-[#F0E6D2] bg-[#FFF9EE] shadow-[0_2px_8px_rgba(40,43,75,0.035)] dark:border-[var(--border)] dark:bg-[color-mix(in_oklab,var(--warning)_8%,var(--z3-bg))]"
+      ? "rounded-[18px] border border-[#F0E6D2] bg-[#FFF9EE] shadow-[var(--lift-1)] dark:border-[var(--border)] dark:bg-[color-mix(in_oklab,var(--warning)_8%,var(--z3-bg))]"
       : WS_CARD;
   return (
-    <section className={`${ground} flex min-w-0 flex-col p-4 ${className}`}>
-      {title && <h3 className="text-[13px] font-bold leading-snug text-primary">{title}</h3>}
-      {hint && <p className="mt-1 text-[11.5px] leading-relaxed text-tertiary">{hint}</p>}
+    <section className={`${ground} flex min-w-0 flex-col p-5 ${className}`}>
+      {title && <h3 className="text-[16px] font-semibold leading-snug tracking-[-0.01em] text-primary">{title}</h3>}
+      {hint && <p className="mt-1.5 text-[13px] leading-relaxed text-tertiary">{hint}</p>}
       <div className={title || hint ? "mt-3" : ""}>{children}</div>
     </section>
   );
@@ -48,9 +48,9 @@ export function WsCard({
 /** The small uppercase label above a step's grid. Not a page heading. */
 export function StepSectionHeading({ title, blurb }: { title: string; blurb?: string }) {
   return (
-    <div className="mb-3">
-      <h2 className="text-[13.5px] font-bold tracking-[-0.005em] text-primary">{title}</h2>
-      {blurb && <p className="mt-0.5 text-[12px] leading-relaxed text-tertiary">{blurb}</p>}
+    <div className="mb-4">
+      <h2 className="text-[20px] font-bold tracking-[-0.02em] text-primary">{title}</h2>
+      {blurb && <p className="mt-1 text-[13.5px] leading-relaxed text-secondary">{blurb}</p>}
     </div>
   );
 }
@@ -105,9 +105,9 @@ export function EvidenceRow({
     <li className="flex items-center justify-between gap-2 py-[5px]">
       <span className="flex min-w-0 items-center gap-2">
         <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
-        <span className="truncate text-[12.5px] text-primary">{label}</span>
+        <span className="truncate text-[13.5px] text-primary">{label}</span>
       </span>
-      <span className={`shrink-0 text-[11px] font-medium ${text}`}>{strength}</span>
+      <span className={`shrink-0 text-[12px] font-medium ${text}`}>{strength}</span>
     </li>
   );
 }
@@ -116,8 +116,8 @@ export function EvidenceRow({
 export function FactRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <li className="flex items-baseline justify-between gap-3 py-[5px]">
-      <span className="shrink-0 text-[12px] text-tertiary">{label}</span>
-      <span className="min-w-0 truncate text-right text-[12.5px] font-medium text-primary">{value}</span>
+      <span className="shrink-0 text-[13px] text-tertiary">{label}</span>
+      <span className="min-w-0 truncate text-right text-[13.5px] font-medium text-primary">{value}</span>
     </li>
   );
 }
@@ -130,12 +130,12 @@ export function BulletRow({ children, tick = false }: { children: ReactNode; tic
         aria-hidden="true"
         className={`mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full ${tick ? "bg-[var(--pill-success-fg)]" : "bg-[var(--accent)]"}`}
       />
-      <span className="text-[12.5px] leading-relaxed text-secondary">{children}</span>
+      <span className="text-[13.5px] leading-relaxed text-secondary">{children}</span>
     </li>
   );
 }
 
 /** Said when a card genuinely has nothing to show. Never padded with an example. */
 export function EmptyNote({ children }: { children: ReactNode }) {
-  return <p className="text-[12px] leading-relaxed text-tertiary">{children}</p>;
+  return <p className="text-[13.5px] leading-relaxed text-tertiary">{children}</p>;
 }

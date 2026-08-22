@@ -1,12 +1,12 @@
 "use client";
 
-import { memo, useState, type ReactNode } from "react";
-import { motion, useReducedMotion } from "motion/react";
+import { memo, type ReactNode } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import type { ListMatchSummary } from "@/lib/rank/jobsList";
 import type { JobWithCompany, JobWithCompanySummary } from "@/types";
 import { candidateStatus } from "@/lib/candidateStatus";
+import { SaveJobButton } from "./SaveJobButton";
 
 export type { JobWithCompanySummary };
 export type RowJob = Pick<
@@ -66,70 +66,6 @@ function AgeLabel({ job, thresholds }: { job: RowJob; thresholds: LifecycleThres
   const fresh = getJobAgeBand(days, thresholds) === "fresh";
   const label = days === 0 ? "Today" : days === 1 ? "1 day ago" : `${days} days ago`;
   return <span className={fresh ? "font-semibold text-[var(--accent)]" : "text-tertiary"}>{label}</span>;
-}
-
-function SaveJobButton({
-  job,
-  candidateId,
-  onSavedChange,
-}: {
-  job: RowJob;
-  candidateId: number;
-  onSavedChange?: (jobId: number, saved: boolean) => void;
-}) {
-  const [saved, setSaved] = useState(job.pinned === 1);
-  const [saving, setSaving] = useState(false);
-  const reduced = useReducedMotion() ?? false;
-  async function toggle() {
-    if (saving) return;
-    const previous = saved;
-    const next = !previous;
-    setSaved(next);
-    setSaving(true);
-    onSavedChange?.(job.id, next);
-    try {
-      const response = await fetch(`/api/jobs/${job.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidateId, pinned: next }),
-      });
-      if (!response.ok) throw new Error("Could not update saved job");
-    } catch {
-      setSaved(previous);
-      onSavedChange?.(job.id, previous);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <motion.button
-      type="button"
-      aria-label={saved ? "Remove saved job" : "Save job"}
-      title={saved ? `Remove ${job.title} from saved jobs` : `Save ${job.title}`}
-      aria-pressed={saved}
-      disabled={saving}
-      onClick={(event) => {
-        event.stopPropagation();
-        void toggle();
-      }}
-      animate={reduced ? undefined : { scale: saved ? [1, 1.16, 1] : 1 }}
-      transition={{ duration: reduced ? 0 : 0.16 }}
-      className={`grid h-11 w-11 shrink-0 place-items-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 disabled:opacity-60 ${
-        saved ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "text-tertiary hover:bg-[var(--surface-hover)] hover:text-primary"
-      }`}
-    >
-      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5">
-        <path
-          d="M20.8 4.7a5.5 5.5 0 0 0-7.8 0L12 5.8l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.8Z"
-          fill={saved ? "currentColor" : "none"}
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </motion.button>
-  );
 }
 
 export const JobRow = memo(function JobRow({
@@ -206,7 +142,13 @@ export const JobRow = memo(function JobRow({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          <SaveJobButton job={job} candidateId={candidateId} onSavedChange={onSavedChange} />
+          <SaveJobButton
+            jobId={job.id}
+            jobTitle={job.title}
+            candidateId={candidateId}
+            initialSaved={job.pinned === 1}
+            onSavedChange={onSavedChange}
+          />
           <span aria-hidden="true" className="hidden h-11 w-8 place-items-center text-tertiary transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-[var(--accent)] sm:grid">
             <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="m6 3 5 5-5 5" /></svg>
           </span>

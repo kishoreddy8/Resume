@@ -69,11 +69,13 @@ function domainOf(url: string | null): string | null {
 export function ApplicationReadyStep({
   job,
   quality,
+  onReviewIssues,
   startControl,
 }: {
   job: JobWithCompany;
   /** Null until Validation has been opened — the resume row then reads "Unknown", not "Ready". */
   quality: QualityWorkflowData | null;
+  onReviewIssues: () => void;
   startControl: ReactNode;
 }) {
   const h1b = combineH1bConfidence(job.company_h1b_confidence, job.sponsorship_polarity);
@@ -83,11 +85,50 @@ export function ApplicationReadyStep({
   /* The resume row follows readiness, which is the authority on whether a package may be sent. */
   const resumeState: RowState = !quality?.readiness
     ? "unknown"
-    : quality.readiness.readiness === "READY" && quality.readiness.humanMaySend
+    : quality.readiness.humanMaySend
       ? "ready"
-      : quality.readiness.readiness === "BLOCKED"
+      : quality.readiness.humanMaySend === false
         ? "blocked"
         : "unknown";
+
+  /* Canonical refusal changes presentation only: the guarded StartApplication control is not
+   * advertised while the authority says a human may not send this package. Nothing is overridden
+   * or re-evaluated here. */
+  if (!quality?.readiness || quality.readiness.humanMaySend === false) {
+    const isUnverified = !quality?.readiness;
+    const reason =
+      quality?.readiness?.blockingReasons[0] ??
+      quality?.readiness?.improvementReasons[0] ??
+      (isUnverified
+        ? "Open Validation to confirm the current resume is safe to use."
+        : "Validation must clear this resume before an application can start.");
+    return (
+      <div>
+        <StepSectionHeading
+          title="Application"
+          blurb="Application controls stay unavailable until the resume is safe to use."
+        />
+        <section className="relative overflow-hidden rounded-[20px] border border-[color-mix(in_oklab,var(--error)_22%,var(--border))] bg-[linear-gradient(135deg,var(--z3-bg),color-mix(in_oklab,var(--error)_6%,var(--z3-bg)))] p-5 shadow-[var(--lift-1)] md:p-7">
+          <div className="max-w-2xl">
+            <span className="inline-flex min-h-8 items-center rounded-full bg-[color-mix(in_oklab,var(--error)_12%,transparent)] px-3 text-[13px] font-semibold text-[var(--error)]">
+              {isUnverified ? "Readiness not confirmed" : "Resume needs review"}
+            </span>
+            <h2 className="mt-4 text-[22px] font-bold tracking-[-0.02em] text-primary">
+              {isUnverified ? "Application readiness required" : "Application unavailable"}
+            </h2>
+            <p className="mt-2 text-[14px] leading-relaxed text-secondary">{reason}</p>
+            <button
+              type="button"
+              onClick={onReviewIssues}
+              className="mt-5 inline-flex h-11 items-center justify-center rounded-[12px] bg-[var(--accent)] px-5 text-[13.5px] font-semibold text-[var(--accent-fg)] transition-colors duration-150 hover:bg-[var(--accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2"
+            >
+              {isUnverified ? "Review validation" : "Review issues"}
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -96,7 +137,7 @@ export function ApplicationReadyStep({
         blurb="What this application will need from you. Nothing starts until you press the button."
       />
 
-      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {/* 1 — overview */}
         <WsCard title="Application overview">
           <ul className="divide-y divide-[#F2F3F7] dark:divide-[var(--separator)]">

@@ -6,6 +6,8 @@ import type { JobWithCompany } from "@/types";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import { IconArrowUpRight, IconPin } from "@/components/icons";
 import { sourceLabel } from "../sourceLabel";
+import { SaveJobButton } from "../SaveJobButton";
+import type { WorkspaceHeroPresentation } from "./workspacePresentation";
 
 /**
  * Who this job is, in one compact band.
@@ -72,14 +74,17 @@ export function decisionLabel(decision: string | null): { text: string; tone: "s
 export function JobIdentityHeader({
   job,
   result,
+  candidateId,
+  status,
   primary,
 }: {
   job: JobWithCompany;
   result: JobMatchResult | null;
+  candidateId: number;
+  status: WorkspaceHeroPresentation["status"];
   /** Exactly one primary action, chosen by the workspace from the workflow's real position. */
   primary: { label: string; onClick: () => void; disabled?: boolean } | null;
 }) {
-  const decision = decisionLabel(result?.decision ?? null);
   const score = typeof result?.overallScore === "number" ? Math.round(result.overallScore) : null;
   const ats = sourceLabel(job.source_type);
   const age = freshness(job);
@@ -89,32 +94,35 @@ export function JobIdentityHeader({
 
   const meta = [job.company_name, job.location, ats, age].filter(Boolean) as string[];
 
-  const toneClass = {
+  const statusTone = {
     success: "bg-[var(--pill-success-bg)] text-[var(--pill-success-fg)]",
+    accent: "bg-[var(--accent-soft)] text-[var(--accent)]",
     warning: "bg-[var(--pill-amber-bg)] text-[var(--pill-amber-fg)]",
     error: "bg-[color-mix(in_oklab,var(--error)_12%,transparent)] text-[var(--error)]",
+    neutral: "bg-[var(--chip-bg)] text-[var(--chip-text)]",
   } as const;
 
   return (
-    <header className="rounded-[14px] border border-[var(--border)] bg-[var(--z3-bg)] px-5 py-3.5 shadow-[var(--shadow-row)]">
+    <header className="relative overflow-hidden rounded-[24px] border border-[color-mix(in_oklab,var(--accent)_14%,var(--border))] bg-[linear-gradient(135deg,var(--z3-bg)_0%,var(--z3-bg)_58%,color-mix(in_oklab,var(--accent-soft)_62%,var(--z3-bg))_100%)] px-5 py-5 shadow-[var(--lift-2)] md:px-7 md:py-6">
+      <span aria-hidden="true" className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-[color-mix(in_oklab,var(--accent)_8%,transparent)] blur-2xl" />
       <Link
         href="/jobs"
-        className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+        className="relative inline-flex min-h-11 items-center gap-1.5 text-[13.5px] font-semibold text-[var(--accent)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
       >
         <span aria-hidden="true">←</span> Back to jobs
       </Link>
 
-      <div className="mt-2 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex min-w-0 gap-4">
+      <div className="relative mt-2 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex min-w-0 gap-4 md:gap-5">
           <CompanyMark name={job.company_name} />
           <div className="min-w-0">
             {/* The workspace's one h1. */}
-            <h1 className="line-clamp-2 text-[22px] font-bold leading-[1.2] tracking-[-0.018em] text-primary">
+            <h1 className="line-clamp-2 text-[24px] font-bold leading-[1.16] tracking-[-0.025em] text-primary md:text-[28px]">
               {job.title}
             </h1>
 
             {meta.length > 0 && (
-              <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] text-tertiary">
+              <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13.5px] text-secondary md:text-[14px]">
                 {meta.map((m, i) => (
                   <span key={m + i} className="flex items-center gap-2">
                     {i > 0 && <span aria-hidden="true">·</span>}
@@ -124,19 +132,16 @@ export function JobIdentityHeader({
               </p>
             )}
 
-            {/* Decision, score and sponsorship — the three facts that decide whether to pursue. */}
-            <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-2">
-              {decision && (
-                <span
-                  className={`inline-flex h-[25px] items-center rounded-full px-2.5 text-[12px] font-medium ${toneClass[decision.tone]}`}
-                >
-                  {decision.text}
+            <div className="mt-4 flex flex-wrap items-center gap-2.5">
+              <span className={`inline-flex min-h-8 items-center rounded-full px-3 text-[13px] font-semibold ${statusTone[status.tone]}`}>
+                {status.label}
+              </span>
+              {score !== null && (
+                <span className="inline-flex min-h-8 items-center rounded-full bg-[var(--accent-tint)] px-3 text-[13px] font-semibold tabular-nums text-[var(--accent)]">
+                  Match {score}
                 </span>
               )}
-              {score !== null && (
-                <span className="text-[12.5px] tabular-nums text-secondary">Match {score}</span>
-              )}
-              <span className="flex items-center gap-1.5 text-[12.5px] text-tertiary" title={h1b.reason}>
+              <span className="flex min-h-8 items-center gap-1.5 text-[13px] text-secondary" title={h1b.reason}>
                 <IconPin size={13} />
                 {/* The confidence vocabulary verbatim. An unknown is never promoted to a positive. */}
                 {h1b.confidence === "Not Sponsoring"
@@ -149,13 +154,20 @@ export function JobIdentityHeader({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto lg:justify-end">
+          <SaveJobButton
+            jobId={job.id}
+            jobTitle={job.title}
+            candidateId={candidateId}
+            initialSaved={job.pinned === 1}
+            className="border border-[var(--border-control)] bg-[var(--z3-bg)] shadow-[var(--shadow-row)]"
+          />
           {job.url && (
             <a
               href={job.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex h-[42px] items-center gap-1.5 rounded-[10px] border border-[var(--border-control)] px-4 text-[13px] font-medium text-primary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)]"
+              className="flex h-11 items-center gap-1.5 rounded-[12px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-4 text-[13.5px] font-semibold text-primary shadow-[var(--shadow-row)] transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
             >
               View original
               <IconArrowUpRight size={14} />
@@ -166,7 +178,7 @@ export function JobIdentityHeader({
               type="button"
               onClick={primary.onClick}
               disabled={primary.disabled}
-              className="flex h-[42px] items-center rounded-[10px] bg-[var(--accent)] px-5 text-[13px] font-semibold text-[var(--accent-fg)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-11 flex-1 items-center justify-center rounded-[12px] bg-[var(--accent)] px-5 text-[13.5px] font-semibold text-[var(--accent-fg)] shadow-[0_8px_20px_color-mix(in_oklab,var(--accent)_22%,transparent)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none"
             >
               {primary.label}
             </button>

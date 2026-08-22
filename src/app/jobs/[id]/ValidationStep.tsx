@@ -3,6 +3,7 @@
 import type { QualityWorkflowData } from "./useQualityWorkflow";
 import { useState } from "react";
 import { EmptyNote, StepSectionHeading, WsCard } from "./WorkspaceUI";
+import { validationIssues } from "./validationPresentation";
 
 /**
  * Step 4 — Validation, as a verification strip.
@@ -143,6 +144,7 @@ export function ValidationStep({
   const dims = dimensions(data);
   const v = verdict(data);
   const overall = data.review?.overallScore ?? null;
+  const issues = validationIssues(data);
 
   const verdictTone = {
     ok: "text-[var(--pill-success-fg)]",
@@ -157,80 +159,86 @@ export function ValidationStep({
         blurb="Whether the tailored resume is truthful and safe to send. The validator decides; this reports."
       />
 
-      <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[260px_minmax(0,1fr)]">
-        {/* summary — the verdict first, the score beside it */}
-        <WsCard title="Validation summary">
-          <div className={`text-[19px] font-bold leading-tight ${verdictTone}`}>{v.text}</div>
-          {overall !== null && (
-            <div className="mt-1.5 text-[12.5px] text-tertiary">
-              Review score <span className="font-semibold tabular-nums text-primary">{overall}</span> / 100
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(320px,1.1fr)]">
+        <section className="rounded-[20px] border border-[var(--border)] bg-[linear-gradient(145deg,var(--z3-bg),color-mix(in_oklab,var(--accent-soft)_35%,var(--z3-bg)))] p-5 shadow-[var(--lift-1)] md:p-6">
+          <div className={`text-[13px] font-bold uppercase tracking-[0.08em] ${verdictTone}`}>Validation result</div>
+          <div className={`mt-2 text-[25px] font-bold leading-tight tracking-[-0.025em] ${verdictTone}`}>
+            {v.text}
+          </div>
+          <p className="mt-3 max-w-xl text-[14px] leading-relaxed text-secondary">
+            {v.tone === "bad"
+              ? `This resume has ${issues.length || "unresolved"} ${issues.length === 1 ? "issue" : "issues"} that must be addressed before it is safe to use.`
+              : v.tone === "warn"
+                ? "This resume needs your review before you continue to an application."
+                : "The resume passed the current safety checks and is ready for your final review."}
+          </p>
+          {data.revalidation?.isLegacyMissingAnalysis && data.revalidation.canRevalidate && (
+            <div className="mt-5">
+              <RevalidateCard candidateId={candidateId} jobId={jobId} onDone={() => onRevalidated?.()} />
             </div>
           )}
-          {data.gate && (
-            <div className="mt-1 text-[12px] text-tertiary">
-              Quality gate: <span className="font-medium text-primary">{data.gate.passed ? "Passed" : "Not passed"}</span>
-            </div>
+        </section>
+
+        <WsCard title="Key issues">
+          {issues.length === 0 ? (
+            <EmptyNote>No blocking issue was reported by the current review.</EmptyNote>
+          ) : (
+            <ul className="flex flex-col gap-2.5">
+              {issues.slice(0, 5).map((issue) => (
+                <li key={issue} className="flex items-start gap-2.5 text-[13.5px] leading-relaxed text-secondary">
+                  <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--error)]" />
+                  <span>{issue}</span>
+                </li>
+              ))}
+            </ul>
           )}
-          {v.note && (
-            /* The engine's own sentence, verbatim. Not summarised and not softened. */
-            <p className="mt-2.5 border-t border-[#F2F3F7] pt-2.5 text-[11.5px] leading-relaxed text-tertiary dark:border-[var(--separator)]">
-              {v.note}
-            </p>
+          {issues.length > 5 && (
+            <p className="mt-3 text-[12.5px] text-tertiary">{issues.length - 5} more in technical details</p>
           )}
         </WsCard>
+      </div>
 
-        {/* the strip of real dimensions */}
-        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:[grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
-          {dims.length === 0 ? (
-            <WsCard>
-              <EmptyNote>This resume has not been reviewed yet, so there is nothing to report.</EmptyNote>
-            </WsCard>
-          ) : (
-            dims.map((d) => {
+      <details className="premium-expansion group mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 shadow-[var(--shadow-row)]">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-[13.5px] font-semibold text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
+          View technical details
+          <span aria-hidden="true" className="text-[18px] transition-transform group-open:rotate-45">+</span>
+        </summary>
+        <div className="mt-4 border-t border-[var(--separator)] pt-4">
+          <div className="mb-4 flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-secondary">
+            {overall !== null && <span>Overall quality <strong className="tabular-nums text-primary">{overall}/100</strong></span>}
+            {data.gate && <span>Quality gate <strong className="text-primary">{data.gate.passed ? "Passed" : "Not passed"}</strong></span>}
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:[grid-template-columns:repeat(auto-fit,minmax(190px,1fr))]">
+            {dims.length === 0 ? (
+              <WsCard><EmptyNote>This resume has not been reviewed yet, so there is nothing to report.</EmptyNote></WsCard>
+            ) : dims.map((d) => {
               const t = toneFor(d.score);
               return (
                 <WsCard key={d.label}>
                   <div className="flex items-start gap-2">
-                    <span aria-hidden="true" className={`mt-[5px] h-2 w-2 shrink-0 rounded-full ${t.dot}`} />
-                    <div className="min-w-0">
-                      <div className="text-[12.5px] font-semibold leading-snug text-primary">{d.label}</div>
-                      {/* Word and number together — the colour is never carrying the state alone. */}
-                      <div className={`mt-0.5 text-[11.5px] font-medium ${t.text}`}>
-                        {t.word}
-                        {d.score !== null && <span className="tabular-nums text-tertiary"> · {d.score}/100</span>}
+                    <span aria-hidden="true" className={`mt-[6px] h-2 w-2 shrink-0 rounded-full ${t.dot}`} />
+                    <div>
+                      <div className="text-[13.5px] font-semibold text-primary">{d.label}</div>
+                      <div className={`mt-1 text-[12.5px] font-medium ${t.text}`}>
+                        {t.word}{d.score !== null && <span className="tabular-nums text-tertiary"> · {d.score}/100</span>}
                       </div>
-                      <p className="mt-1 text-[11px] leading-relaxed text-tertiary">{d.detail}</p>
+                      <p className="mt-1 text-[12px] leading-relaxed text-tertiary">{d.detail}</p>
                     </div>
                   </div>
                 </WsCard>
               );
-            })
+            })}
+          </div>
+          {issues.length > 0 && (
+            <div className="mt-4">
+              <h3 className="text-[14px] font-semibold text-primary">Reviewer details</h3>
+              <ul className="mt-2 flex flex-col gap-2">
+                {issues.map((issue) => <li key={issue} className="text-[13px] leading-relaxed text-secondary">{issue}</li>)}
+              </ul>
+            </div>
           )}
         </div>
-      </div>
-
-      {/* The recoverable case, offered only when the review genuinely predates today's checks and
-       *  the workflow still has a pass left to record one. */}
-      {data.revalidation?.isLegacyMissingAnalysis && data.revalidation.canRevalidate && (
-        <div className="mt-3.5">
-          <RevalidateCard candidateId={candidateId} jobId={jobId} onDone={() => onRevalidated?.()} />
-        </div>
-      )}
-
-      {/* Anything the validator actually flagged. Silent when the lists are empty. */}
-      {data.review && data.review.blockingIssues.length + data.review.truthfulnessIssues.length > 0 && (
-        <div className="mt-3.5">
-          <WsCard title="What the validator flagged">
-            <ul className="flex flex-col gap-1">
-              {[...data.review.blockingIssues, ...data.review.truthfulnessIssues].slice(0, 6).map((issue) => (
-                <li key={issue} className="text-[12px] leading-relaxed text-secondary">
-                  {issue}
-                </li>
-              ))}
-            </ul>
-          </WsCard>
-        </div>
-      )}
+      </details>
     </div>
   );
 }

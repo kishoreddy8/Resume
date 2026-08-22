@@ -68,7 +68,7 @@ export function StartApplication({ candidateId, jobId }: { candidateId: number; 
         type="button"
         onClick={start}
         disabled={outcome.kind === "starting"}
-        className="rounded-md border border-[var(--border)] px-3 py-1.5 text-[12.5px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98] disabled:opacity-50"
+        className="inline-flex h-11 items-center justify-center rounded-[12px] bg-[var(--accent)] px-5 text-[13.5px] font-semibold text-[var(--accent-fg)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 disabled:opacity-50"
       >
         {outcome.kind === "starting" ? "Starting…" : "Start application"}
       </button>

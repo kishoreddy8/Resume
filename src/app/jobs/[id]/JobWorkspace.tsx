@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { JobWithCompany } from "@/types";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
@@ -26,6 +26,7 @@ import {
   resolveWorkspaceRouteStep,
   type WorkspaceRouteRequest,
 } from "./workspaceRoute";
+import { workspaceHeroPresentation } from "./workspacePresentation";
 
 /**
  * The Job Workspace.
@@ -77,6 +78,31 @@ function LockedStep({ title, reason }: { title: string; reason: string | null })
   );
 }
 
+/** A native disclosure that does not mount its expensive contents until the candidate opens it. */
+function LazyDetails({
+  summary,
+  defaultOpen = false,
+  className,
+  children,
+}: {
+  summary: ReactNode;
+  defaultOpen?: boolean;
+  className: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      className={className}
+    >
+      {summary}
+      {open ? children : null}
+    </details>
+  );
+}
+
 export function JobWorkspace({
   jobId,
   routeRequest,
@@ -97,6 +123,7 @@ export function JobWorkspace({
   /* Bumped after a re-validation so the quality record is re-read. Every verdict is then derived
    * from the refetched result — nothing is set optimistically. */
   const [refreshKey, setRefreshKey] = useState(0);
+  const [actionFocus, setActionFocus] = useState<WorkspaceRouteRequest["focus"]>(null);
 
   const match = useJobMatch(jobId, candidateId);
 
@@ -202,6 +229,22 @@ export function JobWorkspace({
       : genericDefault);
   const steps = resolveWorkflowSteps(workflowInput, active);
   const activeStep = steps.find((s) => s.key === active)!;
+  const hero = useMemo(
+    () =>
+      workspaceHeroPresentation({
+        matchDecision: match.result?.decision ?? null,
+        resumeStage: resume?.key ?? null,
+        qualityLoading: quality.state === "loading",
+        readiness: qualityData?.readiness?.readiness ?? null,
+        humanMaySend: qualityData?.readiness?.humanMaySend ?? null,
+        canRevalidate: Boolean(
+          qualityData?.revalidation?.isLegacyMissingAnalysis && qualityData.revalidation.canRevalidate
+        ),
+        runStatuses: (runs ?? []).map((run) => run.status),
+        steps,
+      }),
+    [match.result?.decision, quality.state, qualityData, resume?.key, runs, steps]
+  );
 
   /* The tailoring plan is Resume Studio's data and is requested only on that step. */
 
@@ -211,10 +254,11 @@ export function JobWorkspace({
    * view, and move keyboard focus. There is no click(), submit(), fetch(), or state transition in
    * this effect. Missing or incompatible focus values simply do nothing. */
   useEffect(() => {
-    if (!routeRequest.focus) return;
+    const requestedFocus = actionFocus ?? routeRequest.focus;
+    if (!requestedFocus) return;
     const frame = window.requestAnimationFrame(() => {
       const target = workspaceRef.current?.querySelector<HTMLElement>(
-        `[data-workspace-focus~="${routeRequest.focus}"]`
+        `[data-workspace-focus~="${requestedFocus}"]`
       );
       if (!target) return;
       target.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
@@ -222,7 +266,7 @@ export function JobWorkspace({
       target.dataset.focusedFromRoute = "true";
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [active, quality.state, plan.state, reduced, routeRequest.focus]);
+  }, [actionFocus, active, quality.state, plan.state, reduced, routeRequest.focus]);
 
   /* The newest run for this job. The list is already ordered newest-first by the endpoint. */
   const latestRun = (runs ?? [])[0] ?? null;
@@ -252,28 +296,17 @@ export function JobWorkspace({
   const { job, generatedFiles } = detail;
   const result = match.result;
 
-  /* One primary action in the header, chosen from where the workflow actually stands. It only ever
-   * navigates — nothing here starts a resume writer or a browser. */
-  /* The next step the workflow will actually let you enter, whichever one you happen to be
-   * looking at. It only navigates — nothing here starts a writer or opens a browser. */
-  const NEXT_LABEL: Record<StepKey, string> = {
-    match: "Review match",
-    studio: "Tailor resume",
-    results: "See what changed",
-    validation: "Validate resume",
-    application: "Continue to application",
-  };
-  const activeIndex = steps.findIndex((s) => s.key === active);
-  /* A step carrying a reason is reachable but not cleared — the validator refusing to release a
-   * resume, for instance. Offering "Continue to application" over a Blocked verdict would have the
-   * header contradicting the screen underneath it, so no primary is offered in that case. */
-  const nextStep = steps
-    .slice(activeIndex + 1)
-    .find((s) => s.state !== "locked" && s.state !== "blocked" && !s.lockedReason);
-  const primary =
-    activeStep.state === "blocked" || !nextStep
-      ? null
-      : { label: NEXT_LABEL[nextStep.key], onClick: () => go(nextStep.key) };
+  /* Presentation over the authorities already loaded above. This button only navigates/focuses; it
+   * never starts tailoring, validation or an application. */
+  const primary = hero.action
+    ? {
+        label: hero.action.label,
+        onClick: () => {
+          setActionFocus(hero.action?.focus ?? null);
+          go(hero.action!.step);
+        },
+      }
+    : null;
 
   const rise = {
     initial: reduced ? { opacity: 0 } : { opacity: 0, y: 6 },
@@ -283,7 +316,13 @@ export function JobWorkspace({
 
   return (
     <div ref={workspaceRef} className="mx-auto flex w-full max-w-[var(--home-max-w)] flex-col gap-5 pb-8 pt-1">
-      <JobIdentityHeader job={job} result={result} primary={primary} />
+      <JobIdentityHeader
+        job={job}
+        result={result}
+        candidateId={candidateId}
+        status={hero.status}
+        primary={primary}
+      />
 
       <WorkflowStepper steps={steps} active={active} onSelect={go} />
 
@@ -363,18 +402,31 @@ export function JobWorkspace({
                    *  (which is the DEFAULT landing step — see defaultStep) offered no way to run
                    *  anything. Rendering the same component here, open, gives this step its actions
                    *  without a second implementation of the approval boundary. */}
-                  <div
+                  <LazyDetails
+                    defaultOpen={
+                      routeRequest.focus === "retailor" ||
+                      routeRequest.focus === "progress" ||
+                      actionFocus === "retailor" ||
+                      actionFocus === "progress"
+                    }
                     data-workspace-focus="retailor progress"
-                    tabIndex={-1}
-                    className="workspace-focus-target mt-4"
+                    className="premium-expansion workspace-focus-target group mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 shadow-[var(--shadow-row)]"
+                    summary={
+                      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between text-[13.5px] font-semibold text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
+                        Resume actions and pipeline details
+                        <span aria-hidden="true" className="text-[18px] transition-transform group-open:rotate-45">+</span>
+                      </summary>
+                    }
                   >
-                    <ResumeQualityPipeline
-                      jobId={jobId}
-                      jobTitle={job.title}
-                      companyName={job.company_name}
-                      onStageChange={setResume}
-                    />
-                  </div>
+                    <div className="mt-4 border-t border-[var(--separator)] pt-4">
+                      <ResumeQualityPipeline
+                        jobId={jobId}
+                        jobTitle={job.title}
+                        companyName={job.company_name}
+                        onStageChange={setResume}
+                      />
+                    </div>
+                  </LazyDetails>
                 </>
               )}
             </div>
@@ -399,10 +451,14 @@ export function JobWorkspace({
                   {/* The full record and its actions — approve, retry the writer, export — stay with
                    *  the component that owns them. It is behind a disclosure so the compact strip is
                    *  what the step opens on, and its own request is only made when opened. */}
-                  <details className="premium-expansion group">
-                    <summary className="cursor-pointer list-none text-[12.5px] font-medium text-[var(--accent)] underline-offset-2 hover:underline">
-                      Open the full resume pipeline
-                    </summary>
+                  <LazyDetails
+                    className="premium-expansion group"
+                    summary={
+                      <summary className="flex min-h-11 cursor-pointer list-none items-center text-[12.5px] font-medium text-[var(--accent)] underline-offset-2 hover:underline">
+                        Open the full resume pipeline
+                      </summary>
+                    }
+                  >
                     <div className="mt-3">
                       <ResumeQualityPipeline
                         jobId={jobId}
@@ -411,7 +467,7 @@ export function JobWorkspace({
                         onStageChange={setResume}
                       />
                     </div>
-                  </details>
+                  </LazyDetails>
                 </>
               ) : (
                 <WsCard title="Validation">
@@ -459,11 +515,19 @@ export function JobWorkspace({
                     for the dedicated view.
                   </p>
                 </div>
+              ) : quality.state === "loading" ? (
+                <WsCard title="Application">
+                  <EmptyNote>Checking whether this resume is ready for an application…</EmptyNote>
+                </WsCard>
               ) : (
                 /* ── no run yet ─────────────────────────────────────────────────────────────── */
                 <ApplicationReadyStep
                   job={job}
                   quality={qualityData}
+                  onReviewIssues={() => {
+                    setActionFocus("issues");
+                    go("validation");
+                  }}
                   startControl={<StartApplication candidateId={candidateId} jobId={jobId} />}
                 />
               )}

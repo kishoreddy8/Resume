@@ -99,7 +99,7 @@ export function WorkflowStepper({
   return (
     <nav
       aria-label="Job workflow"
-      className="relative rounded-[14px] border border-[var(--border)] bg-[var(--z3-bg)] px-2 shadow-[var(--shadow-row)]"
+      className="relative rounded-[20px] border border-[var(--border)] bg-[var(--z3-bg)] px-2.5 shadow-[var(--lift-1)]"
     >
       {/* Arrows overlay the track's ends rather than sitting beside it, so they cost nothing when
        *  there is nothing to scroll (disabled means transparent and non-interactive) and never push
@@ -116,7 +116,7 @@ export function WorkflowStepper({
 
       <ol
         ref={trackRef}
-        className={`flex h-[60px] items-stretch gap-1 overflow-x-auto ${overflow.right ? "scroll-fade-x" : "scroll-fade-none"}`}
+        className={`flex h-[72px] items-stretch gap-1.5 overflow-x-auto ${overflow.right ? "scroll-fade-x" : "scroll-fade-none"}`}
       >
         {steps.map((step, i) => {
           const navigable = isStepNavigable(step);
@@ -149,13 +149,13 @@ export function WorkflowStepper({
                 aria-describedby={step.lockedReason ? `step-reason-${step.key}` : undefined}
                 title={step.lockedReason ?? undefined}
                 data-step-active={isActive ? "true" : undefined}
-                className={`relative flex h-full items-center gap-2.5 rounded-[10px] px-3 text-[13px] font-semibold transition-colors duration-150 ease-out ${tone} ${
-                  isActive ? "bg-[var(--accent-tint)]" : navigable ? "hover:bg-[var(--surface-hover)]" : "cursor-not-allowed"
+                className={`relative my-2 flex min-h-11 items-center gap-2.5 rounded-[13px] border px-3.5 text-[14px] font-semibold transition-[background-color,border-color,box-shadow] duration-150 ease-out ${tone} ${
+                  isActive ? "border-[color-mix(in_oklab,var(--accent)_26%,transparent)] bg-[var(--accent-tint)] shadow-[0_4px_14px_color-mix(in_oklab,var(--accent)_10%,transparent)]" : navigable ? "border-transparent hover:bg-[var(--surface-hover)]" : "cursor-not-allowed border-transparent"
                 }`}
               >
                 <span
                   aria-hidden="true"
-                  className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11.5px] font-bold ${
+                  className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[12px] font-bold ${
                     done
                       ? "bg-[var(--pill-success-bg)] text-[var(--pill-success-fg)]"
                       : isActive

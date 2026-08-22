@@ -143,9 +143,7 @@ export function MatchStep({ result }: { result: JobMatchResult }) {
     <div>
       <StepSectionHeading title="Match intelligence" blurb="Why this posting fits the evidence you already have." />
 
-      {/* Five columns at desktop, proportioned as the reference: score is narrow, requirements wide.
-       *  They collapse to three, then two, then one rather than compressing into unreadable slivers. */}
-      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:[grid-template-columns:15fr_20fr_21fr_25fr_19fr]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[0.72fr_1.2fr_1fr]">
         {/* 1 — overall match */}
         <WsCard title="Overall match">
           {score === null ? (
@@ -173,7 +171,7 @@ export function MatchStep({ result }: { result: JobMatchResult }) {
             <EmptyNote>No requirement was matched to your evidence.</EmptyNote>
           ) : (
             <ul className="divide-y divide-[#F2F3F7] dark:divide-[var(--separator)]">
-              {rows.slice(0, 6).map((r) => (
+              {rows.slice(0, 4).map((r) => (
                 <EvidenceRow key={r.label} label={r.label} strength={r.strength} tone={r.tone} />
               ))}
             </ul>
@@ -193,8 +191,14 @@ export function MatchStep({ result }: { result: JobMatchResult }) {
           )}
         </WsCard>
 
+        <details className="premium-expansion group lg:col-span-3 rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 shadow-[var(--shadow-row)]">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between text-[13.5px] font-semibold text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
+            View evidence details
+            <span aria-hidden="true" className="text-[18px] transition-transform group-open:rotate-45">+</span>
+          </summary>
+          <div className="mt-4 grid grid-cols-1 gap-4 border-t border-[var(--separator)] pt-4 lg:grid-cols-[1.35fr_0.65fr]">
         {/* 4 — role requirements */}
-        <WsCard title="Role requirements">
+        <WsCard title="Important requirements">
           {required.length === 0 && preferred.length === 0 ? (
             <EmptyNote>This posting produced no extractable requirements.</EmptyNote>
           ) : (
@@ -251,6 +255,8 @@ export function MatchStep({ result }: { result: JobMatchResult }) {
             </ul>
           )}
         </WsCard>
+          </div>
+        </details>
       </div>
     </div>
   );

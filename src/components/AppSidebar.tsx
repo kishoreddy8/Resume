@@ -179,7 +179,7 @@ export function AppSidebar() {
   }
 
   const navArrow =
-    "absolute top-1/2 z-10 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md bg-[var(--z1-bg)] text-[13px] text-tertiary shadow-[0_0_10px_6px_var(--z1-bg)] transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-0 lg:hidden";
+    "absolute top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-[10px] bg-[var(--z1-bg)] text-[17px] text-tertiary shadow-[0_0_10px_4px_var(--z1-bg)] transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-0 lg:hidden";
 
   return (
     <motion.aside
