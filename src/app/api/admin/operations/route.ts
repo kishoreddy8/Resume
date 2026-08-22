@@ -1,0 +1,1 @@
+import{NextRequest,NextResponse}from"next/server";import{requireAdminOwner}from"@/lib/auth/guard";import{getAdminOperations}from"@/lib/admin/operations";export async function GET(req:NextRequest){const a=requireAdminOwner(req);if(!a.ok)return a.response;return NextResponse.json(getAdminOperations())}

@@ -872,8 +872,13 @@ table {
 .admin-section-heading p,.admin-card-description { color:var(--text-tertiary); font-size:14px; line-height:1.5; }
 .admin-mobile-card { display:grid; gap:12px; }
 .admin-mobile-card p { color:var(--text-tertiary); font-size:14px; }
+.admin-link-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+.admin-link-grid .admin-card { display:block; transition:transform 150ms ease,border-color 150ms ease; }
+.admin-link-grid .admin-card:hover { transform:translateY(-2px); border-color:color-mix(in oklab,var(--accent) 30%,var(--border)); }
+.admin-link-grid h2 { font-size:17px; font-weight:650; }
+.admin-link-grid p { margin-top:6px; color:var(--text-tertiary); font-size:14px; line-height:1.5; }
 @media (max-width: 1350px) { .admin-health-grid { grid-template-columns: repeat(3,minmax(0,1fr)); } }
-@media (max-width: 900px) { .admin-two-column { grid-template-columns:1fr; } .admin-health-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .admin-filter-bar { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width: 900px) { .admin-two-column { grid-template-columns:1fr; } .admin-health-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .admin-filter-bar { grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-link-grid { grid-template-columns:1fr; } }
 @media (max-width: 520px) { .admin-metric-list,.admin-technical-grid,.admin-health-grid { grid-template-columns:1fr; } }
 
 .admin-page-header {
