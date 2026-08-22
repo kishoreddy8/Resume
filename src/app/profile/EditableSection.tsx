@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BTN_PRIMARY, BTN_QUIET, Panel } from "@/components/ui";
 
 /**
@@ -54,12 +54,33 @@ export function EditableSection<T>({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!defaultOpen) return;
+    const frame = requestAnimationFrame(() => {
+      sectionRef.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [defaultOpen]);
+
+  function focusFirstField() {
+    requestAnimationFrame(() => {
+      sectionRef.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+    });
+  }
+
+  function restoreEditFocus() {
+    requestAnimationFrame(() => editButtonRef.current?.focus());
+  }
 
   function open() {
     setDraft(value);
     setError(null);
     setSavedAt(null);
     setEditing(true);
+    focusFirstField();
   }
 
   async function save() {
@@ -69,6 +90,7 @@ export function EditableSection<T>({
       await onSave(draft);
       setEditing(false);
       setSavedAt(Date.now());
+      restoreEditFocus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "We couldn't save this. Nothing was changed.");
     } finally {
@@ -77,55 +99,58 @@ export function EditableSection<T>({
   }
 
   return (
-    <Panel
-      title={title}
-      description={description}
-      compact={compact}
-      icon={icon}
-      actions={
-        canEdit && !editing ? (
-          <button type="button" onClick={open} className={BTN_QUIET}>
-            {editLabel}
-          </button>
-        ) : null
-      }
-    >
-      {editing ? (
-        <div className="flex flex-col gap-4">
-          {form(draft, setDraft)}
-          {error && (
-            <p role="alert" className="text-[12.5px] leading-relaxed text-[var(--error)]">
-              {error}
-            </p>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={save} disabled={saving} className={BTN_PRIMARY}>
-              {saving ? "Saving…" : "Save changes"}
+    <div ref={sectionRef} className="h-full">
+      <Panel
+        title={title}
+        description={description}
+        compact={compact}
+        icon={icon}
+        actions={
+          canEdit && !editing ? (
+            <button ref={editButtonRef} type="button" onClick={open} className={`${BTN_QUIET} min-h-11 text-[14px]`}>
+              {editLabel}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEditing(false);
-                setError(null);
-              }}
-              disabled={saving}
-              className={BTN_QUIET}
-            >
-              Cancel
-            </button>
+          ) : null
+        }
+      >
+        {editing ? (
+          <div className="flex flex-col gap-5">
+            {form(draft, setDraft)}
+            {error && (
+              <p role="alert" className="text-[14px] leading-6 text-[var(--error)]">
+                {error}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={save} disabled={saving} className={`${BTN_PRIMARY} min-h-11 text-[14px]`}>
+                {saving ? "Saving…" : "Save changes"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(false);
+                  setError(null);
+                  restoreEditFocus();
+                }}
+                disabled={saving}
+                className={`${BTN_QUIET} min-h-11 text-[14px]`}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
-        </div>
-      ) : (
-        <>
-          {view(value)}
-          {/* Announced, not just coloured — the change it confirms happened somewhere above it. */}
-          {savedAt !== null && (
-            <p aria-live="polite" className="mt-3 text-[12px] font-medium text-[var(--pill-success-fg)]">
-              Saved.
-            </p>
-          )}
-        </>
-      )}
-    </Panel>
+        ) : (
+          <>
+            {view(value)}
+            {/* Announced, not just coloured — the change it confirms happened somewhere above it. */}
+            {savedAt !== null && (
+              <p aria-live="polite" className="mt-3 text-[13px] font-medium text-[var(--pill-success-fg)]">
+                Saved.
+              </p>
+            )}
+          </>
+        )}
+      </Panel>
+    </div>
   );
 }

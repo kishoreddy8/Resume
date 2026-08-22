@@ -22,7 +22,7 @@ import type { ReactNode } from "react";
  */
 
 export const PANEL_SURFACE =
-  "candidate-panel rounded-[14px] border border-[var(--border)] bg-[var(--z3-bg)] shadow-[var(--shadow-card)]";
+  "candidate-panel rounded-[16px] border border-[var(--border)] bg-[var(--z3-bg)] shadow-[var(--lift-1)]";
 
 export function Panel({
   title,
@@ -47,7 +47,7 @@ export function Panel({
   as?: "section" | "div";
 }) {
   return (
-    <Tag id={id} className={`${PANEL_SURFACE} ${compact ? "candidate-panel-compact px-4 py-4" : "px-5 py-[18px]"} ${className}`}>
+    <Tag id={id} className={`${PANEL_SURFACE} ${compact ? "candidate-panel-compact p-5" : "p-5 sm:p-6"} ${className}`}>
       {(title || actions) && (
         <div className={`flex items-start justify-between gap-x-3 ${compact ? "mb-3" : "mb-3.5"}`}>
           <div className="flex min-w-0 flex-1 items-start gap-2.5">
@@ -62,13 +62,13 @@ export function Panel({
             <div className="min-w-0 flex-1">
             {title && (
               <h2
-                className={`candidate-card-title font-bold leading-snug tracking-[-0.01em] text-primary ${compact ? "text-[13.5px]" : "text-[15px]"}`}
+                className={`candidate-card-title font-bold leading-snug tracking-[-0.015em] text-primary ${compact ? "text-[17px]" : "text-[18px]"}`}
               >
                 {title}
               </h2>
             )}
             {description && (
-              <p className="candidate-body mt-1.5 max-w-[62ch] text-[12.5px] leading-relaxed text-tertiary">{description}</p>
+              <p className="candidate-body mt-1.5 max-w-[62ch] text-[14px] leading-6 text-tertiary">{description}</p>
             )}
             </div>
           </div>
@@ -101,10 +101,10 @@ export function FieldRow({
   const empty = value === null || value === undefined || value === "";
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-[var(--separator)] py-2.5 last:border-b-0">
-      <dt className="candidate-metadata w-[190px] shrink-0 text-[12.5px] font-semibold leading-snug text-secondary">{label}</dt>
-      <dd className="candidate-body min-w-0 flex-1 text-[13px] leading-relaxed text-primary">
+      <dt className="candidate-metadata w-[190px] shrink-0 text-[13px] font-semibold leading-snug text-secondary">{label}</dt>
+      <dd className="candidate-body min-w-0 flex-1 text-[14px] leading-6 text-primary">
         {empty ? <span className="text-tertiary">Not set</span> : value}
-        {hint && <p className="candidate-metadata mt-1 text-[11.5px] leading-relaxed text-tertiary">{hint}</p>}
+        {hint && <p className="candidate-metadata mt-1 text-[13px] leading-5 text-tertiary">{hint}</p>}
       </dd>
       {action && <div className="shrink-0">{action}</div>}
     </div>
@@ -120,7 +120,7 @@ export function FieldList({ children }: { children: ReactNode }) {
 export function PanelEmpty({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-start gap-2.5 rounded-[10px] bg-[var(--z0-bg)] px-4 py-3.5">
-      <p className="candidate-body text-[12.5px] leading-relaxed text-tertiary">{children}</p>
+      <p className="candidate-body text-[14px] leading-6 text-tertiary">{children}</p>
       {action}
     </div>
   );

@@ -68,6 +68,8 @@ export interface CandidateSettingsPayload {
   preferences: PreferenceValues;
   contact: ContactValues;
   contactStatus?: { isComplete: boolean; problems: string[] };
+  /** Count only. The API deliberately never returns potentially sensitive saved answer values. */
+  applicationAnswers?: { count: number };
 }
 
 export const WORKPLACE_OPTIONS = ["Onsite", "Hybrid", "Remote"] as const;

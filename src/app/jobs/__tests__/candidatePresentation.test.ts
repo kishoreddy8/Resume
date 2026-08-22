@@ -65,19 +65,13 @@ test("workflow views consume the authoritative batched resume library contract",
   assert.match(source, /jobWorkspaceUrl/);
 });
 
-test("Settings deduplicates role chips without changing the established removal transition", () => {
+test("Settings summarizes persisted role facts and delegates editing to Profile", () => {
   const source = fs.readFileSync(path.resolve("src/app/settings/page.tsx"), "utf8");
   assert.match(source, /Array\.from\(new Set\(/, "displayed role chips should be deduplicated");
-  assert.match(
-    source,
-    /const \[next, \.\.\.rest\] = prefs\.secondaryTargetRoles;/,
-    "removing a primary role must retain the established promotion semantics"
-  );
-  assert.doesNotMatch(
-    source,
-    /const secondary = prefs\.secondaryTargetRoles\.filter/,
-    "the UI must not normalize secondary roles before applying the established transition"
-  );
+  assert.match(source, /href="\/profile"/);
+  assert.match(source, /Your search uses Profile information/);
+  assert.doesNotMatch(source, /function RoleEditor/);
+  assert.doesNotMatch(source, /method: "PATCH"/);
 });
 
 test("candidate Jobs omits the operational scan action while admin retains it", () => {

@@ -4,8 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import {
-  BTN_PRIMARY,
-  BTN_QUIET,
   BTN_SECONDARY,
   INPUT,
   LoadingRegion,
@@ -105,7 +103,7 @@ async function patchSettings(
 /** One line in a quick-section card — the reference's compact diamond list. */
 function Bullet({ children }: { children: React.ReactNode }) {
   return (
-    <li className="flex items-start gap-2 text-[12.5px] leading-relaxed text-primary">
+    <li className="flex items-start gap-2.5 text-[14px] leading-6 text-primary">
       <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rotate-45 bg-[var(--accent)]" />
       <span className="min-w-0">{children}</span>
     </li>
@@ -113,7 +111,7 @@ function Bullet({ children }: { children: React.ReactNode }) {
 }
 
 function EmptyLine({ children }: { children: React.ReactNode }) {
-  return <p className="text-[12.5px] leading-relaxed text-tertiary">{children}</p>;
+  return <p className="text-[14px] leading-6 text-tertiary">{children}</p>;
 }
 
 /** A figure in the identity strip. Renders zero rather than hiding, so the strip's shape never
@@ -121,11 +119,11 @@ function EmptyLine({ children }: { children: React.ReactNode }) {
 function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string | null }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-tertiary">{label}</div>
-      <div className="mt-1 text-[19px] font-bold leading-none tracking-[-0.015em] tabular-nums text-primary">
+      <div className="text-[12px] font-semibold uppercase tracking-[0.07em] text-tertiary">{label}</div>
+      <div className="mt-1.5 text-[22px] font-bold leading-none tracking-[-0.02em] tabular-nums text-primary">
         {value}
       </div>
-      {sub && <div className="mt-1 truncate text-[11.5px] text-tertiary">{sub}</div>}
+      {sub && <div className="mt-1.5 truncate text-[13px] text-tertiary">{sub}</div>}
     </div>
   );
 }
@@ -176,7 +174,7 @@ export default function ProfilePage() {
 
   if (error) {
     return (
-      <div className="flex flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-6">
         <PageHeader size="lg" title="Profile" />
         <Panel>
           <PanelEmpty
@@ -195,11 +193,11 @@ export default function ProfilePage() {
 
   if (candidateId === null || data === null) {
     return (
-      <div className="flex flex-col gap-5">
+      <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-5">
         <PageHeader
           size="lg"
           title="Profile"
-          description="Review the professional information JobHunt uses across matching, resumes, and applications."
+          description="Your professional information and evidence used across JobHunt."
         />
         <LoadingRegion label="Loading your profile" />
         <Panel>
@@ -228,37 +226,31 @@ export default function ProfilePage() {
   const certifications = evidence?.certifications ?? [];
 
   return (
-    <div className="flex flex-col gap-5 pb-10">
+    <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-6 pb-12">
       <PageHeader
         size="lg"
         title="Profile"
-        description="Review the professional information JobHunt uses across matching, resumes, and applications."
-        actions={
-          /* There is no separate edit route. This opens the section holding the fields it names,
-           * rather than navigating to a second place the same values could be typed. */
-          <button type="button" onClick={() => setIdentitySignal((n) => n + 1)} className={BTN_PRIMARY}>
-            Edit profile
-          </button>
-        }
+        description="Your professional information and evidence used across JobHunt."
       />
 
       {/* ── identity ─────────────────────────────────────────────────────────────────────────── */}
       {/* Deterministic initials, never a stock photo: the product stores no avatar, and a generated
        *  face would be the one invented thing on a page about being accurate. */}
-      <Panel>
-        <div className="flex flex-wrap items-start gap-x-5 gap-y-4">
+      <section aria-labelledby="profile-identity-title" className="premium-gradient-surface rounded-[18px] border border-[var(--border)] p-5 shadow-[var(--lift-1)] sm:p-7">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
           <span
             aria-hidden="true"
-            className="grid h-[56px] w-[56px] shrink-0 place-items-center rounded-full bg-[var(--tile-lav-bg)] text-[20px] font-bold text-[var(--tile-lav-fg)]"
+            className="grid h-16 w-16 shrink-0 place-items-center rounded-[18px] bg-[var(--tile-lav-bg)] text-[22px] font-bold text-[var(--tile-lav-fg)]"
           >
             {initials(name)}
           </span>
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-[21px] font-bold leading-tight tracking-[-0.015em] text-primary">{name}</h2>
-            <p className="mt-0.5 text-[13.5px] font-medium text-secondary">
-              {prefs.primaryTargetRole ?? <span className="text-tertiary">No target role set</span>}
+            <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--accent)]">Professional profile</p>
+            <h2 id="profile-identity-title" className="mt-1 text-[26px] font-bold leading-tight tracking-[-0.025em] text-primary sm:text-[30px]">{name}</h2>
+            <p className="mt-1 text-[15px] font-medium text-secondary">
+              {prefs.primaryTargetRole ?? <span className="text-tertiary">No target role selected</span>}
             </p>
-            <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-tertiary">
+            <p className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px] text-tertiary">
               <span className="flex items-center gap-1.5">
                 <IconPin size={14} aria-hidden="true" />
                 {contact.location ?? "Location not set"}
@@ -273,14 +265,14 @@ export default function ProfilePage() {
               </span>
             </p>
           </div>
-          <button type="button" onClick={() => setIdentitySignal((n) => n + 1)} className={BTN_QUIET}>
-            Edit
+          <button type="button" onClick={() => setIdentitySignal((n) => n + 1)} className={`${BTN_SECONDARY} min-h-11 text-[14px]`}>
+            Edit identity
           </button>
         </div>
 
         {/* Four real counts. Experience is the builder's own totalYearsExperience — this page never
          *  derives years from date arithmetic the product does not itself do. */}
-        <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-[var(--separator)] pt-4 sm:grid-cols-4">
+        <div className="mt-6 grid grid-cols-2 gap-5 border-t border-[var(--separator)] pt-5 sm:grid-cols-4">
           <Stat
             label="Target roles"
             value={roleCount}
@@ -302,13 +294,17 @@ export default function ProfilePage() {
             sub={skills.all.length > 0 ? `${skills.employer.length} employer-backed` : null}
           />
         </div>
-      </Panel>
+      </section>
 
       {/* ── quick sections ───────────────────────────────────────────────────────────────────── */}
-      <h2 className="mt-1 text-[13px] font-bold uppercase tracking-[0.07em] text-tertiary">Quick sections</h2>
+      <div>
+        <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--accent)]">Candidate facts</p>
+        <h2 className="mt-1 text-[22px] font-bold tracking-[-0.02em] text-primary">Professional information</h2>
+        <p className="mt-1 text-[14px] leading-6 text-secondary">Edit only information you provide directly. Resume evidence remains read-only.</p>
+      </div>
       {/* Equal height across the row, as in the reference: four cards of different content
        *  lengths reading as one band rather than a ragged staircase. */}
-      <div className="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:h-full">
+      <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 [&>*]:h-full">
         {/* Remounted by the header's "Edit profile", which is what opens it — a new key rebuilds
          *  the draft from the persisted value, so no effect is needed to force the state. */}
         <EditableSection<ContactValues>
@@ -344,7 +340,7 @@ export default function ProfilePage() {
                 ] as const
               ).map(([key, label, type]) => (
                 <label key={key} className="flex flex-col gap-1.5">
-                  <span className="text-[12px] font-semibold text-secondary">{label}</span>
+                  <span className="text-[14px] font-semibold text-secondary">{label}</span>
                   <input
                     type={type}
                     className={INPUT}
@@ -387,7 +383,7 @@ export default function ProfilePage() {
           form={(draft, set) => (
             <div className="flex flex-col gap-3">
               <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] font-semibold text-secondary">Primary target role</span>
+                <span className="text-[14px] font-semibold text-secondary">Primary target role</span>
                 <input
                   className={INPUT}
                   value={draft.primaryTargetRole ?? ""}
@@ -398,7 +394,7 @@ export default function ProfilePage() {
                 />
               </label>
               <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] font-semibold text-secondary">Also considering</span>
+                <span className="text-[14px] font-semibold text-secondary">Also considering</span>
                 <input
                   className={INPUT}
                   value={draft.secondaryTargetRoles.join(", ")}
@@ -407,7 +403,7 @@ export default function ProfilePage() {
                     set({ ...draft, secondaryTargetRoles: e.target.value.split(",").map((r) => r.trim()) })
                   }
                 />
-                <span className="text-[11.5px] text-tertiary">Comma separated. Up to ten.</span>
+                <span className="text-[13px] text-tertiary">Comma separated. Up to ten.</span>
               </label>
             </div>
           )}
@@ -440,7 +436,7 @@ export default function ProfilePage() {
           form={(draft, set) => (
             <div className="flex flex-col gap-3.5">
               <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] font-semibold text-secondary">Preferred location</span>
+                <span className="text-[14px] font-semibold text-secondary">Preferred location</span>
                 <input
                   className={INPUT}
                   value={draft.locationPreference ?? ""}
@@ -451,13 +447,13 @@ export default function ProfilePage() {
                 />
               </label>
               <fieldset>
-                <legend className="mb-1.5 text-[12px] font-semibold text-secondary">Workplace</legend>
+                <legend className="mb-2 text-[14px] font-semibold text-secondary">Workplace</legend>
                 <div className="flex flex-col gap-1.5">
                   {WORKPLACE_OPTIONS.map((opt) => (
-                    <label key={opt} className="flex items-center gap-2 text-[12.5px] text-primary">
+                    <label key={opt} className="flex min-h-11 items-center gap-3 text-[14px] text-primary">
                       <input
                         type="checkbox"
-                        className="h-[17px] w-[17px] accent-[var(--accent)]"
+                        className="h-5 w-5 accent-[var(--accent)]"
                         checked={draft.workplacePreference.includes(opt)}
                         onChange={(e) =>
                           set({
@@ -474,7 +470,7 @@ export default function ProfilePage() {
                 </div>
               </fieldset>
               <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] font-semibold text-secondary">Employment type</span>
+                <span className="text-[14px] font-semibold text-secondary">Employment type</span>
                 <select
                   className={INPUT}
                   value={draft.employmentTypePreference ?? ""}
@@ -518,7 +514,7 @@ export default function ProfilePage() {
           )}
           form={(draft, set) => (
             <div className="flex flex-col gap-2.5">
-              <p className="rounded-[9px] bg-[var(--tile-blue-bg)] px-3 py-2 text-[11.5px] leading-relaxed text-[var(--pill-blue-fg)]">
+              <p className="rounded-[10px] bg-[var(--tile-blue-bg)] px-4 py-3 text-[13px] leading-5 text-[var(--pill-blue-fg)]">
                 Changing these re-evaluates which jobs you&apos;re eligible for.
               </p>
               {(
@@ -528,10 +524,10 @@ export default function ProfilePage() {
                   ["usCitizen", "I am a U.S. citizen"],
                 ] as const
               ).map(([key, label]) => (
-                <label key={key} className="flex items-center gap-2 text-[12.5px] text-primary">
+                <label key={key} className="flex min-h-11 items-center gap-3 text-[14px] text-primary">
                   <input
                     type="checkbox"
-                    className="h-[17px] w-[17px] accent-[var(--accent)]"
+                    className="h-5 w-5 accent-[var(--accent)]"
                     checked={draft[key]}
                     onChange={(e) => set({ ...draft, [key]: e.target.checked })}
                   />
@@ -539,7 +535,7 @@ export default function ProfilePage() {
                 </label>
               ))}
               <label className="mt-1 flex flex-col gap-1.5">
-                <span className="text-[12px] font-semibold text-secondary">Security clearance</span>
+                <span className="text-[14px] font-semibold text-secondary">Security clearance</span>
                 <select
                   className={INPUT}
                   value={draft.clearanceLevel}
@@ -558,7 +554,7 @@ export default function ProfilePage() {
       </div>
 
       {/* ── lower grid ───────────────────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
         {/* left: what you have done */}
         <div className="flex flex-col gap-5">
           <Panel
@@ -592,8 +588,8 @@ export default function ProfilePage() {
                       <IconBriefcase size={16} />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="text-[14px] font-bold leading-snug text-primary">{e.title}</div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[12.5px] text-secondary">
+                      <div className="text-[17px] font-bold leading-snug text-primary">{e.title}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[14px] text-secondary">
                         <span>{e.employer}</span>
                         {formatSpan(e.startDate, e.endDate) && (
                           <span className="text-tertiary">· {formatSpan(e.startDate, e.endDate)}</span>
@@ -603,8 +599,8 @@ export default function ProfilePage() {
                        *  what is useful here is what this role can be used as evidence FOR. */}
                       {e.technologies && e.technologies.length > 0 && (
                         <details className="group mt-2">
-                          <summary className="cursor-pointer list-none text-[12px] font-semibold text-[var(--accent)] transition-colors duration-150 ease-out hover:text-[var(--accent-hover)]">
-                            {e.technologies.length} technologies
+                          <summary className="inline-flex min-h-11 cursor-pointer list-none items-center text-[14px] font-semibold text-[var(--accent)] transition-colors duration-150 ease-out hover:text-[var(--accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
+                            View details · {e.technologies.length} technologies
                             <span className="ml-1 inline-block transition-transform duration-150 group-open:rotate-90">
                               ›
                             </span>
@@ -630,10 +626,10 @@ export default function ProfilePage() {
               <ul className="flex flex-col divide-y divide-[var(--separator)]">
                 {education.map((e, i) => (
                   <li key={`${e.institution}-${i}`} className="py-3 first:pt-0 last:pb-0">
-                    <div className="text-[13.5px] font-bold leading-snug text-primary">
+                    <div className="text-[16px] font-bold leading-snug text-primary">
                       {[e.level, e.field].filter(Boolean).join(", ") || e.institution || "Qualification"}
                     </div>
-                    {e.institution && <div className="mt-0.5 text-[12.5px] text-tertiary">{e.institution}</div>}
+                    {e.institution && <div className="mt-1 text-[14px] text-tertiary">{e.institution}</div>}
                   </li>
                 ))}
               </ul>
@@ -659,9 +655,9 @@ export default function ProfilePage() {
                       <IconStar size={15} />
                     </span>
                     <div className="min-w-0">
-                      <div className="text-[13.5px] font-semibold leading-snug text-primary">{c.name}</div>
+                      <div className="text-[16px] font-semibold leading-snug text-primary">{c.name}</div>
                       {(c.issuer || c.date) && (
-                        <div className="mt-0.5 text-[12.5px] text-tertiary">
+                        <div className="mt-1 text-[14px] text-tertiary">
                           {[c.issuer, c.date].filter(Boolean).join(" · ")}
                         </div>
                       )}
@@ -681,7 +677,7 @@ export default function ProfilePage() {
                 <span aria-hidden="true" className="mt-px text-[var(--pill-success-fg)]">
                   <IconCheckCircle size={16} />
                 </span>
-                <span className="text-[12.5px] leading-relaxed text-primary">
+                <span className="text-[14px] leading-6 text-primary">
                   Contact details
                   <span className="text-tertiary">
                     {" "}
@@ -693,7 +689,7 @@ export default function ProfilePage() {
                 <span aria-hidden="true" className="mt-px text-[var(--pill-success-fg)]">
                   <IconCheckCircle size={16} />
                 </span>
-                <span className="text-[12.5px] leading-relaxed text-primary">
+                <span className="text-[14px] leading-6 text-primary">
                   Work authorization
                   <span className="text-tertiary">
                     {" "}
@@ -704,9 +700,10 @@ export default function ProfilePage() {
               </li>
             </ul>
             <div className="mt-3 rounded-[10px] bg-[var(--z0-bg)] px-3.5 py-3">
-              <p className="text-[12.5px] leading-relaxed text-tertiary">
-                No reusable application answers saved yet. Answers you give during an application are
-                stored so JobHunt can offer them again.
+              <p className="text-[14px] leading-6 text-tertiary">
+                {settings.applicationAnswers?.count
+                  ? `${settings.applicationAnswers.count} reusable ${settings.applicationAnswers.count === 1 ? "answer" : "answers"} saved.`
+                  : "No saved application information."}
               </p>
             </div>
           </Panel>
@@ -724,19 +721,27 @@ export default function ProfilePage() {
  * and there is no category field. Both counts are stated because they mean different things during
  * tailoring — an employer-backed skill can be claimed directly, an inventory one is used carefully.
  *
- * "View all skills" expands in place rather than linking out: the full list is already in the
- * payload this page loaded, and no other route displays it.
+ * Search works against the single profile payload already in memory, while the rendered chip list
+ * remains capped. Hundreds of persisted skills never become hundreds of hidden DOM nodes.
  */
-function SkillsPanel({
-  employer,
-  inventory,
-}: {
+function SkillsPanel({ employer, inventory }: {
   employer: { rawSkillName: string; attributedTo?: { employer?: string }[] }[];
   inventory: { rawSkillName: string }[];
 }) {
-  const [showAll, setShowAll] = useState(false);
-  const PREVIEW = 24;
+  const [query, setQuery] = useState("");
+  const [visibleCount, setVisibleCount] = useState(24);
   const total = employer.length + inventory.length;
+  const matches = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return [
+      ...employer.map((skill) => ({ ...skill, provenance: "Resume evidence" as const })),
+      ...inventory.map((skill) => ({ ...skill, provenance: "Skills inventory" as const })),
+    ].filter((skill) => !needle || skill.rawSkillName.toLowerCase().includes(needle));
+  }, [employer, inventory, query]);
+  /* Even “Show more” stays capped. Search reaches everything without putting hundreds of hidden or
+   * visible chips in the DOM. */
+  const MAX_RENDERED = 80;
+  const visible = matches.slice(0, Math.min(visibleCount, MAX_RENDERED));
 
   return (
     <Panel
@@ -756,59 +761,62 @@ function SkillsPanel({
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="rounded-[10px] bg-[var(--tile-green-bg)] px-3.5 py-3">
-              <div className="text-[19px] font-bold leading-none tabular-nums text-[var(--tile-green-fg)]">
+            <div className="rounded-[14px] bg-[var(--tile-green-bg)] px-4 py-4">
+              <div className="text-[24px] font-bold leading-none tabular-nums text-[var(--tile-green-fg)]">
                 {employer.length}
               </div>
-              <div className="mt-1.5 text-[12px] font-semibold text-primary">Backed by an employer</div>
-              <div className="mt-0.5 text-[11.5px] leading-snug text-tertiary">
-                Attached to a role you held, so a resume can claim it directly.
+              <div className="mt-2 text-[14px] font-semibold text-primary">Resume evidence</div>
+              <div className="mt-1 text-[13px] leading-5 text-tertiary">
+                Skills with persisted evidence in your professional history.
               </div>
             </div>
-            <div className="rounded-[10px] bg-[var(--tile-blue-bg)] px-3.5 py-3">
-              <div className="text-[19px] font-bold leading-none tabular-nums text-[var(--tile-blue-fg)]">
+            <div className="rounded-[14px] bg-[var(--tile-blue-bg)] px-4 py-4">
+              <div className="text-[24px] font-bold leading-none tabular-nums text-[var(--tile-blue-fg)]">
                 {inventory.length}
               </div>
-              <div className="mt-1.5 text-[12px] font-semibold text-primary">From your skills inventory</div>
-              <div className="mt-0.5 text-[11.5px] leading-snug text-tertiary">
-                Listed by you without an employer attached. Used more carefully.
+              <div className="mt-2 text-[14px] font-semibold text-primary">Skills inventory</div>
+              <div className="mt-1 text-[13px] leading-5 text-tertiary">
+                Skills present in your persisted inventory without employer attribution.
               </div>
             </div>
           </div>
 
-          <div className="mt-3.5 flex flex-wrap gap-1.5">
-            {(showAll ? employer : employer.slice(0, PREVIEW)).map((s, i) => (
-              <span
-                key={`${s.rawSkillName}-${i}`}
-                title={
-                  s.attributedTo && s.attributedTo.length > 0
-                    ? s.attributedTo.map((a) => a.employer).filter(Boolean).join(", ")
-                    : undefined
-                }
-              >
-                <Tag>{s.rawSkillName}</Tag>
-              </span>
-            ))}
-          </div>
+          <label className="mt-4 block max-w-[420px]">
+            <span className="text-[14px] font-semibold text-secondary">Search skills</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setVisibleCount(24);
+              }}
+              className={`${INPUT} mt-2 min-h-11 text-[15px]`}
+              placeholder="Search persisted skills"
+            />
+          </label>
 
-          {showAll && inventory.length > 0 && (
-            <div className="mt-3.5">
-              <div className="mb-2 text-[12px] font-semibold text-secondary">From your skills inventory</div>
-              <div className="flex flex-wrap gap-1.5">
-                {inventory.map((s, i) => (
-                  <Tag key={`${s.rawSkillName}-${i}`}>{s.rawSkillName}</Tag>
-                ))}
-              </div>
-            </div>
+          <p className="mt-4 text-[13px] text-tertiary">Showing {visible.length} of {matches.length} matching skills.</p>
+          {visible.length === 0 ? (
+            <p className="mt-3 rounded-[12px] bg-[var(--z0-bg)] px-4 py-5 text-[14px] text-tertiary">No persisted skill matches this search.</p>
+          ) : (
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {visible.map((skill, index) => (
+                <li key={`${skill.provenance}-${skill.rawSkillName}-${index}`} className="flex items-center gap-1.5">
+                  <Tag>{skill.rawSkillName}</Tag>
+                  <span className="sr-only">{skill.provenance}</span>
+                </li>
+              ))}
+            </ul>
           )}
 
-          <button
-            type="button"
-            onClick={() => setShowAll((v) => !v)}
-            className="mt-2.5 inline-flex min-h-[32px] items-center text-[12.5px] font-semibold text-[var(--accent)] transition-colors duration-150 ease-out hover:text-[var(--accent-hover)]"
-          >
-            {showAll ? "Show fewer skills" : `View all ${total} skills`}
-          </button>
+          {visible.length < matches.length && visible.length < MAX_RENDERED && (
+            <button type="button" onClick={() => setVisibleCount((count) => Math.min(count + 24, MAX_RENDERED))} className={`${BTN_SECONDARY} mt-4 min-h-11 text-[14px]`}>
+              Show more
+            </button>
+          )}
+          {matches.length > MAX_RENDERED && visible.length >= MAX_RENDERED && (
+            <p className="mt-3 text-[13px] leading-5 text-tertiary">Search to find skills beyond this bounded view.</p>
+          )}
         </>
       )}
     </Panel>
