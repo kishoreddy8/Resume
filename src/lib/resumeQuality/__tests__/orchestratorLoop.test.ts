@@ -6,7 +6,7 @@ import { after, before, test } from "node:test";
 import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
 import type { CoverLetterContent, ResumeContent } from "../../../../tools/tailoring-engine/types";
 import type { ResumeReviewerAgent, ResumeReviewerOutput, ResumeWriterAgent, ResumeWriterInput, ResumeWriterOutput } from "../types";
-import { getFinalDirectory, getIterationDirectory, type QualityWorkflowLocation } from "../workspace";
+import { getFinalDirectory, getIterationDirectory, getWorkspaceDirectory, type QualityWorkflowLocation } from "../workspace";
 import { LocalImprovementWriter } from "../writers/localImprovementWriter";
 
 let tmpDbDir: string;
@@ -35,6 +35,8 @@ let ResumeQualityOrchestrationError: typeof import("../orchestrator").ResumeQual
 let buildResumeWriterInput: typeof import("../orchestrator").buildResumeWriterInput;
 let selectRetryBaseline: typeof import("../retryLineage").selectRetryBaseline;
 let writeRetryLineage: typeof import("../retryLineage").writeRetryLineage;
+let readRetryLineage: typeof import("../retryLineage").readRetryLineage;
+let RETRY_LINEAGE_FILENAME: typeof import("../retryLineage").RETRY_LINEAGE_FILENAME;
 
 let candidateAliceId: number;
 let candidateBobId: number;
@@ -192,7 +194,7 @@ before(async () => {
     buildResumeWriterInput,
     ResumeQualityOrchestrationError,
   } = await import("../orchestrator"));
-  ({ selectRetryBaseline, writeRetryLineage } = await import("../retryLineage"));
+  ({ selectRetryBaseline, writeRetryLineage, readRetryLineage, RETRY_LINEAGE_FILENAME } = await import("../retryLineage"));
   getDb();
 
   candidateAliceId = createCandidate({ firstName: "Alice", lastName: "Smith" }).id;
@@ -1713,4 +1715,119 @@ test("44. a workflow without lineage remains a fresh initial generation", () => 
   assert.equal(input.writerMode, "INITIAL_GENERATION");
   assert.equal(input.retryLineage, undefined);
   assert.equal(input.currentResume, undefined);
+});
+
+// --- Phase J: dedicated retry-lineage regression suite ----------------------------------------------
+// Reuses the same fixture built up across tests 1-44 above (Alice has extensive reviewed history for
+// jobOne; Bob has none for either job; jobTwo has no reviewed history for anyone) rather than a second,
+// parallel fixture — the exact prior state each assertion relies on is stated in its own test.
+
+test("Phase J.2: a different candidate never inherits another candidate's baseline", () => {
+  // Bob has never had a reviewed iteration for jobOne in this suite — Alice has many. If candidate
+  // scoping in selectRetryBaseline ever weakened to job-only scoping, this would incorrectly return
+  // one of Alice's attempts.
+  const selection = selectRetryBaseline(candidateBobId, jobOne.dedupe_key);
+  assert.equal(selection, null);
+});
+
+test("Phase J.3: a different job never becomes another job's baseline for the same candidate", () => {
+  // Alice has extensive reviewed history for both jobOne and jobTwo by this point in the suite.
+  // Querying by jobTwo's dedupeKey must return ONLY jobTwo's own history — never jobOne's — proven
+  // positively (the parent's dedupeKey matches what was asked for) rather than by assuming either
+  // job has no history, which would be fragile against future tests adding more.
+  const selection = selectRetryBaseline(candidateAliceId, jobTwo.dedupe_key);
+  assert(selection, "jobTwo has its own reviewed history by this point in the suite");
+  assert.equal(selection.parentLocation.dedupeKey, jobTwo.dedupe_key);
+  assert.notEqual(selection.parentLocation.dedupeKey, jobOne.dedupe_key);
+});
+
+test("Phase J.4: parent workflow ownership is revalidated, not merely trusted from the file", () => {
+  const genuine = selectRetryBaseline(candidateAliceId, jobOne.dedupe_key);
+  assert(genuine, "the completed test workflows must provide a reviewed baseline");
+
+  const victimChild = createResumeQualityWorkflow({
+    candidateId: candidateBobId,
+    applicationId: appBobJobOneId,
+    tailoringRunId: runBobJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  const victimLocation: QualityWorkflowLocation = {
+    candidateId: candidateBobId,
+    dedupeKey: jobOne.dedupe_key,
+    runId: runBobJobOneId,
+    workflowId: victimChild.id,
+  };
+  // A lineage file forged to claim one of ALICE's real workflows as Bob's parent — as if an attacker
+  // (or a bug) had copied the file across candidate workspace directories.
+  const forgedDir = getWorkspaceDirectory(victimLocation);
+  fs.mkdirSync(forgedDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(forgedDir, RETRY_LINEAGE_FILENAME),
+    `${JSON.stringify({ ...genuine.lineage, parentWorkflowId: genuine.parentLocation.workflowId }, null, 2)}\n`
+  );
+
+  const read = readRetryLineage(victimLocation);
+  assert.equal(read, null, "a lineage file naming a workflow that does not belong to this candidate must be refused, not trusted");
+});
+
+test("Phase J.6: retry_lineage.json is write-once — a second write for the same workflow is refused", () => {
+  const selection = selectRetryBaseline(candidateAliceId, jobOne.dedupe_key);
+  assert(selection);
+  const child = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  const location: QualityWorkflowLocation = {
+    candidateId: candidateAliceId,
+    dedupeKey: jobOne.dedupe_key,
+    runId: runAliceJobOneId,
+    workflowId: child.id,
+  };
+  writeRetryLineage(location, selection);
+  assert.throws(() => writeRetryLineage(location, selection), /EEXIST/);
+});
+
+test("Phase J.10: resolved finding keys are a deduplicated, sorted set", () => {
+  const selection = selectRetryBaseline(candidateAliceId, jobOne.dedupe_key);
+  assert(selection);
+  const keys = selection.lineage.resolvedFindingKeys;
+  assert.deepEqual(keys, [...new Set(keys)].sort(), "resolvedFindingKeys must be de-duplicated and sorted, matching selectRetryBaseline's own construction");
+});
+
+test("Phase J.12: a corrupt or schema-invalid lineage file fails safely (never throws, never fabricates a parent)", () => {
+  const child = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  const location: QualityWorkflowLocation = {
+    candidateId: candidateAliceId,
+    dedupeKey: jobOne.dedupe_key,
+    runId: runAliceJobOneId,
+    workflowId: child.id,
+  };
+  const dir = getWorkspaceDirectory(location);
+  fs.mkdirSync(dir, { recursive: true });
+
+  fs.writeFileSync(path.join(dir, RETRY_LINEAGE_FILENAME), "{ not valid json");
+  assert.equal(readRetryLineage(location), null, "unparseable JSON must fail safely");
+
+  fs.writeFileSync(path.join(dir, RETRY_LINEAGE_FILENAME), JSON.stringify({ schemaVersion: 2, parentWorkflowId: 1, parentIterationNumber: 1, resolvedFindingKeys: [] }));
+  assert.equal(readRetryLineage(location), null, "an unrecognized schema version must fail safely, never be interpreted");
+
+  fs.writeFileSync(path.join(dir, RETRY_LINEAGE_FILENAME), JSON.stringify({ schemaVersion: 1, parentWorkflowId: -1, parentIterationNumber: 1, resolvedFindingKeys: [] }));
+  assert.equal(readRetryLineage(location), null, "a structurally invalid parentWorkflowId must fail safely");
+});
+
+test("Phase J.13: workspace paths never collide across candidates for the same job", () => {
+  const aliceLocation: QualityWorkflowLocation = { candidateId: candidateAliceId, dedupeKey: jobOne.dedupe_key, runId: runAliceJobOneId, workflowId: 999 };
+  const bobLocation: QualityWorkflowLocation = { candidateId: candidateBobId, dedupeKey: jobOne.dedupe_key, runId: runBobJobOneId, workflowId: 999 };
+  const aliceDir = getWorkspaceDirectory(aliceLocation);
+  const bobDir = getWorkspaceDirectory(bobLocation);
+  assert.notEqual(aliceDir, bobDir, "two different candidates on the identical job must never resolve to the same workspace directory");
+  assert.ok(aliceDir.includes(String(candidateAliceId)));
+  assert.ok(bobDir.includes(String(candidateBobId)));
 });
