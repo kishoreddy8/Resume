@@ -1631,7 +1631,49 @@ test("41. repair scope violation is rejected before consuming a quality iteratio
   assert.equal(listResumeQualityIterations(candidateAliceId, wf.id).length, 1);
 });
 
-test("42. retry lineage starts iteration 1 from the best prior reviewed attempt", () => {
+test("42. preservation compares equally-normalized baseline and repair values", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  const legacyResume = JSON.parse(JSON.stringify(FLAWED_RESUME_COMPETING_TECH)) as ResumeContent;
+  const legacyCoverLetter = JSON.parse(JSON.stringify(COVER_LETTER)) as CoverLetterContent;
+  legacyResume.location = "Dallas,TX";
+  legacyCoverLetter.location = "Dallas,TX";
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: legacyResume,
+    coverLetter: legacyCoverLetter,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+  const before = getResumeQualityWorkflow(candidateAliceId, wf.id)!;
+  assert.equal(before.current_iteration, 1);
+
+  const writer: ResumeWriterAgent = {
+    generate: async (input) => ({
+      resume: JSON.parse(JSON.stringify(input.currentResume)) as ResumeContent,
+      coverLetter: JSON.parse(JSON.stringify(input.currentCoverLetter)) as CoverLetterContent,
+    }),
+  };
+  await executeResumeImprovementIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    writer,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+
+  const after = getResumeQualityWorkflow(candidateAliceId, wf.id)!;
+  assert.equal(after.current_iteration, 2, "CareerOps' own formatting normalization must not reject an exact repair");
+  assert.equal(listResumeQualityIterations(candidateAliceId, wf.id).length, 2);
+});
+
+test("43. retry lineage starts iteration 1 from the best prior reviewed attempt", () => {
   const selection = selectRetryBaseline(candidateAliceId, jobOne.dedupe_key);
   assert(selection, "the completed test workflows must provide a reviewed baseline");
   const child = createResumeQualityWorkflow({
@@ -1660,7 +1702,7 @@ test("42. retry lineage starts iteration 1 from the best prior reviewed attempt"
   assert(!input.retryLineage?.baselineReviewPath.startsWith("/"), "persisted lineage must not expose an absolute path");
 });
 
-test("43. a workflow without lineage remains a fresh initial generation", () => {
+test("44. a workflow without lineage remains a fresh initial generation", () => {
   const fresh = createResumeQualityWorkflow({
     candidateId: candidateAliceId,
     applicationId: appAliceJobTwoId,

@@ -1194,13 +1194,28 @@ export async function executeResumeImprovementIteration(
     throw new ResumeQualityOrchestrationError("INVALID_WRITER_OUTPUT", failureReason);
   }
 
+  // Preservation is defined over normalized values. Legacy reviewed baselines can predate the
+  // presentation normalizer (for example `Dallas,TX`), while every new writer result passes through
+  // it below. Comparing a normalized repair with an unnormalized baseline falsely attributes
+  // CareerOps' own comma-spacing cleanup to the writer and makes every otherwise-exact targeted
+  // repair fail REPAIR_SCOPE_VIOLATION. Normalize both sides with the same deterministic function;
+  // this does not widen the editable allowlist or conceal any semantic/content change.
+  const normalizedBaseline =
+    writerInput.writerMode === "TARGETED_REPAIR" && writerInput.currentResume
+      ? normalizeResumeWriterOutput({
+          resume: writerInput.currentResume,
+          ...(writerInput.currentCoverLetter ? { coverLetter: writerInput.currentCoverLetter } : {}),
+        })
+      : undefined;
+
   writerOutput = normalizeResumeWriterOutput(writerOutput);
 
-  const repairedCoverLetter = writerOutput.coverLetter ?? writerInput.currentCoverLetter;
+  const repairedCoverLetter =
+    writerOutput.coverLetter ?? normalizedBaseline?.coverLetter ?? writerInput.currentCoverLetter;
   if (writerInput.writerMode === "TARGETED_REPAIR" && writerInput.repairPlan && writerInput.currentResume) {
     const preservation = validateRepairPreservation({
-      baselineResume: writerInput.currentResume,
-      baselineCoverLetter: writerInput.currentCoverLetter,
+      baselineResume: normalizedBaseline!.resume,
+      baselineCoverLetter: normalizedBaseline?.coverLetter,
       repairedResume: writerOutput.resume,
       repairedCoverLetter,
       repairPlan: writerInput.repairPlan,
