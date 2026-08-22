@@ -40,6 +40,7 @@ export function getProviderDateType(sourceType?: SourceType): FreshnessDateType 
     case "teamtailor":
     case "smartrecruiters":
     case "paylocity":
+    case "recruitee":
       return "PUBLISHED";
     case "workday":
     case "icims":

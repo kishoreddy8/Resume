@@ -8,7 +8,6 @@ import {
 } from "@/lib/ats/unsupportedCatalog";
 
 const EXAMPLES: [string, string][] = [
-  ["https://example.recruitee.com/", "Recruitee"],
   ["https://jobs.dayforcehcm.com/en-US/example/jobs", "Dayforce"],
   ["https://example.phenompeople.com/us/en/search-results", "Phenom"],
   ["https://example.avature.net/careers", "Avature"],

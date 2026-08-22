@@ -8,7 +8,7 @@ import { fetchJobsForCompany } from "@/lib/normalize";
 import { categorizeThrownError, isRetryableCategory, ScanConnectorError } from "@/lib/scan/errors";
 import type { Company, ErrorCategory, NormalizedJob } from "@/types";
 
-export type SupportedProvider = "greenhouse" | "lever" | "ashby" | "workday" | "smartrecruiters" | "adp_wfn" | "adp_rm" | "eightfold" | "cornerstone" | "avature" | "paylocity" | "icims" | "ukg_pro" | "bamboohr" | "oracle_recruiting_cloud" | "workable" | "rippling" | "paycom" | "jazzhr" | "jobvite" | "breezy" | "teamtailor" | "applicantpro" | "pinpoint" | "clearcompany" | "personio" | "applicantstack" | "comeet" | "cats" | "gohire" | "newton" | "silkroad" | "jobdiva" | "taleo" | "phenom" | "successfactors";
+export type SupportedProvider = "greenhouse" | "lever" | "ashby" | "workday" | "smartrecruiters" | "adp_wfn" | "adp_rm" | "eightfold" | "cornerstone" | "avature" | "paylocity" | "icims" | "ukg_pro" | "bamboohr" | "oracle_recruiting_cloud" | "workable" | "rippling" | "paycom" | "jazzhr" | "jobvite" | "breezy" | "teamtailor" | "applicantpro" | "pinpoint" | "clearcompany" | "personio" | "recruitee" | "applicantstack" | "comeet" | "cats" | "gohire" | "newton" | "silkroad" | "jobdiva" | "taleo" | "phenom" | "successfactors";
 
 const CONNECTOR_VERSIONS: Record<SupportedProvider, string> = {
   greenhouse: "greenhouse.v1",
@@ -37,6 +37,7 @@ const CONNECTOR_VERSIONS: Record<SupportedProvider, string> = {
   pinpoint: "pinpoint.v1",
   clearcompany: "clearcompany.v1",
   personio: "personio.v1",
+  recruitee: "recruitee.v1",
   applicantstack: "applicantstack.v1",
   comeet: "comeet.v1",
   cats: "cats.v1",
@@ -124,7 +125,7 @@ export function listPendingConnectorCandidates(
        ON l.company_id = c.id AND l.organization_id = js.organization_id
      WHERE js.is_active = 1 AND js.resolution_status = 'VERIFIED'
        AND js.review_status = 'PENDING'
-       AND js.provider IN ('greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters', 'adp_wfn', 'adp_rm', 'eightfold', 'cornerstone', 'avature', 'paylocity', 'icims', 'ukg_pro', 'bamboohr', 'oracle_recruiting_cloud', 'workable', 'rippling', 'paycom', 'jazzhr', 'jobvite', 'breezy', 'teamtailor', 'applicantpro', 'pinpoint', 'clearcompany', 'personio', 'applicantstack', 'comeet', 'cats', 'gohire', 'newton', 'silkroad', 'jobdiva', 'taleo', 'phenom', 'successfactors')
+       AND js.provider IN ('greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters', 'adp_wfn', 'adp_rm', 'eightfold', 'cornerstone', 'avature', 'paylocity', 'icims', 'ukg_pro', 'bamboohr', 'oracle_recruiting_cloud', 'workable', 'rippling', 'paycom', 'jazzhr', 'jobvite', 'breezy', 'teamtailor', 'applicantpro', 'pinpoint', 'clearcompany', 'personio', 'recruitee', 'applicantstack', 'comeet', 'cats', 'gohire', 'newton', 'silkroad', 'jobdiva', 'taleo', 'phenom', 'successfactors')
        ${options.provider ? "AND js.provider = ?" : ""}
        AND js.source_key IS NOT NULL AND js.source_url IS NOT NULL
        AND c.domain_identity_status = 'VERIFIED' AND c.verified_domain IS NOT NULL

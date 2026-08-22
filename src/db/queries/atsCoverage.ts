@@ -254,7 +254,7 @@ export function getAtsCoverageSummary(): AtsCoverageSummary {
   const rows = getDb().prepare(COMPANY_WITH_JOB_COUNT_SQL).all() as RawRow[];
 
   const supportedSourceTypes: Exclude<SourceType, "career_link">[] = [
-    "greenhouse", "ashby", "lever", "workday", "smartrecruiters", "adp_wfn", "adp_rm", "eightfold", "cornerstone", "avature", "paylocity", "icims", "ukg_pro", "bamboohr", "oracle_recruiting_cloud", "workable", "rippling", "paycom", "jazzhr", "jobvite", "breezy", "teamtailor", "applicantpro", "pinpoint", "clearcompany", "personio", "applicantstack", "comeet", "cats", "gohire", "newton", "silkroad", "jobdiva", "taleo", "successfactors",
+    "greenhouse", "ashby", "lever", "workday", "smartrecruiters", "adp_wfn", "adp_rm", "eightfold", "cornerstone", "avature", "paylocity", "icims", "ukg_pro", "bamboohr", "oracle_recruiting_cloud", "workable", "rippling", "paycom", "jazzhr", "jobvite", "breezy", "teamtailor", "applicantpro", "pinpoint", "clearcompany", "personio", "recruitee", "applicantstack", "comeet", "cats", "gohire", "newton", "silkroad", "jobdiva", "taleo", "successfactors",
   ];
   const supported: SupportedAtsGroup[] = supportedSourceTypes
     .map((sourceType) => {

@@ -30,6 +30,7 @@ import { canonicalAvatureUrl, normalizeAvatureToken } from "@/lib/ats/avature";
 import { canonicalSuccessFactorsUrl, normalizeSuccessFactorsToken } from "@/lib/ats/successfactors";
 import { canonicalClearCompanyUrl, normalizeClearCompanyTenant } from "@/lib/ats/clearcompany";
 import { canonicalSmartRecruitersUrl, normalizeSmartRecruitersToken } from "@/lib/ats/smartrecruiters";
+import { canonicalRecruiteeUrl, normalizeRecruiteeTenant } from "@/lib/ats/recruitee";
 import type { SourceType } from "@/types";
 
 export interface AtsDetection {
@@ -633,8 +634,27 @@ const SIMPLE_PATTERNS: { sourceType: Exclude<SourceType, "career_link" | "workda
   { sourceType: "lever", pattern: /jobs\.lever\.co\/([^/?#]+)/i },
 ];
 
+function detectRecruitee(value: string): AtsDetection | null {
+  let url: URL;
+  try {
+    url = new URL(decodeSavedUrl(value));
+  } catch {
+    return null;
+  }
+  const match = url.hostname.match(/^([a-z0-9-]+)\.recruitee\.com$/i);
+  if (!match) return null;
+  try {
+    const tenant = normalizeRecruiteeTenant(match[1]);
+    return { sourceType: "recruitee", atsBoardToken: tenant, canonicalSourceUrl: canonicalRecruiteeUrl(tenant) };
+  } catch {
+    return null;
+  }
+}
+
 /** Tier 1: cheap, no network — matches known ATS domain patterns directly in a URL string. */
 export function detectAtsFromUrlString(url: string): AtsDetection | null {
+  const recruitee = detectRecruitee(url);
+  if (recruitee) return recruitee;
   const workday = detectWorkday(url);
   if (workday) return workday;
   const greenhouse = detectGreenhouse(url);

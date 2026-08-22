@@ -115,7 +115,7 @@ const SUPPORTED_PROVIDERS = new Set<SupportedProvider>([
   "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "adp_wfn", "adp_rm", "eightfold",
   "cornerstone", "avature", "paylocity", "icims", "ukg_pro", "bamboohr", "oracle_recruiting_cloud",
   "workable", "rippling", "paycom", "jazzhr", "jobvite", "breezy", "teamtailor", "applicantpro",
-  "pinpoint", "clearcompany", "personio", "applicantstack", "comeet", "cats", "gohire", "newton",
+  "pinpoint", "clearcompany", "personio", "recruitee", "applicantstack", "comeet", "cats", "gohire", "newton",
   "silkroad", "jobdiva", "taleo", "phenom", "successfactors",
 ]);
 

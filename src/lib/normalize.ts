@@ -19,6 +19,7 @@ import { fetchApplicantProJobs } from "@/lib/ats/applicantpro";
 import { fetchPinpointJobs } from "@/lib/ats/pinpoint";
 import { fetchClearCompanyJobs } from "@/lib/ats/clearcompany";
 import { fetchPersonioJobs } from "@/lib/ats/personio";
+import { fetchRecruiteeJobs } from "@/lib/ats/recruitee";
 import { fetchApplicantStackJobs } from "@/lib/ats/applicantstack";
 import { fetchComeetJobs } from "@/lib/ats/comeet";
 import { fetchCatsJobs } from "@/lib/ats/cats";
@@ -126,6 +127,9 @@ export async function fetchJobsForCompany(
     case "personio":
       if (!company.ats_board_token) throw new Error("Missing Personio tenant");
       return fetchPersonioJobs(company.ats_board_token, options);
+    case "recruitee":
+      if (!company.ats_board_token) throw new Error("Missing Recruitee tenant");
+      return fetchRecruiteeJobs(company.ats_board_token, options);
     case "applicantstack":
       if (!company.ats_board_token) throw new Error("Missing ApplicantStack tenant");
       return fetchApplicantStackJobs(company.ats_board_token, options);

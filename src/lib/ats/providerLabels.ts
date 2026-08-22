@@ -26,6 +26,7 @@ export const PROVIDER_LABELS: Record<SourceType, string> = {
   pinpoint: "Pinpoint",
   clearcompany: "ClearCompany",
   personio: "Personio",
+  recruitee: "Recruitee",
   applicantstack: "ApplicantStack",
   comeet: "Comeet",
   cats: "CATS",

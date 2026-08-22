@@ -127,3 +127,13 @@ test("SmartRecruiters api.smartrecruiters.com URL (the real JSON API host) is re
   assert.equal(result!.sourceType, "smartrecruiters");
   assert.equal(result!.atsBoardToken, "acme");
 });
+
+test("Recruitee career and offer URLs resolve to the same tenant-scoped connector", () => {
+  for (const url of ["https://framestore.recruitee.com/", "https://framestore.recruitee.com/o/freelance-cg-chicago"]) {
+    const result = detectAtsFromUrlString(url);
+    assert.ok(result);
+    assert.equal(result.sourceType, "recruitee");
+    assert.equal(result.atsBoardToken, "framestore");
+    assert.equal(result.canonicalSourceUrl, "https://framestore.recruitee.com/");
+  }
+});

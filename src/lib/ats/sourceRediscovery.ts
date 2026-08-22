@@ -26,6 +26,7 @@ import { canonicalOracleRecruitingCloudUrl } from "@/lib/ats/oracleRecruitingClo
 import { canonicalPaycomUrl } from "@/lib/ats/paycom";
 import { canonicalPaylocityUrl } from "@/lib/ats/paylocity";
 import { canonicalPersonioUrl } from "@/lib/ats/personio";
+import { canonicalRecruiteeUrl } from "@/lib/ats/recruitee";
 import { canonicalPhenomUrl } from "@/lib/ats/phenom";
 import { canonicalPinpointUrl } from "@/lib/ats/pinpoint";
 import { canonicalRipplingUrl } from "@/lib/ats/rippling";
@@ -86,6 +87,7 @@ const CANONICAL_URL_BUILDERS: Partial<Record<SourceType, (token: string) => stri
   paycom: canonicalPaycomUrl,
   paylocity: canonicalPaylocityUrl,
   personio: canonicalPersonioUrl,
+  recruitee: canonicalRecruiteeUrl,
   phenom: canonicalPhenomUrl,
   pinpoint: canonicalPinpointUrl,
   rippling: canonicalRipplingUrl,
