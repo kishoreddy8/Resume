@@ -23,6 +23,7 @@ import { ApplicationDetail } from "@/app/applications/[id]/ApplicationDetail";
 import { JobReviewSkeleton } from "../Skeletons";
 import { EmptyNote, WsCard } from "./WorkspaceUI";
 import {
+  jobWorkspaceUrl,
   resolveWorkspaceRouteStep,
   type WorkspaceRouteRequest,
 } from "./workspaceRoute";
@@ -124,6 +125,8 @@ export function JobWorkspace({
    * from the refetched result — nothing is set optimistically. */
   const [refreshKey, setRefreshKey] = useState(0);
   const [actionFocus, setActionFocus] = useState<WorkspaceRouteRequest["focus"]>(null);
+  const [focusNonce, setFocusNonce] = useState(0);
+  const handledFocusRef = useRef<string | null>(null);
 
   const match = useJobMatch(jobId, candidateId);
 
@@ -178,22 +181,15 @@ export function JobWorkspace({
    * strength of a stage the validator actually returned. */
 
   /* The quality record is read by Tailoring Results, Validation and Application — never by Match or
-   * Resume Studio, which is why it is gated on the step rather than fetched on mount. `activeKey`
-   * is resolved before the input below so the fetch can be gated without a circular dependency:
-   * the landing step never depends on the quality record (see defaultStep). */
-  const preflightInput: WorkflowInput = {
-      result: match.result,
-      matchLoading: match.state === "loading" || match.state === "idle",
-      resume,
-      generatedFileCount: detail?.generatedFiles.length ?? 0,
-      runStatuses: (runs ?? []).map((r) => r.status),
-      humanMaySend: null,
-    };
+   * Resume Studio, which is why it is gated on the requested/local step rather than fetched on a
+   * plain workspace mount. */
   /* A requested later step is provisionally mounted so its existing bounded read can establish
    * eligibility. The query itself still performs no work: it only selects which read-only panel
    * supplies the state used by resolveWorkspaceRouteStep below. */
-  const provisionalKey: StepKey =
-    chosen ?? routeRequest.step ?? defaultStep(preflightInput);
+  /* A plain job click always opens Match. Later steps are entered only through an explicit route
+   * or an in-workspace choice, so visiting `/jobs/{id}` never implies Application/Validation from
+   * historical state and does not prefetch their heavier records. */
+  const provisionalKey: StepKey = chosen ?? routeRequest.step ?? "match";
   const plan = useTailoringPlan(
     candidateId ?? 0,
     jobId,
@@ -221,7 +217,7 @@ export function JobWorkspace({
 
   /* Explicit valid routes outrank the generic landing rule, but only after the current step model
    * proves the destination is reachable. A user's in-page choice then outranks the original URL. */
-  const genericDefault = defaultStep(workflowInput);
+  const genericDefault: StepKey = routeRequest.step ? defaultStep(workflowInput) : "match";
   const provisionalSteps = resolveWorkflowSteps(workflowInput, provisionalKey);
   const active: StepKey = chosen ??
     (routeRequest.step
@@ -250,23 +246,48 @@ export function JobWorkspace({
 
   const go = useCallback((key: StepKey) => setChosen(key), []);
 
+  const followWorkspaceAction = useCallback(
+    (step: StepKey, focus: WorkspaceRouteRequest["focus"]) => {
+      handledFocusRef.current = null;
+      setActionFocus(focus);
+      setChosen(step);
+      setFocusNonce((value) => value + 1);
+    },
+    []
+  );
+
   /* Focus is deliberately inert: it can only find an existing labelled target, scroll it into
    * view, and move keyboard focus. There is no click(), submit(), fetch(), or state transition in
    * this effect. Missing or incompatible focus values simply do nothing. */
   useEffect(() => {
     const requestedFocus = actionFocus ?? routeRequest.focus;
     if (!requestedFocus) return;
-    const frame = window.requestAnimationFrame(() => {
+    const requestKey = `${active}:${requestedFocus}:${focusNonce}`;
+    if (handledFocusRef.current === requestKey) return;
+    let cancelled = false;
+    let frame = 0;
+    let attempts = 0;
+    const locateAfterRender = () => {
+      if (cancelled) return;
       const target = workspaceRef.current?.querySelector<HTMLElement>(
         `[data-workspace-focus~="${requestedFocus}"]`
       );
-      if (!target) return;
+      if (!target) {
+        attempts += 1;
+        if (attempts < 30) frame = window.requestAnimationFrame(locateAfterRender);
+        return;
+      }
+      handledFocusRef.current = requestKey;
       target.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
       target.focus({ preventScroll: true });
       target.dataset.focusedFromRoute = "true";
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [actionFocus, active, quality.state, plan.state, reduced, routeRequest.focus]);
+    };
+    frame = window.requestAnimationFrame(locateAfterRender);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [actionFocus, active, focusNonce, quality.state, plan.state, reduced, routeRequest.focus]);
 
   /* The newest run for this job. The list is already ordered newest-first by the endpoint. */
   const latestRun = (runs ?? [])[0] ?? null;
@@ -301,10 +322,11 @@ export function JobWorkspace({
   const primary = hero.action
     ? {
         label: hero.action.label,
-        onClick: () => {
-          setActionFocus(hero.action?.focus ?? null);
-          go(hero.action!.step);
-        },
+        href: jobWorkspaceUrl(jobId, {
+          step: hero.action.step,
+          focus: hero.action.focus,
+        }),
+        onClick: () => followWorkspaceAction(hero.action!.step, hero.action!.focus),
       }
     : null;
 
@@ -433,11 +455,7 @@ export function JobWorkspace({
           )}
 
           {active === "validation" && (
-            <div
-              data-workspace-focus="revalidate issues"
-              tabIndex={-1}
-              className="workspace-focus-target flex flex-col gap-5"
-            >
+            <div className="flex flex-col gap-5">
               {activeStep.state === "locked" || activeStep.state === "blocked" ? (
                 <LockedStep title="Validation" reason={activeStep.lockedReason} />
               ) : quality.state === "ready" ? (
@@ -524,9 +542,12 @@ export function JobWorkspace({
                 <ApplicationReadyStep
                   job={job}
                   quality={qualityData}
+                  reviewIssuesHref={jobWorkspaceUrl(jobId, {
+                    step: "validation",
+                    focus: "issues",
+                  })}
                   onReviewIssues={() => {
-                    setActionFocus("issues");
-                    go("validation");
+                    followWorkspaceAction("validation", "issues");
                   }}
                   startControl={<StartApplication candidateId={candidateId} jobId={jobId} />}
                 />

@@ -16,5 +16,12 @@ export default async function JobDetailPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ id }, query] = await Promise.all([params, searchParams]);
-  return <JobWorkspace jobId={Number(id)} routeRequest={parseWorkspaceRoute(query)} />;
+  const routeRequest = parseWorkspaceRoute(query);
+  return (
+    <JobWorkspace
+      key={`${id}:${routeRequest.step ?? "default"}:${routeRequest.focus ?? "none"}`}
+      jobId={Number(id)}
+      routeRequest={routeRequest}
+    />
+  );
 }

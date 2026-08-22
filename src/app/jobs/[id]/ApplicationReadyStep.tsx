@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Link from "next/link";
 import type { JobWithCompany } from "@/types";
 import { combineH1bConfidence } from "@/lib/h1b/combineSignal";
 import type { QualityWorkflowData } from "./useQualityWorkflow";
@@ -69,12 +70,14 @@ function domainOf(url: string | null): string | null {
 export function ApplicationReadyStep({
   job,
   quality,
+  reviewIssuesHref,
   onReviewIssues,
   startControl,
 }: {
   job: JobWithCompany;
   /** Null until Validation has been opened — the resume row then reads "Unknown", not "Ready". */
   quality: QualityWorkflowData | null;
+  reviewIssuesHref: string;
   onReviewIssues: () => void;
   startControl: ReactNode;
 }) {
@@ -117,13 +120,14 @@ export function ApplicationReadyStep({
               {isUnverified ? "Application readiness required" : "Application unavailable"}
             </h2>
             <p className="mt-2 text-[14px] leading-relaxed text-secondary">{reason}</p>
-            <button
-              type="button"
+            <Link
+              href={reviewIssuesHref}
+              scroll={false}
               onClick={onReviewIssues}
               className="mt-5 inline-flex h-11 items-center justify-center rounded-[12px] bg-[var(--accent)] px-5 text-[13.5px] font-semibold text-[var(--accent-fg)] transition-colors duration-150 hover:bg-[var(--accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2"
             >
               {isUnverified ? "Review validation" : "Review issues"}
-            </button>
+            </Link>
           </div>
         </section>
       </div>

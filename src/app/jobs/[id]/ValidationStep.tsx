@@ -173,29 +173,39 @@ export function ValidationStep({
                 : "The resume passed the current safety checks and is ready for your final review."}
           </p>
           {data.revalidation?.isLegacyMissingAnalysis && data.revalidation.canRevalidate && (
-            <div className="mt-5">
+            <div
+              data-workspace-focus="revalidate"
+              tabIndex={-1}
+              className="workspace-focus-target mt-5 scroll-mt-24"
+            >
               <RevalidateCard candidateId={candidateId} jobId={jobId} onDone={() => onRevalidated?.()} />
             </div>
           )}
         </section>
 
-        <WsCard title="Key issues">
-          {issues.length === 0 ? (
-            <EmptyNote>No blocking issue was reported by the current review.</EmptyNote>
-          ) : (
-            <ul className="flex flex-col gap-2.5">
-              {issues.slice(0, 5).map((issue) => (
-                <li key={issue} className="flex items-start gap-2.5 text-[13.5px] leading-relaxed text-secondary">
-                  <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--error)]" />
-                  <span>{issue}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {issues.length > 5 && (
-            <p className="mt-3 text-[12.5px] text-tertiary">{issues.length - 5} more in technical details</p>
-          )}
-        </WsCard>
+        <div
+          data-workspace-focus="issues"
+          tabIndex={-1}
+          className="workspace-focus-target scroll-mt-24"
+        >
+          <WsCard title="Key issues" className="h-full">
+            {issues.length === 0 ? (
+              <EmptyNote>No blocking issue was reported by the current review.</EmptyNote>
+            ) : (
+              <ul className="flex flex-col gap-2.5">
+                {issues.slice(0, 5).map((issue) => (
+                  <li key={issue} className="flex items-start gap-2.5 text-[13.5px] leading-relaxed text-secondary">
+                    <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--error)]" />
+                    <span>{issue}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {issues.length > 5 && (
+              <p className="mt-3 text-[12.5px] text-tertiary">{issues.length - 5} more in technical details</p>
+            )}
+          </WsCard>
+        </div>
       </div>
 
       <details className="premium-expansion group mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 shadow-[var(--shadow-row)]">

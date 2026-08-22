@@ -55,3 +55,9 @@ test("Application deep links cannot bypass readiness or another eligibility reas
 test("a valid explicit deep link takes precedence over the generic default", () => {
   assert.equal(resolveWorkspaceRouteStep("studio", steps(), "application"), "studio");
 });
+
+test("a same-job query update selects Validation instead of retaining the prior local step", () => {
+  const request = parseWorkspaceRoute({ step: "validation", focus: "issues" });
+  assert.equal(resolveWorkspaceRouteStep(request.step, steps(), "results"), "validation");
+  assert.equal(request.focus, "issues");
+});

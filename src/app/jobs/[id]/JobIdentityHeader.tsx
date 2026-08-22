@@ -83,7 +83,7 @@ export function JobIdentityHeader({
   candidateId: number;
   status: WorkspaceHeroPresentation["status"];
   /** Exactly one primary action, chosen by the workspace from the workflow's real position. */
-  primary: { label: string; onClick: () => void; disabled?: boolean } | null;
+  primary: { label: string; href: string; onClick: () => void } | null;
 }) {
   const score = typeof result?.overallScore === "number" ? Math.round(result.overallScore) : null;
   const ats = sourceLabel(job.source_type);
@@ -174,14 +174,14 @@ export function JobIdentityHeader({
             </a>
           )}
           {primary && (
-            <button
-              type="button"
+            <Link
+              href={primary.href}
+              scroll={false}
               onClick={primary.onClick}
-              disabled={primary.disabled}
-              className="flex h-11 flex-1 items-center justify-center rounded-[12px] bg-[var(--accent)] px-5 text-[13.5px] font-semibold text-[var(--accent-fg)] shadow-[0_8px_20px_color-mix(in_oklab,var(--accent)_22%,transparent)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none"
+              className="flex h-11 flex-1 items-center justify-center rounded-[12px] bg-[var(--accent)] px-5 text-[13.5px] font-semibold text-[var(--accent-fg)] shadow-[0_8px_20px_color-mix(in_oklab,var(--accent)_22%,transparent)] transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 sm:flex-none"
             >
               {primary.label}
-            </button>
+            </Link>
           )}
         </div>
       </div>
