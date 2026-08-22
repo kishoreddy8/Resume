@@ -109,6 +109,21 @@ test("S26B-04 PASS checks generate no corrections at all", () => {
   assert.equal(evaluateQualityGate(review(), 1, 3), "READY");
 });
 
+test("S26B-04b NOT_APPLICABLE checks (e.g. deepRewrite during a TARGETED_REPAIR iteration) generate no correction — a check that did not apply cannot have been violated", () => {
+  // The exact live defect: workflow 21 (candidate 13, job 33017) had deepRewrite: NOT_APPLICABLE
+  // (correct — that iteration was a targeted repair, so the deep-rewrite comparison genuinely does
+  // not apply) and every other check PASS, yet gateBlockingComplianceCorrections still surfaced
+  // deepRewrite as a "must PASS before READY" correction — an unfixable instruction, since the
+  // writer has no way to turn "does not apply" into "PASS". isComplianceBlocking (the one place that
+  // decides) already correctly excludes NOT_APPLICABLE; this function must ask the same question.
+  const c = compliance({ deepRewrite: "NOT_APPLICABLE" }, { deepRewrite: ["Targeted repair — full-document rewrite comparison does not apply."] });
+  assert.deepEqual(gateBlockingComplianceCorrections(c), [], "NOT_APPLICABLE must never be reported as a blocking correction");
+  // And a review with only this one NOT_APPLICABLE check (everything else PASS) is not blocked by
+  // condition 6 at all — matching allChecksPass/isComplianceBlocking's own semantics.
+  const gateOutcome = evaluateQualityGate(review({ instructionCompliance: c }), 1, 3);
+  assert.notEqual(gateOutcome, "NEEDS_HUMAN_REVIEW", "a NOT_APPLICABLE-only compliance result must never itself force human review");
+});
+
 test("S26B-05 corrections stay scoped to the exact findings — one per failing check, none for the rest", () => {
   const c = compliance(
     { technologyGrouping: "REVIEW", bannedLanguage: "FAIL", hardCareerFacts: "FAIL" },

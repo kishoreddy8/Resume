@@ -349,7 +349,15 @@ export function gateBlockingComplianceCorrections(compliance: InstructionComplia
   const corrections: RequiredCorrection[] = [];
   for (const name of INSTRUCTION_COMPLIANCE_CHECK_NAMES) {
     const status = compliance.checks[name];
-    if (status === "PASS") continue;
+    // NOT_APPLICABLE does not block READY (see isComplianceBlocking) — this was the one caller still
+    // spelled as `status === "PASS"` instead of `!isComplianceBlocking(status)`, so a check that
+    // legitimately does not apply to a given iteration (e.g. deepRewrite during TARGETED_REPAIR) was
+    // surfacing here as a "must PASS before this resume can be marked READY" correction — an
+    // unfixable, misleading instruction, since the writer has no way to make an inapplicable check
+    // become PASS. Found live: workflow 21 (candidate 13, job 33017) correctly reached the real
+    // overallScore >= 95 gate's threshold failure, but its repair-iteration correction list and
+    // human-facing review feedback both falsely named deepRewrite as a blocking cause.
+    if (!isComplianceBlocking(status)) continue;
     const isHardGate = HARD_GATE_CHECKS.includes(name);
     const reasons = compliance.checkNotes?.[name] ?? [];
     const detail = reasons.length > 0 ? ` Reason: ${reasons.join(" | ")}` : "";
