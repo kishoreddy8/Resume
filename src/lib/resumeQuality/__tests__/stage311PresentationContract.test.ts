@@ -229,9 +229,9 @@ test("S311C-28 the cover letter follows the same dash rule", () => {
 // --- SKILLS (tests 20-24) -----------------------------------------------------------------------
 
 const JD: RequirementUnit[] = [
-  { kind: "skill", memberSkillNames: ["Python"], categories: [], label: "Python", requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [], experienceDepthRequired: false, fromUnclaimedText: false },
-  { kind: "skill", memberSkillNames: ["Apache Spark"], categories: [], label: "Spark", requirementLevel: "Required", criticality: "REQUIRED", evidenceSnippets: [], experienceDepthRequired: false, fromUnclaimedText: false },
-  { kind: "skill", memberSkillNames: ["Snowflake"], categories: [], label: "Snowflake", requirementLevel: "Required", criticality: "REQUIRED", evidenceSnippets: [], experienceDepthRequired: false, fromUnclaimedText: false },
+  { kind: "skill", memberSkillNames: ["Python"], categories: [], label: "Python", requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [], experienceDepthRequired: false, requestedYears: null, fromUnclaimedText: false },
+  { kind: "skill", memberSkillNames: ["Apache Spark"], categories: [], label: "Spark", requirementLevel: "Required", criticality: "REQUIRED", evidenceSnippets: [], experienceDepthRequired: false, requestedYears: null, fromUnclaimedText: false },
+  { kind: "skill", memberSkillNames: ["Snowflake"], categories: [], label: "Snowflake", requirementLevel: "Required", criticality: "REQUIRED", evidenceSnippets: [], experienceDepthRequired: false, requestedYears: null, fromUnclaimedText: false },
 ];
 
 test("S311C-21 domain-relevant skills beyond the JD are kept, not flagged", () => {

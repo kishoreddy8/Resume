@@ -34,8 +34,8 @@ test("no unsupported JD skill ever enters the ranking — only candidate-evidenc
 test("STRONG evidence (used at an employer) outranks PARTIAL evidence (inventory-only) at the same JD tier", () => {
   const matrix = buildJdPriorityMatrix(
     [
-      { kind: "skill", memberSkillNames: ["Snowflake"], categories: [], label: "Snowflake", requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [], experienceDepthRequired: false, fromUnclaimedText: false },
-      { kind: "skill", memberSkillNames: ["PostgreSQL"], categories: [], label: "PostgreSQL", requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [], experienceDepthRequired: false, fromUnclaimedText: false },
+      { kind: "skill", memberSkillNames: ["Snowflake"], categories: [], label: "Snowflake", requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [], experienceDepthRequired: false, requestedYears: null, fromUnclaimedText: false },
+      { kind: "skill", memberSkillNames: ["PostgreSQL"], categories: [], label: "PostgreSQL", requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [], experienceDepthRequired: false, requestedYears: null, fromUnclaimedText: false },
     ],
     "Senior Data Engineer",
     MULTI_JD_MASTER_PROFILE
@@ -51,8 +51,8 @@ test("STRONG evidence (used at an employer) outranks PARTIAL evidence (inventory
 test("recency: a skill used at the most recent employer ranks above an equal-tier, equal-evidence skill used only at an older employer", () => {
   const matrix = buildJdPriorityMatrix(
     [
-      { kind: "skill", memberSkillNames: ["Snowflake"], categories: [], label: "Snowflake", requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [], experienceDepthRequired: false, fromUnclaimedText: false },
-      { kind: "skill", memberSkillNames: ["Terraform"], categories: [], label: "Terraform", requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [], experienceDepthRequired: false, fromUnclaimedText: false },
+      { kind: "skill", memberSkillNames: ["Snowflake"], categories: [], label: "Snowflake", requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [], experienceDepthRequired: false, requestedYears: null, fromUnclaimedText: false },
+      { kind: "skill", memberSkillNames: ["Terraform"], categories: [], label: "Terraform", requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [], experienceDepthRequired: false, requestedYears: null, fromUnclaimedText: false },
     ],
     "Senior Data Engineer",
     MULTI_JD_MASTER_PROFILE

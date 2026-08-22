@@ -2,6 +2,7 @@ import { SKILL_TAXONOMY } from "@/lib/jobIntel/skillsTaxonomy";
 import { escapeRegExp } from "@/lib/jobIntel/textUtils";
 import { deriveCriticality } from "./requirementCriticality";
 import { isExperienceDepthRequired } from "./handsOnCues";
+import { extractTechnologySpecificYears } from "./technologyDuration";
 import type { RequirementUnit } from "./types";
 
 /**
@@ -120,6 +121,7 @@ export function detectUnclaimedRequirements(input: UnclaimedRequirementInput): R
 
   const units: RequirementUnit[] = kept.map(({ line, requirementLevel }) => {
     const evidenceSnippets = [line];
+    const requestedYears = extractTechnologySpecificYears(evidenceSnippets);
     return {
       kind: "skill",
       memberSkillNames: [],
@@ -128,7 +130,8 @@ export function detectUnclaimedRequirements(input: UnclaimedRequirementInput): R
       requirementLevel,
       criticality: deriveCriticality({ requirementLevel, evidenceSnippets, jobTitle: input.jobTitle, memberSkillNames: [] }),
       evidenceSnippets,
-      experienceDepthRequired: isExperienceDepthRequired(evidenceSnippets),
+      experienceDepthRequired: isExperienceDepthRequired(evidenceSnippets) || requestedYears !== null,
+      requestedYears,
       fromUnclaimedText: true,
     };
   });
@@ -143,6 +146,7 @@ export function detectUnclaimedRequirements(input: UnclaimedRequirementInput): R
       criticality: "REQUIRED",
       evidenceSnippets: [],
       experienceDepthRequired: false,
+      requestedYears: null,
       fromUnclaimedText: true,
     });
   }

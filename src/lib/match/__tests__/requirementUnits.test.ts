@@ -113,3 +113,58 @@ test("education unit can still be promoted to CRITICAL when no equivalent-experi
   assert.ok(unit);
   assert.equal(unit?.criticality, "CRITICAL");
 });
+
+// --- Technology-specific numeric duration, end to end (real JobSkill -> real RequirementUnit) ------
+// The literal scenarios requested for certification: each of these is a REAL evidence_snippet run
+// through the REAL extraction path (collapseSkillUnits -> extractTechnologySpecificYears), not a
+// hand-set boolean — proving the wiring works, not just the regex in isolation.
+
+test("TD-INT-1: '4+ years Databricks' sets requestedYears and experienceDepthRequired with no hands-on-cue phrase present", () => {
+  const units = collapseSkillUnits([skill({ skill_name: "Databricks", evidence_snippet: "4+ years Databricks required" })], "Data Engineer");
+  assert.equal(units[0].requestedYears, 4);
+  assert.equal(units[0].experienceDepthRequired, true, "a numeric duration alone must be sufficient — no hands-on/production-experience phrase needed");
+});
+
+test("TD-INT-2: '5 years Azure Data Factory' is recognized end to end", () => {
+  const units = collapseSkillUnits([skill({ skill_name: "Azure Data Factory", evidence_snippet: "5 years Azure Data Factory pipeline development" })], "Data Engineer");
+  assert.equal(units[0].requestedYears, 5);
+  assert.equal(units[0].experienceDepthRequired, true);
+});
+
+test("TD-INT-3: '3+ years Snowflake experience' is recognized end to end", () => {
+  const units = collapseSkillUnits([skill({ skill_name: "Snowflake", evidence_snippet: "3+ years Snowflake experience" })], "Data Engineer");
+  assert.equal(units[0].requestedYears, 3);
+});
+
+test("TD-INT-4: 'minimum 4 years PySpark' is recognized end to end", () => {
+  const units = collapseSkillUnits([skill({ skill_name: "PySpark", evidence_snippet: "minimum 4 years PySpark development required" })], "Data Engineer");
+  assert.equal(units[0].requestedYears, 4);
+});
+
+test("TD-INT-5: a plain skill mention with no duration figure leaves requestedYears null and does not force experienceDepthRequired", () => {
+  const units = collapseSkillUnits([skill({ skill_name: "Kafka", evidence_snippet: "Kafka experience" })], "Data Engineer");
+  assert.equal(units[0].requestedYears, null);
+  assert.equal(units[0].experienceDepthRequired, false);
+});
+
+test("TD-INT-6: overall/career-total years stated alongside a technology on the same JD line is NEVER attributed to that technology", () => {
+  // The exact critical distinction from the certification ticket: "10 years overall experience;
+  // Databricks required" must not become "10 years Databricks".
+  const units = collapseSkillUnits(
+    [skill({ skill_name: "Databricks", evidence_snippet: "10 years overall experience; Databricks required" })],
+    "Data Engineer"
+  );
+  assert.equal(units[0].requestedYears, null, "an overall-experience figure must never be read as this technology's own duration");
+});
+
+test("TD-INT-7: an OR-alternative skill group also carries requestedYears when its evidence text states one", () => {
+  const units = collapseSkillUnits(
+    [
+      skill({ id: 1, skill_name: "Databricks", alternative_group_id: "alt-1", evidence_snippet: "4+ years Databricks or Snowflake" }),
+      skill({ id: 2, skill_name: "Snowflake", alternative_group_id: "alt-1", evidence_snippet: "4+ years Databricks or Snowflake" }),
+    ],
+    "Data Engineer"
+  );
+  assert.equal(units.length, 1);
+  assert.equal(units[0].requestedYears, 4);
+});

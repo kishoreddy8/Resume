@@ -1,6 +1,7 @@
 import type { JobCertification, JobSkill, RequirementLevel } from "@/types";
 import { deriveCriticality } from "./requirementCriticality";
 import { isExperienceDepthRequired } from "./handsOnCues";
+import { extractTechnologySpecificYears } from "./technologyDuration";
 import type { RequirementUnit } from "./types";
 
 /**
@@ -36,6 +37,7 @@ export function collapseSkillUnits(skills: JobSkill[], jobTitle: string): Requir
   for (const skill of ungrouped) {
     const memberSkillNames = [skill.skill_name];
     const evidenceSnippets = buildEvidenceSnippets([skill.evidence_snippet]);
+    const requestedYears = extractTechnologySpecificYears(evidenceSnippets);
     units.push({
       kind: "skill",
       memberSkillNames,
@@ -49,7 +51,10 @@ export function collapseSkillUnits(skills: JobSkill[], jobTitle: string): Requir
         memberSkillNames,
       }),
       evidenceSnippets,
-      experienceDepthRequired: isExperienceDepthRequired(evidenceSnippets),
+      // Either signal is independently sufficient — a qualitative hands-on cue, or an explicit
+      // technology-specific years figure. Neither requires the other (see types.ts's doc comment).
+      experienceDepthRequired: isExperienceDepthRequired(evidenceSnippets) || requestedYears !== null,
+      requestedYears,
       fromUnclaimedText: false,
     });
   }
@@ -61,6 +66,7 @@ export function collapseSkillUnits(skills: JobSkill[], jobTitle: string): Requir
     // line/group it came from), so taking the first member's level is safe, not a guess.
     const requirementLevel: RequirementLevel = members[0].requirement_level;
     const evidenceSnippets = buildEvidenceSnippets(members.map((m) => m.evidence_snippet));
+    const requestedYears = extractTechnologySpecificYears(evidenceSnippets);
     units.push({
       kind: "skill_group",
       memberSkillNames,
@@ -69,7 +75,8 @@ export function collapseSkillUnits(skills: JobSkill[], jobTitle: string): Requir
       requirementLevel,
       criticality: deriveCriticality({ requirementLevel, evidenceSnippets, jobTitle, memberSkillNames }),
       evidenceSnippets,
-      experienceDepthRequired: isExperienceDepthRequired(evidenceSnippets),
+      experienceDepthRequired: isExperienceDepthRequired(evidenceSnippets) || requestedYears !== null,
+      requestedYears,
       fromUnclaimedText: false,
     });
   }
@@ -94,6 +101,7 @@ export function buildCertificationUnits(certifications: JobCertification[], jobT
       }),
       evidenceSnippets,
       experienceDepthRequired: false, // not a meaningful concept for "do you hold this certification"
+      requestedYears: null,
       fromUnclaimedText: false,
     };
   });
@@ -129,6 +137,7 @@ export function buildEducationUnit(input: EducationRequirementInput): Requiremen
     criticality,
     evidenceSnippets,
     experienceDepthRequired: false,
+    requestedYears: null,
     fromUnclaimedText: false,
   };
 }

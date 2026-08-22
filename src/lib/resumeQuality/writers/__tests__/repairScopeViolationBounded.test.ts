@@ -53,6 +53,7 @@ function unit(overrides: Partial<RequirementUnit>): RequirementUnit {
     criticality: "REQUIRED",
     evidenceSnippets: [],
     experienceDepthRequired: false,
+    requestedYears: null,
     fromUnclaimedText: false,
     ...overrides,
   };

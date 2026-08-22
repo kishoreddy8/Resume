@@ -52,6 +52,7 @@ const STRONG_REQUIREMENTS: RequirementUnit[] = [
     criticality: "CRITICAL",
     evidenceSnippets: [],
     experienceDepthRequired: false,
+    requestedYears: null,
     fromUnclaimedText: false,
   },
   {
@@ -63,6 +64,7 @@ const STRONG_REQUIREMENTS: RequirementUnit[] = [
     criticality: "CRITICAL",
     evidenceSnippets: [],
     experienceDepthRequired: false,
+    requestedYears: null,
     fromUnclaimedText: false,
   },
   {
@@ -74,6 +76,7 @@ const STRONG_REQUIREMENTS: RequirementUnit[] = [
     criticality: "CRITICAL",
     evidenceSnippets: [],
     experienceDepthRequired: false,
+    requestedYears: null,
     fromUnclaimedText: false,
   },
 ];

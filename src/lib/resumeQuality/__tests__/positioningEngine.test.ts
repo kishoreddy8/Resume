@@ -30,6 +30,7 @@ function baseRequirement() {
     criticality: "REQUIRED" as const,
     evidenceSnippets: [] as string[],
     experienceDepthRequired: false,
+    requestedYears: null,
     fromUnclaimedText: false,
   };
 }

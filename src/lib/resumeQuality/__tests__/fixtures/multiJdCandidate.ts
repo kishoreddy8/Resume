@@ -100,6 +100,7 @@ function req(overrides: Partial<RequirementUnit> & { criticality: RequirementUni
     requirementLevel: defaultLevel,
     evidenceSnippets: [],
     experienceDepthRequired: false,
+    requestedYears: null,
     fromUnclaimedText: false,
     ...overrides,
   };

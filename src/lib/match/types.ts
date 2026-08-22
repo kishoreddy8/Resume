@@ -91,9 +91,17 @@ export interface RequirementUnit {
   requirementLevel: RequirementLevel; // "Required" | "Preferred" — which coverage pool this belongs to
   criticality: RequirementCriticality;
   evidenceSnippets: string[];
-  /** True when this unit's evidence text matched a hands-on/production-experience cue — see
-   *  handsOnCues.ts. Reduces inventory-only credit for this unit specifically (scoring.ts). */
+  /** True when this unit's evidence text matched a hands-on/production-experience cue (see
+   *  handsOnCues.ts) OR carries an explicit technology-specific years figure (see
+   *  technologyDuration.ts, requestedYears below) — either is independently sufficient; neither is
+   *  required for the other. Reduces inventory-only credit for this unit specifically (scoring.ts),
+   *  and is the signal tailoringIntelligence/plan.ts's distributed-evidence guidance reads. */
   experienceDepthRequired: boolean;
+  /** The JD's own explicitly-stated technology-specific years figure for THIS unit (e.g. "4+ years
+   *  Databricks" -> 4), or null when none is stated — see technologyDuration.ts. TARGET evidence
+   *  only: what the JD asked for, never a claim about what the candidate has. Distinct from
+   *  RequirementMatch.evidence.yearsStated, which is candidate-side (MSI-declared) years. */
+  requestedYears: number | null;
   /** True only for units produced by unclaimedRequirementDetector.ts — a JD line that mentions a
    *  real requirement no structured extractor (job_skills/job_certifications/education) captured. */
   fromUnclaimedText: boolean;

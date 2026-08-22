@@ -77,10 +77,15 @@ export interface PlanRequirement {
    */
   sources: string[];
   /** True when the JD's own evidence text for this requirement carried an explicit hands-on/
-   *  production-experience cue (handsOnCues.ts — the existing Phase 2 structured depth signal, not a
-   *  parsed "N+ years" count). Used below as the honest signal for "this requirement asks for real
-   *  depth", never as a substitute for an actual years claim. */
+   *  production-experience cue (handsOnCues.ts) OR an explicit technology-specific years figure
+   *  (technologyDuration.ts, requestedYears below) — either is independently sufficient. Used below
+   *  as the honest signal for "this requirement asks for real depth", never as a substitute for an
+   *  actual years claim. */
   depthRequested: boolean;
+  /** The JD's own explicitly-stated technology-specific years figure (e.g. "4+ years Databricks" ->
+   *  4), or null when none is stated. TARGET evidence only — what the JD asked for, never a claim
+   *  about what the candidate has. Distinct from `yearsStated` above, which is candidate-side. */
+  requestedYears: number | null;
 }
 
 export interface EmployerEmphasis {
@@ -180,6 +185,7 @@ function toPlanRequirement(match: RequirementMatch, state: EvidenceState): PlanR
     transferableReason: match.transferable?.reason ?? null,
     inventoryOnly,
     depthRequested: match.requirement.experienceDepthRequired === true,
+    requestedYears: match.requirement.requestedYears,
   };
 }
 
@@ -194,6 +200,10 @@ export interface DistributedEvidenceGuidance {
   /** Always true for entries in this list — kept explicit so a render function never needs to
    *  re-derive why a technology was selected. */
   depthRequested: boolean;
+  /** The JD's own explicitly-stated technology-specific years figure, when it stated one (e.g. "4+
+   *  years Databricks" -> 4) — null when the depth signal was qualitative (a hands-on/production-
+   *  experience cue) rather than numeric. TARGET evidence only, never a candidate-years claim. */
+  requestedYears: number | null;
   /** Every employer where this technology is genuinely usable: already written, or eligible under
    *  the MSI rule at a role the compatibility check accepts. The full set — never trimmed here. */
   compatibleEmployers: string[];
@@ -228,6 +238,7 @@ function buildDistributedEvidence(requirements: PlanRequirement[], msiEligibilit
       return {
         technology: r.label,
         depthRequested: true,
+        requestedYears: r.requestedYears,
         compatibleEmployers,
         suggestedEmployers: compatibleEmployers.slice(0, MAX_SUGGESTED_EMPLOYERS_PER_TECHNOLOGY),
         criticality: r.criticality,
@@ -237,9 +248,10 @@ function buildDistributedEvidence(requirements: PlanRequirement[], msiEligibilit
     .sort((a, b) => (criticalityRank[a.criticality] ?? 4) - (criticalityRank[b.criticality] ?? 4))
     .slice(0, MAX_DISTRIBUTED_EVIDENCE_TECHNOLOGIES);
 
-  return candidates.map(({ technology, depthRequested, compatibleEmployers, suggestedEmployers }) => ({
+  return candidates.map(({ technology, depthRequested, requestedYears, compatibleEmployers, suggestedEmployers }) => ({
     technology,
     depthRequested,
+    requestedYears,
     compatibleEmployers,
     suggestedEmployers,
   }));

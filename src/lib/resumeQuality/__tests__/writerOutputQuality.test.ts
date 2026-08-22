@@ -69,6 +69,7 @@ function requirement(skill: string, criticality: RequirementUnit["criticality"])
     criticality,
     evidenceSnippets: [],
     experienceDepthRequired: false,
+    requestedYears: null,
     fromUnclaimedText: false,
   };
 }

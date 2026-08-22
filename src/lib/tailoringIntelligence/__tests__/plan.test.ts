@@ -14,6 +14,7 @@ function unit(label: string, level: "Required" | "Preferred" = "Required"): Requ
     criticality: level === "Required" ? "REQUIRED" : "PREFERRED",
     evidenceSnippets: [],
     experienceDepthRequired: false,
+    requestedYears: null,
     fromUnclaimedText: false,
   } as RequirementUnit;
 }
@@ -318,12 +319,12 @@ test("TI-10 the writer section names only established evidence, and forbids the 
 // Built entirely from `requirements` + the SAME `msiEligibility` this plan already computes (see
 // plan.ts's buildDistributedEvidence) — no new evidence source, no second policy engine.
 
-function depthUnit(label: string): RequirementUnit {
-  return { ...unit(label, "Required"), experienceDepthRequired: true } as RequirementUnit;
+function depthUnit(label: string, requestedYears: number | null = null): RequirementUnit {
+  return { ...unit(label, "Required"), experienceDepthRequired: true, requestedYears } as RequirementUnit;
 }
 
-function depthMatch(label: string, opts: Partial<RequirementMatch> = {}): RequirementMatch {
-  return { requirement: depthUnit(label), matchType: "MATCHED", credit: 1, ...opts } as RequirementMatch;
+function depthMatch(label: string, opts: Partial<RequirementMatch> = {}, requestedYears: number | null = null): RequirementMatch {
+  return { requirement: depthUnit(label, requestedYears), matchType: "MATCHED", credit: 1, ...opts } as RequirementMatch;
 }
 
 /** Two compatible (technical, taxonomy-resolving) employers, one technology written at both. */
@@ -427,17 +428,38 @@ test("DE-I: multiple depth-requested technologies are ranked by criticality and 
   assert.ok(plan.distributedEvidence.length <= 4, "distribution guidance must stay capped so it can never claim the entire bullet budget");
 });
 
-test("Phase C: the writer section is additive and never claims an exact years figure", () => {
+test("Phase C: with a purely qualitative depth signal (no JD years figure), the writer section states no years figure at all", () => {
   const plan = buildTailoringPlan(
     result({ employerEvidencedMatches: [depthMatch("Databricks", { evidence: { source: "employer", rawSkillName: "Databricks", canonicalSkillName: "Databricks", employers: ["Comerica", "IntlMotors"] } })] }),
     multiEmployerProfile
   );
+  assert.equal(plan.distributedEvidence[0].requestedYears, null);
   const text = renderDistributedEvidenceSection(plan);
   assert.match(text, /Databricks/);
   assert.match(text, /Comerica/);
   assert.match(text, /IntlMotors/);
-  assert.doesNotMatch(text, /\d+\+? years?/i, "the guidance section itself must never state or suggest an exact years figure");
+  assert.doesNotMatch(text, /\d+\+? years?/i, "with no JD-stated figure, the guidance section must not invent one");
 
   const empty = renderDistributedEvidenceSection(buildTailoringPlan(result(), null));
   assert.equal(empty, "", "empty when there is nothing to suggest, leaving the prompt byte-for-byte unchanged");
+});
+
+test("Phase C: with a JD-stated technology-specific years figure, the writer section states it as the JD's ask, never a candidate claim", () => {
+  const plan = buildTailoringPlan(
+    result({
+      employerEvidencedMatches: [
+        depthMatch(
+          "Databricks",
+          { evidence: { source: "employer", rawSkillName: "Databricks", canonicalSkillName: "Databricks", employers: ["Comerica", "IntlMotors"] } },
+          4
+        ),
+      ],
+    }),
+    multiEmployerProfile
+  );
+  assert.equal(plan.distributedEvidence[0].requestedYears, 4);
+  const text = renderDistributedEvidenceSection(plan);
+  assert.match(text, /JD asks for 4\+ years/, "the JD's own figure must be shown, clearly attributed to the JD");
+  assert.match(text, /never a statement about how many years the candidate has/i, "the section must explicitly disclaim any candidate-years implication");
+  assert.doesNotMatch(text, /candidate has \d/i, "must never phrase the JD's figure as a candidate fact");
 });

@@ -232,6 +232,7 @@ test("deserializeJobMatchResult round-trips every JobMatchResult field, includin
           criticality: "CRITICAL",
           evidenceSnippets: ["must have Kubernetes"],
           experienceDepthRequired: true,
+          requestedYears: null,
           fromUnclaimedText: false,
         },
         matchType: "MISSING",
@@ -278,7 +279,7 @@ test("deserializeJobMatchResult degrades safely on a legacy row missing critical
           requirement: {
             kind: "skill", memberSkillNames: ["AWS"], categories: [], label: "AWS",
             requirementLevel: "Required", criticality: "CRITICAL", evidenceSnippets: [],
-            experienceDepthRequired: false, fromUnclaimedText: false,
+            experienceDepthRequired: false, requestedYears: null, fromUnclaimedText: false,
           },
           matchType: "MISSING",
           credit: 0,

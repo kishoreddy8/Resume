@@ -63,16 +63,20 @@ export function renderDistributedEvidenceSection(plan: TailoringPlan): string {
 
   let out = "## DISTRIBUTED EVIDENCE FOR DEPTH-REQUESTED REQUIREMENTS\n\n";
   out +=
-    "This posting's own evidence text asked for real hands-on/production depth with the technologies " +
-    "below, and this candidate can genuinely evidence each one at more than one compatible employer " +
-    "(already written, or eligible under the Master Skills Inventory rule at a role the compatibility " +
-    "check accepts). A single mention under one employer is weak evidence of that depth even when " +
-    "truthful — consider naturally incorporating each technology across the suggested employers, " +
-    "using a genuinely DIFFERENT responsibility at each one. Never claim an exact years figure for " +
-    "any of these. Never place a technology under an employer not named here.\n\n";
+    "This posting's own evidence text asked for real hands-on/production depth — or stated an explicit " +
+    "technology-specific years figure — with the technologies below, and this candidate can genuinely " +
+    "evidence each one at more than one compatible employer (already written, or eligible under the " +
+    "Master Skills Inventory rule at a role the compatibility check accepts). A single mention under one " +
+    "employer is weak evidence of that depth even when truthful — consider naturally incorporating each " +
+    "technology across the suggested employers, using a genuinely DIFFERENT responsibility at each one. " +
+    "Any years figure shown below is what the JOB DESCRIPTION asked for, never a statement about how " +
+    "many years the candidate has with it. Never claim an exact years figure for any of these — not the " +
+    "JD's figure, and not a total inferred from employment dates. Never place a technology under an " +
+    "employer not named here.\n\n";
 
   for (const g of plan.distributedEvidence) {
-    out += `- **${g.technology}** — suggested employers: ${g.suggestedEmployers.join(", ")}`;
+    const yearsNote = g.requestedYears !== null ? ` (JD asks for ${g.requestedYears}+ years)` : "";
+    out += `- **${g.technology}**${yearsNote} — suggested employers: ${g.suggestedEmployers.join(", ")}`;
     const remaining = g.compatibleEmployers.filter((e) => !g.suggestedEmployers.includes(e));
     if (remaining.length > 0) out += ` (also compatible: ${remaining.join(", ")})`;
     out += "\n";
