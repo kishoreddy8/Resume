@@ -143,6 +143,14 @@ const FLAWED_RESUME: ResumeContent = {
   ],
 };
 
+const SURGICALLY_REPAIRED_RESUME: ResumeContent = {
+  ...FLAWED_RESUME,
+  experience: FLAWED_RESUME.experience.map((entry, index) => ({
+    ...entry,
+    bullets: index === 0 ? ["Built batch data ingestion pipelines using Azure Data Factory."] : [...entry.bullets],
+  })),
+};
+
 const COVER_LETTER: CoverLetterContent = {
   name: "Alice Smith",
   location: "Remote, US",
@@ -349,7 +357,25 @@ before(async () => {
     `#!/usr/bin/env node
 const fs = require('fs');
 const input = JSON.parse(fs.readFileSync('writer_input.json', 'utf-8'));
-const resume = JSON.parse(process.env.FAKE_CLAUDE_RESUME_JSON);
+const desired = JSON.parse(process.env.FAKE_CLAUDE_RESUME_JSON);
+const resume = input.writerMode === 'TARGETED_REPAIR' && input.currentResume
+  ? JSON.parse(JSON.stringify(input.currentResume))
+  : desired;
+function tokens(value) {
+  return [...value.matchAll(/([A-Za-z][A-Za-z0-9_]*)|\\[(\\d+)\\]/g)].map((m) => m[2] === undefined ? m[1] : Number(m[2]));
+}
+function read(root, parts) { return parts.reduce((value, part) => value == null ? undefined : value[part], root); }
+function write(root, parts, value) {
+  let target = root;
+  for (const part of parts.slice(0, -1)) target = target[part];
+  target[parts[parts.length - 1]] = JSON.parse(JSON.stringify(value));
+}
+for (const editablePath of input.repairPlan?.editablePaths || []) {
+  if (!editablePath.startsWith('resume.')) continue;
+  const parts = tokens(editablePath).slice(1);
+  const value = read(desired, parts);
+  if (value !== undefined) write(resume, parts, value);
+}
 const output = {
   schemaVersion: 1,
   candidateId: input.candidateId,
@@ -593,7 +619,7 @@ test("7. technical failure never consumes a quality iteration, and WRITER_FAILUR
     tailoringRunId: wf.tailoring_run_id,
     workflowId: wf.id,
     iterationNumber: startingIteration + 1,
-    resume: PERFECT_RESUME,
+    resume: SURGICALLY_REPAIRED_RESUME,
   };
   const importResult = importExternalWriterResult({
     candidateId: candidateAliceId,

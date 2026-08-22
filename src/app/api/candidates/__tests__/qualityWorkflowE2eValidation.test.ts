@@ -125,6 +125,16 @@ const FLAWED_RESUME: ResumeContent = {
   certifications: [],
 };
 
+const SURGICAL_FLAWED_RESUME: ResumeContent = {
+  ...PERFECT_RESUME,
+  experience: PERFECT_RESUME.experience.map((entry, index) => ({
+    ...entry,
+    bullets: index === 0
+      ? ["Built the same pipeline using Azure Data Factory and AWS Glue as competing primary platforms.", ...entry.bullets.slice(1)]
+      : [...entry.bullets],
+  })),
+};
+
 const COVER_LETTER: CoverLetterContent = {
   name: "Alice Smith",
   location: "Remote, US",
@@ -372,7 +382,8 @@ test("E2E Case B: Multi-stage improvement workflow via external handoff package"
   const iter1Result = await executeResumeQualityIteration({
     candidateId: candidateAliceId,
     workflowId: wf.id,
-    resume: FLAWED_RESUME,
+    resume: SURGICAL_FLAWED_RESUME,
+    coverLetter: COVER_LETTER,
   });
   assert.equal(iter1Result.status, "IMPROVEMENT_RUNNING");
 
@@ -455,9 +466,10 @@ test("E2E Case B: Multi-stage improvement workflow via external handoff package"
   assert.ok(fs.existsSync(path.join(iter1Dir, "resume_content.json")));
   assert.ok(fs.existsSync(path.join(iter2Dir, "resume_content.json")));
   const iter1Json = JSON.parse(fs.readFileSync(path.join(iter1Dir, "resume_content.json"), "utf8"));
-  assert.equal(iter1Json.tagline, "Data Engineer");
   const iter2Json = JSON.parse(fs.readFileSync(path.join(iter2Dir, "resume_content.json"), "utf8"));
-  assert.equal(iter2Json.tagline, "Senior Data Engineer");
+  assert.equal(iter2Json.tagline, iter1Json.tagline, "the frozen headline must survive a bullet-only repair");
+  assert.match(iter1Json.experience[0].bullets[0], /AWS Glue/);
+  assert.doesNotMatch(iter2Json.experience[0].bullets[0], /AWS Glue/);
 });
 
 // ============================================================================
