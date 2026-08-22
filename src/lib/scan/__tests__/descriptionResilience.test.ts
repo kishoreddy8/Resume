@@ -68,6 +68,11 @@ interface OracleListingFixture {
   PrimaryLocationCountry: string;
 }
 
+// This suite exercises per-job description resilience, not the independent 20-day freshness
+// gate. Keep its otherwise-valid detail records safely inside that gate so the fixture cannot
+// expire as the calendar advances (the previous fixed 2026-08-01 date did exactly that).
+const FRESH_POSTED_AT = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
 /** Serves a fixed listing (all US) and per-job details — a configurable subset of which come back
  *  with NO description content, matching the real "job N has no full description" evidence. Any
  *  id in `missingDescriptionIds` gets a detail response with an empty ExternalDescriptionStr. */
@@ -90,7 +95,7 @@ function stubOracle(listings: OracleListingFixture[], missingDescriptionIds: Set
             {
               ...listing,
               ExternalDescriptionStr: hasDescription ? "<p>Complete role description text.</p>" : "",
-              ExternalPostedStartDate: "2026-08-01T00:00:00+00:00",
+              ExternalPostedStartDate: FRESH_POSTED_AT,
               WorkplaceType: "Remote",
             },
           ],
