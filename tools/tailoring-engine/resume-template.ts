@@ -34,6 +34,7 @@ import {
   SPACE_BETWEEN_SKILL_LINES,
 } from "./constants";
 import type { ExperienceEntry, KeyProject, ResumeContent } from "./types";
+import { buildCertificationBadgeRuns } from "./certificationBadges";
 
 /**
  * Stage 31 — the reference-resume presentation standard.
@@ -58,12 +59,17 @@ function run(text: string): TextRun {
   return new TextRun({ text, font: FONT, color: BLACK, size: SIZE_BODY });
 }
 
-/** Real clickable hyperlink with readable display text, not a raw tracking URL. */
+/**
+ * Real clickable hyperlink with readable display text, not a raw tracking URL. Displayed text is
+ * black, not the conventional hyperlink blue — the link still resolves and is still underlined, so
+ * it remains visually identifiable and functionally clickable; only its color is brought in line
+ * with the rest of the document's all-black text requirement.
+ */
 function link(displayText: string, url: string, size = SIZE_CONTACT): ExternalHyperlink {
   return new ExternalHyperlink({
     link: url,
     children: [
-      new TextRun({ text: displayText, size, font: FONT, color: "0563C1", underline: {} }),
+      new TextRun({ text: displayText, size, font: FONT, color: BLACK, underline: {} }),
     ],
   });
 }
@@ -72,6 +78,19 @@ function link(displayText: string, url: string, size = SIZE_CONTACT): ExternalHy
  * Stage 31 — LEFT, not centred. The reference anchors the whole header block to the left margin,
  * which is also what keeps the name, headline and contact line reading as one unit instead of
  * three separately-centred fragments of differing width.
+ *
+ * Phase H (clarified) — an optional certification badge run right-tab-stopped to the content
+ * margin. Tables, text boxes and floating shapes are forbidden for resume layout (validate-docx.ts
+ * — an existing ATS-safety gate this change does not touch), so "beside the header, at the top
+ * right" is built the same way `companyLine`'s dates already sit at the right margin: a real
+ * paragraph-level right tab stop, never a second column. Attaching a badge run each to the headline
+ * and contact lines is what stacks them into a block that reads as sitting beside the header,
+ * without ever introducing a table.
+ *
+ * The name line NEVER carries a badge run, deliberately: `texts[0]` of the rendered document is a
+ * protected invariant elsewhere (stage311NameAndVoice.test.ts's "the display name survives
+ * rendering exactly") — the candidate's own name is the one line in this document that must always
+ * extract as pure, unaccompanied text, so it stays completely untouched by this feature.
  */
 function nameLine(text: string): Paragraph {
   return new Paragraph({
@@ -83,23 +102,23 @@ function nameLine(text: string): Paragraph {
 }
 
 /** The headline: bold, not italic, and left-aligned under the name — as the reference sets it. */
-function headlineLine(text: string): Paragraph {
+function headlineLine(text: string, badgeRun?: TextRun): Paragraph {
+  const children: TextRun[] = [new TextRun({ text, bold: true, size: SIZE_TAGLINE, font: FONT, color: BLACK })];
+  if (badgeRun) children.push(new TextRun({ children: [new Tab()] }), badgeRun);
   return new Paragraph({
     alignment: AlignmentType.LEFT,
     keepNext: true,
     spacing: { after: 20 },
-    children: [new TextRun({ text, bold: true, size: SIZE_TAGLINE, font: FONT, color: BLACK })],
+    ...(badgeRun ? { tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_WIDTH }] } : {}),
+    children,
   });
 }
 
 /** location | phone | email (mailto: link) | LinkedIn (https: link, readable text not a raw URL) */
-function contactLine(params: {
-  location: string;
-  phone: string;
-  email: string;
-  linkedin?: string;
-  github?: string;
-}): Paragraph {
+function contactLine(
+  params: { location: string; phone: string; email: string; linkedin?: string; github?: string },
+  badgeRun?: TextRun
+): Paragraph {
   const sep = () => new TextRun({ text: "  |  ", size: SIZE_CONTACT, font: FONT, color: BLACK });
   const children: (TextRun | ExternalHyperlink)[] = [
     new TextRun({ text: params.location, size: SIZE_CONTACT, font: FONT, color: BLACK }),
@@ -117,7 +136,37 @@ function contactLine(params: {
     const url = params.github.startsWith("http") ? params.github : `https://${params.github}`;
     children.push(sep(), link(params.github, url));
   }
-  return new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 60 }, children });
+  if (badgeRun) children.push(new TextRun({ children: [new Tab()] }), badgeRun);
+  return new Paragraph({
+    alignment: AlignmentType.LEFT,
+    spacing: { after: 60 },
+    ...(badgeRun ? { tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_WIDTH }] } : {}),
+    children,
+  });
+}
+
+/**
+ * The header block: name, headline, contact — exactly as before Phase H when there are no
+ * recognized certification badges. With one or two recognized badges, the first badge run lands on
+ * the headline line and the second on the contact line, each right tab-stopped to the content
+ * margin — a compact, top-right, secondary block beside the header that never touches, displaces,
+ * or resizes the candidate's own name.
+ */
+function headerBlock(content: ResumeContent, badgeRuns: TextRun[]): Paragraph[] {
+  return [
+    nameLine(content.name),
+    headlineLine(content.tagline, badgeRuns[0]),
+    contactLine(
+      {
+        location: content.location,
+        phone: content.phone,
+        email: content.email,
+        linkedin: content.linkedin,
+        github: content.github,
+      },
+      badgeRuns[1]
+    ),
+  ];
 }
 
 /**
@@ -372,16 +421,18 @@ function experienceParagraphs(role: ExperienceEntry): Paragraph[] {
 export async function generateResumeDocx(content: ResumeContent, outputPath: string): Promise<void> {
   // Section order is the reference's, exactly: identity block, then what the candidate can do,
   // then proof they have done it, then credentials.
+  //
+  // Phase H (clarified) — compact certification "badge" runs (shaded text, never an image; see
+  // certificationBadges.ts), right tab-stopped onto the name/headline/contact lines so they read
+  // as a block sitting at the top right of the header, for whichever of this candidate's
+  // ALREADY-APPROVED certifications this local registry recognizes. Purely decorative and
+  // additive: an empty array (nothing recognized, or no certifications at all) means the header
+  // renders in its original plain shape, and the full bulleted Certifications section further down
+  // is completely unaffected either way.
+  const certificationBadgeRuns = buildCertificationBadgeRuns(content.certifications);
+
   const children: Paragraph[] = [
-    nameLine(content.name),
-    headlineLine(content.tagline),
-    contactLine({
-      location: content.location,
-      phone: content.phone,
-      email: content.email,
-      linkedin: content.linkedin,
-      github: content.github,
-    }),
+    ...headerBlock(content, certificationBadgeRuns),
 
     sectionHeading("Professional Summary"),
     // Stage 31.1 — ONE paragraph, always.
