@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { NextRequest } from "next/server";
+import { adminTestRequest } from "@/lib/auth/__tests__/adminTestRequest";
 
 /**
  * Phase 4 Stage 6 — GET /api/operations. Real (temp, isolated) SQLite DB, no network, no candidate
@@ -49,9 +50,17 @@ after(() => {
   } catch {}
 });
 
-function callGET(query: string) {
-  const req = new NextRequest(`http://localhost/api/operations${query}`);
-  return GET(req);
+async function callGET(query: string) {
+  const url = new URL(`http://localhost/api/operations${query}`);
+  const candidateId = Number(url.searchParams.get("candidateId"));
+  if (Number.isInteger(candidateId) && candidateId > 0) {
+    const candidate = getDb().prepare("SELECT id FROM candidates WHERE id = ?").get(candidateId);
+    if (candidate) {
+      getDb().prepare("UPDATE candidates SET is_owner = CASE WHEN id = ? THEN 1 ELSE 0 END").run(candidateId);
+      return GET(await adminTestRequest(`/api/operations${query}`));
+    }
+  }
+  return GET(new NextRequest(url));
 }
 
 let companyCounter = 0;

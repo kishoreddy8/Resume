@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { Company, ConnectorHealth, ScanRunWithCompany } from "@/types";
 import { Metric, PageHeader, SkeletonMetrics, SkeletonRows, Status, StatusDot, Surface, LoadingRegion } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { adminApiUrl } from "@/lib/admin/client";
 
 /**
  * ATS Operations Center.
@@ -66,6 +68,7 @@ function relative(value: string | null): string {
 }
 
 export default function ScannerPage() {
+  const candidateId = useActiveCandidateId();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [latestRuns, setLatestRuns] = useState<ScanRunWithCompany[]>([]);
   const [recentRuns, setRecentRuns] = useState<ScanRunWithCompany[]>([]);
@@ -77,9 +80,9 @@ export default function ScannerPage() {
     try {
       const [companiesRes, latestRes, recentRes] = await Promise.all([
         // Connector health only — see FIELD_SETS.scan in the companies route.
-        fetch("/api/companies?fields=scan"),
-        fetch("/api/scan-runs?latestPerCompany=1"),
-        fetch("/api/scan-runs?limit=25"),
+        fetch(adminApiUrl("/api/companies?fields=scan", candidateId)),
+        fetch(adminApiUrl("/api/scan-runs?latestPerCompany=1", candidateId)),
+        fetch(adminApiUrl("/api/scan-runs?limit=25", candidateId)),
       ]);
       const companiesData = await companiesRes.json();
       const latestData = await latestRes.json();
@@ -96,7 +99,9 @@ export default function ScannerPage() {
     // Intentional: fetch-on-mount with a loading flag, not a render loop.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
-  }, []);
+    // load is intentionally local; candidateId is its only changing input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateId]);
 
   const latestRunByCompany = useMemo(() => {
     const map = new Map<number, ScanRunWithCompany>();

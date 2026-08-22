@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { NextRequest } from "next/server";
+import { adminTestRequest } from "@/lib/auth/__tests__/adminTestRequest";
 
 /**
  * Route-level coverage for Discovery V2 Stage 3's proposal endpoints. Query-layer behavior (dedup,
@@ -39,7 +39,7 @@ after(() => {
 });
 
 function postRequest(body: Record<string, unknown> = {}) {
-  return new NextRequest("http://localhost/test", {
+  return adminTestRequest("/test", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -64,17 +64,17 @@ test("GET /api/ats-source-proposals returns the global pending queue", async () 
     },
   });
 
-  const res = await GET_ALL();
+  const res = await GET_ALL(await adminTestRequest("/api/ats-source-proposals"));
   const json = await res.json();
   assert.equal(res.status, 200);
   assert.ok(json.proposals.some((p: { proposed_board_token: string }) => p.proposed_board_token === "route-test-a"));
 });
 
 test("GET company-scoped proposals returns 404 for a nonexistent company, 400 for an invalid id", async () => {
-  const notFound = await GET_FOR_COMPANY(new NextRequest("http://localhost/test"), { params: Promise.resolve({ id: "999999" }) });
+  const notFound = await GET_FOR_COMPANY(await adminTestRequest("/test"), { params: Promise.resolve({ id: "999999" }) });
   assert.equal(notFound.status, 404);
 
-  const invalid = await GET_FOR_COMPANY(new NextRequest("http://localhost/test"), { params: Promise.resolve({ id: "not-a-number" }) });
+  const invalid = await GET_FOR_COMPANY(await adminTestRequest("/test"), { params: Promise.resolve({ id: "not-a-number" }) });
   assert.equal(invalid.status, 400);
 });
 
@@ -97,15 +97,15 @@ test("approve/reject 404 on an unknown proposal id, 409 when another company tri
     },
   })!;
 
-  const unknownProposal = await APPROVE(postRequest(), { params: Promise.resolve({ id: String(owner.id), proposalId: "999999" }) });
+  const unknownProposal = await APPROVE(await postRequest(), { params: Promise.resolve({ id: String(owner.id), proposalId: "999999" }) });
   assert.equal(unknownProposal.status, 404);
 
-  const crossCompany = await APPROVE(postRequest(), { params: Promise.resolve({ id: String(stranger.id), proposalId: String(proposal.id) }) });
+  const crossCompany = await APPROVE(await postRequest(), { params: Promise.resolve({ id: String(stranger.id), proposalId: String(proposal.id) }) });
   assert.equal(crossCompany.status, 409);
   const crossCompanyJson = await crossCompany.json();
   assert.equal(crossCompanyJson.code, "COMPANY_MISMATCH");
 
-  const rejectCrossCompany = await REJECT(postRequest(), { params: Promise.resolve({ id: String(stranger.id), proposalId: String(proposal.id) }) });
+  const rejectCrossCompany = await REJECT(await postRequest(), { params: Promise.resolve({ id: String(stranger.id), proposalId: String(proposal.id) }) });
   assert.equal(rejectCrossCompany.status, 409);
 });
 
@@ -127,7 +127,7 @@ test("approve succeeds (200) with the owning company id and reflects the new sou
     },
   })!;
 
-  const res = await APPROVE(postRequest({ reviewNote: "looks right" }), { params: Promise.resolve({ id: String(owner.id), proposalId: String(proposal.id) }) });
+  const res = await APPROVE(await postRequest({ reviewNote: "looks right" }), { params: Promise.resolve({ id: String(owner.id), proposalId: String(proposal.id) }) });
   assert.equal(res.status, 200);
   const json = await res.json();
   assert.equal(json.proposal.status, "APPROVED");
@@ -152,12 +152,12 @@ test("Stage 4: a MEDIUM/VALIDATED_ZERO_JOBS proposal cannot be approved through 
     },
   })!;
 
-  const res = await APPROVE(postRequest(), { params: Promise.resolve({ id: String(owner.id), proposalId: String(proposal.id) }) });
+  const res = await APPROVE(await postRequest(), { params: Promise.resolve({ id: String(owner.id), proposalId: String(proposal.id) }) });
   assert.equal(res.status, 409);
   const json = await res.json();
   assert.equal(json.code, "NOT_APPROVABLE");
 
   // Rejecting the same MEDIUM proposal must still work — Stage 4 only restricts approval, not review.
-  const rejectRes = await REJECT(postRequest(), { params: Promise.resolve({ id: String(owner.id), proposalId: String(proposal.id) }) });
+  const rejectRes = await REJECT(await postRequest(), { params: Promise.resolve({ id: String(owner.id), proposalId: String(proposal.id) }) });
   assert.equal(rejectRes.status, 200);
 });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { approveProposal, ProposalApprovalError } from "@/db/queries/atsSourceProposals";
+import { requireAdminOwner } from "@/lib/auth/guard";
 
 const BODY_SCHEMA = z.object({ reviewNote: z.string().optional() });
 
@@ -14,6 +15,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; proposalId: string }> }
 ) {
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
   const { id, proposalId: proposalIdParam } = await params;
   const companyId = Number(id);
   const proposalId = Number(proposalIdParam);

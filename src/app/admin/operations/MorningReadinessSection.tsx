@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { MorningReadinessSummary } from "@/lib/production/types";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { adminApiUrl } from "@/lib/admin/client";
 
 function formatTimestamp(value: string | null): string {
   if (!value) return "never";
@@ -29,6 +31,7 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export function MorningReadinessSection() {
+  const candidateId = useActiveCandidateId();
   const [data, setData] = useState<{ readiness: MorningReadinessSummary; lock: { held: boolean; acquiredAt: string | null } } | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -37,7 +40,7 @@ export function MorningReadinessSection() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/production-readiness");
+      const res = await fetch(adminApiUrl("/api/production-readiness", candidateId));
       if (!res.ok) {
         throw new Error(`Failed to load readiness (${res.status})`);
       }
@@ -49,7 +52,7 @@ export function MorningReadinessSection() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [candidateId]);
 
   useEffect(() => {
     // Intentional: fetch-on-mount with a loading flag, not a render loop — same pattern (and same
@@ -62,7 +65,7 @@ export function MorningReadinessSection() {
     try {
       setRunning(true);
       setError(null);
-      const res = await fetch("/api/production-cycle", { method: "POST" });
+      const res = await fetch(adminApiUrl("/api/production-cycle", candidateId), { method: "POST" });
       const json = await res.json();
       if (!res.ok) {
         throw new Error(json.error || `Cycle failed (${res.status})`);

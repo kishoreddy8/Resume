@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { adminApiUrl } from "@/lib/admin/client";
 import Link from "next/link";
 
 /**
@@ -61,7 +62,7 @@ export function CompanyIntelligence({ companyId, candidateId }: { companyId: num
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/companies/${companyId}/intelligence?candidateId=${candidateId}`)
+    fetch(adminApiUrl(`/api/companies/${companyId}/intelligence`, candidateId))
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
         if (cancelled) return;

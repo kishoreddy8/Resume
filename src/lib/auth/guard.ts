@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { UNLOCK_COOKIE, verifyUnlockToken } from "./candidatePin";
 import { getPinState, getUnlockSecret, isOwner } from "@/db/queries/candidatePinStore";
+import { requireActiveCandidate, type CandidateRow } from "@/db/queries/candidates";
 
 /**
  * The single authorisation check for candidate-scoped API routes.
@@ -16,6 +17,85 @@ import { getPinState, getUnlockSecret, isOwner } from "@/db/queries/candidatePin
  */
 
 export type AccessDenial = NextResponse<{ error: string; reason: string; candidateId: number }>;
+
+export type AdminOwnerAuthorization =
+  | { ok: true; candidateId: number; candidate: CandidateRow }
+  | { ok: false; response: AccessDenial };
+
+/**
+ * Canonical authorization boundary for global Admin HTTP routes.
+ *
+ * The candidate id is deliberately explicit. Global endpoints must never inherit the UI's active
+ * candidate or silently fall back to candidate 1: the request names the profile whose unlocked
+ * owner session is authorising the operation. Client-side `is_owner` checks remain useful product
+ * affordances, but this is the security boundary.
+ */
+export function requireAdminOwner(req: NextRequest): AdminOwnerAuthorization {
+  const raw = req.nextUrl.searchParams.get("candidateId");
+  const candidateId = raw === null ? NaN : Number(raw);
+  if (!Number.isInteger(candidateId) || candidateId <= 0) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "An explicit owner candidateId is required for Admin access.",
+          reason: "admin_context_required",
+          candidateId: 0,
+        },
+        { status: 400 }
+      ) as AccessDenial,
+    };
+  }
+
+  const candidate = requireActiveCandidate(candidateId);
+  if (!candidate) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "The Admin candidate context is invalid or inactive.",
+          reason: "admin_context_invalid",
+          candidateId,
+        },
+        { status: 404 }
+      ) as AccessDenial,
+    };
+  }
+
+  if (candidate.is_owner !== 1) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Only the owner account can access system operations.",
+          reason: "admin_owner_required",
+          candidateId,
+        },
+        { status: 403 }
+      ) as AccessDenial,
+    };
+  }
+
+  // Owner status alone is never sufficient. This reuses the existing signed, expiring PIN unlock
+  // contract, including its fail-closed behavior when the owner has no PIN or the token is stale.
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return { ok: false, response: accessDenial };
+  if (!getPinState(candidateId)?.hasPin) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Set and unlock the owner PIN before using Admin operations.",
+          reason: "admin_owner_pin_required",
+          candidateId,
+        },
+        { status: 403 }
+      ) as AccessDenial,
+    };
+  }
+
+  return { ok: true, candidateId, candidate };
+}
 
 /**
  * Returns null when the request may proceed, or a response to return immediately.

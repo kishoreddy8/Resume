@@ -89,7 +89,7 @@ test("every candidate-scoped API route calls requireCandidateAccess", () => {
       if (!src.includes("candidateId")) continue;
       const rel = p.slice(root.length);
       if (rel.includes(`${path.sep}unlock${path.sep}`) || rel.includes(`${path.sep}pin${path.sep}`)) continue;
-      if (src.includes("requireCandidateAccess")) guarded += 1;
+      if (src.includes("requireCandidateAccess") || src.includes("requireAdminOwner")) guarded += 1;
       else missing.push(rel);
     }
   };

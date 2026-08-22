@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
+import { adminTestRequest } from "@/lib/auth/__tests__/adminTestRequest";
 
 /**
  * POST /api/scan lock-integration tests (Phase 4 Stage 1) — confirms the manual-scan route shares
@@ -73,13 +74,13 @@ function writeValidProfile(candidateId: number) {
   );
 }
 
-function postScan(body: Record<string, unknown> = {}) {
-  const req = new Request("http://localhost/api/scan", {
+async function postScan(body: Record<string, unknown> = {}) {
+  const req = await adminTestRequest("/api/scan", {
     method: "POST",
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
   });
-  return POST(req as unknown as Parameters<typeof POST>[0]);
+  return POST(req);
 }
 
 test("54. POST /api/scan with zero active companies short-circuits before ever acquiring the lock", async () => {

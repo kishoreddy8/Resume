@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAppSettings } from "@/db/queries/settings";
 import { getScanLockStatus } from "@/lib/scheduler/lock";
 import { getSchedulerRuntimeState } from "@/lib/scheduler/state";
 import { nextEligibleRunAt } from "@/lib/scheduler/window";
+import { requireAdminOwner } from "@/lib/auth/guard";
 
 /**
  * Read-only scheduler status (Phase 4 Stage 1) — user-configurable settings (via the existing
@@ -11,7 +12,9 @@ import { nextEligibleRunAt } from "@/lib/scheduler/window";
  * handler here on purpose — see src/lib/scheduler/state.ts's module doc comment for why runtime
  * bookkeeping is kept out of any client-writable surface.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
   const settings = getAppSettings();
   const runtime = getSchedulerRuntimeState();
   const lock = getScanLockStatus();

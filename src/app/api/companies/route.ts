@@ -5,6 +5,7 @@ import { discoverCompanySource } from "@/lib/ats/discovery";
 import { matchCompanyToSponsor, scoreCompanyConfidence } from "@/lib/h1b/fuzzyMatch";
 import { isUrlSafeForNavigation } from "@/lib/net/safeFetch";
 import type { Company } from "@/types";
+import { requireAdminOwner } from "@/lib/auth/guard";
 
 const EXPLICIT_SCHEMA = z
   .object({
@@ -60,9 +61,15 @@ const FIELD_SETS: Record<string, readonly string[]> = {
 };
 
 export async function GET(req: NextRequest) {
-  const companies = listCompanies();
-
   const requested = req.nextUrl.searchParams.get("fields");
+  // The candidate Jobs page needs only id/name for a filter. Every operational projection and the
+  // full registry are Admin data and require an explicitly unlocked owner context.
+  if (requested !== "minimal") {
+    const authorization = requireAdminOwner(req);
+    if (!authorization.ok) return authorization.response;
+  }
+
+  const companies = listCompanies();
   const projection = requested ? FIELD_SETS[requested] : undefined;
   if (!projection) {
     /* Unknown or absent value returns the full row rather than erroring: a caller that guesses a
@@ -79,6 +86,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
   const body = await req.json().catch(() => null);
 
   // Try the auto-detect shape first ({name, url}) — it's the primary flow now. Uses the bounded

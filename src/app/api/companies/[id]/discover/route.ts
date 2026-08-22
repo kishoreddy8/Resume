@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCompany, recordDiscoveryResult } from "@/db/queries/companies";
 import { discoverCompanySource } from "@/lib/ats/discovery";
+import { requireAdminOwner } from "@/lib/auth/guard";
 
 /**
  * "Retry Discovery" — re-runs the bounded discovery chain (src/lib/ats/discovery.ts) for an existing
@@ -17,7 +18,9 @@ import { discoverCompanySource } from "@/lib/ats/discovery";
  */
 const MANUAL_RETRY_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
   const { id } = await params;
   const companyId = Number(id);
   if (!Number.isInteger(companyId)) {

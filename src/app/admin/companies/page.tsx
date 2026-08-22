@@ -6,6 +6,7 @@ import { H1bBadge } from "@/components/H1bBadge";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
 import { CompanyIntelligence } from "./CompanyIntelligence";
 import { PROVIDER_LABELS } from "@/lib/ats/providerLabels";
+import { adminApiUrl } from "@/lib/admin/client";
 import type { Company, CompanyResolutionStatus, SourceType } from "@/types";
 
 const COMPANY_LIMIT = 100;
@@ -39,6 +40,7 @@ function ResolutionBadge({ status }: { status: CompanyResolutionStatus }) {
 const UNRESOLVED_STATUSES: CompanyResolutionStatus[] = ["UNRESOLVED", "NEEDS_ADAPTER", "FAILED_TEMPORARY"];
 
 function RetryDiscoveryButton({ company, onChanged }: { company: Company; onChanged: () => void }) {
+  const candidateId = useActiveCandidateId();
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,7 +48,7 @@ function RetryDiscoveryButton({ company, onChanged }: { company: Company; onChan
     setRetrying(true);
     setError(null);
     try {
-      const res = await fetch(`/api/companies/${company.id}/discover`, { method: "POST" });
+      const res = await fetch(adminApiUrl(`/api/companies/${company.id}/discover`, candidateId), { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(typeof data.error === "string" ? data.error : "Retry failed");
@@ -193,6 +195,7 @@ interface DetectionPreview {
 }
 
 function useDebouncedDetection(url: string) {
+  const candidateId = useActiveCandidateId();
   const [preview, setPreview] = useState<DetectionPreview | undefined>(undefined); // undefined = not yet checked
   const [checking, setChecking] = useState(false);
 
@@ -207,7 +210,7 @@ function useDebouncedDetection(url: string) {
     setChecking(true);
     const handle = setTimeout(async () => {
       try {
-        const res = await fetch("/api/companies/detect", {
+        const res = await fetch(adminApiUrl("/api/companies/detect", candidateId), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url }),
@@ -229,12 +232,13 @@ function useDebouncedDetection(url: string) {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [url]);
+  }, [url, candidateId]);
 
   return { preview, checking };
 }
 
 function AddCompanyForm({ onAdded }: { onAdded: () => void }) {
+  const candidateId = useActiveCandidateId();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -246,7 +250,7 @@ function AddCompanyForm({ onAdded }: { onAdded: () => void }) {
     setError(null);
     setSaving(true);
     try {
-      const res = await fetch("/api/companies", {
+      const res = await fetch(adminApiUrl("/api/companies", candidateId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, url }),
@@ -323,6 +327,7 @@ function AddCompanyForm({ onAdded }: { onAdded: () => void }) {
 }
 
 function AdvancedManualForm({ onAdded }: { onAdded: () => void }) {
+  const candidateId = useActiveCandidateId();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [sourceType, setSourceType] = useState<Exclude<SourceType, "career_link">>("greenhouse");
@@ -335,7 +340,7 @@ function AdvancedManualForm({ onAdded }: { onAdded: () => void }) {
     setError(null);
     setSaving(true);
     try {
-      const res = await fetch("/api/companies", {
+      const res = await fetch(adminApiUrl("/api/companies", candidateId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, source_type: sourceType, ats_board_token: token }),
@@ -432,7 +437,7 @@ function CompanyRow({ company, onChanged }: { company: Company; onChanged: () =>
   async function scanThis() {
     setBusy(true);
     try {
-      await fetch("/api/scan", {
+      await fetch(adminApiUrl("/api/scan", candidateId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ companyId: company.id }),
@@ -446,7 +451,7 @@ function CompanyRow({ company, onChanged }: { company: Company; onChanged: () =>
   async function toggleActive() {
     setBusy(true);
     try {
-      await fetch(`/api/companies/${company.id}`, {
+      await fetch(adminApiUrl(`/api/companies/${company.id}`, candidateId), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: company.is_active === 1 ? false : true }),
@@ -461,7 +466,7 @@ function CompanyRow({ company, onChanged }: { company: Company; onChanged: () =>
     if (!confirm(`Delete ${company.name} and all its jobs? This can't be undone.`)) return;
     setBusy(true);
     try {
-      await fetch(`/api/companies/${company.id}`, { method: "DELETE" });
+      await fetch(adminApiUrl(`/api/companies/${company.id}`, candidateId), { method: "DELETE" });
       onChanged();
     } finally {
       setBusy(false);
@@ -560,6 +565,7 @@ function CompanyRow({ company, onChanged }: { company: Company; onChanged: () =>
 }
 
 export default function CompaniesPage() {
+  const candidateId = useActiveCandidateId();
   const [companies, setCompanies] = useState<Company[]>([]);
   /* The table rendered every company — ~2,500 rows and 75,169 DOM nodes on the measured dataset.
    * Same render-cap vocabulary as the jobs list and the ATS table; a search narrows the set rather
@@ -583,7 +589,7 @@ export default function CompaniesPage() {
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch("/api/companies");
+      const res = await fetch(adminApiUrl("/api/companies", candidateId));
       const data = await res.json();
       setCompanies(data.companies ?? []);
     } finally {
@@ -595,7 +601,9 @@ export default function CompaniesPage() {
     // Intentional: fetch-on-mount with a loading flag, not a render loop.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
-  }, []);
+    // load is intentionally local; candidateId is its only changing input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateId]);
 
   return (
     <div className="flex flex-col gap-6">

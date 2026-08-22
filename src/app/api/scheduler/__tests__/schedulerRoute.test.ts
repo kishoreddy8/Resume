@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
+import { adminTestRequest } from "@/lib/auth/__tests__/adminTestRequest";
 
 let tmpDir: string;
 let updateAppSettings: typeof import("@/db/queries/settings").updateAppSettings;
@@ -34,7 +35,7 @@ test("57. GET /api/scheduler reports the disabled default settings and a free lo
   resetAppSettings();
   resetScanLockForTests();
 
-  const res = await GET();
+  const res = await GET(await adminTestRequest("/api/scheduler"));
   assert.equal(res.status, 200);
   const body = await res.json();
 
@@ -48,7 +49,7 @@ test("58. GET /api/scheduler reflects a persisted scheduler settings patch", asy
   resetAppSettings();
   updateAppSettings({ scheduler: { enabled: true, intervalMinutes: 45, windowStartHour: 0, windowEndHour: 24 } });
 
-  const res = await GET();
+  const res = await GET(await adminTestRequest("/api/scheduler"));
   const body = await res.json();
   assert.equal(body.settings.enabled, true);
   assert.equal(body.settings.intervalMinutes, 45);
@@ -62,7 +63,7 @@ test("59. GET /api/scheduler reports lock.held=true and acquiredAt while a scan 
   acquireScanLock(now);
 
   try {
-    const res = await GET();
+    const res = await GET(await adminTestRequest("/api/scheduler"));
     const body = await res.json();
     assert.equal(body.lock.held, true);
     assert.ok(body.lock.acquiredAt);

@@ -25,11 +25,11 @@ export function useLifecycleThresholds(): { thresholds: LifecycleThresholds; loa
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/settings")
+    fetch("/api/settings/lifecycle")
       .then((r) => r.json())
-      .then((data: { settings?: { lifecycle?: { freshDays: number; archiveAfterDays: number; deleteAfterDays: number } } }) => {
+      .then((data: { lifecycle?: { freshDays: number; archiveAfterDays: number; deleteAfterDays: number } }) => {
         if (cancelled) return;
-        const lifecycle = data.settings?.lifecycle;
+        const lifecycle = data.lifecycle;
         if (lifecycle) {
           setThresholds({
             freshMaxDays: lifecycle.freshDays,

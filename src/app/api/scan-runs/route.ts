@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getLatestScanRunPerCompany, listRecentScanRuns, listScanRunsForCompany } from "@/db/queries/scanRuns";
+import { requireAdminOwner } from "@/lib/auth/guard";
 
 /**
  * GET /api/scan-runs — Scanner dashboard data (src/app/scanner/page.tsx).
@@ -10,10 +11,13 @@ import { getLatestScanRunPerCompany, listRecentScanRuns, listScanRunsForCompany 
  * row itself and are already returned by the existing GET /api/companies — no change needed there.
  */
 export async function GET(req: NextRequest) {
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
   const params = req.nextUrl.searchParams;
   const companyId = params.get("companyId");
   const latestPerCompany = params.get("latestPerCompany");
-  const limit = Number(params.get("limit") ?? 50);
+  const requestedLimit = Number(params.get("limit") ?? 50);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, Math.trunc(requestedLimit))) : 50;
 
   if (companyId) {
     const id = Number(companyId);

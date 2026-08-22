@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { LoadingRegion, SkeletonRows, Surface } from "@/components/ui";
 import type { AtsCoverageCompany, AtsCoverageSummary } from "@/db/queries/atsCoverage";
 import { PROVIDER_LABELS } from "@/lib/ats/providerLabels";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { adminApiUrl } from "@/lib/admin/client";
 
 const HEALTH_STYLES: Record<string, string> = {
   healthy: "text-emerald-700 dark:text-emerald-400",
@@ -121,6 +123,7 @@ function notApprovableReason(p: SourceProposal): string {
 }
 
 function ProposalCard({ proposal, onDecided }: { proposal: SourceProposal; onDecided: () => void }) {
+  const candidateId = useActiveCandidateId();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const approvable = isApprovable(proposal);
@@ -135,7 +138,7 @@ function ProposalCard({ proposal, onDecided }: { proposal: SourceProposal; onDec
   async function decide(action: "approve" | "reject") {
     setBusy(true);
     try {
-      const res = await fetch(`/api/companies/${proposal.company_id}/source-proposals/${proposal.id}/${action}`, {
+      const res = await fetch(adminApiUrl(`/api/companies/${proposal.company_id}/source-proposals/${proposal.id}/${action}`, candidateId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -246,10 +249,11 @@ function ProposalCard({ proposal, onDecided }: { proposal: SourceProposal; onDec
 }
 
 function SourceProposalsSection() {
+  const candidateId = useActiveCandidateId();
   const [proposals, setProposals] = useState<SourceProposal[] | null>(null);
 
   async function load() {
-    const res = await fetch("/api/ats-source-proposals");
+    const res = await fetch(adminApiUrl("/api/ats-source-proposals", candidateId));
     const json = await res.json();
     setProposals(json.proposals ?? []);
   }
@@ -258,7 +262,9 @@ function SourceProposalsSection() {
     (async () => {
       await load();
     })();
-  }, []);
+    // load is intentionally local; candidateId is its only changing input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateId]);
 
   if (proposals === null) return null;
 
@@ -311,14 +317,15 @@ const RELIABILITY_STATE_STYLES: Record<string, string> = {
  *  "Needs Attention" list (NEEDS_REVIEW/DOWN only — RECOVERING is deliberately never listed here, so
  *  the panel isn't overwhelmed by expected, self-healing transient failures). */
 function ReliabilitySection() {
+  const candidateId = useActiveCandidateId();
   const [data, setData] = useState<{ summary: ConnectorReliabilitySummary; providers: ProviderHealthSummary[] } | null>(null);
 
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/connector-reliability");
+      const res = await fetch(adminApiUrl("/api/connector-reliability", candidateId));
       setData(await res.json());
     })();
-  }, []);
+  }, [candidateId]);
 
   if (!data) return null;
   const { summary, providers } = data;
@@ -381,6 +388,7 @@ function Section({ title, subtitle, children }: { title: string; subtitle: strin
 }
 
 export default function AtsCoveragePage() {
+  const candidateId = useActiveCandidateId();
   const [data, setData] = useState<AtsCoverageSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -388,13 +396,13 @@ export default function AtsCoveragePage() {
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch("/api/ats-coverage");
+        const res = await fetch(adminApiUrl("/api/ats-coverage", candidateId));
         setData(await res.json());
       } finally {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [candidateId]);
 
   if (loading || !data) {
     return (

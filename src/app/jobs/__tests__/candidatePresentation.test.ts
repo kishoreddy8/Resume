@@ -81,7 +81,7 @@ test("candidate Jobs omits the operational scan action while admin retains it", 
 
   assert.doesNotMatch(candidateJobs, /Scan now/);
   assert.doesNotMatch(candidateJobs, /fetch\("\/api\/scan"/);
-  assert.match(adminCompanies, /fetch\("\/api\/scan"/);
+  assert.match(adminCompanies, /adminApiUrl\("\/api\/scan"/);
   assert.match(adminCompanies, />\s*Scan\s*</);
   assert.match(adminNavigation, /href: "\/admin\/companies", label: "Companies"/);
 });

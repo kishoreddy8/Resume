@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { deleteCompany, getCompany, updateCompany } from "@/db/queries/companies";
+import { requireAdminOwner } from "@/lib/auth/guard";
 
 const PATCH_SCHEMA = z.object({
   name: z.string().min(1).optional(),
@@ -11,6 +12,8 @@ const PATCH_SCHEMA = z.object({
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
   const { id } = await params;
   const companyId = Number(id);
   if (!Number.isInteger(companyId)) {
@@ -33,7 +36,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return NextResponse.json({ company });
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
   const { id } = await params;
   const companyId = Number(id);
   if (!Number.isInteger(companyId)) {

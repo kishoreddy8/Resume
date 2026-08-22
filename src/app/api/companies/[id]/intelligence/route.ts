@@ -1,8 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getDb } from "@/db";
 import { getCompany } from "@/db/queries/companies";
-import { requireCandidateAccess } from "@/lib/auth/guard";
-import { requireActiveCandidate } from "@/db/queries/candidates";
+import { requireAdminOwner } from "@/lib/auth/guard";
 
 /**
  * GET — what Career-Ops has actually observed about one company.
@@ -24,6 +23,8 @@ const ROLE_LIMIT = 12;
 const LOCATION_LIMIT = 8;
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
   const { id: raw } = await ctx.params;
   const companyId = Number(raw);
   if (!Number.isInteger(companyId) || companyId <= 0) {
@@ -33,20 +34,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const company = getCompany(companyId);
   if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-  /* Candidate scope is optional: company observations are not candidate data. It is required only
-   * for the application-history section, which IS candidate data and is guarded accordingly. */
-  const candidateParam = req.nextUrl.searchParams.get("candidateId");
-  let candidateId: number | null = null;
-  if (candidateParam !== null) {
-    const parsed = Number(candidateParam);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      return NextResponse.json({ error: "Invalid candidate id" }, { status: 400 });
-    }
-    if (!requireActiveCandidate(parsed)) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
-    const denial = requireCandidateAccess(req, parsed);
-    if (denial) return denial;
-    candidateId = parsed;
-  }
+  const candidateId = authorization.candidateId;
 
   const db = getDb();
 
@@ -85,17 +73,15 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
   /* This user's own recorded dealings with the company. Only stages they set — never inferred. */
   let applications: { jobId: number; title: string; stage: string; updatedAt: string | null }[] = [];
-  if (candidateId !== null) {
-    applications = db
-      .prepare(
-        `SELECT j.id AS jobId, j.title AS title, s.pipeline_status AS stage, s.pipeline_updated_at AS updatedAt
-           FROM candidate_job_state s
-           JOIN jobs j ON j.dedupe_key = s.dedupe_key
-          WHERE s.candidate_id = ? AND j.company_id = ?
-          ORDER BY s.pipeline_updated_at DESC LIMIT 20`
-      )
-      .all(candidateId, companyId) as typeof applications;
-  }
+  applications = db
+    .prepare(
+      `SELECT j.id AS jobId, j.title AS title, s.pipeline_status AS stage, s.pipeline_updated_at AS updatedAt
+         FROM candidate_job_state s
+         JOIN jobs j ON j.dedupe_key = s.dedupe_key
+        WHERE s.candidate_id = ? AND j.company_id = ?
+        ORDER BY s.pipeline_updated_at DESC LIMIT 20`
+    )
+    .all(candidateId, companyId) as typeof applications;
 
   return NextResponse.json({
     company: {

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireCandidateAccess } from "@/lib/auth/guard";
-import { requireActiveCandidate } from "@/db/queries/candidates";
+import { requireAdminOwner } from "@/lib/auth/guard";
 import {
   getApplicationLifecycleCounts,
   getCandidateMatchDecisionCounts,
@@ -65,10 +64,8 @@ export async function GET(req: NextRequest) {
   if (!Number.isInteger(candidateId)) {
     return NextResponse.json({ error: "candidateId is required and must be an integer" }, { status: 400 });
   }
-  const candidate = requireActiveCandidate(candidateId);
-  const accessDenial = requireCandidateAccess(req, candidateId);
-  if (accessDenial) return accessDenial;
-  if (!candidate) return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
 
   const windowParam = params.get("window");
   const window: WindowKey = windowParam === null ? "24h" : isWindowKey(windowParam) ? windowParam : ("" as WindowKey);

@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { LoadingRegion, PageHeader, SkeletonRows, Surface } from "@/components/ui";
 import type { AppSettings } from "@/lib/settings";
+import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { adminApiUrl } from "@/lib/admin/client";
 
 interface FieldSpec {
   key: string;
@@ -201,6 +203,7 @@ function ResumeWriterControl({
   enabled: boolean;
   onChanged: (settings: AppSettings) => void;
 }) {
+  const candidateId = useActiveCandidateId();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,7 +213,7 @@ function ResumeWriterControl({
     setError(null);
     try {
       // Only this one field is sent — never the whole settings object.
-      const res = await fetch("/api/settings", {
+      const res = await fetch(adminApiUrl("/api/settings", candidateId), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scheduler: { writerEnabled: next } }),
@@ -305,6 +308,7 @@ function ResumeWriterControl({
 }
 
 export default function SettingsPage() {
+  const candidateId = useActiveCandidateId();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [defaults, setDefaults] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -317,7 +321,7 @@ export default function SettingsPage() {
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch("/api/settings");
+      const res = await fetch(adminApiUrl("/api/settings", candidateId));
       const data = await res.json();
       setSettings(data.settings);
       setDefaults(data.defaults);
@@ -330,7 +334,9 @@ export default function SettingsPage() {
     // Intentional: fetch-on-mount with a loading flag, not a render loop.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
-  }, []);
+    // load is intentionally local; candidateId is its only changing input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateId]);
 
   function handleChange(group: GroupKey, key: string, value: number) {
     setSettings((prev) => {
@@ -346,7 +352,7 @@ export default function SettingsPage() {
     setErrors([]);
     setFormError(null);
     try {
-      const res = await fetch("/api/settings", {
+      const res = await fetch(adminApiUrl("/api/settings", candidateId), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(settings),
@@ -372,7 +378,7 @@ export default function SettingsPage() {
     setErrors([]);
     setFormError(null);
     try {
-      const res = await fetch("/api/settings/reset", { method: "POST" });
+      const res = await fetch(adminApiUrl("/api/settings/reset", candidateId), { method: "POST" });
       const data = await res.json();
       setSettings(data.settings);
       setSavedAt(Date.now());

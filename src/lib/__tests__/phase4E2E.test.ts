@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { NextRequest } from "next/server";
+import { adminTestRequest } from "@/lib/auth/__tests__/adminTestRequest";
 
 /**
  * Phase 4 Stage 7 — END-TO-END DAILY OPERATIONS ACCEPTANCE TEST.
@@ -978,7 +979,8 @@ test("44. job H is excluded from the candidate rematch page's freshness window (
 // -------------------------------------------------------------------------------------------
 
 async function callOperations(candidateId: number, window = "30d") {
-  const req = new NextRequest(`http://localhost/api/operations?candidateId=${candidateId}&window=${window}`);
+  getDb().prepare("UPDATE candidates SET is_owner = CASE WHEN id = ? THEN 1 ELSE 0 END").run(candidateId);
+  const req = await adminTestRequest(`/api/operations?candidateId=${candidateId}&window=${window}`);
   const res = await OperationsGET(req);
   return res.json();
 }

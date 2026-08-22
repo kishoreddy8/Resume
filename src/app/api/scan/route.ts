@@ -3,10 +3,13 @@ import { z } from "zod";
 import { getCompany, listActiveCompanies } from "@/db/queries/companies";
 import { acquireScanLock, releaseScanLock } from "@/lib/scheduler/lock";
 import { runScanWithIncrementalMatching } from "@/lib/scan/runScanWithMatching";
+import { requireAdminOwner } from "@/lib/auth/guard";
 
 const BODY_SCHEMA = z.object({ companyId: z.number().int().optional() });
 
 export async function POST(req: NextRequest) {
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
   const body = await req.json().catch(() => ({}));
   const parsed = BODY_SCHEMA.safeParse(body);
   if (!parsed.success) {

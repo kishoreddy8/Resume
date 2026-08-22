@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
+import { adminTestRequest } from "@/lib/auth/__tests__/adminTestRequest";
 
 /**
  * Retry Discovery cooldown — POST /api/companies/[id]/discover previously had zero rate limiting
@@ -35,9 +36,9 @@ after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function postDiscover(companyId: number) {
-  const req = new Request(`http://localhost/api/companies/${companyId}/discover`, { method: "POST" });
-  return POST(req as unknown as Parameters<typeof POST>[0], { params: Promise.resolve({ id: String(companyId) }) });
+async function postDiscover(companyId: number) {
+  const req = await adminTestRequest(`/api/companies/${companyId}/discover`, { method: "POST" });
+  return POST(req, { params: Promise.resolve({ id: String(companyId) }) });
 }
 
 test("a second retry within the cooldown window is rejected with 429", async () => {

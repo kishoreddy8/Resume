@@ -1,8 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { runProductionCycle } from "@/lib/production/orchestrator";
 import { getProductionCycleLockStatus } from "@/lib/production/state";
+import { requireAdminOwner } from "@/lib/auth/guard";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  const authorization = requireAdminOwner(req);
+  if (!authorization.ok) return authorization.response;
   try {
     const lockStatus = getProductionCycleLockStatus();
     if (lockStatus.held) {
