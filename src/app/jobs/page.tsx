@@ -236,8 +236,13 @@ export default function JobsPage() {
         )}
       </AppToolbarActions>
 
-      <section className="relative overflow-hidden rounded-[24px] border border-[color-mix(in_oklab,var(--accent)_16%,var(--border))] bg-[linear-gradient(125deg,color-mix(in_oklab,var(--accent-soft)_72%,var(--surface)),var(--surface)_58%,color-mix(in_oklab,var(--accent-soft)_35%,var(--surface)))] px-5 py-7 shadow-[var(--lift-1)] md:px-8 md:py-9">
+      <section className="relative overflow-hidden rounded-[24px] border border-[color-mix(in_oklab,var(--accent)_16%,var(--border))] bg-[linear-gradient(125deg,color-mix(in_oklab,var(--accent-soft)_72%,var(--surface)),var(--surface)_58%,color-mix(in_oklab,var(--accent-soft)_35%,var(--surface)))] px-5 py-7 shadow-[var(--lift-1)] md:px-8">
         <div aria-hidden="true" className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[var(--accent-soft)] blur-3xl" />
+        <div aria-hidden="true" className="absolute right-8 top-1/2 hidden h-24 w-44 -translate-y-1/2 md:block">
+          <span className="absolute inset-x-0 top-1/2 h-px bg-[linear-gradient(90deg,transparent,color-mix(in_oklab,var(--accent)_26%,transparent),transparent)]" />
+          <span className="absolute left-8 top-6 h-12 w-12 rotate-45 rounded-[14px] border border-[color-mix(in_oklab,var(--accent)_14%,transparent)] bg-[color-mix(in_oklab,var(--surface)_50%,transparent)]" />
+          <span className="absolute right-5 top-3 h-16 w-16 rotate-45 rounded-[18px] border border-[color-mix(in_oklab,var(--accent)_18%,transparent)] bg-[color-mix(in_oklab,var(--accent-soft)_35%,transparent)]" />
+        </div>
         <div className="relative max-w-2xl">
           <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Candidate workspace</p>
           <h1 className="mt-2 text-[30px] font-semibold leading-tight tracking-[-0.035em] text-primary md:text-[38px]">Find work worth pursuing.</h1>
@@ -261,7 +266,7 @@ export default function JobsPage() {
               }}
               role="tab"
               aria-selected={view === id}
-              className={`premium-active-tab relative h-12 shrink-0 rounded-[11px] px-5 text-[14px] font-semibold transition-colors duration-150 ease-out ${
+              className={`premium-active-tab relative h-12 shrink-0 rounded-[11px] px-5 text-[14.5px] font-semibold transition-colors duration-150 ease-out ${
                 view === id
                   ? "bg-[var(--accent)] text-[var(--accent-fg)] shadow-[var(--lift-1)]"
                   : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary"

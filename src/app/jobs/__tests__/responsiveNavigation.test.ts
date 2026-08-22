@@ -31,6 +31,18 @@ test("candidate navigation follows the approved journey without changing the adm
   assert.deepEqual(candidateOrder, [...candidateOrder].sort((a, b) => a - b));
   assert.match(sidebar, /const ADMIN_NAV/);
   assert.match(sidebar, /href: "\/admin\/scanner"/);
+  assert.match(sidebar, /inAdmin \? "h-11 text-\[14px\] font-medium" : "h-12 text-\[15\.5px\]"/);
+  assert.equal((sidebar.match(/size=\{20\}/g) ?? []).length, 6);
+  assert.match(sidebar, /active[\s\S]*font-semibold text-\[var\(--accent\)\]/);
+});
+
+test("candidate account text remains readable while operational metadata stays quiet", () => {
+  const selector = read("src/components/CandidateSelector.tsx");
+  const adminLink = read("src/components/AdminRailLink.tsx");
+  assert.match(selector, /h-\[54px\]/);
+  assert.match(selector, /text-\[13\.5px\]/);
+  assert.match(adminLink, /h-11/);
+  assert.match(adminLink, /text-\[13px\] text-tertiary/);
 });
 
 test("WorkflowStepper paging is presentational and keeps one workspace instance", () => {

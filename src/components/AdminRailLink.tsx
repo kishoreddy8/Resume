@@ -49,7 +49,7 @@ export function AdminRailLink() {
   return (
     <Link
       href={inAdmin ? "/home" : "/admin"}
-      className="mt-2.5 flex h-[42px] items-center gap-2.5 rounded-[9px] border border-[var(--header-border)] bg-[var(--surface-muted)] px-3 text-[12.5px] text-tertiary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
+      className="mt-2.5 flex h-11 items-center gap-2.5 rounded-[9px] border border-[var(--header-border)] bg-[var(--surface-muted)] px-3 text-[13px] text-tertiary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary"
     >
       {/* On the same outlined grid as the rail's navigation, and deliberately quieter than it:
        *  this is a door out of the candidate product, not a seventh destination inside it. */}

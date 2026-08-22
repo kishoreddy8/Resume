@@ -64,17 +64,17 @@ const USER_NAV: NavGroup[] = [
   {
     title: "Primary",
     items: [
-      { href: "/home", label: "Home", icon: <IconHome size={19} /> },
-      { href: "/jobs", label: "Jobs", icon: <IconBriefcase size={19} />, matchPrefix: /^\/jobs\/\d+$/ },
-      { href: "/resume", label: "Resume Studio", icon: <IconDocument size={19} /> },
+      { href: "/home", label: "Home", icon: <IconHome size={20} /> },
+      { href: "/jobs", label: "Jobs", icon: <IconBriefcase size={20} />, matchPrefix: /^\/jobs\/\d+$/ },
+      { href: "/resume", label: "Resume Studio", icon: <IconDocument size={20} /> },
       {
         href: "/applications",
         label: "Applications",
-        icon: <IconInbox size={19} />,
+        icon: <IconInbox size={20} />,
         matchPrefix: /^\/applications\/\d+$/,
       },
-      { href: "/profile", label: "Profile", icon: <IconUser size={19} /> },
-      { href: "/settings", label: "Settings", icon: <IconSettings size={19} /> },
+      { href: "/profile", label: "Profile", icon: <IconUser size={20} /> },
+      { href: "/settings", label: "Settings", icon: <IconSettings size={20} /> },
     ],
   },
 ];
@@ -260,7 +260,7 @@ export function AppSidebar() {
                 {group.title}
               </h2>
             )}
-            <div className="contents lg:flex lg:flex-col lg:gap-[5px]">
+            <div className={`contents lg:flex lg:flex-col ${inAdmin ? "lg:gap-[5px]" : "lg:gap-1.5"}`}>
               {group.items.map((item) => {
                 const active = isNavItemActive(item, pathname);
                 return (
@@ -268,12 +268,12 @@ export function AppSidebar() {
                     key={item.href}
                     href={item.href}
                     aria-current={active ? "page" : undefined}
-                    className={`relative flex h-11 shrink-0 items-center gap-3 rounded-[10px] px-3 font-medium leading-5 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.985] ${
-                      inAdmin ? "text-[14px]" : "text-[15px]"
+                    className={`relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-[10px] px-3 leading-5 transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:scale-[0.985] ${
+                      inAdmin ? "h-11 text-[14px] font-medium" : "h-12 text-[15.5px]"
                     } ${
                       active
-                        ? "bg-[var(--accent-tint)] text-[var(--accent)]"
-                        : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary active:bg-[var(--surface-active)]"
+                        ? "bg-[var(--accent-tint)] font-semibold text-[var(--accent)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_8%,transparent)]"
+                        : "font-medium text-secondary hover:bg-[var(--surface-hover)] hover:text-primary active:bg-[var(--surface-active)]"
                     }`}
                   >
                     {active && (

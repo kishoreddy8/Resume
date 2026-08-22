@@ -36,7 +36,7 @@ function MatchFit({ summary }: { summary: ListMatchSummary | undefined }) {
   if (!summary) return <span className="text-[13px] font-medium text-tertiary">Not evaluated</span>;
   if (summary.insufficientJdSignal) {
     return (
-      <span className="rounded-full bg-[var(--pill-amber-bg)] px-2.5 py-1 text-[12px] font-semibold text-[var(--pill-amber-fg)]">
+      <span className="rounded-full bg-[var(--pill-amber-bg)] px-2.5 py-1 text-[12.5px] font-semibold text-[var(--pill-amber-fg)]">
         Insufficient data
       </span>
     );
@@ -55,7 +55,7 @@ function MatchFit({ summary }: { summary: ListMatchSummary | undefined }) {
         : candidateStatus("blocked").label;
   return (
     <span className="flex items-center gap-2.5 whitespace-nowrap">
-      <span className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${tone}`}>{label}</span>
+      <span className={`rounded-full px-2.5 py-1 text-[12.5px] font-semibold ${tone}`}>{label}</span>
       <span className="text-[18px] font-bold tabular-nums text-primary">{Math.round(summary.overallScore)}</span>
     </span>
   );
@@ -192,7 +192,7 @@ export const JobRow = memo(function JobRow({
             <MatchFit summary={summary} />
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px]">
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[13px]">
             <H1bBadge confidence={job.h1b_combined_confidence} />
             {job.marked_for_tailoring === 1 ? (
               <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-1 font-semibold text-[var(--accent)]">Tailoring approved</span>

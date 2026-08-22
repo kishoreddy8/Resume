@@ -73,7 +73,7 @@ export function CandidateSelector() {
       .join("") || "?";
 
   return (
-    <div className="flex h-[52px] items-center gap-2.5 rounded-[12px] border border-[var(--border)] bg-[var(--z3-bg)] px-2.5">
+    <div className="flex h-[54px] items-center gap-2.5 rounded-[12px] border border-[var(--border)] bg-[var(--z3-bg)] px-2.5">
       <span
         aria-hidden="true"
         className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--accent-tint)] text-[12px] font-bold text-[var(--accent)]"
@@ -83,8 +83,8 @@ export function CandidateSelector() {
       <select
         value={activeId ?? ""}
         onChange={(e) => handleChange(e.target.value)}
-        className="min-w-0 flex-1 truncate rounded-md border-0 bg-transparent px-0 py-0.5 text-[13px] font-semibold text-primary transition-colors duration-150 ease-out focus:outline-none"
-        /* The rail is a fixed 216px and a long name is ellipsised rather than widening it. The
+        className="min-w-0 flex-1 truncate rounded-md border-0 bg-transparent px-0 py-0.5 text-[13.5px] font-semibold text-primary transition-colors duration-150 ease-out focus:outline-none"
+        /* The rail has a fixed desktop width and a long name is ellipsised rather than widening it. The
          * full name stays reachable: the control is labelled with it, and the browser shows it. */
         aria-label={activeName ? `Active candidate: ${activeName}` : "Active candidate"}
         title={activeName || "Current candidate — switching does not rescan shared jobs/companies"}
@@ -103,7 +103,7 @@ export function CandidateSelector() {
           title="Preferences (target roles, eligibility)"
           className="shrink-0 rounded-md p-1 text-tertiary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:bg-[var(--surface-active)]"
         >
-          <IconSettings size={15} />
+          <IconSettings size={16} />
         </Link>
       )}
     </div>
