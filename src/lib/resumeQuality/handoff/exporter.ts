@@ -7,7 +7,7 @@ import { getCandidateJobState } from "@/db/queries/candidateJobState";
 import { getTailoringRun } from "@/db/queries/tailoringRuns";
 import { deserializeJobMatchResult, getLatestJobMatchResult } from "@/db/queries/jobMatches";
 import { buildTailoringPlan } from "@/lib/tailoringIntelligence/plan";
-import { renderExperienceEmphasisSection } from "@/lib/tailoringIntelligence/writerSection";
+import { renderExperienceEmphasisSection, renderDistributedEvidenceSection } from "@/lib/tailoringIntelligence/writerSection";
 import { buildAtsCoverageReport, renderAtsCoverageReport } from "../atsCoverageReport";
 import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
 import { buildJdPriorityMatrix, type JdPriorityMatrix } from "../jdPriorityMatrix";
@@ -89,6 +89,9 @@ export function buildExternalWriterPrompt(input: {
   /** Additive — job-specific employer emphasis order. Absent leaves the prompt exactly as it was.
    *  See tailoringIntelligence/writerSection.ts for why it carries only the ordering. */
   experienceEmphasisSection?: string;
+  /** Additive — distributed-evidence guidance for depth-requested JD requirements the candidate can
+   *  evidence at more than one compatible employer. Same absent-means-unchanged contract as above. */
+  distributedEvidenceSection?: string;
   jdPriorityMatrix?: JdPriorityMatrix;
   positioningRecommendation?: string;
   recommendedSkillOrder?: string[];
@@ -219,7 +222,7 @@ Where each value goes:
 - **LinkedIn** — resume only, and only when given above. The cover letter header does not carry it.
   Omitting it from the cover letter is correct and is not an inconsistency between the documents.
 
-${input.repairPlanSection ?? ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.employerEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
+${input.repairPlanSection ?? ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.employerEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
 1. **Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
    - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
@@ -583,12 +586,14 @@ export function exportExternalWriterPackage(
    * so the writer sees the same evidence the rest of the app shows. Absent when the job has not
    * been evaluated or no profile is loaded, in which case the prompt is unchanged. */
   const exportMatchRow = getLatestJobMatchResult(candidateId, workflow.dedupe_key);
-  const exportExperienceEmphasis =
+  const exportTailoringPlan =
     exportMatchRow && writerInput.masterProfile
-      ? renderExperienceEmphasisSection(
-          buildTailoringPlan(deserializeJobMatchResult(exportMatchRow), writerInput.masterProfile)
-        )
-      : undefined;
+      ? buildTailoringPlan(deserializeJobMatchResult(exportMatchRow), writerInput.masterProfile)
+      : null;
+  const exportExperienceEmphasis = exportTailoringPlan ? renderExperienceEmphasisSection(exportTailoringPlan) : undefined;
+  /* Distributed-evidence guidance — same plan, computed once above and reused here rather than a
+   * second buildTailoringPlan call, so the two sections can never see different evidence. */
+  const exportDistributedEvidence = exportTailoringPlan ? renderDistributedEvidenceSection(exportTailoringPlan) : undefined;
 
   const exportAtsCoverageText = writerInput.currentResume
     ? renderAtsCoverageReport(buildAtsCoverageReport(writerInput.currentResume, exportJdPriorityMatrix))
@@ -623,6 +628,7 @@ export function exportExternalWriterPackage(
         )
       : undefined,
     experienceEmphasisSection: exportExperienceEmphasis || undefined,
+    distributedEvidenceSection: exportDistributedEvidence || undefined,
     presentationStandardSection: renderPresentationStandardSection(writerInput.masterProfile),
     roleProjectEvidenceSection: renderRoleProjectEvidenceSection(
       collectRoleProjectEvidence(writerInput.currentResume, writerInput.masterProfile)

@@ -51,3 +51,32 @@ export function renderExperienceEmphasisSection(plan: TailoringPlan): string {
 
   return out;
 }
+
+/**
+ * Guidance for distributing a genuinely depth-requested, genuinely evidenced technology across more
+ * than one compatible employer — see plan.ts's `buildDistributedEvidence`. Same additive-by-
+ * construction contract as the section above: returns "" when there is nothing to suggest, names only
+ * employers `classifyForEmployer` already cleared, and grants no new evidence or latitude.
+ */
+export function renderDistributedEvidenceSection(plan: TailoringPlan): string {
+  if (plan.distributedEvidence.length === 0) return "";
+
+  let out = "## DISTRIBUTED EVIDENCE FOR DEPTH-REQUESTED REQUIREMENTS\n\n";
+  out +=
+    "This posting's own evidence text asked for real hands-on/production depth with the technologies " +
+    "below, and this candidate can genuinely evidence each one at more than one compatible employer " +
+    "(already written, or eligible under the Master Skills Inventory rule at a role the compatibility " +
+    "check accepts). A single mention under one employer is weak evidence of that depth even when " +
+    "truthful — consider naturally incorporating each technology across the suggested employers, " +
+    "using a genuinely DIFFERENT responsibility at each one. Never claim an exact years figure for " +
+    "any of these. Never place a technology under an employer not named here.\n\n";
+
+  for (const g of plan.distributedEvidence) {
+    out += `- **${g.technology}** — suggested employers: ${g.suggestedEmployers.join(", ")}`;
+    const remaining = g.compatibleEmployers.filter((e) => !g.suggestedEmployers.includes(e));
+    if (remaining.length > 0) out += ` (also compatible: ${remaining.join(", ")})`;
+    out += "\n";
+  }
+
+  return out;
+}

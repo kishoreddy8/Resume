@@ -76,6 +76,11 @@ export interface PlanRequirement {
    * a thinner kind of evidence.
    */
   sources: string[];
+  /** True when the JD's own evidence text for this requirement carried an explicit hands-on/
+   *  production-experience cue (handsOnCues.ts — the existing Phase 2 structured depth signal, not a
+   *  parsed "N+ years" count). Used below as the honest signal for "this requirement asks for real
+   *  depth", never as a substitute for an actual years claim. */
+  depthRequested: boolean;
 }
 
 export interface EmployerEmphasis {
@@ -139,6 +144,14 @@ export interface TailoringPlan {
    * Empty when no profile is loaded — eligibility has no honest basis without one.
    */
   msiEligibility: MsiEligibility[];
+
+  /**
+   * Guidance for JD requirements that ask for genuine depth and that this candidate can genuinely
+   * evidence across more than one compatible employer. Empty whenever there is no profile, no
+   * depth-requested requirement, or no requirement with more than one compatible employer — never
+   * padded to appear non-empty.
+   */
+  distributedEvidence: DistributedEvidenceGuidance[];
 }
 
 const LEVEL: Record<string, "Required" | "Preferred"> = { Required: "Required", Preferred: "Preferred" };
@@ -166,7 +179,70 @@ function toPlanRequirement(match: RequirementMatch, state: EvidenceState): PlanR
     yearsStated: typeof match.evidence?.yearsStated === "number" ? match.evidence.yearsStated : null,
     transferableReason: match.transferable?.reason ?? null,
     inventoryOnly,
+    depthRequested: match.requirement.experienceDepthRequired === true,
   };
+}
+
+/**
+ * Guidance for distributing a genuinely depth-requested, genuinely evidenced technology across more
+ * than one compatible employer — never a mandate, and never evidence of its own. Every employer named
+ * here already passed `classifyForEmployer`'s role-compatibility gate (via the `msiEligibility` this
+ * plan already computes) before it can appear.
+ */
+export interface DistributedEvidenceGuidance {
+  technology: string;
+  /** Always true for entries in this list — kept explicit so a render function never needs to
+   *  re-derive why a technology was selected. */
+  depthRequested: boolean;
+  /** Every employer where this technology is genuinely usable: already written, or eligible under
+   *  the MSI rule at a role the compatibility check accepts. The full set — never trimmed here. */
+  compatibleEmployers: string[];
+  /** A conservative subset of `compatibleEmployers` (at most 3, most-recent-first — profile order)
+   *  worth considering for distribution. Still just a suggestion: the writer must still satisfy
+   *  cross-employer differentiation, bullet caps, and every other existing rule at each one. */
+  suggestedEmployers: string[];
+}
+
+const MAX_DISTRIBUTED_EVIDENCE_TECHNOLOGIES = 4;
+const MAX_SUGGESTED_EMPLOYERS_PER_TECHNOLOGY = 3;
+
+/**
+ * Built from `requirements` + `msiEligibility` only — both already computed above from the same
+ * persisted match result and validated profile. This function invents nothing: a technology only
+ * appears here if it is already evidenced (STRONG/PARTIAL/MENTIONED) and the JD already asked for
+ * real depth (`depthRequested`), and every employer named for it already cleared the existing
+ * `classifyForEmployer` compatibility gate. Capped to the highest-criticality requirements so
+ * multiple depth-requested skills never all compete for the same bullet budget at once.
+ */
+function buildDistributedEvidence(requirements: PlanRequirement[], msiEligibility: MsiEligibility[]): DistributedEvidenceGuidance[] {
+  const eligibilityByTech = new Map(msiEligibility.map((e) => [e.technology.trim().toLowerCase(), e]));
+  const criticalityRank: Record<string, number> = { CRITICAL: 0, REQUIRED: 1, PREFERRED: 2, OPTIONAL: 3 };
+
+  const candidates = requirements
+    .filter((r) => r.depthRequested && (r.state === "STRONG" || r.state === "PARTIAL" || r.state === "MENTIONED"))
+    .map((r) => {
+      const eligibility = eligibilityByTech.get(r.label.trim().toLowerCase());
+      if (!eligibility) return null;
+      const compatibleEmployers = [...new Set([...eligibility.writtenAt, ...eligibility.eligibleViaMsi])];
+      if (compatibleEmployers.length < 2) return null; // nothing to "distribute" with only one home
+      return {
+        technology: r.label,
+        depthRequested: true,
+        compatibleEmployers,
+        suggestedEmployers: compatibleEmployers.slice(0, MAX_SUGGESTED_EMPLOYERS_PER_TECHNOLOGY),
+        criticality: r.criticality,
+      };
+    })
+    .filter((g): g is NonNullable<typeof g> => g !== null)
+    .sort((a, b) => (criticalityRank[a.criticality] ?? 4) - (criticalityRank[b.criticality] ?? 4))
+    .slice(0, MAX_DISTRIBUTED_EVIDENCE_TECHNOLOGIES);
+
+  return candidates.map(({ technology, depthRequested, compatibleEmployers, suggestedEmployers }) => ({
+    technology,
+    depthRequested,
+    compatibleEmployers,
+    suggestedEmployers,
+  }));
 }
 
 /**
@@ -317,6 +393,8 @@ export function buildTailoringPlan(
     }
   }
 
+  const distributedEvidence = buildDistributedEvidence(requirements, msiEligibility);
+
   return {
     msiEligibility,
     candidateId: result.candidateId,
@@ -329,5 +407,6 @@ export function buildTailoringPlan(
     employerEmphasis,
     sectionsAffected,
     inventoryOnlyCount,
+    distributedEvidence,
   };
 }

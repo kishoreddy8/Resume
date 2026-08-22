@@ -50,6 +50,22 @@ export function evaluateSummaryAlignment(summary: string[], jobRequirements: Req
     summaryIssues.push("Professional Summary is very short/generic — likely missing role-specific detail.");
   }
 
+  // Professional Summary Structure guardrail (canonicalInstructions.ts): a recruiter should be able
+  // to read the positioning in about 5-8 seconds, which the canonical standard targets as roughly
+  // 4-6 sentences/lines. `summary` is already stored one entry per line/sentence, so its length is
+  // the direct signal. Wide tolerance and advisory wording only: this is a structural nudge, not a
+  // truthfulness finding — a genuinely strong summary just outside the range is never fabricated or
+  // unsafe, so it must never be treated as a blocking issue.
+  if (summary.length > 0 && summary.length < 3) {
+    summaryIssues.push(
+      `Professional Summary is only ${summary.length} line(s) — aim for roughly 4-6 concise sentences so a recruiter can place this candidate in about 5-8 seconds.`
+    );
+  } else if (summary.length > 8) {
+    summaryIssues.push(
+      `Professional Summary is ${summary.length} lines — condense toward roughly 4-6 concise sentences so a recruiter can scan it in about 5-8 seconds.`
+    );
+  }
+
   if (!jobRequirements || jobRequirements.length === 0) {
     return { summaryIssues, insufficientRequirementData: true, bannedLanguageFound };
   }

@@ -1,9 +1,12 @@
 import type { ResumeWriterOutput } from "./types";
 
-export const CURRENT_ROLE_BULLET_CAP = 7;
-export const SECOND_ROLE_BULLET_CAP = 6;
-export const OLDER_ROLE_BULLET_CAP = 5;
-export const TOTAL_EXPERIENCE_BULLET_CAP = 18;
+export const CURRENT_ROLE_BULLET_CAP = 8;
+export const SECOND_ROLE_BULLET_CAP = 7;
+export const OLDER_ROLE_BULLET_CAP = 6;
+// Deliberately >= CURRENT_ROLE_BULLET_CAP + SECOND_ROLE_BULLET_CAP + OLDER_ROLE_BULLET_CAP (21) so a
+// three-role resume can legitimately reach every individual role cap at once without the total cap
+// contradicting them; a resume with more roles is still bounded here, just not by the per-role sum.
+export const TOTAL_EXPERIENCE_BULLET_CAP = 21;
 export const PROJECT_DESCRIPTION_MAX_SENTENCES = 2;
 export const PROJECT_DESCRIPTION_MAX_TECHNOLOGIES = 4;
 

@@ -109,7 +109,7 @@ function cleanReview(): StructuredResumeReview {
 // --- 1. Canonical instruction identity: exposure & determinism -------------------------------------
 
 test("canonical instruction version and hash are exposed and stable across repeated computation", () => {
-  assert.equal(INSTRUCTION_VERSION, "2026-08-21");
+  assert.equal(INSTRUCTION_VERSION, "2026-08-22");
   assert.equal(typeof INSTRUCTION_HASH, "string");
   assert.equal(INSTRUCTION_HASH.length, 64); // sha256 hex digest
   assert.equal(computeInstructionHash(), INSTRUCTION_HASH);

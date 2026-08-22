@@ -103,24 +103,24 @@ test("overloaded bullets may be split only when each result has distinct employe
   assert.match(section, /Otherwise simplify the original bullet/);
 });
 
-test("role bullet caps are enforced at 7, 6, and 5", () => {
+test("role bullet caps are enforced at 8, 7, and 6", () => {
   const content = resume();
   content.experience[0].bullets = bullets(CURRENT_ROLE_BULLET_CAP, "current");
   content.experience[1].bullets = bullets(SECOND_ROLE_BULLET_CAP, "second");
   content.experience[2].bullets = bullets(OLDER_ROLE_BULLET_CAP, "older");
   assert.equal(evaluateBulletCaps(content.experience).compliant, true);
   content.experience[0].bullets.push("Built one excess current-role bullet.");
-  assert.ok(evaluateBulletCaps(content.experience).corrections.some((item) => /7-bullet cap/.test(item.description)));
+  assert.ok(evaluateBulletCaps(content.experience).corrections.some((item) => new RegExp(`${CURRENT_ROLE_BULLET_CAP}-bullet cap`).test(item.description)));
 });
 
 test("the total Professional Experience bullet cap is enforced", () => {
   const content = resume();
-  content.experience[0].bullets = bullets(7, "current");
-  content.experience[1].bullets = bullets(6, "second");
-  content.experience[2].bullets = bullets(6, "older");
+  content.experience[0].bullets = bullets(8, "current");
+  content.experience[1].bullets = bullets(7, "second");
+  content.experience[2].bullets = bullets(7, "older"); // one over the per-role cap too, to push the total past 21
   const result = evaluateBulletCaps(content.experience);
-  assert.equal(TOTAL_EXPERIENCE_BULLET_CAP, 18);
-  assert.ok(result.corrections.some((item) => /18-bullet total cap/.test(item.description)));
+  assert.equal(TOTAL_EXPERIENCE_BULLET_CAP, 21);
+  assert.ok(result.corrections.some((item) => /21-bullet total cap/.test(item.description)));
 });
 
 test("bullet caps are ceilings and never padding targets", () => {

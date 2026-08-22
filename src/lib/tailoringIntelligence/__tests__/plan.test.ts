@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildTailoringPlan, EVIDENCE_STATE_LABEL } from "../plan";
-import { renderExperienceEmphasisSection } from "../writerSection";
+import { renderExperienceEmphasisSection, renderDistributedEvidenceSection } from "../writerSection";
 import type { CandidateProfile, JobMatchResult, RequirementMatch, RequirementUnit } from "@/lib/match/types";
 
 function unit(label: string, level: "Required" | "Preferred" = "Required"): RequirementUnit {
@@ -312,4 +312,132 @@ test("TI-10 the writer section names only established evidence, and forbids the 
   assert.match(text, /not a licence to expand one/i, "the section must not read as permission to embellish");
   // It must never invent an employer that is not in the profile.
   assert.doesNotMatch(text, /Google|Amazon|Microsoft/);
+});
+
+// --- Phase C: distributed technology evidence for high-depth JD requirements -----------------------
+// Built entirely from `requirements` + the SAME `msiEligibility` this plan already computes (see
+// plan.ts's buildDistributedEvidence) — no new evidence source, no second policy engine.
+
+function depthUnit(label: string): RequirementUnit {
+  return { ...unit(label, "Required"), experienceDepthRequired: true } as RequirementUnit;
+}
+
+function depthMatch(label: string, opts: Partial<RequirementMatch> = {}): RequirementMatch {
+  return { requirement: depthUnit(label), matchType: "MATCHED", credit: 1, ...opts } as RequirementMatch;
+}
+
+/** Two compatible (technical, taxonomy-resolving) employers, one technology written at both. */
+const multiEmployerProfile: CandidateProfile = {
+  schemaVersion: 1,
+  sourceHashes: { resume: "r", skills: "s" },
+  builtAt: "2026-01-01T00:00:00Z",
+  skills: [{ rawSkillName: "Databricks", source: "employer", attributedTo: [{ employer: "Comerica" }, { employer: "IntlMotors" }] }],
+  experience: [
+    { employer: "Comerica", title: "Data Engineer", startDate: null, endDate: null, technologies: ["Databricks", "SQL"] },
+    { employer: "IntlMotors", title: "Data Engineer", startDate: null, endDate: null, technologies: ["Databricks", "Python"] },
+  ],
+  education: [],
+  certifications: [],
+  totalYearsExperience: null,
+} as CandidateProfile;
+
+test("DE-A: a depth-requested technology evidenced at 2+ compatible employers is distributed", () => {
+  const plan = buildTailoringPlan(
+    result({ employerEvidencedMatches: [depthMatch("Databricks", { evidence: { source: "employer", rawSkillName: "Databricks", canonicalSkillName: "Databricks", employers: ["Comerica", "IntlMotors"] } })] }),
+    multiEmployerProfile
+  );
+  assert.equal(plan.distributedEvidence.length, 1);
+  assert.equal(plan.distributedEvidence[0].technology, "Databricks");
+  assert.deepEqual([...plan.distributedEvidence[0].compatibleEmployers].sort(), ["Comerica", "IntlMotors"]);
+  assert.deepEqual([...plan.distributedEvidence[0].suggestedEmployers].sort(), ["Comerica", "IntlMotors"]);
+});
+
+test("DE-C: the same depth-requested technology at only ONE compatible employer is never listed for distribution", () => {
+  const singleEmployerProfile: CandidateProfile = {
+    ...multiEmployerProfile,
+    skills: [{ rawSkillName: "Databricks", source: "employer", attributedTo: [{ employer: "Comerica" }] }],
+    experience: [multiEmployerProfile.experience[0]],
+  } as CandidateProfile;
+  const plan = buildTailoringPlan(
+    result({ employerEvidencedMatches: [depthMatch("Databricks", { evidence: { source: "employer", rawSkillName: "Databricks", canonicalSkillName: "Databricks", employers: ["Comerica"] } })] }),
+    singleEmployerProfile
+  );
+  assert.equal(plan.distributedEvidence.length, 0, "nothing to distribute with only one home — a single-employer technology stays a normal emphasis item, not a distribution suggestion");
+});
+
+test("DE-D: an MSI-only (no employer attribution) technology can still be distributed across compatible employers", () => {
+  const msiOnlyProfile: CandidateProfile = {
+    ...multiEmployerProfile,
+    skills: [{ rawSkillName: "Databricks", source: "inventory_only" }],
+  } as CandidateProfile;
+  const plan = buildTailoringPlan(
+    result({ inventoryOnlyMatches: [depthMatch("Databricks")] }),
+    msiOnlyProfile
+  );
+  assert.equal(plan.distributedEvidence.length, 1);
+  assert.deepEqual([...plan.distributedEvidence[0].compatibleEmployers].sort(), ["Comerica", "IntlMotors"]);
+});
+
+test("DE-E: an unsupported technology never appears in distributed evidence, even if flagged depth-requested", () => {
+  const plan = buildTailoringPlan(result({ missingRequirements: [depthMatch("Kubernetes")] }), multiEmployerProfile);
+  assert.equal(plan.distributedEvidence.length, 0);
+});
+
+test("DE-F: an out-of-domain (incompatible) employer never receives distribution guidance", () => {
+  const withOutOfDomainRole: CandidateProfile = {
+    ...multiEmployerProfile,
+    experience: [
+      ...multiEmployerProfile.experience,
+      { employer: "Acme Manufacturing", title: "Electrical Trainee", startDate: null, endDate: null, technologies: ["Heavy machinery testing"] },
+    ],
+  } as CandidateProfile;
+  const plan = buildTailoringPlan(
+    result({ employerEvidencedMatches: [depthMatch("Databricks", { evidence: { source: "employer", rawSkillName: "Databricks", canonicalSkillName: "Databricks", employers: ["Comerica", "IntlMotors"] } })] }),
+    withOutOfDomainRole
+  );
+  assert.equal(plan.distributedEvidence.length, 1);
+  assert.ok(!plan.distributedEvidence[0].compatibleEmployers.includes("Acme Manufacturing"), "an out-of-domain role must never be suggested for distribution even though it exists in the profile");
+});
+
+test("DE-H: a requirement with no depth signal at all is never suggested for distribution, even with 2+ compatible employers", () => {
+  const plan = buildTailoringPlan(
+    result({ employerEvidencedMatches: [match("Databricks", { evidence: { source: "employer", rawSkillName: "Databricks", canonicalSkillName: "Databricks", employers: ["Comerica", "IntlMotors"] } })] }),
+    multiEmployerProfile
+  );
+  assert.equal(plan.distributedEvidence.length, 0, "distribution guidance is only for JD requirements the JD's own evidence text actually asked real depth for");
+});
+
+test("DE-I: multiple depth-requested technologies are ranked by criticality and capped, never unbounded", () => {
+  const wideProfile: CandidateProfile = {
+    ...multiEmployerProfile,
+    skills: [
+      { rawSkillName: "Databricks", source: "employer", attributedTo: [{ employer: "Comerica" }, { employer: "IntlMotors" }] },
+      { rawSkillName: "SQL", source: "employer", attributedTo: [{ employer: "Comerica" }, { employer: "IntlMotors" }] },
+    ],
+  } as CandidateProfile;
+  const plan = buildTailoringPlan(
+    result({
+      employerEvidencedMatches: [
+        depthMatch("Databricks", { evidence: { source: "employer", rawSkillName: "Databricks", canonicalSkillName: "Databricks", employers: ["Comerica", "IntlMotors"] } }),
+        depthMatch("SQL", { evidence: { source: "employer", rawSkillName: "SQL", canonicalSkillName: "SQL", employers: ["Comerica", "IntlMotors"] } }),
+      ],
+    }),
+    wideProfile
+  );
+  assert.ok(plan.distributedEvidence.length <= 4, "distribution guidance must stay capped so it can never claim the entire bullet budget");
+});
+
+test("Phase C: the writer section is additive and never claims an exact years figure", () => {
+  const plan = buildTailoringPlan(
+    result({ employerEvidencedMatches: [depthMatch("Databricks", { evidence: { source: "employer", rawSkillName: "Databricks", canonicalSkillName: "Databricks", employers: ["Comerica", "IntlMotors"] } })] }),
+    multiEmployerProfile
+  );
+  const text = renderDistributedEvidenceSection(plan);
+  assert.match(text, /Databricks/);
+  assert.match(text, /Comerica/);
+  assert.match(text, /IntlMotors/);
+  assert.doesNotMatch(text, /\d+\+? years?/i, "the guidance section itself must never state or suggest an exact years figure");
+
+  const empty = renderDistributedEvidenceSection(buildTailoringPlan(result(), null));
+  assert.equal(empty, "", "empty when there is nothing to suggest, leaving the prompt byte-for-byte unchanged");
 });
