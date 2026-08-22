@@ -1,23 +1,18 @@
 "use client";
 
-import { memo, type ReactNode } from "react";
-import { motion } from "motion/react";
+import { memo, useState, type ReactNode } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { H1bBadge } from "@/components/H1bBadge";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import type { ListMatchSummary } from "@/lib/rank/jobsList";
 import type { JobWithCompany, JobWithCompanySummary } from "@/types";
 import { candidateStatus } from "@/lib/candidateStatus";
 
-/**
- * Exactly the fields a row draws — nothing more. Typing against this rather than JobWithCompany is
- * deliberate: the For You feed is served the trimmed JobWithCompanySummary projection (Stage 32
- * dropped description_html and friends from list payloads), and the row must fit that shape rather
- * than the payload being widened back out to fit the row.
- */
 export type { JobWithCompanySummary };
 export type RowJob = Pick<
   JobWithCompany,
   | "id"
+  | "dedupe_key"
   | "title"
   | "company_name"
   | "location"
@@ -25,41 +20,23 @@ export type RowJob = Pick<
   | "h1b_combined_confidence"
   | "posted_at"
   | "first_seen_at"
-  /* Candidate-personal workflow state. Both list payloads already carry these 51-field job objects,
-   * so reading them widens nothing — RowJob simply stops narrowing them away. */
   | "marked_for_tailoring"
   | "pipeline_status"
+  | "pinned"
 >;
 
-/**
- * WORKBENCH PHASE 2 — the one job row used by both lists.
- *
- * All Jobs and For You read from different response shapes (a decisions map keyed by dedupe_key
- * versus an inline `ranking` object), but the three fit states they display are the same contract,
- * and they should look the same. Rather than let two row implementations drift, the shape each list
- * already has is narrowed to `ListMatchSummary` at the call site and this component renders it.
- *
- * `meta` is the only concession to the two views differing: For You passes its bucket and rank
- * through it, All Jobs passes nothing. That is a slot, not a second design system.
- */
+function companyMonogram(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "JB";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0]}${words[1][0]}`.toUpperCase();
+}
 
-/** Stage 24B — same three-state contract as the For You feed's cell (not evaluated / insufficient
- *  data / evaluated). Kept local to this component rather than shared, because the two lists read
- *  from different response shapes; the SEMANTICS are what must agree, and they do.
- *
- *  WORKBENCH — laid out inline for a two-line row instead of stacked in a table cell. The three
- *  states, their wording and their meaning are untouched. */
 function MatchFit({ summary }: { summary: ListMatchSummary | undefined }) {
-  if (!summary) {
-    return <span className="shrink-0 text-[12.5px] italic text-tertiary">Not evaluated</span>;
-  }
+  if (!summary) return <span className="text-[13px] font-medium text-tertiary">Not evaluated</span>;
   if (summary.insufficientJdSignal) {
     return (
-      <span
-        className="inline-flex h-[26px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-[var(--pill-amber-bg)] px-2.5 text-[12px] font-medium text-[var(--pill-amber-fg)]"
-        title="This posting did not yield enough structured requirements to score reliably."
-      >
-        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--pill-amber-fg)]" />
+      <span className="rounded-full bg-[var(--pill-amber-bg)] px-2.5 py-1 text-[12px] font-semibold text-[var(--pill-amber-fg)]">
         Insufficient data
       </span>
     );
@@ -77,94 +54,103 @@ function MatchFit({ summary }: { summary: ListMatchSummary | undefined }) {
         ? candidateStatus("needsReview").label
         : candidateStatus("blocked").label;
   return (
-    <span className="flex shrink-0 items-center gap-2.5 whitespace-nowrap">
-      {/* Decision and score are still two marks, not one — the word is tinted and enclosed, the
-       *  number is bare. What changed is weight: at 11px beside a 14px figure the pair read as
-       *  footnotes on a row wide enough to hold a sentence. The number is what you scan down the
-       *  column, so it carries the size, and the word sits in a tint so the column has an edge to
-       *  scan against rather than three lengths of grey text. Colour still never carries the
-       *  meaning alone — the word is always present and always spelled out. */}
-      <span
-        className={`inline-flex h-[26px] items-center rounded-full px-2.5 text-[12px] font-semibold uppercase tracking-[0.04em] ${tone}`}
-      >
-        {label}
-      </span>
-      <span className="w-[3ch] text-right text-[20px] font-bold tabular-nums leading-none text-primary">
-        {Math.round(summary.overallScore)}
-      </span>
+    <span className="flex items-center gap-2.5 whitespace-nowrap">
+      <span className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${tone}`}>{label}</span>
+      <span className="text-[18px] font-bold tabular-nums text-primary">{Math.round(summary.overallScore)}</span>
     </span>
   );
 }
 
-/**
- * Workflow cue for a queue row.
- *
- * Built strictly from fields the list payload ALREADY carries on every job — `marked_for_tailoring`
- * and `pipeline_status` are both on the wire in All Jobs and For You alike, so this needs no payload
- * widening and no per-row request. It is two spans and no SVG.
- *
- * What it deliberately cannot show: whether a resume has been GENERATED. That state
- * (`hasReadyResume`) exists only on the For You ranking, and For You already renders its own
- * "Resume Ready" chip. Inferring it for All Jobs would require widening the Stage 32 decision
- * projection across ~15.7k jobs, so All Jobs shows tailoring/apply state only.
- */
-function WorkflowCue({ job }: { job: RowJob }) {
-  const approved = job.marked_for_tailoring === 1;
-  const applied =
-    job.pipeline_status !== null && ["Applied", "Interviewing", "Offer", "Employer Rejected"].includes(job.pipeline_status);
-  if (!approved && !applied) return null;
-  // Text, not colour alone — the dot repeats the word, it never replaces it.
-  return (
-    <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--accent)]">
-      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] shadow-[0_0_6px_var(--accent)]" />
-      {applied ? job.pipeline_status : candidateStatus("tailoring").label}
-    </span>
-  );
-}
-
-/** Compact age. The lifecycle "fresh" band — the same getJobAgeBand policy the sweep uses — is kept
- *  as an accent tint on the number rather than a separate badge, so no signal is lost. */
 function AgeLabel({ job, thresholds }: { job: RowJob; thresholds: LifecycleThresholds }) {
   const days = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at });
   const fresh = getJobAgeBand(days, thresholds) === "fresh";
+  const label = days === 0 ? "Today" : days === 1 ? "1 day ago" : `${days} days ago`;
+  return <span className={fresh ? "font-semibold text-[var(--accent)]" : "text-tertiary"}>{label}</span>;
+}
+
+function SaveJobButton({
+  job,
+  candidateId,
+  onSavedChange,
+}: {
+  job: RowJob;
+  candidateId: number;
+  onSavedChange?: (jobId: number, saved: boolean) => void;
+}) {
+  const [saved, setSaved] = useState(job.pinned === 1);
+  const [saving, setSaving] = useState(false);
+  const reduced = useReducedMotion() ?? false;
+  async function toggle() {
+    if (saving) return;
+    const previous = saved;
+    const next = !previous;
+    setSaved(next);
+    setSaving(true);
+    onSavedChange?.(job.id, next);
+    try {
+      const response = await fetch(`/api/jobs/${job.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ candidateId, pinned: next ? 1 : 0 }),
+      });
+      if (!response.ok) throw new Error("Could not update saved job");
+    } catch {
+      setSaved(previous);
+      onSavedChange?.(job.id, previous);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
-    <span
-      className={`shrink-0 tabular-nums text-[12.5px] ${fresh ? "font-semibold text-[var(--accent)]" : "text-tertiary"}`}
-      title={fresh ? `Posted ${days} day${days === 1 ? "" : "s"} ago — high priority` : `${days} days old`}
+    <motion.button
+      type="button"
+      aria-label={saved ? `Remove ${job.title} from saved jobs` : `Save ${job.title}`}
+      aria-pressed={saved}
+      disabled={saving}
+      onClick={(event) => {
+        event.stopPropagation();
+        void toggle();
+      }}
+      animate={reduced ? undefined : { scale: saved ? [1, 1.16, 1] : 1 }}
+      transition={{ duration: reduced ? 0 : 0.16 }}
+      className={`grid h-11 w-11 shrink-0 place-items-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 disabled:opacity-60 ${
+        saved ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "text-tertiary hover:bg-[var(--surface-hover)] hover:text-primary"
+      }`}
     >
-      {days}d
-    </span>
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5">
+        <path
+          d="M20.8 4.7a5.5 5.5 0 0 0-7.8 0L12 5.8l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.8Z"
+          fill={saved ? "currentColor" : "none"}
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </motion.button>
   );
 }
 
-/**
- * One row of the Workbench master list.
- *
- * Deliberately NOT a Motion component. There are up to 100 of these and they are selected tens of
- * times per session; per the frequency rule, the highest-frequency interaction in the app must be
- * instant, so selection is a plain class change with no transition on the surface tint. Only the
- * accent bar participates in shared-layout motion, and only for the one selected row.
- */
 export const JobRow = memo(function JobRow({
   job,
+  candidateId,
   thresholds,
   summary,
   selected,
   onOpen,
-  sharedLayout,
+  onSavedChange,
   meta,
   optionId,
 }: {
   job: RowJob;
+  candidateId: number;
   thresholds: LifecycleThresholds;
   summary: ListMatchSummary | undefined;
   selected: boolean;
-  /** Opens the job's workspace. Arrow-key selection is separate and stays on the list. */
   onOpen: (id: number) => void;
-  sharedLayout: boolean;
-  /** View-specific context. For You puts its bucket + rank here; All Jobs passes nothing. */
+  onSavedChange?: (jobId: number, saved: boolean) => void;
+  sharedLayout?: boolean;
   meta?: ReactNode;
-  /** Gives a focused listbox a stable aria-activedescendant target without adding another control. */
   optionId?: string;
 }) {
   return (
@@ -175,55 +161,55 @@ export const JobRow = memo(function JobRow({
       tabIndex={-1}
       data-job-row={job.id}
       onClick={() => onOpen(job.id)}
-      /* Selection lifts the row toward the viewer: its own surface tone, a lit top
-       *  edge and a contact shadow. Hover is a 1px rise, transform-only, and gated
-       *  to real pointers so a touch tap never leaves a row stuck raised. */
-      className={`relative cursor-pointer select-none border-b border-[var(--separator)] py-[15px] pl-5 pr-5 row-lift transition-[background-color,box-shadow] duration-150 ease-out ${
+      className={`group relative cursor-pointer rounded-[18px] border bg-surface p-4 shadow-[var(--lift-1)] transition-[border-color,box-shadow,transform] duration-150 md:p-5 ${
         selected
-          ? "z-[1] bg-[var(--z3-bg)] shadow-[var(--lift-2)]"
-          : "hover:bg-[var(--surface-hover)]"
-      } ${job.is_active ? "" : "opacity-60"}`}
+          ? "border-[var(--accent)] shadow-[var(--lift-2)]"
+          : "border-[var(--border)] hover:-translate-y-px hover:border-[color-mix(in_oklab,var(--accent)_35%,var(--border))] hover:shadow-[var(--lift-2)]"
+      } ${job.is_active ? "" : "opacity-65"}`}
     >
-      {/* The single shared-layout participant. When selection moves, this one bar travels; nothing
-       *  else in the list animates. On keyboard selection the travel is suppressed (see JobList). */}
-      {selected &&
-        (sharedLayout ? (
-          <motion.span
-            layoutId="workbench-selection"
-            aria-hidden="true"
-            className="absolute inset-y-0 left-0 w-[3px] rounded-r-full bg-[var(--accent)] shadow-[0_0_12px_var(--accent-soft)]"
-            transition={{ type: "spring", duration: 0.32, bounce: 0 }}
-          />
-        ) : (
-          <span aria-hidden="true" className="absolute inset-y-0 left-0 w-[3px] bg-[var(--accent)]" />
-        ))}
-
-      <div className="flex items-center gap-3.5">
-        {/* Title carries the weight: 13.5px, tightened tracking, and it is the only
-         *  element that grows in weight on selection. */}
-        <span
-          className={`min-w-0 flex-1 truncate text-[15.5px] leading-[1.3] tracking-[-0.008em] ${
-            selected ? "font-semibold text-primary" : "font-medium text-primary"
-          }`}
-          title={job.title}
+      <div className="flex items-start gap-3.5 md:gap-4">
+        <div
+          aria-hidden="true"
+          className="grid h-12 w-12 shrink-0 place-items-center rounded-[14px] bg-[linear-gradient(145deg,var(--accent-soft),var(--z0-bg))] text-[14px] font-bold tracking-[0.04em] text-[var(--accent)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--accent)_18%,transparent)] md:h-14 md:w-14"
         >
-          {job.title}
-        </span>
-        <AgeLabel job={job} thresholds={thresholds} />
-        <MatchFit summary={summary} />
-      </div>
+          {companyMonogram(job.company_name)}
+        </div>
 
-      <div className="mt-[5px] flex items-center gap-2.5 text-[12.5px] leading-none">
-        <span className="min-w-0 truncate text-secondary">
-          {job.company_name}
-          {job.location ? <span className="text-tertiary"> · {job.location}</span> : null}
-          {!job.is_active && <span className="text-tertiary"> · closed</span>}
-        </span>
-        <WorkflowCue job={job} />
-        {meta}
-        <span className="ml-auto shrink-0">
-          <H1bBadge confidence={job.h1b_combined_confidence} />
-        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0">
+              <h2 className="truncate text-[17px] font-semibold leading-tight tracking-[-0.015em] text-primary md:text-[18px]" title={job.title}>
+                {job.title}
+              </h2>
+              <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13.5px] text-secondary">
+                <span className="font-medium text-primary">{job.company_name}</span>
+                {job.location ? <><span aria-hidden="true">·</span><span>{job.location}</span></> : null}
+                <span aria-hidden="true">·</span>
+                <AgeLabel job={job} thresholds={thresholds} />
+                {!job.is_active ? <><span aria-hidden="true">·</span><span>Closed</span></> : null}
+              </p>
+            </div>
+            <MatchFit summary={summary} />
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px]">
+            <H1bBadge confidence={job.h1b_combined_confidence} />
+            {job.marked_for_tailoring === 1 ? (
+              <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-1 font-semibold text-[var(--accent)]">Tailoring approved</span>
+            ) : null}
+            {job.pipeline_status && job.pipeline_status !== "New" ? (
+              <span className="rounded-full bg-[var(--z0-bg)] px-2.5 py-1 font-medium text-secondary">{job.pipeline_status}</span>
+            ) : null}
+            {meta}
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+          <SaveJobButton job={job} candidateId={candidateId} onSavedChange={onSavedChange} />
+          <span aria-hidden="true" className="hidden h-11 w-8 place-items-center text-tertiary transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-[var(--accent)] sm:grid">
+            <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="m6 3 5 5-5 5" /></svg>
+          </span>
+        </div>
       </div>
     </div>
   );

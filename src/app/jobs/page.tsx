@@ -8,22 +8,28 @@ import { Aperture } from "./Aperture";
 import type { QueueItem } from "./queue";
 import { ForYouList } from "./ForYouList";
 import { JobList } from "./JobList";
+import { WorkflowJobsList } from "./WorkflowJobsList";
 import { JobListSkeleton, LoadingRegion } from "./Skeletons";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AppToolbarActions, AppToolbarSlot } from "@/components/AppToolbarSlot";
 import { useLifecycleThresholds } from "./useLifecycleThresholds";
 
-type JobsView = "forYou" | "all";
+type JobsView = "forYou" | "all" | "saved" | "tailoring" | "needsReview";
+
+const JOB_VIEWS: { id: JobsView; label: string }[] = [
+  { id: "forYou", label: "For You" },
+  { id: "all", label: "All Jobs" },
+  { id: "saved", label: "Saved" },
+  { id: "tailoring", label: "Tailoring" },
+  { id: "needsReview", label: "Needs Review" },
+];
 
 /** Holds the workspace's shape while data arrives, so nothing collapses and snaps back. */
 function WorkspaceLoading() {
   return (
-    <div className="flex h-[calc(100dvh-10rem)] min-h-[420px] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border)] bg-surface">
+    <div className="min-h-[420px] overflow-hidden rounded-[22px] border border-[var(--border)] bg-surface p-4 shadow-[var(--lift-1)]">
       <LoadingRegion label="Loading jobs" />
-      <div className="min-w-0 flex-1">
-        <JobListSkeleton />
-      </div>
-      <div className="hidden w-[42%] shrink-0 border-l border-[var(--separator)] lg:block" />
+      <JobListSkeleton />
     </div>
   );
 }
@@ -173,7 +179,7 @@ export default function JobsPage() {
   }, [loadJobs, view]);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 pb-10">
       {/* The toolbar carries what this page IS. What it can DO sits on the other side of the
        *  search, and what it FILTERS sits in the page's own control row below — see the comment on
        *  APP_TOOLBAR_ACTIONS_SLOT_ID. Portalling all three into one left-hand anchor put the page's
@@ -230,28 +236,38 @@ export default function JobsPage() {
         )}
       </AppToolbarActions>
 
+      <section className="relative overflow-hidden rounded-[24px] border border-[color-mix(in_oklab,var(--accent)_16%,var(--border))] bg-[linear-gradient(125deg,color-mix(in_oklab,var(--accent-soft)_72%,var(--surface)),var(--surface)_58%,color-mix(in_oklab,var(--accent-soft)_35%,var(--surface)))] px-5 py-7 shadow-[var(--lift-1)] md:px-8 md:py-9">
+        <div aria-hidden="true" className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[var(--accent-soft)] blur-3xl" />
+        <div className="relative max-w-2xl">
+          <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Candidate workspace</p>
+          <h1 className="mt-2 text-[30px] font-semibold leading-tight tracking-[-0.035em] text-primary md:text-[38px]">Find work worth pursuing.</h1>
+          <p className="mt-3 max-w-xl text-[14.5px] leading-relaxed text-secondary md:text-[15.5px]">Prioritized matches, saved opportunities, and resume work—organized around the next decision you need to make.</p>
+        </div>
+      </section>
+
       {/* The page's own control row, aligned to the page container rather than to the toolbar.
        *  The view switch and the feed's search live here because they filter what is directly
        *  below them — and because the toolbar already holds a search that means something else:
        *  the global one navigates, this one narrows the list you are looking at. */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex shrink-0 items-center rounded-[12px] bg-[var(--z0-bg)] p-[3px] shadow-[inset_0_1px_2px_var(--edge-lo)]">
-          {(["forYou", "all"] as JobsView[]).map((v) => (
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+        <div role="tablist" aria-label="Job views" className="flex min-w-0 overflow-x-auto rounded-[14px] bg-[var(--z0-bg)] p-1 shadow-[inset_0_1px_2px_var(--edge-lo)]">
+          {JOB_VIEWS.map(({ id, label }) => (
             <button
-              key={v}
+              key={id}
               type="button"
               onClick={() => {
-                setView(v);
+                setView(id);
                 setSelectedJobId(null);
               }}
-              aria-pressed={view === v}
-              className={`premium-active-tab relative h-11 rounded-[9px] px-5 text-[14.5px] font-medium transition-colors duration-150 ease-out ${
-                view === v
-                  ? "bg-[var(--z3-bg)] text-primary shadow-[var(--lift-1),inset_0_1px_0_var(--edge-hi)]"
-                  : "text-tertiary hover:text-primary"
+              role="tab"
+              aria-selected={view === id}
+              className={`premium-active-tab relative h-12 shrink-0 rounded-[11px] px-5 text-[14px] font-semibold transition-colors duration-150 ease-out ${
+                view === id
+                  ? "bg-[var(--accent)] text-[var(--accent-fg)] shadow-[var(--lift-1)]"
+                  : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary"
               }`}
             >
-              {v === "forYou" ? "For You" : "All Jobs"}
+              {label}
             </button>
           ))}
         </div>
@@ -259,7 +275,7 @@ export default function JobsPage() {
         {/* A recessed well, not a bordered box. The field measured 1.08:1 against the command bar
          *  on tone alone; a 3:1 outline would read as an enterprise form control, so the field is
          *  identified by sinking (well tone + inset edge) plus a persistent glyph. */}
-        <label className="relative min-w-0 flex-1 sm:max-w-[440px]">
+        <label className="relative min-w-0 flex-1 xl:ml-auto xl:max-w-[440px]">
           <span className="sr-only">Narrow this list by title, company or description</span>
           <svg
             aria-hidden="true"
@@ -280,11 +296,12 @@ export default function JobsPage() {
 
       </div>
 
-      {view === "forYou" ? (
+      {view === "forYou" || view === "saved" ? (
         !thresholdsLoaded ? (
           <WorkspaceLoading />
         ) : (
           <ForYouList
+            mode={view}
             candidateId={candidateId}
             thresholds={thresholds}
             search={filters.search}
@@ -293,7 +310,7 @@ export default function JobsPage() {
             onQueueChange={setQueue}
           />
         )
-      ) : (
+      ) : view === "all" ? (
         <div className="flex min-w-0 flex-col gap-4 lg:flex-row">
           <div className="min-w-0 flex-1">
             {loading || !thresholdsLoaded ? (
@@ -309,6 +326,8 @@ export default function JobsPage() {
             )}
           </div>
         </div>
+      ) : (
+        <WorkflowJobsList candidateId={candidateId} view={view} />
       )}
     </div>
   );

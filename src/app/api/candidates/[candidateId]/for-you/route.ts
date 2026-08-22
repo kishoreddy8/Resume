@@ -120,6 +120,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
 
   const searchParams = req.nextUrl.searchParams;
   const includeStale = searchParams.get("includeStale") === "true";
+  // Candidate Saved is a presentation slice over the existing pinned state. Filtering before the
+  // bounded response keeps old saved jobs visible without a second query or a request per row.
+  const savedOnly = searchParams.get("savedOnly") === "true";
   const requestedLimit = Number(searchParams.get("limit"));
   const limit = Number.isInteger(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 500) : DEFAULT_LIMIT;
 
@@ -343,6 +346,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
     badges: CandidateJobBadges;
     hasReadyResume: boolean;
     tailoringApproval: ForYouTailoringApproval | null;
+    saved: boolean;
   }
 
   const allEnriched: EnrichedItem[] = [];
@@ -427,11 +431,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ cand
       badges,
       hasReadyResume,
       tailoringApproval,
+      saved: state?.pinned === 1,
     });
   }
 
   // 5. Filter out not-interested jobs for candidate
   let filtered = allEnriched.filter((item) => !item.forYouInput.notInterested);
+
+  if (savedOnly) filtered = filtered.filter((item) => item.saved);
 
   if (normalizedBucket && normalizedBucket !== "ALL") {
     // TOP_MATCH is badge-sourced (see the bucket-counting loop above); every other tab is its

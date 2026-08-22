@@ -191,8 +191,12 @@ export function JobList({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-[var(--separator)] px-4 py-2 text-xs">
+    <section className="rounded-[22px] border border-[var(--border)] bg-[color-mix(in_oklab,var(--surface)_88%,transparent)] p-3 shadow-[var(--lift-1)] md:p-5">
+      <div className="mb-5 flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--separator)] pb-4 text-[13px]">
+        <div className="mr-auto">
+          <h2 className="text-[18px] font-semibold tracking-[-0.01em] text-primary">All opportunities</h2>
+          <p className="mt-1 text-[13.5px] text-secondary">Browse the complete candidate job inventory.</p>
+        </div>
         <span className="text-tertiary">Match decision:</span>
         <select
           value={decisionFilter}
@@ -256,12 +260,13 @@ export function JobList({
           onPointerDown={() => setSharedLayout(true)}
           // scroll-padding keeps a keyboard-focused row clear of the sticky filter bar
           // (WCAG 2.2 "Focus Not Obscured").
-          className="min-h-0 flex-1 overflow-y-auto [scroll-padding-block:3rem]"
+          className="min-h-0 flex-1 space-y-3 [scroll-padding-block:3rem]"
         >
           {renderedJobs.map((job) => (
             <JobRow
               key={job.id}
               job={job}
+              candidateId={candidateId}
               thresholds={thresholds}
               summary={decisions[job.dedupe_key]}
               selected={job.id === selectedJobId}
@@ -281,6 +286,6 @@ export function JobList({
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }

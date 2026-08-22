@@ -11,19 +11,53 @@ test("sourceLabel only presents stored source identifiers in candidate-readable 
   assert.equal(sourceLabel("greenhouse"), "Greenhouse");
 });
 
-test("For You uses the candidate-facing role label and Settings destination", () => {
+test("For You uses a candidate-facing role label without internal tier shorthand", () => {
   const source = fs.readFileSync(path.resolve("src/app/jobs/ForYouList.tsx"), "utf8");
-  assert.match(source, /ROLE_FAMILY_LABEL\.PRIMARY/);
-  assert.match(source, /href="\/settings"/);
+  assert.match(source, />Primary role</);
   assert.doesNotMatch(source, /`P · \$\{prefs\.primaryTargetRole\}`/);
 });
 
 test("For You exposes and activates the selected option through the focused listbox", () => {
   const source = fs.readFileSync(path.resolve("src/app/jobs/ForYouList.tsx"), "utf8");
   assert.match(source, /aria-activedescendant=/);
-  assert.match(source, /optionId={`recommended-job-\$\{job\.id\}`}/);
-  assert.match(source, /e\.key === "Enter" \|\| e\.key === " "/);
+  assert.match(source, /optionId={`candidate-job-\$\{job\.id\}`}/);
+  assert.match(source, /event\.key === "Enter" \|\| event\.key === " "/);
   assert.match(source, /openJob\(selectedJobId\)/);
+});
+
+test("Jobs exposes the approved five candidate views in order", () => {
+  const source = fs.readFileSync(path.resolve("src/app/jobs/page.tsx"), "utf8");
+  const labels = ["For You", "All Jobs", "Saved", "Tailoring", "Needs Review"];
+  let cursor = -1;
+  for (const label of labels) {
+    const next = source.indexOf(`label: "${label}"`);
+    assert.ok(next > cursor, `${label} should appear in the approved order`);
+    cursor = next;
+  }
+  assert.match(source, /role="tablist"/);
+  assert.match(source, /aria-selected=\{view === id\}/);
+});
+
+test("saved jobs use the existing candidate pin field with optimistic rollback", () => {
+  const row = fs.readFileSync(path.resolve("src/app/jobs/JobRow.tsx"), "utf8");
+  const feed = fs.readFileSync(path.resolve("src/app/jobs/ForYouList.tsx"), "utf8");
+  const route = fs.readFileSync(path.resolve("src/app/api/candidates/[candidateId]/for-you/route.ts"), "utf8");
+  assert.match(row, /job\.pinned === 1/);
+  assert.match(row, /method: "PATCH"/);
+  assert.match(row, /body: JSON\.stringify\(\{ candidateId, pinned: next \? 1 : 0 \}\)/);
+  assert.match(row, /setSaved\(previous\)/);
+  assert.equal(row.match(/fetch\(`/g)?.length, 1, "saving should be the row's only request");
+  assert.match(row, /async function toggle\(\)[\s\S]*fetch\(`/);
+  assert.match(feed, /params\.set\("savedOnly", "true"\)/);
+  assert.match(route, /if \(savedOnly\) filtered = filtered\.filter\(\(item\) => item\.saved\)/);
+});
+
+test("workflow views consume the authoritative batched resume library contract", () => {
+  const source = fs.readFileSync(path.resolve("src/app/jobs/WorkflowJobsList.tsx"), "utf8");
+  assert.match(source, /\/resume-library`/);
+  assert.match(source, /entry\.isLegacyMissingAnalysis && entry\.canRevalidate/);
+  assert.match(source, /entry\.readiness === "BLOCKED"/);
+  assert.match(source, /jobWorkspaceUrl/);
 });
 
 test("Settings deduplicates role chips without changing the established removal transition", () => {
