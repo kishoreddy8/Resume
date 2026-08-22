@@ -39,15 +39,23 @@ export type RepairOperationKind =
   | "FIX_EMPLOYER_ATTRIBUTION"
   | "FIX_COVER_LETTER_SENTENCE"
   | "FIX_FORMATTING"
-  | "FIX_SUMMARY_SENTENCE";
+  | "FIX_SUMMARY_SENTENCE"
+  | "REPAIR_TARGET_POSITIONING";
 
 export interface RootRepairFinding {
   key: string;
   description: string;
-  source: "BLOCKING_FAILURE" | "BLOCKING_ISSUE" | "REQUIRED_CORRECTION" | "COMPLIANCE";
+  source: "BLOCKING_FAILURE" | "BLOCKING_ISSUE" | "REQUIRED_CORRECTION" | "COMPLIANCE" | "RECRUITER_QUALITY";
   evidenceSource: string[];
   reason: string;
   candidateInputRequired: boolean;
+  /** Recruiter findings carry their existing authority and deterministic repair attribution. These
+   *  fields are optional so historical/canonical finding shapes remain unchanged. */
+  severity?: "BLOCKING";
+  artifact?: "resume" | "cover_letter";
+  section?: string;
+  proposedCorrectionType?: RepairOperationKind;
+  automaticRepairSafe?: boolean;
 }
 
 export interface RepairOperation {
@@ -96,6 +104,7 @@ export interface CandidateRepairQuestion {
 }
 
 const META_COMPLIANCE_CHECKS: readonly (keyof InstructionComplianceChecks)[] = ["finalValidation"];
+const META_RECRUITER_DIMENSIONS = new Set(["firstTenSecondFit"]);
 const TECHNOLOGY_ROOT_CHECKS = new Set<keyof InstructionComplianceChecks>([
   "architectureIntegrity",
   "technologyAdaptation",
@@ -120,14 +129,22 @@ function quotedTerms(text: string): string[] {
 function addRootFinding(target: RootRepairFinding[], finding: RootRepairFinding): void {
   const normalized = normalizeFindingKey(finding.description);
   if (!normalized) return;
-  const duplicate = target.some((existing) => {
+  const duplicateIndex = target.findIndex((existing) => {
     const prior = normalizeFindingKey(existing.description);
     if (prior === normalized || prior.includes(normalized) || normalized.includes(prior)) return true;
     const priorQuotes = quotedTerms(existing.description).map((q) => q.toLowerCase());
     const nextQuotes = quotedTerms(finding.description).map((q) => q.toLowerCase());
     return priorQuotes.length > 0 && nextQuotes.length > 0 && nextQuotes.every((q) => priorQuotes.includes(q));
   });
-  if (!duplicate) target.push({ ...finding, key: normalized });
+  if (duplicateIndex === -1) {
+    target.push({ ...finding, key: normalized });
+    return;
+  }
+  // When a canonical layer and recruiter assessment report the same defect, keep one root but retain
+  // the recruiter assessment's more precise, deterministic section/path attribution.
+  if (finding.source === "RECRUITER_QUALITY" && finding.automaticRepairSafe) {
+    target[duplicateIndex] = { ...finding, key: normalized };
+  }
 }
 
 function rootFromBlockingFailure(failure: BlockingFailure): RootRepairFinding {
@@ -187,6 +204,34 @@ export function extractRootRepairFindings(review: StructuredResumeReview): RootR
     });
   }
 
+  // Recruiter-quality authority is already decided by recruiterQualityGate.ts. Consume only its
+  // BLOCKING findings: advisory ordering/style suggestions must never start an automatic rewrite.
+  // firstTenSecondFit is a derived explanation emitted whenever a concrete positioning issue exists,
+  // so it remains enforced by the gate but never becomes a second content-edit instruction.
+  for (const issue of review.recruiterQualityAssessment?.issues ?? []) {
+    if (issue.severity !== "BLOCKING" || META_RECRUITER_DIMENSIONS.has(issue.dimension)) continue;
+    const targetPositioning = issue.dimension === "targetRoleClarity";
+    const secondaryTechPositioning = issue.dimension === "excessiveSecondaryTechEmphasis";
+    const automaticRepairSafe = targetPositioning || secondaryTechPositioning;
+    addRootFinding(roots, {
+      key: normalizeFindingKey(issue.description),
+      description: issue.description,
+      source: "RECRUITER_QUALITY",
+      severity: "BLOCKING",
+      artifact: "resume",
+      section: targetPositioning ? "tagline" : secondaryTechPositioning ? "positioning" : "unresolved",
+      proposedCorrectionType: automaticRepairSafe ? "REPAIR_TARGET_POSITIONING" : undefined,
+      automaticRepairSafe,
+      evidenceSource: [
+        `recruiterQualityAssessment.${issue.dimension}`,
+        "jdPriorityMatrix.targetRoleTitle",
+        "candidate evidence",
+      ],
+      reason: issue.description,
+      candidateInputRequired: !automaticRepairSafe,
+    });
+  }
+
   const compliance = review.instructionCompliance;
   if (!compliance) return roots;
   const hasUnsupported = (review.blockingFailures ?? []).some((f) => f.type === "UNSUPPORTED_CLAIM");
@@ -225,6 +270,7 @@ function baselineTextUnits(baseline: RepairBaseline): Array<{ artifact: "resume"
   const units: Array<{ artifact: "resume" | "cover_letter"; section: string; path: string; text: string; employer?: string }> = [];
   const resume = baseline.resume;
   if (resume) {
+    units.push({ artifact: "resume", section: "tagline", path: "resume.tagline", text: resume.tagline });
     resume.summary.forEach((text, i) => units.push({ artifact: "resume", section: "summary", path: `resume.summary[${i}]`, text }));
     resume.skillGroups.forEach((group, gi) => group.items.forEach((text, ii) => units.push({ artifact: "resume", section: "skills", path: `resume.skillGroups[${gi}].items[${ii}]`, text })));
     resume.experience.forEach((entry, ei) => {
@@ -246,6 +292,7 @@ function employerFromFinding(text: string, baseline: RepairBaseline): string | u
 }
 
 function operationKind(finding: RootRepairFinding): RepairOperationKind {
+  if (finding.proposedCorrectionType) return finding.proposedCorrectionType;
   const text = finding.description;
   if (/UNSUPPORTED_CLAIM/i.test(text)) return "REMOVE_UNSUPPORTED_CLAIM";
   if (/unsupported skill|skill inventory/i.test(text)) return "REMOVE_UNSUPPORTED_SKILL";
@@ -268,7 +315,26 @@ function operationsForFinding(finding: RootRepairFinding, baseline: RepairBaseli
   const needles = [...quoted, ...(employer ? [employer] : [])].filter((v) => v.length > 1);
   let matches = units.filter((unit) => needles.some((needle) => unit.text.toLowerCase().includes(needle.toLowerCase())));
 
-  if (kind === "FIX_EMPLOYER_ATTRIBUTION" || kind === "FIX_COVER_LETTER_SENTENCE") {
+  if (finding.automaticRepairSafe === false) {
+    return [{
+      operation: kind,
+      artifact: finding.artifact ?? "resume",
+      section: finding.section ?? "unresolved",
+      rootFinding: finding.key,
+      evidenceSource: finding.evidenceSource,
+      reason: finding.reason,
+      candidateInputRequired: finding.candidateInputRequired,
+      editablePath: "",
+    }];
+  }
+
+  if (kind === "REPAIR_TARGET_POSITIONING") {
+    matches = units.filter((unit) =>
+      finding.section === "tagline"
+        ? unit.path === "resume.tagline"
+        : unit.path === "resume.tagline" || unit.section === "summary"
+    );
+  } else if (kind === "FIX_EMPLOYER_ATTRIBUTION" || kind === "FIX_COVER_LETTER_SENTENCE") {
     const claim = quoted[0];
     matches = units.filter(
       (unit) =>
@@ -543,6 +609,12 @@ export function renderRepairPlanSection(plan: RepairPlan): string {
       out += ` — ${operation.reason}${operation.candidateInputRequired ? " **CANDIDATE INPUT REQUIRED; do not guess.**" : ""}\n`;
     }
     out += "\n";
+    if (plan.operations.some((operation) => operation.operation === "REPAIR_TARGET_POSITIONING")) {
+      out +=
+        "For target-positioning repairs, use the target-role context only to improve supported positioning. " +
+        "Do not blindly copy the JD title, introduce a technology or responsibility absent from candidate evidence, " +
+        "or change any field outside the explicit editable path(s).\n\n";
+    }
   }
   if (plan.editablePaths) {
     out += "### Frozen-content contract\n";
