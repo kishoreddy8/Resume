@@ -89,6 +89,12 @@ export interface RepairPlan {
   editablePaths?: string[];
 }
 
+export interface CandidateRepairQuestion {
+  findingKey: string;
+  question: string;
+  choices: ["Yes", "No", "Not sure"];
+}
+
 const META_COMPLIANCE_CHECKS: readonly (keyof InstructionComplianceChecks)[] = ["finalValidation"];
 const TECHNOLOGY_ROOT_CHECKS = new Set<keyof InstructionComplianceChecks>([
   "architectureIntegrity",
@@ -125,14 +131,33 @@ function addRootFinding(target: RootRepairFinding[], finding: RootRepairFinding)
 }
 
 function rootFromBlockingFailure(failure: BlockingFailure): RootRepairFinding {
+  const ambiguityText = `${failure.description} ${failure.recommendedCorrection ?? ""}`;
   return {
     key: normalizeFindingKey(failure.description),
     description: `${failure.type}: ${failure.description}`,
     source: "BLOCKING_FAILURE",
     evidenceSource: failure.evidenceSearched ?? [],
     reason: failure.recommendedCorrection ?? failure.description,
-    candidateInputRequired: false,
+    candidateInputRequired: /\b(ambiguous|unclear|cannot determine|could not determine|evidence is insufficient)\b/i.test(ambiguityText),
   };
+}
+
+/** Questions are a last-resort product of genuinely ambiguous evidence, never a restatement of a
+ * deterministic formatting/removal task. Callers surface these only after automatic attempts end. */
+export function buildCandidateRepairQuestions(plan: RepairPlan): CandidateRepairQuestion[] {
+  const questions = new Map<string, CandidateRepairQuestion>();
+  for (const operation of plan.operations ?? []) {
+    if (!operation.candidateInputRequired || questions.has(operation.rootFinding)) continue;
+    const subject = operation.employer
+      ? `Did you personally perform the described work while at ${operation.employer}?`
+      : `Can you confirm the experience described in this finding: ${operation.reason}`;
+    questions.set(operation.rootFinding, {
+      findingKey: operation.rootFinding,
+      question: subject,
+      choices: ["Yes", "No", "Not sure"],
+    });
+  }
+  return [...questions.values()];
 }
 
 /** Collapse the review's several reporting layers into actual content defects. Gate statuses remain
@@ -278,7 +303,7 @@ function operationsForFinding(finding: RootRepairFinding, baseline: RepairBaseli
       rootFinding: finding.key,
       evidenceSource: finding.evidenceSource,
       reason: finding.reason,
-      candidateInputRequired: true,
+      candidateInputRequired: finding.candidateInputRequired,
       editablePath: "",
     }];
   }

@@ -70,6 +70,8 @@ export function buildExternalWriterPrompt(input: {
   employerEvidenceSection?: string;
   /** Stage 28 — the targeted-repair brief for a correction attempt. Absent on iteration 1. */
   repairPlanSection?: string;
+  /** Findings proven resolved in the retry lineage. They are guardrails, never new edit tasks. */
+  resolvedFindingKeys?: string[];
   /** Stage 30 — the candidate's own professional identity, so the headline and summary lead with who
    *  the candidate is rather than with the job's title. */
   professionalIdentitySection?: string;
@@ -162,6 +164,7 @@ export function buildExternalWriterPrompt(input: {
    - Start from \`previous_resume_content.json\` and \`previous_cover_letter_content.json\`.
    - Apply only the explicit repair operations and editable paths in the targeted-repair contract above.
    - Do not rewrite, improve, reorder, re-tailor, or rephrase any frozen content, even if you prefer different wording.
+   - Previously resolved findings must not return: ${input.resolvedFindingKeys?.length ? input.resolvedFindingKeys.join(" | ") : "none recorded"}.
    - A substantially different resume is a failed repair. CareerOps deterministically rejects any collateral change before consuming a quality iteration.`;
 
   const priorReviewSection =
@@ -609,6 +612,7 @@ export function exportExternalWriterPackage(
       ? renderEmployerEvidenceSection(buildEmployerEvidenceMap(writerInput.masterProfile))
       : undefined,
     repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
+    resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,
     professionalIdentitySection: writerInput.masterProfile
       ? renderProfessionalIdentitySection(
           deriveProfessionalIdentity(writerInput.masterProfile),

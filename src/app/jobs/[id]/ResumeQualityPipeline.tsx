@@ -83,6 +83,11 @@ interface QualityWorkflowResponse {
     failingChecks: string[];
     blockingIssues: string[];
   } | null;
+  candidateRepairQuestions?: Array<{
+    findingKey: string;
+    question: string;
+    choices: ["Yes", "No", "Not sure"];
+  }>;
   availableArtifacts: {
     hasFinalResume: boolean;
     hasFinalCoverLetter: boolean;
@@ -957,6 +962,23 @@ export function ResumeQualityPipeline({
               {workflow.failure_reason ?? "Max improvement iterations reached without meeting quality threshold."}
             </p>
           </div>
+
+          {(data.candidateRepairQuestions?.length ?? 0) > 0 && (
+            <div className="rounded border border-red-200/70 bg-white/70 p-3 dark:border-red-900/40 dark:bg-red-950/10">
+              <p className="text-xs font-semibold text-red-900 dark:text-red-200">Candidate evidence questions</p>
+              <p className="mt-1 text-xs text-red-700 dark:text-red-300">
+                These appear only where CareerOps cannot resolve employer-scoped evidence deterministically. A confirmed answer is required before evidence can expand.
+              </p>
+              <ul className="mt-2 space-y-2 text-xs text-red-800 dark:text-red-300">
+                {data.candidateRepairQuestions?.map((item) => (
+                  <li key={item.findingKey}>
+                    <p>{item.question}</p>
+                    <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">Choices: {item.choices.join(" · ")}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {bestAttempt && (
             <div className="rounded border border-red-200/70 bg-white/60 p-3 dark:border-red-900/40 dark:bg-red-950/10">

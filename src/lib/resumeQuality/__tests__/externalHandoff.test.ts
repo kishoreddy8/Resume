@@ -1137,6 +1137,9 @@ test("32. import does not bypass deterministic reviewer", async () => {
   const handoffDir = getHandoffDirectory(loc, 2);
   fs.mkdirSync(handoffDir, { recursive: true });
 
+  const repairedResume = JSON.parse(JSON.stringify(FLAWED_RESUME)) as ResumeContent;
+  repairedResume.experience[0]!.bullets[0] =
+    "Built batch data ingestion pipelines using Azure Data Factory.";
   const iter2Output: ExternalWriterOutput = {
     schemaVersion: 1,
     candidateId: candidateAliceId,
@@ -1145,7 +1148,7 @@ test("32. import does not bypass deterministic reviewer", async () => {
     tailoringRunId: runAliceJobOneId,
     workflowId: wf.id,
     iterationNumber: 2,
-    resume: PERFECT_RESUME,
+    resume: repairedResume,
   };
   fs.writeFileSync(path.join(handoffDir, "writer_output.json"), JSON.stringify(iter2Output, null, 2), "utf-8");
 

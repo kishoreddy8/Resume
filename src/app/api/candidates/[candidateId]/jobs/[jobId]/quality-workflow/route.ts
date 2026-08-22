@@ -17,6 +17,7 @@ import { matchesCurrentInstructions } from "@/lib/resumeQuality/canonicalInstruc
 import { evaluateTailoringAuthorization } from "@/lib/resumeQuality/tailoringAuthorization";
 import { evaluateWorkflowRetry } from "@/lib/resumeQuality/workflowRetry";
 import { selectRetryBaseline, writeRetryLineage } from "@/lib/resumeQuality/retryLineage";
+import { buildCandidateRepairQuestions, planRepairScope, type CandidateRepairQuestion } from "@/lib/resumeQuality/repairScope";
 import { getResumeWriterHealth, type ResumeWriterHealth } from "@/lib/resumeQuality/writers/writerHealth";
 import { evaluateQualityGate } from "@/lib/resumeQuality/qualityGate";
 import { isComplianceBlocking } from "@/lib/resumeQuality/instructionCompliance";
@@ -45,7 +46,7 @@ import {
   collapseSkillUnits,
 } from "@/lib/match/requirementUnits";
 import { detectUnclaimedRequirements } from "@/lib/match/unclaimedRequirementDetector";
-import type { StructuredResumeReview } from "@/lib/resumeQuality/types";
+import type { CoverLetterContent, ResumeContent, StructuredResumeReview } from "@/lib/resumeQuality/types";
 
 function parsePositiveInt(raw: string): number | null {
   const n = Number(raw);
@@ -133,6 +134,7 @@ export async function GET(
     failingChecks: string[];
     blockingIssues: string[];
   } | null = null;
+  let candidateRepairQuestions: CandidateRepairQuestion[] = [];
 
   /**
    * Stage 26 — the truthful Phase 9A outcome, read from the record the orchestrator writes beside the
@@ -290,6 +292,20 @@ export async function GET(
             : [],
           blockingIssues: winner.blockingIssues,
         };
+        const winnerDir = getIterationDirectory(location, selection.iterationNumber);
+        const resumeJson = path.join(winnerDir, "resume_content.json");
+        const coverJson = path.join(winnerDir, "cover_letter_content.json");
+        try {
+          const baselineResume = JSON.parse(fs.readFileSync(resumeJson, "utf-8")) as ResumeContent;
+          const baselineCoverLetter = fs.existsSync(coverJson)
+            ? JSON.parse(fs.readFileSync(coverJson, "utf-8")) as CoverLetterContent
+            : undefined;
+          candidateRepairQuestions = buildCandidateRepairQuestions(
+            planRepairScope(winner, { resume: baselineResume, coverLetter: baselineCoverLetter })
+          );
+        } catch {
+          candidateRepairQuestions = [];
+        }
       }
 
       // Stage 28 — the verdict the UI actually renders. A terminal FAILED workflow is NOT
@@ -424,6 +440,7 @@ export async function GET(
     qualityGate,
     applicationReadiness,
     bestAttempt,
+    candidateRepairQuestions,
     availableArtifacts,
     waitingFor,
     writer,
