@@ -109,10 +109,12 @@ async function main(): Promise<void> {
   const { runProductionCycleTick } = await import("@/lib/production/tick");
   const { runJobEvaluationTick } = await import("@/lib/match/tick");
   const { runResumeWriterTick } = await import("@/lib/resumeQuality/writers/tick");
+  const { getLoadedResumeWriterRuntimeContract } = await import("@/lib/resumeQuality/runtimeContract");
   const { closeDbConnection } = await import("@/db");
   const { handleDbFailure } = await import("@/db/health");
 
   const startedAt = new Date().toISOString();
+  const runtimeContract = getLoadedResumeWriterRuntimeContract();
   let shuttingDown = false;
 
   console.log(`CareerOps background worker started (pid ${process.pid}). ${describeSchedulerHost()}`);
@@ -158,6 +160,10 @@ async function main(): Promise<void> {
       currentActivity: snapshot.currentActivity,
       heavySlotHeldBy: snapshot.heavySlotHeldBy,
       ticks: snapshot.ticks,
+      sourceRevision: runtimeContract.sourceRevision,
+      contractVersion: runtimeContract.contractVersion,
+      runtimeLoadedAt: runtimeContract.loadedAt,
+      activeWorkflowId: null,
     });
   }, 15_000);
 
@@ -176,6 +182,10 @@ async function main(): Promise<void> {
       host: "worker",
       currentActivity: "IDLE",
       ticks: scheduler.snapshot().ticks,
+      sourceRevision: runtimeContract.sourceRevision,
+      contractVersion: runtimeContract.contractVersion,
+      runtimeLoadedAt: runtimeContract.loadedAt,
+      activeWorkflowId: null,
     });
     releaseLock();
     // In-flight synchronous tick work finishes on its own; the leases it holds go stale and are

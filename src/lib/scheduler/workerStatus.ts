@@ -41,6 +41,11 @@ export interface BackgroundWorkerStatus {
    *  normal while a synchronous heavy tick holds the event loop. The activity detail is then a
    *  snapshot from `lastStatusAt`, not a live reading. */
   statusStale: boolean;
+  sourceRevision: string | null;
+  contractVersion: string | null;
+  runtimeLoadedAt: string | null;
+  /** Reported by the worker itself; never inferred from workflow database state. */
+  activeWorkflowId: number | null;
   /** Why the status is not live, when it is not. Never a fabricated reason. */
   detail: string;
 }
@@ -72,6 +77,10 @@ export function readBackgroundWorkerStatus(now: Date = new Date(), dataDir: stri
     heavySlotHeldBy: null,
     ticks: null,
     statusStale: false,
+    sourceRevision: null,
+    contractVersion: null,
+    runtimeLoadedAt: null,
+    activeWorkflowId: null,
   };
 
   let raw: string;
@@ -117,6 +126,10 @@ export function readBackgroundWorkerStatus(now: Date = new Date(), dataDir: stri
     currentActivity: running ? (parsed.currentActivity ?? "IDLE") : null,
     heavySlotHeldBy: running ? (parsed.heavySlotHeldBy ?? null) : null,
     ticks: running ? (parsed.ticks ?? null) : null,
+    sourceRevision: typeof parsed.sourceRevision === "string" ? parsed.sourceRevision : null,
+    contractVersion: typeof parsed.contractVersion === "string" ? parsed.contractVersion : null,
+    runtimeLoadedAt: typeof parsed.runtimeLoadedAt === "string" ? parsed.runtimeLoadedAt : null,
+    activeWorkflowId: typeof parsed.activeWorkflowId === "number" ? parsed.activeWorkflowId : null,
     running,
     statusStale,
     detail: parsed.stoppedAt

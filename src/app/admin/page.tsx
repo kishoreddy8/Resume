@@ -1,85 +1,70 @@
 "use client";
 
 import Link from "next/link";
-import { Surface } from "@/components/ui";
+import { useCallback, useEffect, useState } from "react";
+import { AdminEmptyState, AdminErrorState, AdminLoadingState, AdminPageHeader, AdminStatus, HealthTile, InterventionList, OperationalTable, TechnicalDetails, TimeWindowControl } from "@/components/admin";
+import { useAdminCandidate } from "@/lib/admin/AdminContext";
 
-/**
- * Admin overview.
- *
- * A map, not a dashboard. Every destination here already existed and already renders its own real
- * numbers; duplicating a few of them on a landing page would mean two places that can disagree
- * about connector health, and the one you happened to open would be the one you believed.
- *
- * This exists so system operations have a home that is NOT the candidate's navigation rail. A
- * person looking for work should not be reading scan-run diagnostics between Jobs and Settings.
- */
+type WindowKey = "24h" | "7d" | "30d";
+type Overview = {
+  generatedAt: string;
+  health: { system: string; scanner: string; writer: string; applications: string; runtimeCompatibility: { state: string; detail: string } };
+  runtime: { web: { sourceRevision: string; contractVersion: string }; worker: { pid: number | null; sourceRevision: string | null; contractVersion: string | null; currentActivity: string | null } };
+  writer: { state: string; pendingWorkflowCount: number };
+  scanning: { summary: { runs: number; jobsAdded: number } };
+  companies: { total: number; active: number };
+  jobsDiscovered: number;
+  applications: Record<string, number>;
+  recentFailures: Array<{ source: string; id: number; status: string; detail: string | null; occurredAt: string }>;
+};
 
-const SECTIONS = [
-  {
-    href: "/admin/scanner",
-    title: "ATS Scanner",
-    body: "Scan runs, connector health, and what each source last returned.",
-  },
-  {
-    href: "/admin/connectors",
-    title: "Connectors",
-    body: "ATS coverage across the registry, and the sources still unresolved.",
-  },
-  {
-    href: "/admin/companies",
-    title: "Companies",
-    body: "The company registry, discovery state, and what JobHunt has observed of each.",
-  },
-  {
-    href: "/admin/pipeline",
-    title: "Pipeline",
-    body: "Stage counts across the job corpus — the internal view, not a candidate's applications.",
-  },
-  {
-    href: "/admin/operations",
-    title: "System health",
-    body: "Workers, queues, scheduler state and data health.",
-  },
-  {
-    href: "/settings",
-    title: "Configuration",
-    body: "System configuration, AI providers, and feature switches.",
-  },
-];
+function displayStatus(value: string): string {
+  const map: Record<string, string> = { MATCH: "healthy", MISMATCH: "version_mismatch", VERSION_MISMATCH: "version_mismatch", HEALTHY: "healthy", DEGRADED: "degraded", DISABLED: "disabled", PROCESSING: "running", IDLE: "idle", WAITING_FOR_NEXT_ATTEMPT: "queued", UNAVAILABLE_NOT_RUNNING: "offline", TECHNICAL_FAILURE: "failed", AUTH_REQUIRED: "needs_intervention", BLOCKED_MAX_ATTEMPTS: "needs_intervention" };
+  return map[value] ?? "unknown";
+}
 
 export default function AdminOverviewPage() {
-  return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 py-6">
-      <header>
-        <h1 className="page-title">System operations</h1>
-        <p className="mt-1.5 max-w-[64ch] text-[12.5px] leading-relaxed text-tertiary">
-          The machinery behind JobHunt: how jobs are discovered, which connectors are healthy, and
-          what the system is doing. Separate from the candidate experience on purpose — nothing here
-          is something a job seeker should have to think about.
-        </p>
-      </header>
+  const { candidateId } = useAdminCandidate();
+  const [timeWindow, setTimeWindow] = useState<WindowKey>("24h");
+  const [data, setData] = useState<Overview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/admin/overview?candidateId=${candidateId}&window=${timeWindow}`);
+      if (!response.ok) throw new Error((await response.json()).error ?? "Overview is unavailable");
+      setData(await response.json()); setError(null);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Overview is unavailable"); }
+  }, [candidateId, timeWindow]);
 
-      <ul className="grid gap-2.5 sm:grid-cols-2">
-        {SECTIONS.map((s) => (
-          <li key={s.href}>
-            <Link href={s.href} className="block">
-              <Surface
-                level="z3"
-                className="h-full rounded-[var(--radius-xl)] px-4 py-3.5 transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)]"
-              >
-                <h2 className="text-[13.5px] font-semibold text-primary">{s.title}</h2>
-                <p className="mt-1 text-[12px] leading-relaxed text-tertiary">{s.body}</p>
-              </Surface>
-            </Link>
-          </li>
-        ))}
-      </ul>
+  useEffect(() => {
+    const initial = setTimeout(() => void load(), 0);
+    const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 15_000);
+    return () => { clearTimeout(initial); clearInterval(timer); };
+  }, [load]);
 
-      <p className="text-[11.5px] leading-relaxed text-tertiary">
-        <Link href="/home" className="text-secondary underline-offset-2 hover:underline">
-          ← Back to JobHunt
-        </Link>
-      </p>
-    </div>
-  );
+  if (error && !data) return <AdminErrorState title="Overview unavailable" detail={error} retry={() => void load()} />;
+  if (!data) return <AdminLoadingState label="Loading operational health" />;
+  const queueCount = data.writer.pendingWorkflowCount + (data.applications.QUEUED ?? 0);
+  const runningCount = (data.applications.RUNNING ?? 0) + (data.health.writer === "PROCESSING" ? 1 : 0);
+  const interventionItems = [
+    ...(data.health.runtimeCompatibility.state === "MISMATCH" ? [{ id: "runtime", title: "Version mismatch", detail: data.health.runtimeCompatibility.detail, status: "version_mismatch" as const }] : []),
+    ...data.recentFailures.slice(0, 5).map((failure) => ({ id: `${failure.source}-${failure.id}`, title: `${failure.source} #${failure.id}`, detail: failure.detail ?? failure.status, status: "failed" as const })),
+  ];
+
+  return <div className="admin-page-stack">
+    <AdminPageHeader eyebrow="Operations" title="System overview" description="A truthful, current view of system health, active work, failures, and operator intervention." actions={<TimeWindowControl value={timeWindow} options={[{ value: "24h", label: "24 hours" }, { value: "7d", label: "7 days" }, { value: "30d", label: "30 days" }]} onChange={setTimeWindow} />} />
+    {data.health.runtimeCompatibility.state === "MISMATCH" && <div className="admin-critical-banner" role="alert"><strong>Version mismatch</strong><span>{data.health.runtimeCompatibility.detail}</span></div>}
+    <section aria-labelledby="health-heading"><h2 id="health-heading" className="admin-section-title">Critical health</h2><div className="admin-health-grid">
+      <HealthTile label="System" status={displayStatus(data.health.system)} value={queueCount + runningCount} detail={`${queueCount} queued · ${runningCount} running`} href="/admin/operations" />
+      <HealthTile label="Scanner" status={displayStatus(data.health.scanner)} value={data.scanning.summary.runs} detail={`${data.scanning.summary.jobsAdded} jobs added`} href="/admin/scanner" />
+      <HealthTile label="Resume Writer" status={displayStatus(data.writer.state)} value={data.writer.pendingWorkflowCount} detail="Workflows queued" href="/admin/writer" />
+      <HealthTile label="Applications" status={displayStatus(data.health.applications)} value={data.applications.FAILED ?? 0} detail="Failed runs" href="/admin/applications" />
+      <HealthTile label="Runtime compatibility" status={displayStatus(data.health.runtimeCompatibility.state)} detail={data.health.runtimeCompatibility.detail} href="/admin/operations" />
+    </div></section>
+    <div className="admin-two-column"><section aria-labelledby="intervention-heading"><h2 id="intervention-heading" className="admin-section-title">Work requiring intervention</h2>{interventionItems.length ? <InterventionList items={interventionItems} /> : <AdminEmptyState title="No intervention required" detail="No recent operational failure or runtime mismatch needs attention." />}</section>
+    <section aria-labelledby="throughput-heading"><h2 id="throughput-heading" className="admin-section-title">Queue and throughput</h2><div className="admin-operational-card"><dl className="admin-metric-list"><div><dt>Queued work</dt><dd>{queueCount}</dd></div><div><dt>Running now</dt><dd>{runningCount}</dd></div><div><dt>Jobs discovered</dt><dd>{data.jobsDiscovered}</dd></div><div><dt>Active companies</dt><dd>{data.companies.active} / {data.companies.total}</dd></div></dl></div></section></div>
+    <section aria-labelledby="failures-heading"><h2 id="failures-heading" className="admin-section-title">Recent failures</h2>{data.recentFailures.length ? <OperationalTable label="Recent cross-service failures"><caption className="sr-only">Recent cross-service failures</caption><thead><tr><th>Service</th><th>Item</th><th>Status</th><th>When</th></tr></thead><tbody>{data.recentFailures.map((failure) => <tr key={`${failure.source}-${failure.id}`}><td>{failure.source}</td><td>#{failure.id} {failure.detail ?? ""}</td><td><AdminStatus status="failed" label={failure.status} /></td><td>{new Date(failure.occurredAt).toLocaleString()}</td></tr>)}</tbody></OperationalTable> : <AdminEmptyState title="No recent failures" detail="No persisted scanner, writer, or application failures were found." />}</section>
+    <TechnicalDetails summary="Runtime details"><dl className="admin-technical-grid"><div><dt>Web revision</dt><dd>{data.runtime.web.sourceRevision}</dd></div><div><dt>Web contract</dt><dd>{data.runtime.web.contractVersion}</dd></div><div><dt>Worker revision</dt><dd>{data.runtime.worker.sourceRevision ?? "Not reported"}</dd></div><div><dt>Worker contract</dt><dd>{data.runtime.worker.contractVersion ?? "Not reported"}</dd></div><div><dt>Worker PID</dt><dd>{data.runtime.worker.pid ?? "Offline"}</dd></div><div><dt>Worker activity</dt><dd>{data.runtime.worker.currentActivity ?? "Unknown"}</dd></div></dl></TechnicalDetails>
+    <p className="admin-updated-at">Updated {new Date(data.generatedAt).toLocaleTimeString()} · <Link href="/admin/activity">View activity</Link></p>
+  </div>;
 }
