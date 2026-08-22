@@ -45,6 +45,75 @@ const MODULE_RUNTIME_CONTRACT: ResumeWriterRuntimeContract = Object.freeze({
   loadedAt: new Date().toISOString(),
 });
 
+/**
+ * ADVISORY ONLY — never used to gate a writer pass. `MODULE_RUNTIME_CONTRACT` above is frozen at
+ * module load and is the thing every real writer pass is actually checked against (see
+ * assertResumeWriterRuntimeContract); that per-workflow enforcement remains fully authoritative and
+ * is completely untouched by this function.
+ *
+ * What this adds is purely observational: in a long-lived single dev-server process, the loaded
+ * contract can quietly fall behind as commits land, and nothing previously told an operator that had
+ * happened until a real workflow's stamped runtime_contract.json revealed it after the fact. This
+ * re-resolves the current on-disk revision FRESH on each call (via the same resolveSourceRevision()
+ * a fresh process would use) so Admin can show the operator the gap before it costs a writer pass.
+ *
+ * Cached briefly (30s) so a busy Admin page cannot turn this into a `git rev-parse` on every request
+ * — an operator watching for a restart does not need sub-second precision.
+ */
+let cachedObservation: { revision: string; observedAt: number } | null = null;
+const OBSERVATION_CACHE_MS = 30_000;
+
+export function observeCurrentRepositoryRevision(): { revision: string; observedAt: string } {
+  const now = Date.now();
+  if (!cachedObservation || now - cachedObservation.observedAt > OBSERVATION_CACHE_MS) {
+    cachedObservation = { revision: resolveSourceRevision(), observedAt: now };
+  }
+  return { revision: cachedObservation.revision, observedAt: new Date(cachedObservation.observedAt).toISOString() };
+}
+
+export type RuntimeFreshnessState = "CURRENT" | "STALE_PROCESS" | "UNKNOWN";
+
+export interface RuntimeFreshness {
+  state: RuntimeFreshnessState;
+  loadedRevision: string;
+  observedRevision: string;
+  observedAt: string;
+  detail: string;
+}
+
+/** Compares what THIS process loaded against what is on disk right now. Never infers "safe" from a
+ *  match here — the per-workflow stamp/assert cycle remains the only real safety mechanism. */
+export function evaluateRuntimeFreshness(
+  loaded: Pick<ResumeWriterRuntimeContract, "sourceRevision">,
+  observed: { revision: string; observedAt: string } = observeCurrentRepositoryRevision()
+): RuntimeFreshness {
+  if (loaded.sourceRevision === "unknown" || observed.revision === "unknown") {
+    return {
+      state: "UNKNOWN",
+      loadedRevision: loaded.sourceRevision,
+      observedRevision: observed.revision,
+      observedAt: observed.observedAt,
+      detail: "The repository revision could not be determined; freshness cannot be judged.",
+    };
+  }
+  if (loaded.sourceRevision !== observed.revision) {
+    return {
+      state: "STALE_PROCESS",
+      loadedRevision: loaded.sourceRevision,
+      observedRevision: observed.revision,
+      observedAt: observed.observedAt,
+      detail: "This process loaded an older revision than what is currently checked out. Restart every Career-Ops writer-capable process before running the writer.",
+    };
+  }
+  return {
+    state: "CURRENT",
+    loadedRevision: loaded.sourceRevision,
+    observedRevision: observed.revision,
+    observedAt: observed.observedAt,
+    detail: "This process's loaded revision matches the currently checked-out repository HEAD.",
+  };
+}
+
 export class ResumeWriterRuntimeMismatchError extends Error {
   readonly code = "RUNTIME_VERSION_MISMATCH";
 

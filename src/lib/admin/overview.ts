@@ -1,7 +1,11 @@
 import { getDb } from "@/db";
 import { getScanningWindowSummary, getLatestScanActivity, type WindowKey, WINDOW_DAYS } from "@/db/queries/operations";
 import { getAppSettings } from "@/db/queries/settings";
-import { getLoadedResumeWriterRuntimeContract, type ResumeWriterRuntimeContract } from "@/lib/resumeQuality/runtimeContract";
+import {
+  evaluateRuntimeFreshness,
+  getLoadedResumeWriterRuntimeContract,
+  type ResumeWriterRuntimeContract,
+} from "@/lib/resumeQuality/runtimeContract";
 import { getResumeWriterHealth } from "@/lib/resumeQuality/writers/writerHealth";
 import { readBackgroundWorkerStatus, type BackgroundWorkerStatus } from "@/lib/scheduler/workerStatus";
 
@@ -59,6 +63,13 @@ export function getAdminOverview(window: WindowKey) {
   const worker = readBackgroundWorkerStatus();
   const webRuntime = getLoadedResumeWriterRuntimeContract();
   const runtimeCompatibility = compareRuntimeVersions(webRuntime, worker);
+  // Phase K (advisory only — never a substitute for the per-workflow runtime_contract.json stamp/
+  // assert cycle, which remains the sole real safety mechanism). compareRuntimeVersions above only
+  // catches a MISMATCH between this web process and a separate standalone worker process; in the
+  // common single-process "web" host mode there is no worker to compare against, so a web process
+  // that has quietly gone stale relative to the currently checked-out repository was previously
+  // invisible here until a real workflow's stamped contract revealed it after the fact.
+  const runtimeFreshness = evaluateRuntimeFreshness(webRuntime);
   const workflows = groupedCounts("resume_quality_workflows");
   const applications = groupedCounts("application_runs");
   const scanning = getScanningWindowSummary(windowDays);
@@ -71,8 +82,9 @@ export function getAdminOverview(window: WindowKey) {
       writer: writer.state,
       applications: (applications.FAILED ?? 0) > 0 ? "DEGRADED" : "HEALTHY",
       runtimeCompatibility,
+      runtimeFreshness,
     },
-    runtime: { web: webRuntime, worker }, writer,
+    runtime: { web: webRuntime, worker, freshness: runtimeFreshness }, writer,
     scanning: { summary: scanning, latest: getLatestScanActivity() },
     companies: countCompanies(), jobsDiscovered: countRecentJobs(windowDays), workflows, applications,
     recentFailures: recentFailures(),
