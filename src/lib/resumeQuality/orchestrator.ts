@@ -25,6 +25,7 @@ import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION
 import { resolveCandidateContact } from "./candidateContact";
 import { gateBlockingComplianceCorrections } from "./instructionCompliance";
 import { planRepairScope, type RepairPlan } from "./repairScope";
+import { validateRepairPreservation } from "./repairPreservation";
 import { generateColdFollowUpEmail } from "./coldFollowUpEmail";
 import { publishFinalApplicationArtifacts, type PublishedApplication } from "./finalPublication";
 import { generateHumanReviewPackage } from "./humanReviewPackage";
@@ -1150,12 +1151,30 @@ export async function executeResumeImprovementIteration(
 
   writerOutput = normalizeResumeWriterOutput(writerOutput);
 
+  const repairedCoverLetter = writerOutput.coverLetter ?? writerInput.currentCoverLetter;
+  if (writerInput.writerMode === "TARGETED_REPAIR" && writerInput.repairPlan && writerInput.currentResume) {
+    const preservation = validateRepairPreservation({
+      baselineResume: writerInput.currentResume,
+      baselineCoverLetter: writerInput.currentCoverLetter,
+      repairedResume: writerOutput.resume,
+      repairedCoverLetter,
+      repairPlan: writerInput.repairPlan,
+    });
+    if (!preservation.valid) {
+      throw new ResumeQualityOrchestrationError(
+        "REPAIR_SCOPE_VIOLATION",
+        `Targeted repair changed frozen content: ${preservation.violations.join(", ")}`,
+        { violations: preservation.violations, editablePaths: writerInput.repairPlan.editablePaths ?? [] }
+      );
+    }
+  }
+
   // 2. Transition and drive next review iteration
   return executeResumeQualityIteration({
     candidateId,
     workflowId,
     resume: writerOutput.resume,
-    coverLetter: writerOutput.coverLetter ?? writerInput.currentCoverLetter,
+    coverLetter: repairedCoverLetter,
     resumeDocxPath: input.resumeDocxPath,
     coverLetterDocxPath: input.coverLetterDocxPath,
     jobRequirements: input.jobRequirements ?? writerInput.jobRequirements,

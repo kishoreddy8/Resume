@@ -216,7 +216,7 @@ test("employer attribution becomes one cover-letter sentence repair and freezes 
   assert.equal(plan.scope, "COVER_LETTER_ONLY");
   assert.deepEqual(plan.editablePaths, ["coverLetter.paragraphs[0].sentences[0]"]);
   assert.equal(plan.rootFindings?.length, 1, "the compliance echo must not become a second repair");
-  assert.match(renderRepairPlanSection(plan), /Every other summary sentence.*FROZEN/s);
+  assert.match(renderRepairPlanSection(plan), /Every other summary sentence[\s\S]*FROZEN/);
 });
 
 // =================================================================================================

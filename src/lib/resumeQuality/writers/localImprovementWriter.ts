@@ -109,14 +109,6 @@ export class LocalImprovementWriter implements ResumeWriterAgent {
       }
     }
 
-    // 5. Fix blocking issues (e.g. unevidenced certifications or employers)
-    if (input.latestReview?.blockingIssues && input.latestReview.blockingIssues.length > 0) {
-      // If certification mismatch, align certifications with master profile
-      if (input.masterProfile?.certifications) {
-        improvedResume.certifications = input.masterProfile.certifications.map((c) => c.name);
-      }
-    }
-
     return {
       resume: improvedResume,
       coverLetter: input.currentCoverLetter,

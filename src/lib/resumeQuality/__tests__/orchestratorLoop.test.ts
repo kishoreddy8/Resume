@@ -131,20 +131,6 @@ const FLAWED_RESUME_COMPETING_TECH: ResumeContent = {
   ],
 };
 
-const FLAWED_RESUME_TITLE: ResumeContent = {
-  ...PERFECT_RESUME,
-  experience: [
-    {
-      title: "VP of Product Strategy", // Truthfulness mismatch with "Senior Data Engineer"
-      company: "Acme Corp",
-      dates: "2020 - Present",
-      bullets: [
-        "Designed Azure Data Factory pipelines that reduced nightly batch processing time from 6 hours to 45 minutes.",
-      ],
-    },
-  ],
-};
-
 const COVER_LETTER: CoverLetterContent = {
   name: "Alice Smith",
   location: "Remote, US",
@@ -154,6 +140,16 @@ const COVER_LETTER: CoverLetterContent = {
   paragraphs: ["I am excited to apply for the Senior Data Engineer position."],
   closing: "Sincerely,\nAlice Smith",
 };
+
+function stagedSurgicalRepair(input: ResumeWriterInput): ResumeWriterOutput {
+  assert(input.currentResume);
+  const resume = JSON.parse(JSON.stringify(input.currentResume)) as ResumeContent;
+  if ((input.iterationNumber ?? 1) > 2) {
+    resume.experience[0]!.bullets[0] = resume.experience[0]!.bullets[0]!
+      .replace(/and AWS Glue/i, "migrated from legacy AWS Glue pipelines");
+  }
+  return { resume };
+}
 
 before(async () => {
   tmpDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-loop-db-"));
@@ -545,14 +541,9 @@ test("5. iteration-2 READY terminates", async () => {
 test("6. iteration-2 fail invokes writer again", async () => {
   let writerCalls = 0;
   const multiStepWriter: ResumeWriterAgent = {
-    async generate(): Promise<ResumeWriterOutput> {
+    async generate(input): Promise<ResumeWriterOutput> {
       writerCalls += 1;
-      if (writerCalls === 1) {
-        // First improvement still has flawed title
-        return { resume: FLAWED_RESUME_TITLE };
-      }
-      // Second improvement is perfect
-      return { resume: PERFECT_RESUME };
+      return stagedSurgicalRepair(input);
     },
   };
 
@@ -586,10 +577,7 @@ test("6. iteration-2 fail invokes writer again", async () => {
 test("7. iteration 3 created", async () => {
   const multiStepWriter: ResumeWriterAgent = {
     async generate(input: ResumeWriterInput): Promise<ResumeWriterOutput> {
-      if (input.iterationNumber === 2) {
-        return { resume: FLAWED_RESUME_TITLE };
-      }
-      return { resume: PERFECT_RESUME };
+      return stagedSurgicalRepair(input);
     },
   };
 
@@ -615,10 +603,7 @@ test("7. iteration 3 created", async () => {
 test("8. iteration-3 READY terminates", async () => {
   const multiStepWriter: ResumeWriterAgent = {
     async generate(input: ResumeWriterInput): Promise<ResumeWriterOutput> {
-      if (input.iterationNumber === 2) {
-        return { resume: FLAWED_RESUME_TITLE };
-      }
-      return { resume: PERFECT_RESUME };
+      return stagedSurgicalRepair(input);
     },
   };
 
@@ -784,10 +769,7 @@ test("12. iteration 1 artifacts unchanged after iteration 2", async () => {
 test("13. iteration 2 artifacts unchanged after iteration 3", async () => {
   const multiStepWriter: ResumeWriterAgent = {
     async generate(input: ResumeWriterInput): Promise<ResumeWriterOutput> {
-      if (input.iterationNumber === 2) {
-        return { resume: FLAWED_RESUME_TITLE };
-      }
-      return { resume: PERFECT_RESUME };
+      return stagedSurgicalRepair(input);
     },
   };
 
@@ -939,7 +921,7 @@ test("18. writer receives latest review feedback", async () => {
   const inspectWriter: ResumeWriterAgent = {
     async generate(input: ResumeWriterInput): Promise<ResumeWriterOutput> {
       capturedFeedbackPath = input.priorIteration?.reviewFeedbackPath ?? "";
-      return { resume: PERFECT_RESUME };
+      return new LocalImprovementWriter().generate(input);
     },
   };
 
@@ -966,7 +948,7 @@ test("19. writer receives required corrections", async () => {
   const inspectWriter: ResumeWriterAgent = {
     async generate(input: ResumeWriterInput): Promise<ResumeWriterOutput> {
       capturedCorrectionsCount = input.requiredCorrections?.length ?? 0;
-      return { resume: PERFECT_RESUME };
+      return new LocalImprovementWriter().generate(input);
     },
   };
 
@@ -992,7 +974,7 @@ test("20. writer receives authoritative JD context", async () => {
   const inspectWriter: ResumeWriterAgent = {
     async generate(input: ResumeWriterInput): Promise<ResumeWriterOutput> {
       capturedJdPath = input.jobDescriptionPath;
-      return { resume: PERFECT_RESUME };
+      return new LocalImprovementWriter().generate(input);
     },
   };
 
@@ -1018,7 +1000,7 @@ test("21. writer receives Master Resume/profile evidence", async () => {
   const inspectWriter: ResumeWriterAgent = {
     async generate(input: ResumeWriterInput): Promise<ResumeWriterOutput> {
       capturedProfile = input.masterProfile;
-      return { resume: PERFECT_RESUME };
+      return new LocalImprovementWriter().generate(input);
     },
   };
 
@@ -1045,7 +1027,7 @@ test("22. writer receives selected track", async () => {
   const inspectWriter: ResumeWriterAgent = {
     async generate(input: ResumeWriterInput): Promise<ResumeWriterOutput> {
       receivedWorkflowId = input.workflowId;
-      return { resume: PERFECT_RESUME };
+      return new LocalImprovementWriter().generate(input);
     },
   };
 
@@ -1606,4 +1588,40 @@ test("40. no mutation to production tailoring run history", async () => {
 
   const afterRuns = db.prepare("SELECT count(*) as cnt FROM tailoring_runs").get() as { cnt: number };
   assert.equal(beforeRuns.cnt, afterRuns.cnt, "Stage 10 loop must not create extraneous tailoring_runs rows");
+});
+
+test("41. repair scope violation is rejected before consuming a quality iteration", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: FLAWED_RESUME_COMPETING_TECH,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+  const before = getResumeQualityWorkflow(candidateAliceId, wf.id)!;
+  assert.equal(before.current_iteration, 1);
+
+  const collateral = JSON.parse(JSON.stringify(FLAWED_RESUME_COMPETING_TECH)) as ResumeContent;
+  collateral.tagline = "A completely unrelated replacement tagline";
+  const writer: ResumeWriterAgent = { generate: async () => ({ resume: collateral }) };
+  await assert.rejects(
+    executeResumeImprovementIteration({
+      candidateId: candidateAliceId,
+      workflowId: wf.id,
+      writer,
+      jobRequirements: STRONG_REQUIREMENTS,
+      masterResumeProfile: masterProfile(),
+    }),
+    (error: unknown) => error instanceof ResumeQualityOrchestrationError && error.code === "REPAIR_SCOPE_VIOLATION"
+  );
+
+  const after = getResumeQualityWorkflow(candidateAliceId, wf.id)!;
+  assert.equal(after.current_iteration, 1, "a writer contract violation must not consume iteration 2");
+  assert.equal(listResumeQualityIterations(candidateAliceId, wf.id).length, 1);
 });
