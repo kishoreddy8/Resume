@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { getCandidateJobState } from "@/db/queries/candidateJobState";
 import { requireActiveCandidate } from "@/db/queries/candidates";
@@ -21,6 +22,22 @@ import type { CoverLetterContent, ResumeContent } from "../../tools/tailoring-en
  * outside this app, per the Phase 3 V1 architecture); this module only authorizes, persists, renders
  * deterministically, and finalizes the run record.
  */
+
+// Certification-badge source clarification: resolves this candidate's own Master Resume .docx path
+// exactly as /api/master-files/route.ts stores it, so generateResumeDocx can preserve its embedded
+// certification badge images (see sourceBadgeAssets.ts). Deliberately re-derived locally rather than
+// imported — this mirrors the same "small local re-derivation over cross-module coupling" pattern
+// this exact path convention already uses in src/lib/match/candidateProfile.ts and
+// src/lib/resumeQuality/workspacePackage.ts. Returns undefined (never throws) when the candidate has
+// no Master Resume yet, or its master resume is a .md/.txt upload rather than a .docx — both cases
+// fall back to the generic text-card badge presentation exactly as before this feature existed.
+function candidatesRoot(): string {
+  return process.env.CAREER_OPS_CANDIDATES_DIR ?? path.join(process.cwd(), "data", "candidates");
+}
+function resolveMasterResumeDocxPath(candidateId: number): string | undefined {
+  const candidate = path.join(candidatesRoot(), String(candidateId), "master", "resume.docx");
+  return fs.existsSync(candidate) ? candidate : undefined;
+}
 
 // READY_DIRECT may only ever pair with a READY_FOR_TAILORING approval, NEEDS_REVIEW_OVERRIDE only
 // with NEEDS_REVIEW — mirrors POST /api/candidates/[candidateId]/jobs/[jobId]/tailoring-runs's exact
@@ -216,6 +233,7 @@ export async function executeTailoringRun(input: ExecuteTailoringRunInput): Prom
         jobId: input.jobId,
         resume: input.resume,
         coverLetter: input.coverLetter,
+        masterResumeDocxPath: resolveMasterResumeDocxPath(input.candidateId),
       },
       { outputDir: paths.dir }
     );

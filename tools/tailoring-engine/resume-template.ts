@@ -5,6 +5,7 @@ import {
   Document,
   ExternalHyperlink,
   HeadingLevel,
+  ImageRun,
   LevelFormat,
   Packer,
   Paragraph,
@@ -35,6 +36,7 @@ import {
 } from "./constants";
 import type { ExperienceEntry, KeyProject, ResumeContent } from "./types";
 import { buildCertificationBadgeRuns } from "./certificationBadges";
+import { extractSourceCertificationBadges, buildSourceCertificationBadgeRuns } from "./sourceBadgeAssets";
 
 /**
  * Stage 31 — the reference-resume presentation standard.
@@ -102,8 +104,8 @@ function nameLine(text: string): Paragraph {
 }
 
 /** The headline: bold, not italic, and left-aligned under the name — as the reference sets it. */
-function headlineLine(text: string, badgeRun?: TextRun): Paragraph {
-  const children: TextRun[] = [new TextRun({ text, bold: true, size: SIZE_TAGLINE, font: FONT, color: BLACK })];
+function headlineLine(text: string, badgeRun?: TextRun | ImageRun): Paragraph {
+  const children: (TextRun | ImageRun)[] = [new TextRun({ text, bold: true, size: SIZE_TAGLINE, font: FONT, color: BLACK })];
   if (badgeRun) children.push(new TextRun({ children: [new Tab()] }), badgeRun);
   return new Paragraph({
     alignment: AlignmentType.LEFT,
@@ -117,10 +119,10 @@ function headlineLine(text: string, badgeRun?: TextRun): Paragraph {
 /** location | phone | email (mailto: link) | LinkedIn (https: link, readable text not a raw URL) */
 function contactLine(
   params: { location: string; phone: string; email: string; linkedin?: string; github?: string },
-  badgeRun?: TextRun
+  badgeRun?: TextRun | ImageRun
 ): Paragraph {
   const sep = () => new TextRun({ text: "  |  ", size: SIZE_CONTACT, font: FONT, color: BLACK });
-  const children: (TextRun | ExternalHyperlink)[] = [
+  const children: (TextRun | ExternalHyperlink | ImageRun)[] = [
     new TextRun({ text: params.location, size: SIZE_CONTACT, font: FONT, color: BLACK }),
     sep(),
     new TextRun({ text: params.phone, size: SIZE_CONTACT, font: FONT, color: BLACK }),
@@ -150,9 +152,11 @@ function contactLine(
  * recognized certification badges. With one or two recognized badges, the first badge run lands on
  * the headline line and the second on the contact line, each right tab-stopped to the content
  * margin — a compact, top-right, secondary block beside the header that never touches, displaces,
- * or resizes the candidate's own name.
+ * or resizes the candidate's own name. Each badge run is either a real ImageRun (a preserved Master
+ * Resume badge — see sourceBadgeAssets.ts) or a generic shaded TextRun (certificationBadges.ts's
+ * fallback); the caller decides which set to pass in, this function only places them.
  */
-function headerBlock(content: ResumeContent, badgeRuns: TextRun[]): Paragraph[] {
+function headerBlock(content: ResumeContent, badgeRuns: (TextRun | ImageRun)[]): Paragraph[] {
   return [
     nameLine(content.name),
     headlineLine(content.tagline, badgeRuns[0]),
@@ -418,18 +422,37 @@ function experienceParagraphs(role: ExperienceEntry): Paragraph[] {
   return out;
 }
 
-export async function generateResumeDocx(content: ResumeContent, outputPath: string): Promise<void> {
+export interface GenerateResumeDocxOptions {
+  /**
+   * The candidate's own Master Resume .docx file, resolved by the caller from a trusted
+   * candidateId (see tailoringExecution.ts) — never taken from writer output. When it exists and
+   * has embedded images, those images are extracted and preserved as real inline badges (see
+   * sourceBadgeAssets.ts); otherwise the generic text-card fallback below is used, exactly as
+   * before this option existed.
+   */
+  masterResumeDocxPath?: string;
+}
+
+export async function generateResumeDocx(
+  content: ResumeContent,
+  outputPath: string,
+  options: GenerateResumeDocxOptions = {}
+): Promise<void> {
   // Section order is the reference's, exactly: identity block, then what the candidate can do,
   // then proof they have done it, then credentials.
   //
-  // Phase H (clarified) — compact certification "badge" runs (shaded text, never an image; see
-  // certificationBadges.ts), right tab-stopped onto the name/headline/contact lines so they read
-  // as a block sitting at the top right of the header, for whichever of this candidate's
-  // ALREADY-APPROVED certifications this local registry recognizes. Purely decorative and
-  // additive: an empty array (nothing recognized, or no certifications at all) means the header
-  // renders in its original plain shape, and the full bulleted Certifications section further down
-  // is completely unaffected either way.
-  const certificationBadgeRuns = buildCertificationBadgeRuns(content.certifications);
+  // Certification badges, right tab-stopped onto the headline/contact lines so they read as a
+  // block sitting at the top right of the header. Source-badge clarification: when the candidate's
+  // own Master Resume has embedded certification badge images, those exact images win — preserved
+  // byte-for-byte, never redrawn or approximated (see sourceBadgeAssets.ts). Only when no source
+  // image exists does this fall back to certificationBadges.ts's generic shaded-text cards, for
+  // whichever of the candidate's ALREADY-APPROVED certifications that local registry recognizes.
+  // Purely decorative and additive either way: an empty result means the header renders in its
+  // original plain shape, and the full bulleted Certifications section further down is completely
+  // unaffected regardless of which path (or neither) produced a badge.
+  const sourceBadges = await extractSourceCertificationBadges(options.masterResumeDocxPath);
+  const certificationBadgeRuns: (TextRun | ImageRun)[] =
+    sourceBadges.length > 0 ? buildSourceCertificationBadgeRuns(sourceBadges) : buildCertificationBadgeRuns(content.certifications);
 
   const children: Paragraph[] = [
     ...headerBlock(content, certificationBadgeRuns),

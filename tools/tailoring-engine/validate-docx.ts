@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import JSZip from "jszip";
 import { CONTENT_WIDTH, FONT, MARGIN, PAGE_HEIGHT, PAGE_WIDTH } from "./constants";
+import { MAX_SOURCE_BADGES, TRUSTED_CERTIFICATION_BADGE_MARKER } from "./sourceBadgeAssets";
 
 export interface ValidationResult {
   valid: boolean;
@@ -154,11 +155,30 @@ export async function validateDocx(
     violations.push("No <w:widowControl/> found — isolated single lines can be left at the top/bottom of a page");
   }
 
-  // --- Never use tables, text boxes, floating shapes, or images for resume layout ---
+  // --- Never use tables, text boxes, or floating shapes for resume layout ---
   if (documentXml.includes("<w:tbl>")) violations.push("Document contains a <w:tbl> table — forbidden for resume layout");
   if (documentXml.includes("<w:pict>")) violations.push("Document contains legacy VML drawing (<w:pict>) — forbidden");
-  if (documentXml.includes("<w:drawing>")) violations.push("Document contains a <w:drawing> (image/shape/text box) — forbidden");
   if (documentXml.includes("w:framePr")) violations.push("Document contains a frame (w:framePr) — forbidden floating text");
+
+  // --- Images: forbidden by default, narrowly allowed ONLY for a trusted, preserved certification
+  // badge (see sourceBadgeAssets.ts). Every <w:drawing> must be (a) inline, never floating/anchored,
+  // and (b) carry the exact <wp:docPr name="..."> marker only that module's buildSourceCertification-
+  // BadgeRuns ever sets. An arbitrary image, a photo, a writer-supplied image, or anything else
+  // embedded in the document still fails here exactly as before this exception existed.
+  const drawingBlocks = [...documentXml.matchAll(/<w:drawing>[\s\S]*?<\/w:drawing>/g)].map((m) => m[0]);
+  if (drawingBlocks.length > MAX_SOURCE_BADGES) {
+    violations.push(`Document contains ${drawingBlocks.length} embedded images — more than the ${MAX_SOURCE_BADGES} allowed for certification badges`);
+  }
+  for (const block of drawingBlocks) {
+    if (!block.includes("<wp:inline")) {
+      violations.push("Document contains a floating/anchored image (<wp:anchor>) — forbidden even for a certification badge");
+      continue;
+    }
+    const nameMatch = block.match(/<wp:docPr\b[^>]*\bname="([^"]*)"/);
+    if (!nameMatch || nameMatch[1] !== TRUSTED_CERTIFICATION_BADGE_MARKER) {
+      violations.push("Document contains an embedded image that is not a recognized, trusted certification badge — forbidden");
+    }
+  }
 
   // --- No header/footer content ---
   const headerFooterFiles = Object.keys(zip.files).filter((f) => /word\/(header|footer)\d*\.xml$/.test(f));

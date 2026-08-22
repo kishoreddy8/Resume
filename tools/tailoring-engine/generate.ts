@@ -14,6 +14,11 @@ export interface GenerateInput {
   jobId: string | number;
   resume: ResumeContent;
   coverLetter: CoverLetterContent;
+  /** See resume-template.ts's GenerateResumeDocxOptions — the candidate's own Master Resume .docx,
+   *  when the caller has resolved one (tailoringExecution.ts does, from a trusted candidateId; the
+   *  legacy direct-CLI path below has no candidate identity to resolve one from, and simply omits
+   *  it). Never part of the writer-produced content.json shape. */
+  masterResumeDocxPath?: string;
 }
 
 /**
@@ -89,7 +94,7 @@ export async function generateTailoringOutputs(input: GenerateInput, options: Ge
   const resumePath = path.join(outDir, "Resume.docx");
   const coverLetterPath = path.join(outDir, "CoverLetter.docx");
 
-  await generateResumeDocx(input.resume, resumePath);
+  await generateResumeDocx(input.resume, resumePath, { masterResumeDocxPath: input.masterResumeDocxPath });
   await generateCoverLetterDocx(input.coverLetter, coverLetterPath);
 
   const resumeCheck = await validateDocx(resumePath, "resume");

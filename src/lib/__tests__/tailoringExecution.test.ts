@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
+import JSZip from "jszip";
 import type { JobMatchResult } from "@/lib/match/types";
+import { makePng } from "../../../tools/tailoring-engine/__tests__/pngFixture";
+import { writeMasterResumeDocxFixture } from "../../../tools/tailoring-engine/__tests__/masterResumeFixture";
 
 /**
  * Phase 3 Stage 5 — executeTailoringRun end-to-end tests. Isolated temp DB (CAREER_OPS_DB_PATH),
@@ -341,6 +344,30 @@ test("14. no path traversal is possible through the execution flow — candidate
     path.resolve(result.resumePath).startsWith(resolvedGeneratedRoot),
     "the executed run's artifact must resolve inside the generated-artifact root, never escape it"
   );
+});
+
+test("15. a candidate whose Master Resume has an embedded certification badge gets that exact image preserved in the real, fully-executed output", async () => {
+  approve(candidateAId, jobOne);
+  // approve()'s writeProfile() already created data/candidates/<id>/master/ — this adds the one
+  // thing it doesn't: a real resume.docx with an embedded image, exactly what a real candidate's
+  // upload through /api/master-files would leave on disk.
+  const masterResumePath = path.join(tmpCandidatesDir, String(candidateAId), "master", "resume.docx");
+  const badge = makePng(120, 60, [12, 76, 138]);
+  await writeMasterResumeDocxFixture(masterResumePath, [{ bytes: badge, width: 40, height: 20 }]);
+
+  const result = await executeTailoringRun({
+    candidateId: candidateAId,
+    jobId: jobOne.id,
+    resume: { ...VALID_RESUME, certifications: ["Microsoft Certified: Azure Data Engineer Associate (DP-203)"] },
+    coverLetter: VALID_COVER_LETTER,
+  });
+  assert.equal(result.run.status, "completed");
+
+  const zip = await JSZip.loadAsync(fs.readFileSync(result.resumePath));
+  const mediaFiles = Object.keys(zip.files).filter((f) => /^word\/media\//.test(f) && !f.endsWith("/"));
+  assert.equal(mediaFiles.length, 1, "the executed run's real output must contain exactly the one preserved badge image");
+  const embedded = await zip.file(mediaFiles[0])!.async("nodebuffer");
+  assert.ok(embedded.equals(badge), "the badge preserved through the full executeTailoringRun path must be byte-identical to the Master Resume's own embedded image");
 });
 
 test("startTailoringRun: rejects a nonexistent/inactive candidate before creating any run row", () => {
