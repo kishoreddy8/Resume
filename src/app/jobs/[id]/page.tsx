@@ -1,7 +1,5 @@
-"use client";
-
-import { use } from "react";
 import { JobWorkspace } from "./JobWorkspace";
+import { parseWorkspaceRoute } from "./workspaceRoute";
 
 /**
  * The Job Workspace route — one job, one workflow, one step at a time.
@@ -10,7 +8,13 @@ import { JobWorkspace } from "./JobWorkspace";
  * review itself is unchanged and still serves the Workbench's persistent detail pane on /jobs, so
  * the discovery experience is untouched by this route's change.
  */
-export default function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  return <JobWorkspace jobId={Number(id)} />;
+export default async function JobDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const [{ id }, query] = await Promise.all([params, searchParams]);
+  return <JobWorkspace jobId={Number(id)} routeRequest={parseWorkspaceRoute(query)} />;
 }

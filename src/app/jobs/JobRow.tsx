@@ -6,6 +6,7 @@ import { H1bBadge } from "@/components/H1bBadge";
 import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
 import type { ListMatchSummary } from "@/lib/rank/jobsList";
 import type { JobWithCompany, JobWithCompanySummary } from "@/types";
+import { candidateStatus } from "@/lib/candidateStatus";
 
 /**
  * Exactly the fields a row draws — nothing more. Typing against this rather than JobWithCompany is
@@ -71,10 +72,10 @@ function MatchFit({ summary }: { summary: ListMatchSummary | undefined }) {
         : "bg-[var(--pill-red-bg)] text-[var(--pill-red-fg)]";
   const label =
     summary.decision === "READY_FOR_TAILORING"
-      ? "Ready"
+      ? candidateStatus("readyToTailor").label
       : summary.decision === "NEEDS_REVIEW"
-        ? "Review"
-        : "Blocked";
+        ? candidateStatus("needsReview").label
+        : candidateStatus("blocked").label;
   return (
     <span className="flex shrink-0 items-center gap-2.5 whitespace-nowrap">
       {/* Decision and score are still two marks, not one — the word is tinted and enclosed, the
@@ -116,7 +117,7 @@ function WorkflowCue({ job }: { job: RowJob }) {
   return (
     <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--accent)]">
       <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] shadow-[0_0_6px_var(--accent)]" />
-      {applied ? job.pipeline_status : "Tailoring"}
+      {applied ? job.pipeline_status : candidateStatus("tailoring").label}
     </span>
   );
 }

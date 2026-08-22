@@ -37,15 +37,15 @@ export function PageHeader({
         <h1
           className={
             lg
-              ? "text-[27px] font-bold leading-[1.15] tracking-[-0.022em] text-primary sm:text-[32px]"
-              : "page-title"
+              ? "candidate-page-title text-[27px] font-bold leading-[1.15] tracking-[-0.022em] text-primary sm:text-[32px]"
+              : "candidate-page-title page-title"
           }
         >
           {title}
         </h1>
         {description && (
           <p
-            className={`mt-1.5 max-w-[70ch] leading-relaxed text-tertiary ${lg ? "text-[13.5px]" : "text-[12.5px]"}`}
+            className={`candidate-page-description mt-2 max-w-[70ch] leading-relaxed text-tertiary ${lg ? "text-[13.5px]" : "text-[12.5px]"}`}
           >
             {description}
           </p>

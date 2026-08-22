@@ -66,13 +66,13 @@ const USER_NAV: NavGroup[] = [
     items: [
       { href: "/home", label: "Home", icon: <IconHome size={19} /> },
       { href: "/jobs", label: "Jobs", icon: <IconBriefcase size={19} />, matchPrefix: /^\/jobs\/\d+$/ },
+      { href: "/resume", label: "Resume Studio", icon: <IconDocument size={19} /> },
       {
         href: "/applications",
         label: "Applications",
         icon: <IconInbox size={19} />,
         matchPrefix: /^\/applications\/\d+$/,
       },
-      { href: "/resume", label: "Resume Studio", icon: <IconDocument size={19} /> },
       { href: "/profile", label: "Profile", icon: <IconUser size={19} /> },
       { href: "/settings", label: "Settings", icon: <IconSettings size={19} /> },
     ],
@@ -268,7 +268,9 @@ export function AppSidebar() {
                     key={item.href}
                     href={item.href}
                     aria-current={active ? "page" : undefined}
-                    className={`relative flex h-11 shrink-0 items-center gap-3 rounded-[10px] px-3 text-[14px] font-medium leading-5 transition-[background-color,color] duration-150 ease-out ${
+                    className={`relative flex h-11 shrink-0 items-center gap-3 rounded-[10px] px-3 font-medium leading-5 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.985] ${
+                      inAdmin ? "text-[14px]" : "text-[15px]"
+                    } ${
                       active
                         ? "bg-[var(--accent-tint)] text-[var(--accent)]"
                         : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary active:bg-[var(--surface-active)]"

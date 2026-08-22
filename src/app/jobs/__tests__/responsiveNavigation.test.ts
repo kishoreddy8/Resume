@@ -17,6 +17,22 @@ test("responsive navigation keeps one tree and disables unavailable paging contr
   assert.match(sidebar, /behavior: reduced \? "auto" : "smooth"/);
 });
 
+test("candidate navigation follows the approved journey without changing the admin rail", () => {
+  const sidebar = read("src/components/AppSidebar.tsx");
+  const candidateOrder = [
+    'href: "/home"',
+    'href: "/jobs"',
+    'href: "/resume"',
+    'href: "/applications"',
+    'href: "/profile"',
+    'href: "/settings"',
+  ].map((needle) => sidebar.indexOf(needle));
+  assert.ok(candidateOrder.every((index) => index >= 0));
+  assert.deepEqual(candidateOrder, [...candidateOrder].sort((a, b) => a - b));
+  assert.match(sidebar, /const ADMIN_NAV/);
+  assert.match(sidebar, /href: "\/admin\/scanner"/);
+});
+
 test("WorkflowStepper paging is presentational and keeps one workspace instance", () => {
   const stepper = read("src/app/jobs/[id]/WorkflowStepper.tsx");
   const workspace = read("src/app/jobs/[id]/JobWorkspace.tsx");
@@ -40,4 +56,15 @@ test("job bucket paging keeps compact arrows inside comfortable hit targets", ()
 test("Home overview links replace outline suppression with a visible focus ring", () => {
   const home = read("src/app/home/page.tsx");
   assert.match(home, /focus-visible:ring-2 focus-visible:ring-\[var\(--focus-ring\)\]/);
+});
+
+test("premium motion utilities and route focus respect reduced motion", () => {
+  const css = read("src/app/globals.css");
+  const workspace = read("src/app/jobs/[id]/JobWorkspace.tsx");
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(css, /\.premium-hover-lift:hover \{ transform: none; \}/);
+  assert.match(css, /workspace-focus-target\[data-focused-from-route="true"\]/);
+  assert.match(workspace, /behavior: reduced \? "auto" : "smooth"/);
+  assert.doesNotMatch(workspace, /target\.click\(\)/);
+  assert.doesNotMatch(workspace, /target\.submit\(\)/);
 });

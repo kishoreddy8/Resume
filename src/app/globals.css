@@ -233,6 +233,168 @@ body {
   color: var(--text-secondary);
 }
 
+/* Candidate product scale. Admin keeps the compact operational scale above; AppShell scopes these
+ * rules to candidate routes so improving readability never enlarges scanner or system consoles. */
+.candidate-product {
+  --candidate-page-title: 1.8125rem; /* 29px mobile */
+  --candidate-section-title: 1.25rem; /* 20px */
+  --candidate-card-title: 1.0625rem; /* 17px */
+  --candidate-body: 0.9375rem; /* 15px */
+  --candidate-metadata: 0.8125rem; /* 13px */
+  --candidate-control: 0.875rem; /* 14px */
+  --candidate-badge: 0.75rem; /* 12px */
+  font-size: var(--candidate-body);
+}
+
+@media (min-width: 640px) {
+  .candidate-product {
+    --candidate-page-title: 2.125rem; /* 34px */
+    --candidate-section-title: 1.4375rem; /* 23px */
+    --candidate-body: 1rem; /* 16px */
+    --candidate-metadata: 0.875rem; /* 14px */
+    --candidate-control: 0.9375rem; /* 15px */
+    --candidate-badge: 0.8125rem; /* 13px */
+  }
+}
+
+.candidate-product .candidate-page-title {
+  font-size: var(--candidate-page-title);
+  line-height: 1.14;
+  letter-spacing: -0.025em;
+}
+
+.candidate-product .candidate-page-description,
+.candidate-product .candidate-body {
+  font-size: var(--candidate-body);
+  line-height: 1.55;
+}
+
+.candidate-product .candidate-section-title {
+  font-size: var(--candidate-section-title);
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+}
+
+.candidate-product .candidate-card-title {
+  font-size: var(--candidate-card-title);
+  line-height: 1.4;
+}
+
+.candidate-product .candidate-metadata {
+  font-size: var(--candidate-metadata);
+  line-height: 1.45;
+}
+
+.candidate-product .candidate-panel:not(.candidate-panel-compact) {
+  padding: 1.375rem 1.5rem; /* 22px 24px */
+}
+
+.candidate-product .candidate-panel-compact {
+  padding: 1.125rem;
+}
+
+.candidate-product .candidate-control,
+.candidate-product .candidate-input {
+  min-height: 44px;
+  font-size: var(--candidate-control);
+}
+
+.candidate-product .candidate-badge {
+  min-height: 28px;
+  font-size: var(--candidate-badge);
+}
+
+/* Premium foundation: small, composable treatments built only from paint-cheap opacity and
+ * transform changes. They carry no meaning on their own and remain optional at call sites. */
+.premium-gradient-surface {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--accent) 14%, var(--border));
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 88% 10%, color-mix(in oklab, var(--accent) 10%, transparent), transparent 34%),
+    linear-gradient(145deg, var(--z3-bg), color-mix(in oklab, var(--accent-tint) 42%, var(--z3-bg)));
+}
+
+.premium-hover-lift {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .premium-hover-lift:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklab, var(--accent) 24%, var(--border));
+    box-shadow: var(--lift-2);
+  }
+}
+
+.premium-active-tab {
+  position: relative;
+  transition: color 180ms ease, background-color 180ms ease, transform 180ms ease;
+}
+
+.premium-active-tab[aria-pressed="true"]::after,
+.premium-active-tab[aria-current="page"]::after {
+  position: absolute;
+  right: 18%;
+  bottom: 2px;
+  left: 18%;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: "";
+}
+
+.premium-expansion > :not(summary) {
+  animation: premium-panel-enter 240ms ease-out both;
+}
+
+@keyframes premium-panel-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.premium-status-accent {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.premium-status-success { background: var(--success); box-shadow: 0 0 0 4px var(--pill-success-bg); }
+.premium-status-warning { background: var(--warning); box-shadow: 0 0 0 4px var(--pill-amber-bg); }
+.premium-status-danger { background: var(--error); box-shadow: 0 0 0 4px var(--pill-red-bg); }
+
+.workspace-focus-target {
+  border-radius: 16px;
+  outline: none;
+}
+
+.workspace-focus-target[data-focused-from-route="true"] {
+  animation: workspace-route-focus 900ms ease-out both;
+}
+
+@keyframes workspace-route-focus {
+  0%, 35% { box-shadow: 0 0 0 4px var(--accent-soft); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .premium-hover-lift,
+  .premium-active-tab,
+  .candidate-control,
+  .workspace-focus-target {
+    transition-duration: 0.01ms !important;
+  }
+  .premium-hover-lift:hover { transform: none; }
+  .premium-expansion > :not(summary),
+  .workspace-focus-target[data-focused-from-route="true"] {
+    animation: none !important;
+  }
+}
+
 /* Numeric columns only line up if the digits share an advance width. Scoped to
  * tables so every existing data view gets it without touching a component;
  * digits change metrics, surrounding prose does not. */

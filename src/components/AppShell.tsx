@@ -25,6 +25,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const bare = CHROMELESS_ROUTES.has(pathname);
+  const productClass = pathname.startsWith("/admin") ? "admin-product" : "candidate-product";
 
   if (bare) {
     return (
@@ -37,7 +38,7 @@ export function AppShell({
   return (
     <>
       {sidebar}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className={`${productClass} flex min-h-0 min-w-0 flex-1 flex-col`}>
         {header}
         {/* Follows a running build across every page, so nobody meets an empty Jobs list and
          *  concludes the app is broken while their profile is still being read. */}

@@ -1,4 +1,5 @@
 import { presentStatus, type Marker } from "./runStatus";
+import { candidateStatus } from "@/lib/candidateStatus";
 
 /**
  * Which of the four candidate-facing groups a run belongs to.
@@ -34,29 +35,29 @@ export interface ApplicationGroup {
 export const APPLICATION_GROUPS: ApplicationGroup[] = [
   {
     id: "needs-action",
-    label: "Needs your action",
-    cardLabel: "Need your action",
+    label: candidateStatus("needsYourAction").label,
+    cardLabel: candidateStatus("needsYourAction").label,
     cardHint: "Requires your input",
     tone: "warning",
   },
   {
     id: "in-progress",
-    label: "In progress",
-    cardLabel: "In progress",
+    label: candidateStatus("inProgress").label,
+    cardLabel: candidateStatus("inProgress").label,
     cardHint: "Applications running",
     tone: "accent",
   },
   {
     id: "submitted",
-    label: "Submitted",
-    cardLabel: "Submitted",
+    label: candidateStatus("submitted").label,
+    cardLabel: candidateStatus("submitted").label,
     cardHint: "Sent to employers",
     tone: "info",
   },
   {
     id: "closed",
-    label: "Closed",
-    cardLabel: "Closed",
+    label: candidateStatus("closed").label,
+    cardLabel: candidateStatus("closed").label,
     cardHint: "Stopped or cancelled",
     tone: "success",
   },

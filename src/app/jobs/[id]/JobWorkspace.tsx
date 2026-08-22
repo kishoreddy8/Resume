@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { JobWithCompany } from "@/types";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
@@ -22,6 +22,10 @@ import { StartApplication } from "./StartApplication";
 import { ApplicationDetail } from "@/app/applications/[id]/ApplicationDetail";
 import { JobReviewSkeleton } from "../Skeletons";
 import { EmptyNote, WsCard } from "./WorkspaceUI";
+import {
+  resolveWorkspaceRouteStep,
+  type WorkspaceRouteRequest,
+} from "./workspaceRoute";
 
 /**
  * The Job Workspace.
@@ -73,9 +77,16 @@ function LockedStep({ title, reason }: { title: string; reason: string | null })
   );
 }
 
-export function JobWorkspace({ jobId }: { jobId: number }) {
+export function JobWorkspace({
+  jobId,
+  routeRequest,
+}: {
+  jobId: number;
+  routeRequest: WorkspaceRouteRequest;
+}) {
   const candidateId = useResolvedCandidateId();
   const reduced = useReducedMotion() ?? false;
+  const workspaceRef = useRef<HTMLDivElement>(null);
 
   const [detail, setDetail] = useState<JobDetail | null>(null);
   const [failed, setFailed] = useState(false);
@@ -143,25 +154,28 @@ export function JobWorkspace({ jobId }: { jobId: number }) {
    * Resume Studio, which is why it is gated on the step rather than fetched on mount. `activeKey`
    * is resolved before the input below so the fetch can be gated without a circular dependency:
    * the landing step never depends on the quality record (see defaultStep). */
-  const activeKey: StepKey =
-    chosen ??
-    defaultStep({
+  const preflightInput: WorkflowInput = {
       result: match.result,
       matchLoading: match.state === "loading" || match.state === "idle",
       resume,
       generatedFileCount: detail?.generatedFiles.length ?? 0,
       runStatuses: (runs ?? []).map((r) => r.status),
       humanMaySend: null,
-    });
+    };
+  /* A requested later step is provisionally mounted so its existing bounded read can establish
+   * eligibility. The query itself still performs no work: it only selects which read-only panel
+   * supplies the state used by resolveWorkspaceRouteStep below. */
+  const provisionalKey: StepKey =
+    chosen ?? routeRequest.step ?? defaultStep(preflightInput);
   const plan = useTailoringPlan(
     candidateId ?? 0,
     jobId,
-    candidateId !== null && (activeKey === "studio" || activeKey === "results")
+    candidateId !== null && (provisionalKey === "studio" || provisionalKey === "results")
   );
   const quality = useQualityWorkflow(
     candidateId,
     jobId,
-    activeKey === "results" || activeKey === "validation" || activeKey === "application",
+    provisionalKey === "results" || provisionalKey === "validation" || provisionalKey === "application",
     refreshKey
   );
   const qualityData = quality.state === "ready" ? quality.data : null;
@@ -178,14 +192,37 @@ export function JobWorkspace({ jobId }: { jobId: number }) {
     [match.result, match.state, resume, detail?.generatedFiles.length, runs, qualityData]
   );
 
-  /* Where the workflow stands, unless the user has navigated somewhere else. */
-  const active: StepKey = activeKey;
+  /* Explicit valid routes outrank the generic landing rule, but only after the current step model
+   * proves the destination is reachable. A user's in-page choice then outranks the original URL. */
+  const genericDefault = defaultStep(workflowInput);
+  const provisionalSteps = resolveWorkflowSteps(workflowInput, provisionalKey);
+  const active: StepKey = chosen ??
+    (routeRequest.step
+      ? resolveWorkspaceRouteStep(routeRequest.step, provisionalSteps, genericDefault)
+      : genericDefault);
   const steps = resolveWorkflowSteps(workflowInput, active);
   const activeStep = steps.find((s) => s.key === active)!;
 
   /* The tailoring plan is Resume Studio's data and is requested only on that step. */
 
   const go = useCallback((key: StepKey) => setChosen(key), []);
+
+  /* Focus is deliberately inert: it can only find an existing labelled target, scroll it into
+   * view, and move keyboard focus. There is no click(), submit(), fetch(), or state transition in
+   * this effect. Missing or incompatible focus values simply do nothing. */
+  useEffect(() => {
+    if (!routeRequest.focus) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = workspaceRef.current?.querySelector<HTMLElement>(
+        `[data-workspace-focus~="${routeRequest.focus}"]`
+      );
+      if (!target) return;
+      target.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+      target.dataset.focusedFromRoute = "true";
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, quality.state, plan.state, reduced, routeRequest.focus]);
 
   /* The newest run for this job. The list is already ordered newest-first by the endpoint. */
   const latestRun = (runs ?? [])[0] ?? null;
@@ -245,7 +282,7 @@ export function JobWorkspace({ jobId }: { jobId: number }) {
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-[var(--home-max-w)] flex-col gap-4 pb-8 pt-1">
+    <div ref={workspaceRef} className="mx-auto flex w-full max-w-[var(--home-max-w)] flex-col gap-5 pb-8 pt-1">
       <JobIdentityHeader job={job} result={result} primary={primary} />
 
       <WorkflowStepper steps={steps} active={active} onSelect={go} />
@@ -254,7 +291,7 @@ export function JobWorkspace({ jobId }: { jobId: number }) {
       <AnimatePresence mode="wait" initial={false}>
         <motion.div key={active} {...rise} className="min-w-0">
           {active === "match" && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-5">
               {!result ? (
                 <WsCard title="Match">
                   <p className="text-[13px] leading-relaxed text-tertiary">
@@ -279,7 +316,7 @@ export function JobWorkspace({ jobId }: { jobId: number }) {
           )}
 
           {active === "studio" && (
-            <div className="flex flex-col gap-4">
+            <div data-workspace-focus="tailor" tabIndex={-1} className="workspace-focus-target flex flex-col gap-5">
               {activeStep.state === "locked" || activeStep.state === "blocked" ? (
                 <LockedStep title="Resume Studio" reason={activeStep.lockedReason} />
               ) : plan.state === "ready" ? (
@@ -326,7 +363,11 @@ export function JobWorkspace({ jobId }: { jobId: number }) {
                    *  (which is the DEFAULT landing step — see defaultStep) offered no way to run
                    *  anything. Rendering the same component here, open, gives this step its actions
                    *  without a second implementation of the approval boundary. */}
-                  <div className="mt-4">
+                  <div
+                    data-workspace-focus="retailor progress"
+                    tabIndex={-1}
+                    className="workspace-focus-target mt-4"
+                  >
                     <ResumeQualityPipeline
                       jobId={jobId}
                       jobTitle={job.title}
@@ -340,7 +381,11 @@ export function JobWorkspace({ jobId }: { jobId: number }) {
           )}
 
           {active === "validation" && (
-            <div className="flex flex-col gap-4">
+            <div
+              data-workspace-focus="revalidate issues"
+              tabIndex={-1}
+              className="workspace-focus-target flex flex-col gap-5"
+            >
               {activeStep.state === "locked" || activeStep.state === "blocked" ? (
                 <LockedStep title="Validation" reason={activeStep.lockedReason} />
               ) : quality.state === "ready" ? (
@@ -354,7 +399,7 @@ export function JobWorkspace({ jobId }: { jobId: number }) {
                   {/* The full record and its actions — approve, retry the writer, export — stay with
                    *  the component that owns them. It is behind a disclosure so the compact strip is
                    *  what the step opens on, and its own request is only made when opened. */}
-                  <details className="group">
+                  <details className="premium-expansion group">
                     <summary className="cursor-pointer list-none text-[12.5px] font-medium text-[var(--accent)] underline-offset-2 hover:underline">
                       Open the full resume pipeline
                     </summary>

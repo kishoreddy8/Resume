@@ -245,7 +245,7 @@ export default function JobsPage() {
                 setSelectedJobId(null);
               }}
               aria-pressed={view === v}
-              className={`relative h-10 rounded-[9px] px-5 text-[14.5px] font-medium transition-colors duration-150 ease-out ${
+              className={`premium-active-tab relative h-11 rounded-[9px] px-5 text-[14.5px] font-medium transition-colors duration-150 ease-out ${
                 view === v
                   ? "bg-[var(--z3-bg)] text-primary shadow-[var(--lift-1),inset_0_1px_0_var(--edge-hi)]"
                   : "text-tertiary hover:text-primary"

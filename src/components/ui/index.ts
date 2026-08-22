@@ -3,6 +3,13 @@ export { Surface, type SurfaceLevel } from "./Surface";
 export { PageHeader } from "./PageHeader";
 export { Status, StatusDot, type StatusTone } from "./Status";
 export { Metric } from "./Metric";
+export {
+  PremiumGradientSurface,
+  StatusAccent,
+  PREMIUM_ACTIVE_TAB,
+  PREMIUM_EXPANSION,
+  PREMIUM_HOVER_LIFT,
+} from "./Premium";
 export { SkeletonLine, SkeletonBlock, SkeletonMetrics, SkeletonRows, LoadingRegion } from "./Skeleton";
 export {
   Panel,

@@ -16,6 +16,7 @@ import type { LifecycleThresholds } from "@/lib/jobLifecycle";
 import type { ListMatchSummary } from "@/lib/rank/jobsList";
 import type { CandidateRankingPreferences } from "@/db/queries/candidateSettings";
 import type { ForYouResponseEntry, ForYouBucketCounts } from "@/app/api/candidates/[candidateId]/for-you/route";
+import { candidateStatus } from "@/lib/candidateStatus";
 
 /**
  * Phase 4 Stage 3 — Actionable "For You" Candidate Job Feed Component.
@@ -73,11 +74,11 @@ const TABS: TabConfig[] = [
 /** Bucket label + dot. Same values and wording the feed already used; one chip shape instead of
  *  seven saturated fills, so the bucket reads as context beside the decision rather than against it. */
 const BUCKET: Record<CandidateJobBucket, { label: string; dot: string }> = {
-  READY_TO_APPLY: { label: "Resume Ready", dot: "bg-emerald-600 dark:bg-emerald-400" },
-  READY_FOR_TAILORING: { label: "Ready for Tailoring", dot: "bg-purple-600 dark:bg-purple-400" },
-  NEEDS_REVIEW: { label: "Needs Review", dot: "bg-amber-500 dark:bg-amber-400" },
+  READY_TO_APPLY: { label: candidateStatus("applicationReady").label, dot: "bg-emerald-600 dark:bg-emerald-400" },
+  READY_FOR_TAILORING: { label: candidateStatus("readyToTailor").label, dot: "bg-purple-600 dark:bg-purple-400" },
+  NEEDS_REVIEW: { label: candidateStatus("needsReview").label, dot: "bg-amber-500 dark:bg-amber-400" },
   TOP_MATCH: { label: "Top Match", dot: "bg-indigo-600 dark:bg-indigo-400" },
-  NEW_TODAY: { label: "New Today", dot: "bg-teal-600 dark:bg-teal-400" },
+  NEW_TODAY: { label: candidateStatus("newMatch").label, dot: "bg-teal-600 dark:bg-teal-400" },
   APPLIED: { label: "Applied", dot: "bg-zinc-500 dark:bg-zinc-400" },
   INTERVIEWING: { label: "Interviewing", dot: "bg-blue-600 dark:bg-blue-400" },
 };

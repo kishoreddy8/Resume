@@ -380,7 +380,7 @@ export default function ResumeStudioPage() {
                     type="button"
                     onClick={() => setFilter(f.id)}
                     aria-pressed={filter === f.id}
-                    className={`inline-flex h-[36px] items-center gap-2 rounded-[10px] px-3.5 text-[13px] font-medium transition-colors duration-150 ease-out active:scale-[0.98] ${
+                    className={`premium-active-tab inline-flex h-11 items-center gap-2 rounded-[10px] px-3.5 text-[13px] font-medium transition-colors duration-150 ease-out active:scale-[0.98] ${
                       filter === f.id
                         ? "bg-[var(--accent)] text-[var(--accent-fg)]"
                         : "text-secondary hover:bg-[var(--surface-hover)] hover:text-primary"

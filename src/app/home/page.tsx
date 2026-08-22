@@ -7,6 +7,7 @@ import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import { LoadingRegion, SkeletonRows } from "@/components/ui";
 import { presentStatus } from "@/app/applications/runStatus";
 import { NOTIFICATION_PRESENTATION, notificationTitle } from "@/lib/notifications/presentation";
+import { jobWorkspaceUrl } from "@/app/jobs/[id]/workspaceRoute";
 import {
   IconArrowUpRight,
   IconCheckCircle,
@@ -150,9 +151,9 @@ function primaryAction(s: HomeSummary): PrimaryAction {
       eyebrow: "Ready to tailor",
       title: top.title,
       detail: [top.company, top.location].filter(Boolean).join(" · ") || "Strong evidence alignment",
-      href: `/jobs/${top.id}`,
+      href: jobWorkspaceUrl(top.id, { step: "studio", focus: "tailor" }),
       cta: "Review & tailor resume",
-      secondary: { href: `/jobs/${top.id}`, label: "View job details" },
+      secondary: { href: jobWorkspaceUrl(top.id, { step: "match" }), label: "View job details" },
     };
   }
 
@@ -207,7 +208,7 @@ function priorities(s: HomeSummary): Priority[] {
     out.push({
       text: `Tailor resume for ${job.title}`,
       context: [job.company, `Match ${job.score}`].filter(Boolean).join(" · "),
-      href: `/jobs/${job.id}`,
+      href: jobWorkspaceUrl(job.id, { step: "studio", focus: "tailor" }),
       kind: "tailor",
     });
   }

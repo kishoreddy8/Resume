@@ -22,7 +22,7 @@ import type { ReactNode } from "react";
  */
 
 export const PANEL_SURFACE =
-  "rounded-[14px] border border-[var(--border)] bg-[var(--z3-bg)] shadow-[var(--shadow-card)]";
+  "candidate-panel rounded-[14px] border border-[var(--border)] bg-[var(--z3-bg)] shadow-[var(--shadow-card)]";
 
 export function Panel({
   title,
@@ -47,7 +47,7 @@ export function Panel({
   as?: "section" | "div";
 }) {
   return (
-    <Tag id={id} className={`${PANEL_SURFACE} ${compact ? "px-4 py-4" : "px-5 py-[18px]"} ${className}`}>
+    <Tag id={id} className={`${PANEL_SURFACE} ${compact ? "candidate-panel-compact px-4 py-4" : "px-5 py-[18px]"} ${className}`}>
       {(title || actions) && (
         <div className={`flex items-start justify-between gap-x-3 ${compact ? "mb-3" : "mb-3.5"}`}>
           <div className="flex min-w-0 flex-1 items-start gap-2.5">
@@ -62,13 +62,13 @@ export function Panel({
             <div className="min-w-0 flex-1">
             {title && (
               <h2
-                className={`font-bold leading-snug tracking-[-0.01em] text-primary ${compact ? "text-[13.5px]" : "text-[15px]"}`}
+                className={`candidate-card-title font-bold leading-snug tracking-[-0.01em] text-primary ${compact ? "text-[13.5px]" : "text-[15px]"}`}
               >
                 {title}
               </h2>
             )}
             {description && (
-              <p className="mt-1 max-w-[62ch] text-[12.5px] leading-relaxed text-tertiary">{description}</p>
+              <p className="candidate-body mt-1.5 max-w-[62ch] text-[12.5px] leading-relaxed text-tertiary">{description}</p>
             )}
             </div>
           </div>
@@ -101,10 +101,10 @@ export function FieldRow({
   const empty = value === null || value === undefined || value === "";
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-[var(--separator)] py-2.5 last:border-b-0">
-      <dt className="w-[190px] shrink-0 text-[12.5px] font-semibold leading-snug text-secondary">{label}</dt>
-      <dd className="min-w-0 flex-1 text-[13px] leading-relaxed text-primary">
+      <dt className="candidate-metadata w-[190px] shrink-0 text-[12.5px] font-semibold leading-snug text-secondary">{label}</dt>
+      <dd className="candidate-body min-w-0 flex-1 text-[13px] leading-relaxed text-primary">
         {empty ? <span className="text-tertiary">Not set</span> : value}
-        {hint && <p className="mt-0.5 text-[11.5px] leading-relaxed text-tertiary">{hint}</p>}
+        {hint && <p className="candidate-metadata mt-1 text-[11.5px] leading-relaxed text-tertiary">{hint}</p>}
       </dd>
       {action && <div className="shrink-0">{action}</div>}
     </div>
@@ -120,7 +120,7 @@ export function FieldList({ children }: { children: ReactNode }) {
 export function PanelEmpty({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-start gap-2.5 rounded-[10px] bg-[var(--z0-bg)] px-4 py-3.5">
-      <p className="text-[12.5px] leading-relaxed text-tertiary">{children}</p>
+      <p className="candidate-body text-[12.5px] leading-relaxed text-tertiary">{children}</p>
       {action}
     </div>
   );
@@ -152,8 +152,8 @@ export function StatTile({
     <div className={`${PANEL_SURFACE} flex min-w-0 flex-col justify-between px-4 py-4`}>
       {icon && <span className={`mb-3 grid h-9 w-9 place-items-center rounded-[10px] ${tint}`}>{icon}</span>}
       <div className="text-[26px] font-bold leading-none tracking-[-0.02em] tabular-nums text-primary">{value}</div>
-      <div className="mt-2 text-[13px] font-semibold leading-snug text-primary">{label}</div>
-      {hint && <div className="mt-0.5 text-[11.5px] leading-relaxed text-tertiary">{hint}</div>}
+      <div className="candidate-metadata mt-2 text-[13px] font-semibold leading-snug text-primary">{label}</div>
+      {hint && <div className="candidate-metadata mt-1 text-[11.5px] leading-relaxed text-tertiary">{hint}</div>}
     </div>
   );
 }
@@ -172,7 +172,7 @@ const PILL_TONE: Record<PillTone, string> = {
 export function Pill({ tone = "neutral", children }: { tone?: PillTone; children: ReactNode }) {
   return (
     <span
-      className={`inline-flex h-[26px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[12px] font-semibold ${PILL_TONE[tone]}`}
+      className={`candidate-badge inline-flex h-[26px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[12px] font-semibold ${PILL_TONE[tone]}`}
     >
       {children}
     </span>
@@ -189,13 +189,13 @@ export function Tag({ children }: { children: ReactNode }) {
 }
 
 export const BTN_PRIMARY =
-  "inline-flex h-[42px] items-center justify-center gap-1.5 rounded-[9px] bg-[var(--accent)] px-4 text-[13px] font-semibold text-[var(--accent-fg)] shadow-[var(--lift-1),inset_0_1px_0_rgba(255,255,255,0.22)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50";
+  "candidate-control inline-flex h-[42px] items-center justify-center gap-1.5 rounded-[10px] bg-[var(--accent)] px-4 text-[13px] font-semibold text-[var(--accent-fg)] shadow-[var(--lift-1),inset_0_1px_0_rgba(255,255,255,0.22)] transition-[background-color,transform,box-shadow] duration-150 ease-out hover:bg-[var(--accent-hover)] hover:shadow-[var(--lift-2)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50";
 
 export const BTN_SECONDARY =
-  "inline-flex h-[42px] items-center justify-center gap-1.5 rounded-[9px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-4 text-[13px] font-semibold text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50";
+  "candidate-control inline-flex h-[42px] items-center justify-center gap-1.5 rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-4 text-[13px] font-semibold text-secondary transition-[background-color,color,transform] duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50";
 
 export const BTN_QUIET =
-  "inline-flex h-[38px] items-center justify-center gap-1.5 rounded-[9px] px-3 text-[13px] font-medium text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98]";
+  "candidate-control inline-flex h-[38px] items-center justify-center gap-1.5 rounded-[9px] px-3 text-[13px] font-medium text-secondary transition-[background-color,color,transform] duration-150 ease-out hover:bg-[var(--surface-hover)] hover:text-primary active:scale-[0.98]";
 
 export const INPUT =
-  "h-[42px] w-full rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-3 text-[13.5px] text-primary outline-none transition-[border-color,box-shadow] duration-150 ease-out placeholder:text-tertiary focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-soft)]";
+  "candidate-input h-[42px] w-full rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-3 text-[13.5px] text-primary outline-none transition-[border-color,box-shadow] duration-150 ease-out placeholder:text-tertiary focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_var(--accent-soft)]";
