@@ -9,7 +9,7 @@ function read(file: string): string {
 
 test("responsive navigation keeps one tree and disables unavailable paging controls", () => {
   const sidebar = read("src/components/AppSidebar.tsx");
-  assert.equal((sidebar.match(/<nav\b/g) ?? []).length, 1);
+  assert.equal((sidebar.match(/<nav\s+ref=\{navRef\}/g) ?? []).length, 1);
   assert.equal((sidebar.match(/<CandidateSelector\s*\/>/g) ?? []).length, 1);
   assert.match(sidebar, /disabled={!overflow\.left}/);
   assert.match(sidebar, /disabled={!overflow\.right}/);
@@ -24,6 +24,7 @@ test("responsive navigation keeps one tree and disables unavailable paging contr
 
 test("candidate navigation follows the approved journey without changing the admin rail", () => {
   const sidebar = read("src/components/AppSidebar.tsx");
+  const candidateNav = sidebar.slice(sidebar.indexOf("const USER_NAV"), sidebar.indexOf("const ADMIN_NAV"));
   const candidateOrder = [
     'href: "/home"',
     'href: "/jobs"',
@@ -31,13 +32,13 @@ test("candidate navigation follows the approved journey without changing the adm
     'href: "/applications"',
     'href: "/profile"',
     'href: "/settings"',
-  ].map((needle) => sidebar.indexOf(needle));
+  ].map((needle) => candidateNav.indexOf(needle));
   assert.ok(candidateOrder.every((index) => index >= 0));
   assert.deepEqual(candidateOrder, [...candidateOrder].sort((a, b) => a - b));
   assert.match(sidebar, /const ADMIN_NAV/);
   assert.match(sidebar, /href: "\/admin\/scanner"/);
   assert.match(sidebar, /inAdmin \? "h-11 text-\[14px\] font-medium" : "h-12 text-\[15\.5px\]"/);
-  assert.equal((sidebar.match(/size=\{20\}/g) ?? []).length, 6);
+  assert.equal((candidateNav.match(/size=\{20\}/g) ?? []).length, 6);
   assert.match(sidebar, /active[\s\S]*font-semibold text-\[var\(--accent\)\]/);
 });
 

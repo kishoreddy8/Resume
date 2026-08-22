@@ -81,7 +81,7 @@ test("candidate Jobs omits the operational scan action while admin retains it", 
 
   assert.doesNotMatch(candidateJobs, /Scan now/);
   assert.doesNotMatch(candidateJobs, /fetch\("\/api\/scan"/);
-  assert.match(adminCompanies, /adminApiUrl\("\/api\/scan"/);
+  assert.match(adminCompanies, /fetch\(`\/api\/scan\?candidateId=\$\{candidateId\}`/);
   assert.match(adminCompanies, />\s*Scan\s*</);
   assert.match(adminNavigation, /href: "\/admin\/companies", label: "Companies"/);
 });
@@ -93,9 +93,10 @@ test("candidate Settings omits writer operations while admin Settings remains au
   assert.doesNotMatch(candidateSettings, /Resume writer/);
   assert.doesNotMatch(candidateSettings, /writerEnabled/);
   assert.doesNotMatch(candidateSettings, /scheduler:\s*\{\s*writerEnabled/);
-  assert.match(adminSettings, /function ResumeWriterControl/);
-  assert.match(adminSettings, /scheduler:\s*\{\s*writerEnabled: next\s*\}/);
-  assert.match(adminSettings, /<ResumeWriterControl/);
+  assert.match(adminSettings, /key==="writerEnabled"/);
+  assert.match(adminSettings, /setConfirmWriter\(true\)/);
+  assert.match(adminSettings, /<AdminConfirmDialog[^>]*open=\{confirmWriter\}/);
+  assert.match(adminSettings, /update\("scheduler","writerEnabled",true\)/);
 });
 
 test("candidate privacy and approval copy state the supported trust boundary", () => {

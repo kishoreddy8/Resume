@@ -42,7 +42,8 @@ export function NotificationBell() {
   async function load() {
     // Nothing is fetched until the server has said which candidate this is — a request against the
     // optimistic guess 401s whenever that guess is someone else's PIN-locked profile.
-    if (candidateId === null || inAdmin) return;
+    if (candidateId === null) return;
+    if (inAdmin) return;
     const res = await fetch(`/api/candidates/${candidateId}/notifications?limit=20`);
     if (!res.ok) return;
     const body = await res.json();
