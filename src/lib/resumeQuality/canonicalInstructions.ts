@@ -22,14 +22,18 @@ import crypto from "node:crypto";
  * cross-employer technology differentiation, a strengthened bullet-writing hierarchy, and Cover Letter
  * requirements — all per the user-approved scope for that task — and raises the bullet-cap ceilings
  * modestly (current role 7→8, second role 6→7, older roles 5→6, total 18→21) to give distributed
- * evidence room without unconfining overall resume length. It supersedes the earlier text as the
- * authoritative standard from this point on.
+ * evidence room without unconfining overall resume length. The 2026-08-22b revision (same day, a
+ * second pass) strengthens PROFESSIONAL SUMMARY STRUCTURE after a live run produced a 3-sentence
+ * summary that skipped the candidate's own stated years of experience: years-of-experience is now
+ * explicit and mandatory whenever a truthful figure exists, and each of the six information beats
+ * must land as its own sentence rather than being compressible into fewer. It supersedes the earlier
+ * text as the authoritative standard from this point on.
  *
  * NEVER paraphrase or edit this string — any wording change to the actual standard must come from
  * the user, land here first, and get a new instructionVersion.
  */
 
-export const INSTRUCTION_VERSION = "2026-08-22";
+export const INSTRUCTION_VERSION = "2026-08-22b";
 
 export const CANONICAL_TAILORING_INSTRUCTIONS = `Resume Tailoring System Instructions
 Master + Guardrail Addendum — Updated 2026-08-22
@@ -140,14 +144,14 @@ Tailor primarily toward that architecture rather than attempting to force every 
 
 PROFESSIONAL SUMMARY STRUCTURE
 A recruiter must understand the candidate's positioning in about 5-8 seconds. Abstract, engineering-description-heavy openings ("Pipeline ownership spans ingestion, distributed processing...") are too slow to scan and must be avoided.
-Target approximately 4-6 concise sentences (or visually equivalent lines), in this information order:
-1. Primary professional identity and truthful years of experience, when safely available from the Master Resume/candidate profile.
-2. Target-role/domain positioning.
-3. The highest-priority JD technologies that the candidate has real evidence for.
-4. Architecture/workload breadth (e.g. batch and real-time, scale, platform diversity) when genuinely supported.
-5. Production/engineering strengths (data quality, performance, CI/CD, reliability) when genuinely supported.
-6. A relevant secondary differentiator (for example AI/ML) only when it is genuinely supported and adds real value for this JD — never when it would outrank or crowd out the primary positioning.
-Every sentence must be candidate-specific, JD-specific, and evidence-grounded. Do not inflate years of experience. Do not claim a JD requirement the candidate has no evidence for. Do not repeat the same technology name across multiple sentences when it adds nothing new. Prefer concrete language over abstract description wherever a concrete one is available and supported.
+Write 4-6 concise sentences, EACH covering exactly one of the six beats below as its own sentence. Do not compress two or more beats into one sentence, and do not skip a beat merely because it is convenient to fold into another one — the only reason to omit a beat is that the underlying fact genuinely does not exist or is not supported (never that it was inconvenient to phrase separately). A summary that lands at 3 sentences by merging beats together is NOT compliant with this structure even if it happens to read smoothly.
+1. Primary professional identity AND years of experience, in the SAME sentence, whenever a truthful total-years figure exists anywhere in the Master Resume/candidate profile (an explicit "X years" statement in the Master Resume's own text, or a computed total from employment dates) — this is mandatory, not optional, whenever that figure exists; only omit it when no such figure can be honestly established. Do not inflate it, and do not round up.
+2. Target-role/domain positioning, as its own sentence.
+3. The highest-priority JD technologies that the candidate has real evidence for, as its own sentence.
+4. Architecture/workload breadth (e.g. batch and real-time, scale, platform diversity) when genuinely supported, as its own sentence.
+5. Production/engineering strengths (data quality, performance, CI/CD, reliability) when genuinely supported, as its own sentence.
+6. A relevant secondary differentiator (for example AI/ML) only when it is genuinely supported and adds real value for this JD — never when it would outrank or crowd out the primary positioning — as its own sentence.
+Every sentence must be candidate-specific, JD-specific, and evidence-grounded. Do not claim a JD requirement the candidate has no evidence for. Do not repeat the same technology name across multiple sentences when it adds nothing new. Prefer concrete language over abstract description wherever a concrete one is available and supported.
 This structure applies to INITIAL_GENERATION. A Professional Summary that already satisfies the deterministic reviewer must not be opportunistically rewritten by a later TARGETED_REPAIR pass unless a specific finding names it.
 
 ⸻

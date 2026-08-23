@@ -366,7 +366,16 @@ export function renderPresentationStandardSection(profile: CandidateProfile | un
     `naming what this role's work was with no more than ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies, so a reader knows the scope ` +
     "before the bullets. It is a restatement, not an addition: every system, domain, client, technology and " +
     "figure in it must already appear in THIS role's own bullets. Introducing anything new here is a " +
-    "truthfulness failure and is checked automatically.\n";
+    "truthfulness failure and is checked automatically.\n" +
+    "  - NEVER open this sentence by echoing the job title back (the title already renders on its own line " +
+    "directly above this one — repeating it here is redundant filler, not scope). Do not write \"<Job Title> " +
+    "role delivering/building/performing ...\" or any paraphrase of that shape. Open instead with the work " +
+    "itself — the system, platform or outcome — as the grammatical subject.\n" +
+    "    Bad: \"AI Engineer role delivering a GenAI chatbot and multi-agent systems on Databricks and " +
+    "Kubernetes infrastructure.\"\n" +
+    "    Good: \"Delivered a GenAI chatbot and multi-agent systems on Databricks and Kubernetes " +
+    "infrastructure, integrating Azure OpenAI-based retrieval-augmented generation for structured and " +
+    "unstructured enterprise data.\"\n";
   out +=
     "  - `environment` — the technology stack of THIS role. Every entry must be either Already written " +
     "for THIS employer or Available here under the MSI rule, per the per-employer evidence section above. " +
