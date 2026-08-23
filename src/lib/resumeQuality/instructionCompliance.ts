@@ -358,7 +358,13 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
  * note gets the plain status statement — never an invented explanation.
  */
 export function gateBlockingComplianceCorrections(compliance: InstructionComplianceResult): RequiredCorrection[] {
-  const corrections: RequiredCorrection[] = [];
+  interface Blocking {
+    name: keyof InstructionComplianceChecks;
+    status: ComplianceStatus;
+    isHardGate: boolean;
+    reasons: string[];
+  }
+  const blocking: Blocking[] = [];
   for (const name of INSTRUCTION_COMPLIANCE_CHECK_NAMES) {
     const status = compliance.checks[name];
     // NOT_APPLICABLE does not block READY (see isComplianceBlocking) — this was the one caller still
@@ -370,15 +376,51 @@ export function gateBlockingComplianceCorrections(compliance: InstructionComplia
     // overallScore >= 95 gate's threshold failure, but its repair-iteration correction list and
     // human-facing review feedback both falsely named deepRewrite as a blocking cause.
     if (!isComplianceBlocking(status)) continue;
-    const isHardGate = HARD_GATE_CHECKS.includes(name);
-    const reasons = compliance.checkNotes?.[name] ?? [];
+    blocking.push({ name, status, isHardGate: HARD_GATE_CHECKS.includes(name), reasons: compliance.checkNotes?.[name] ?? [] });
+  }
+
+  // SUMMARY QUALITY + WRITER TOKEN OPTIMIZATION (2026-08-23, pass 2) — real, measured duplication: a
+  // single root cause (e.g. one technology contradiction) commonly fails several NAMED checks at
+  // once (technologyAdaptation, migrationIntegrity, noContradictingTechnologies...), each of which
+  // previously rendered its own near-identical paragraph carrying the EXACT SAME reason text. Group
+  // by that reason text — checks sharing byte-identical evidence are the same underlying problem
+  // restated under a different check name, not four separate things to fix. A check with NO recorded
+  // reason never merges with another reasonless check (keyed by its own name, never just ""), since
+  // two checks both having "nothing recorded" is not evidence they share a root cause.
+  const groups = new Map<string, Blocking[]>();
+  for (const check of blocking) {
+    const key = check.reasons.length > 0 ? check.reasons.join(" | ") : `__no_reason__:${check.name}`;
+    const group = groups.get(key);
+    if (group) group.push(check);
+    else groups.set(key, [check]);
+  }
+
+  const corrections: RequiredCorrection[] = [];
+  for (const group of groups.values()) {
+    const anyHardGate = group.some((c) => c.isHardGate);
+    const reasons = group[0].reasons;
     const detail = reasons.length > 0 ? ` Reason: ${reasons.join(" | ")}` : "";
+    if (group.length === 1) {
+      // Exactly the original, byte-for-byte single-check format — unchanged so every existing
+      // caller/test that matches on this exact wording keeps working.
+      const { name, status, isHardGate } = group[0];
+      corrections.push({
+        priority: isHardGate ? "CRITICAL" : "HIGH",
+        description:
+          `Canonical instruction compliance — ${name}: ${status}. ` +
+          `${isHardGate ? "This is a hard-gate check and must PASS" : "Every named compliance check, including this one, must PASS"} ` +
+          `before this resume can be marked READY.${detail}`,
+      });
+      continue;
+    }
+    const allSameStatus = group.every((c) => c.status === group[0].status);
+    const statusLabel = allSameStatus ? `all ${group[0].status}` : group.map((c) => `${c.name}: ${c.status}`).join(", ");
+    const names = group.map((c) => c.name).join(", ");
     corrections.push({
-      priority: isHardGate ? "CRITICAL" : "HIGH",
+      priority: anyHardGate ? "CRITICAL" : "HIGH",
       description:
-        `Canonical instruction compliance — ${name}: ${status}. ` +
-        `${isHardGate ? "This is a hard-gate check and must PASS" : "Every named compliance check, including this one, must PASS"} ` +
-        `before this resume can be marked READY.${detail}`,
+        `Canonical instruction compliance — ${names}: ${statusLabel} from the same underlying issue. ` +
+        `Every named compliance check above must PASS before this resume can be marked READY.${detail}`,
     });
   }
   return corrections;

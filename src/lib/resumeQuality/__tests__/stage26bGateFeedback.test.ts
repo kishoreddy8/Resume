@@ -241,3 +241,57 @@ test("S26B-10 every gate-relevant check name is covered — hard and soft alike"
     "hard + soft must together cover every named check, or some check could block READY with no correction"
   );
 });
+
+// --- SUMMARY QUALITY + WRITER TOKEN OPTIMIZATION (2026-08-23, pass 2) -------------------------------
+// Real, measured defect: a single technology contradiction commonly fails technologyAdaptation,
+// migrationIntegrity, and noContradictingTechnologies simultaneously, each previously rendering its
+// own paragraph carrying the byte-identical "Reason:" text — found live in a real handoff
+// (data/generated/candidates/1/jobs/.../quality/13/handoffs/iteration-2/writer_prompt.md), 3 near-
+// identical paragraphs from one root cause, costing ~648 bytes of pure duplication.
+
+const SHARED_CONTRADICTION_REASON =
+  'Cover letter: "Azure Synapse Analytics + Snowflake" (competing data warehouses positioned as primary) with no migration/integration framing.';
+
+test("S26B-11 checks that FAIL from the identical underlying reason are consolidated into ONE correction", () => {
+  const c = compliance(
+    { technologyAdaptation: "FAIL", migrationIntegrity: "FAIL", noContradictingTechnologies: "FAIL" },
+    {
+      technologyAdaptation: [SHARED_CONTRADICTION_REASON],
+      migrationIntegrity: [SHARED_CONTRADICTION_REASON],
+      noContradictingTechnologies: [SHARED_CONTRADICTION_REASON],
+    }
+  );
+  const corrections = gateBlockingComplianceCorrections(c);
+  assert.equal(corrections.length, 1, "three checks sharing one root cause must collapse into one correction, not three");
+  assert.match(corrections[0].description, /technologyAdaptation/);
+  assert.match(corrections[0].description, /migrationIntegrity/);
+  assert.match(corrections[0].description, /noContradictingTechnologies/);
+  assert.equal(corrections[0].description.split(SHARED_CONTRADICTION_REASON).length - 1, 1, "the reason text itself must appear exactly once, not three times");
+  assert.equal(corrections[0].priority, "CRITICAL", "noContradictingTechnologies is a hard-gate check, so the merged correction stays CRITICAL");
+});
+
+test("S26B-12 checks that FAIL for DIFFERENT reasons are never merged, even if both are blocking", () => {
+  const c = compliance(
+    { technologyAdaptation: "FAIL", hardCareerFacts: "FAIL" },
+    { technologyAdaptation: [SHARED_CONTRADICTION_REASON], hardCareerFacts: ["A different, unrelated reason."] }
+  );
+  const corrections = gateBlockingComplianceCorrections(c);
+  assert.equal(corrections.length, 2, "different root causes must never be collapsed together");
+});
+
+test("S26B-13 two checks with NO recorded reason are never merged with each other just because both are empty", () => {
+  const c = compliance({ bannedLanguage: "FAIL", noDuplicateBulletPhrasing: "FAIL" });
+  const corrections = gateBlockingComplianceCorrections(c);
+  assert.equal(corrections.length, 2, "two independently-reasonless checks are not evidence of a shared root cause");
+});
+
+test("S26B-14 a merged correction's priority is CRITICAL if ANY of the grouped checks is hard-gate, even when others are soft-gate", () => {
+  // migrationIntegrity/technologyAdaptation are soft-gate; noContradictingTechnologies is hard-gate.
+  const c = compliance(
+    { technologyAdaptation: "FAIL", noContradictingTechnologies: "FAIL" },
+    { technologyAdaptation: [SHARED_CONTRADICTION_REASON], noContradictingTechnologies: [SHARED_CONTRADICTION_REASON] }
+  );
+  const corrections = gateBlockingComplianceCorrections(c);
+  assert.equal(corrections.length, 1);
+  assert.equal(corrections[0].priority, "CRITICAL");
+});
