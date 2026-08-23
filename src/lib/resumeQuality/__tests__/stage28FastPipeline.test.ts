@@ -265,7 +265,7 @@ test("S28-22 negative evidence is derived, never invented", () => {
 test("S28-23 the rendered writer section states the stricter cover-letter rule", () => {
   const section = renderEmployerEvidenceSection(buildEmployerEvidenceMap(PROFILE));
   assert.match(section, /PER-EMPLOYER EVIDENCE/);
-  assert.match(section, /Available here under the MSI rule/);
+  assert.match(section, /available.{0,40}under the MSI rule/i);
   assert.match(section, /cover letter/i);
   assert.ok(
     section.includes("must also appear in the bullets you write for that same employer"),

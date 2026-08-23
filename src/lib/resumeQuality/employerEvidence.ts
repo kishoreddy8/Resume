@@ -137,12 +137,47 @@ export function filterEmployerEvidenceMap(map: EmployerEvidenceMap, scope: Reado
 }
 
 /**
+ * INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — EMPLOYER EVIDENCE CONSOLIDATION.
+ *
+ * WHY THIS EXISTS. evidenceForEmployer (msiEvidence.ts) classifies every technology the candidate
+ * knows against ONE shared global set (its own `seen` map, built once from profile.experience +
+ * profile.skills — identical regardless of which employer is asked about). For any employer whose
+ * role is in the inventory's domain (inventoryReachesRole), `supported ∪ availableViaMsi ∪
+ * prohibitedHere` together account for EVERY technology in that same global set — so
+ * `availableViaMsi` for employer A is ALWAYS exactly (global pool) minus (A's own supported) minus
+ * (A's own prohibitedHere). Rendering that near-complete global list once per employer — 4 times on
+ * the real corpus, 130-150+ items each — repeats the same ~90% of content 4 times over, which is
+ * exactly the "same technologies appear multiple times" duplication a prior read-only audit flagged.
+ *
+ * WHAT THIS COMPUTES. The technology pool is the union of every employer's OWN `supported ∪
+ * availableViaMsi` — not re-derived independently from the profile, so it can never disagree with
+ * what buildEmployerEvidenceMap itself already decided is available. Every technology any employer's
+ * evidence supports appears here exactly once, regardless of how many employers separately listed it.
+ */
+function computeTechnologyPool(employers: readonly EmployerEvidence[]): string[] {
+  const pool = new Map<string, string>();
+  for (const employer of employers) {
+    for (const tech of employer.supported) pool.set(normalizeKey(tech), tech);
+    for (const tech of employer.availableViaMsi) pool.set(normalizeKey(tech), tech);
+  }
+  return [...pool.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/**
  * Renders the map as the writer-facing contract. Kept as prose the model must follow rather than raw
  * JSON, because the rule ("you may not attribute X here") matters more than the data, and states the
  * cover-letter rule explicitly: the deterministic reviewer validates cover-letter attributions
  * against the RESUME BULLETS THE WRITER JUST WROTE, not against this map, so a technology that is
  * supported here but absent from the finished resume still cannot appear in the cover letter under
  * that employer.
+ *
+ * The shared technology pool (see computeTechnologyPool above) is printed ONCE; each employer then
+ * states only what's genuinely employer-specific — its own "Already written here" list (unchanged),
+ * any explicit prohibition (unchanged), and a one-line pointer to the pool for everything else, rather
+ * than re-listing the ~90% overlap every employer's availableViaMsi previously repeated in full. No
+ * technology gains or loses scope: every item still traceable to the exact same
+ * supported/availableViaMsi/prohibitedHere buckets buildEmployerEvidenceMap computed — this only
+ * changes how they are PRINTED, never which employer they apply to.
  */
 export function renderEmployerEvidenceSection(map: EmployerEvidenceMap): string {
   if (map.employers.length === 0) return "";
@@ -154,19 +189,26 @@ export function renderEmployerEvidenceSection(map: EmployerEvidenceMap): string 
     "Inventory is the candidate's own declaration of technologies they have genuinely worked with — it is evidence, " +
     "not a keyword list — and it is not confined to whichever client the resume happens to mention.\n\n";
 
+  const pool = computeTechnologyPool(map.employers);
+  if (pool.length > 0) {
+    out +=
+      `**Candidate's full technology pool (${pool.length}) — available at ANY employer below whose role is in the ` +
+      "inventory's domain, EXCEPT a technology explicitly marked prohibited for that specific employer:** " +
+      `${pool.join(", ")}\n\n`;
+  }
+
   for (const employer of map.employers) {
     out += `### ${employer.employer} — ${employer.title}\n`;
     out += `- **Already written here (${employer.supported.length}):** ${employer.supported.join(", ") || "(none recorded)"}\n`;
-    if (employer.availableViaMsi.length > 0) {
-      out +=
-        `- **Available here under the MSI rule (${employer.availableViaMsi.length}):** ` +
-        `${employer.availableViaMsi.join(", ")}\n`;
-    }
     if (!employer.inventoryReachesRole) {
       out +=
         `- **This role is outside the candidate's technical domain.** Nothing in its own recorded work ` +
         `overlaps the Skills Inventory, so the inventory does not extend here. Present this role using ` +
         `only what is already written above — do not bring in technologies from other roles.\n`;
+    } else if (employer.availableViaMsi.length > 0) {
+      out +=
+        `- **Everything else in the technology pool above is available here under the MSI rule** ` +
+        `(${employer.availableViaMsi.length} technologies), except anything listed as prohibited below.\n`;
     }
     if (employer.prohibitedHere.length > 0) {
       out +=

@@ -254,5 +254,5 @@ test("MSI-A the canonical instructions and the evidence section no longer contra
   // The section used to flatly forbid exactly that. It must not any more.
   assert.doesNotMatch(section, /you may only present the technologies under/i);
   assert.doesNotMatch(section, /Global skill evidence is not employer-specific experience evidence/i);
-  assert.match(section, /Available here under the MSI rule/);
+  assert.match(section, /available.{0,40}under the MSI rule/i);
 });
