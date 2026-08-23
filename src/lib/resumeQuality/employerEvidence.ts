@@ -124,6 +124,19 @@ export function buildEmployerEvidenceMap(profile: CandidateProfile): EmployerEvi
 }
 
 /**
+ * SUMMARY QUALITY + WRITER TOKEN OPTIMIZATION (2026-08-23) — a writer-context PROJECTION only, never
+ * a second evidence engine: filters an already-built EmployerEvidenceMap down to a subset of
+ * employers for rendering. buildEmployerEvidenceMap itself is untouched and always computed against
+ * the FULL CandidateProfile — every caller that needs the complete, authoritative evidence (the
+ * deterministic reviewer, repairPreservation.ts's comparator) must keep calling
+ * buildEmployerEvidenceMap directly and must never call this filtered projection instead.
+ * `scope: null` means "no filter" — returns the map unchanged. */
+export function filterEmployerEvidenceMap(map: EmployerEvidenceMap, scope: ReadonlySet<string> | null): EmployerEvidenceMap {
+  if (scope === null) return map;
+  return { employers: map.employers.filter((e) => scope.has(e.employer)), inventoryOnlyCount: map.inventoryOnlyCount };
+}
+
+/**
  * Renders the map as the writer-facing contract. Kept as prose the model must follow rather than raw
  * JSON, because the rule ("you may not attribute X here") matters more than the data, and states the
  * cover-letter rule explicitly: the deterministic reviewer validates cover-letter attributions

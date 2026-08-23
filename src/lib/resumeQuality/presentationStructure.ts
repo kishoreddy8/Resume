@@ -457,6 +457,15 @@ export function collectRoleProjectEvidence(
   });
 }
 
+/** SUMMARY QUALITY + WRITER TOKEN OPTIMIZATION (2026-08-23) — same writer-context-projection-only
+ *  contract as employerEvidence.ts's filterEmployerEvidenceMap: collectRoleProjectEvidence itself is
+ *  untouched and always computed against the full profile/resume; this only filters the RENDERED
+ *  subset for a scoped TARGETED_REPAIR. `scope: null` means "no filter". */
+export function filterRoleProjectEvidence(evidence: RoleProjectEvidence[], scope: ReadonlySet<string> | null): RoleProjectEvidence[] {
+  if (scope === null) return evidence;
+  return evidence.filter((e) => scope.has(e.employer));
+}
+
 /**
  * The per-employer material the writer needs in order to write a Project line and choose an
  * Environment subset. Rendered as a compact table rather than prose: the writer is selecting from a

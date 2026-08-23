@@ -589,6 +589,26 @@ export function planRepairScope(review: StructuredResumeReview, baseline?: Repai
   };
 }
 
+/**
+ * SUMMARY QUALITY + WRITER TOKEN OPTIMIZATION (2026-08-23) — which employers a TARGETED_REPAIR
+ * handoff genuinely needs per-employer evidence for, derived from the SAME `operations[].employer`
+ * field this module already computes for the repair brief itself (see operationsForFinding above) —
+ * no new classification logic, just a projection of data this module already has.
+ *
+ * Returns `null` (meaning "no filter — every employer") whenever scope cannot be determined: no plan,
+ * no operations array, or an operation set that carries no employer at all is NOT the same as "zero
+ * employers are relevant" — it means this repair plan gives no positive signal either way, so the
+ * safe default is to include everyone rather than silently omit evidence a caller might still need
+ * (e.g. a plan whose only operations are unattributed COMPLIANCE findings with no `employer` field).
+ * The caller (handoff/exporter.ts) is expected to fall back to "no filter" for the same reason on
+ * INITIAL_GENERATION, which always needs every employer's evidence to write the resume from scratch.
+ */
+export function employerScopeForRepair(plan: RepairPlan | undefined): ReadonlySet<string> | null {
+  if (!plan?.operations) return null;
+  const employers = new Set(plan.operations.map((op) => op.employer).filter((e): e is string => Boolean(e)));
+  return employers.size > 0 ? employers : null;
+}
+
 /** The writer-facing repair brief. States the scope as an instruction, and what must NOT change. */
 export function renderRepairPlanSection(plan: RepairPlan): string {
   let out = "## TARGETED REPAIR — CHANGE ONLY WHAT IS LISTED HERE\n\n";

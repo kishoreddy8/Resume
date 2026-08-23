@@ -16,12 +16,13 @@ import { recommendedSkillOrder } from "../skillRanking";
 import { buildWorkspacePackage } from "../workspacePackage";
 import { getIterationDirectory, getHandoffDirectory, getWorkspaceDirectory, type QualityWorkflowLocation } from "../workspace";
 import { ensureResumeWriterRuntimeContract } from "../runtimeContract";
-import { buildEmployerEvidenceMap, renderEmployerEvidenceSection } from "../employerEvidence";
+import { buildEmployerEvidenceMap, filterEmployerEvidenceMap, renderEmployerEvidenceSection } from "../employerEvidence";
 import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orchestrator";
-import { renderRepairPlanSection } from "../repairScope";
+import { employerScopeForRepair, renderRepairPlanSection } from "../repairScope";
 import { deriveProfessionalIdentity, renderProfessionalIdentitySection } from "../professionalIdentity";
 import {
   collectRoleProjectEvidence,
+  filterRoleProjectEvidence,
   renderPresentationStandardSection,
   renderRoleProjectEvidenceSection,
 } from "../presentationStructure";
@@ -599,6 +600,37 @@ export function exportExternalWriterPackage(
     ? renderAtsCoverageReport(buildAtsCoverageReport(writerInput.currentResume, exportJdPriorityMatrix))
     : undefined;
 
+  // SUMMARY QUALITY + WRITER TOKEN OPTIMIZATION (2026-08-23) — TARGETED_REPAIR context reduction.
+  //
+  // Measured live (workflow 24, candidate 13, job 33017): a repair's writer_prompt.md was LARGER
+  // than the initial generation's (55,517 vs 47,823 bytes), because every one of the six sections
+  // below was computed and embedded UNCONDITIONALLY, with zero branching on writerMode — a repair
+  // touching one bullet at one employer received the exact same full per-employer evidence dump,
+  // full experience-emphasis plan, and full distributed-evidence plan as a from-scratch write. This
+  // is the single largest safe optimization opportunity the architecture offers, because
+  // repairScope.ts's own RepairOperation already carries a per-operation `employer` field — the
+  // scoping information already exists, it was simply never used to shrink what gets exported.
+  //
+  // The reduction below touches ONLY the writer-facing PROJECTION, never the underlying evidence
+  // engine: buildEmployerEvidenceMap/collectRoleProjectEvidence are still called against the FULL
+  // CandidateProfile exactly as before, and repairPreservation.ts's post-hoc comparator (the actual
+  // authority that accepts or rejects the writer's output) still validates against that same full,
+  // untouched evidence regardless of what the writer itself was shown — see repairPreservation.ts.
+  // Nothing here changes what CareerOps knows or verifies; it only changes what Claude has to read.
+  const isTargetedRepair = writerInput.writerMode === "TARGETED_REPAIR";
+  // `null` means "no filter — every employer" (the safe default whenever scope can't be determined,
+  // e.g. no repairPlan, or an INITIAL_GENERATION pass, which always needs every employer's evidence
+  // to write the resume from scratch in the first place). See employerScopeForRepair's own doc
+  // comment for why an ambiguous/empty signal also resolves to "no filter" rather than "zero
+  // employers".
+  const repairEmployerScope: ReadonlySet<string> | null = isTargetedRepair ? employerScopeForRepair(writerInput.repairPlan) : null;
+
+  const exportEmployerMap = writerInput.masterProfile ? buildEmployerEvidenceMap(writerInput.masterProfile) : undefined;
+  const scopedEmployerMap = exportEmployerMap ? filterEmployerEvidenceMap(exportEmployerMap, repairEmployerScope) : undefined;
+
+  const exportRoleEvidence = collectRoleProjectEvidence(writerInput.currentResume, writerInput.masterProfile);
+  const scopedRoleEvidence = filterRoleProjectEvidence(exportRoleEvidence, repairEmployerScope);
+
   // 2. writer_prompt.md
   const promptContent = buildExternalWriterPrompt({
     candidateId,
@@ -616,9 +648,7 @@ export function exportExternalWriterPackage(
     blockingFailures: writerInput.blockingFailures,
     complianceCorrections: writerInput.complianceCorrections,
     candidateContact: writerInput.candidateContact,
-    employerEvidenceSection: writerInput.masterProfile
-      ? renderEmployerEvidenceSection(buildEmployerEvidenceMap(writerInput.masterProfile))
-      : undefined,
+    employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
     repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
     resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,
     professionalIdentitySection: writerInput.masterProfile
@@ -627,12 +657,15 @@ export function exportExternalWriterPackage(
           writerInput.masterProfile.totalYearsExperience ?? null
         )
       : undefined,
-    experienceEmphasisSection: exportExperienceEmphasis || undefined,
-    distributedEvidenceSection: exportDistributedEvidence || undefined,
+    // Bullet/skill ORDERING and DISTRIBUTED-EVIDENCE planning are both from-scratch positioning
+    // aids — irrelevant to a surgical repair, which is explicitly forbidden from reordering or
+    // re-tailoring content it wasn't asked to touch (see the repair rewrite rule below: "Do not
+    // rewrite, improve, reorder, re-tailor"). Sending them during a repair contradicts the repair's
+    // own instructions, not merely wastes context.
+    experienceEmphasisSection: isTargetedRepair ? undefined : exportExperienceEmphasis || undefined,
+    distributedEvidenceSection: isTargetedRepair ? undefined : exportDistributedEvidence || undefined,
     presentationStandardSection: renderPresentationStandardSection(writerInput.masterProfile),
-    roleProjectEvidenceSection: renderRoleProjectEvidenceSection(
-      collectRoleProjectEvidence(writerInput.currentResume, writerInput.masterProfile)
-    ),
+    roleProjectEvidenceSection: renderRoleProjectEvidenceSection(scopedRoleEvidence),
     jdPriorityMatrix: exportJdPriorityMatrix,
     positioningRecommendation: exportPositioningRecommendation,
     recommendedSkillOrder: exportSkillOrder,
