@@ -1,0 +1,138 @@
+<!doctype html>
+<!-- ASYNC-* / LOCATION-* / COUNTRY-* tests.
+     Reproduces the dual-listbox pattern discovered in Greenhouse Dry Run #2:
+       - an "unrelated" listbox (simulating the iti phone-country picker) that is ALWAYS visible
+         as [role="option"] elements in the global DOM
+       - a city combobox with aria-controls pointing to its own listbox, async-loaded (400ms)
+       - a country combobox with aria-controls, synchronously-filtered
+     Proves that aria-controls scoping prevents unrelated options from bleeding in. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock — Async / Scoped Combobox</title></head>
+<body>
+  <form id="application_form">
+
+    <!-- Persistent unrelated listbox — always open in the DOM (simulates phone iti picker).
+         Its [role="option"] elements must never appear when reading the city or country comboboxes. -->
+    <ul id="unrelated-listbox" role="listbox" aria-label="Phone country">
+      <li role="option">Unrelated-A</li>
+      <li role="option">Unrelated-B</li>
+      <li role="option">Unrelated-C</li>
+    </ul>
+
+    <!-- City combobox: async-loaded (400 ms delay), aria-controls set on open -->
+    <label id="city-label" for="city">Location (City)*</label>
+    <input id="city"
+           role="combobox"
+           aria-haspopup="listbox"
+           aria-controls="city-listbox"
+           aria-expanded="false"
+           type="text"
+           autocomplete="off"
+           required>
+    <ul id="city-listbox" role="listbox"></ul>
+
+    <!-- Country combobox: synchronously filtered from a small list, aria-controls set -->
+    <label id="country-cb-label" for="country-cb">Country*</label>
+    <input id="country-cb"
+           role="combobox"
+           aria-haspopup="listbox"
+           aria-controls="country-cb-listbox"
+           aria-expanded="false"
+           type="text"
+           autocomplete="off"
+           required>
+    <ul id="country-cb-listbox" role="listbox"></ul>
+
+    <button id="submit_application" type="button"
+      onclick="document.body.innerHTML='<h1>Submitted</h1><p>Ref #AC-1</p>'">
+      Submit
+    </button>
+  </form>
+  <script>
+    /* City combobox — async (400 ms), options keyed by city prefix.
+       Lookup uses prefix matching so the executor can fill the full option text
+       ("Dallas, Texas, United States") and still trigger the right options. */
+    // "Dallas" is included as an exact option so the contact-derived city value (always "Dallas"
+    // from "Dallas, TX") matches exactly, making the city fill succeed in integration tests.
+    var CITY_DATA = {
+      "Dallas": ["Dallas", "Dallas, Georgia, United States", "Dallas, Oregon, United States"],
+      "Atlanta": ["Atlanta", "Atlanta, Georgia, United States"]
+    };
+
+    function lookupCities(q) {
+      var qLower = (q || "").toLowerCase();
+      if (!qLower) return [];
+      var results = [];
+      for (var key in CITY_DATA) {
+        if (qLower.startsWith(key.toLowerCase()) || key.toLowerCase().startsWith(qLower)) {
+          for (var i = 0; i < CITY_DATA[key].length; i++) {
+            results.push(CITY_DATA[key][i]);
+          }
+        }
+      }
+      return results;
+    }
+
+    var cityInput  = document.getElementById("city");
+    var cityList   = document.getElementById("city-listbox");
+
+    function renderCity(opts) {
+      cityList.innerHTML = "";
+      for (var i = 0; i < opts.length; i++) {
+        var li = document.createElement("li");
+        li.setAttribute("role", "option");
+        li.textContent = opts[i];
+        (function(val) {
+          li.addEventListener("click", function() {
+            cityInput.value = val;
+            cityInput.setAttribute("data-selected", val);
+            cityList.innerHTML = "";
+            cityInput.setAttribute("aria-expanded", "false");
+          });
+        })(opts[i]);
+        cityList.appendChild(li);
+      }
+      cityInput.setAttribute("aria-expanded", opts.length > 0 ? "true" : "false");
+    }
+
+    cityInput.addEventListener("input", function() {
+      var q = cityInput.value;
+      setTimeout(function() { renderCity(lookupCities(q)); }, 400);
+    });
+    cityInput.addEventListener("focus", function() {
+      cityInput.setAttribute("aria-expanded", "false");
+      cityList.innerHTML = "";
+    });
+
+    /* Country combobox — synchronous */
+    var COUNTRY_OPTIONS = ["United States", "Canada", "United Kingdom"];
+    var countryCb   = document.getElementById("country-cb");
+    var countryList = document.getElementById("country-cb-listbox");
+
+    function renderCountry(q) {
+      countryList.innerHTML = "";
+      var qLower = (q || "").toLowerCase();
+      for (var i = 0; i < COUNTRY_OPTIONS.length; i++) {
+        var opt = COUNTRY_OPTIONS[i];
+        if (!qLower || opt.toLowerCase().indexOf(qLower) !== -1) {
+          var li = document.createElement("li");
+          li.setAttribute("role", "option");
+          li.textContent = opt;
+          (function(val) {
+            li.addEventListener("click", function() {
+              countryCb.value = val;
+              countryCb.setAttribute("data-selected", val);
+              countryList.innerHTML = "";
+            });
+          })(opt);
+          countryList.appendChild(li);
+        }
+      }
+    }
+
+    countryCb.addEventListener("focus", function() { renderCountry(countryCb.value); });
+    countryCb.addEventListener("input", function() { renderCountry(countryCb.value); });
+
+  </script>
+</body>
+</html>

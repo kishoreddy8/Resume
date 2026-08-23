@@ -64,25 +64,59 @@ async function collectSignals(page: Page): Promise<{ url: string; text: string; 
 /**
  * Selects one option in a react-select-style combobox (`role="combobox"`, no native `<select>`).
  *
- * Types the approved value to filter, reads whatever the browser actually shows (options only exist
- * once the menu is open — see comboboxSelection.ts), and clicks the exact match. Returns null,
- * clicking nothing, when there is no exact match: never a closest guess. `[role="option"]` is the
- * accessible-name contract these menus render to, not any one library's class names, so this holds
- * across ATS boards rather than being a Celigo-only selector hack.
+ * SCOPED TO THE ACTIVE LISTBOX. After opening the combobox, React Select writes the listbox id into
+ * `aria-controls` on the input. We read that id and scope every subsequent option read and click to
+ * that one listbox — preventing unrelated open menus on the same page (e.g. a phone country-code
+ * picker's `[role="listbox"]`) from polluting the option list. When `aria-controls` is absent (older
+ * or simpler ATS boards), the query falls back to global `[role="option"]` as before.
+ *
+ * ASYNC-SAFE. Some ATS comboboxes fetch suggestions via API on each keystroke. The scoped listbox
+ * may be empty immediately after the combobox opens, then populate a few hundred ms later. We capture
+ * the initial snapshot and wait (up to 3 s) for it to change before reading the final option list —
+ * a synchronous combobox that already has options resolves this immediately at zero extra cost.
+ *
+ * EXACT MATCH ONLY. See comboboxSelection.ts. Returns null when no option matches exactly; never
+ * picks the closest guess.
  */
 async function selectComboboxOption(page: Page, selector: string, targetValue: string): Promise<string | null> {
   await page.click(selector);
+
+  // React Select sets aria-controls on the input to the id of its listbox once the menu opens.
+  // Scoping to that listbox keeps unrelated open menus out of our option reads.
+  const listboxId = await page.$eval(selector, (el) => el.getAttribute("aria-controls") ?? "").catch(() => "");
+  const optionSelector = listboxId ? `#${listboxId} [role="option"]` : '[role="option"]';
+
   await page.fill(selector, targetValue);
-  await page.waitForSelector('[role="option"]', { timeout: 2000 }).catch(() => null);
-  const visibleOptions = await page.$$eval('[role="option"]', (els) => els.map((el) => el.textContent?.trim() ?? ""));
+
+  // Capture the initial state of the scoped option list and wait for it to change. For async
+  // comboboxes, the list starts empty (or with a stale set) and updates once the API responds.
+  // For synchronous comboboxes, the list is already correct and this resolves immediately.
+  const initialSnapshot = await page
+    .$$eval(optionSelector, (els) => els.map((el) => (el.textContent ?? "").trim()).join("\x00"))
+    .catch(() => "");
+  await page
+    .waitForFunction(
+      (args) => {
+        const els = document.querySelectorAll(args.sel);
+        const current = Array.from(els)
+          .map((el) => (el.textContent ?? "").trim())
+          .join("\x00");
+        return current !== args.init;
+      },
+      { sel: optionSelector, init: initialSnapshot },
+      { timeout: 3000 }
+    )
+    .catch(() => null); // timeout is safe — we proceed with whatever options are present
+
+  const visibleOptions = await page.$$eval(optionSelector, (els) => els.map((el) => (el.textContent ?? "").trim()));
   const exact = exactComboboxOption(visibleOptions, targetValue);
   if (!exact) return null;
+
   const escaped = exact.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  await page
-    .locator('[role="option"]')
-    .filter({ hasText: new RegExp(`^${escaped}$`) })
-    .first()
-    .click();
+  const optionLocator = listboxId
+    ? page.locator(`#${listboxId} [role="option"]`).filter({ hasText: new RegExp(`^${escaped}$`) }).first()
+    : page.locator('[role="option"]').filter({ hasText: new RegExp(`^${escaped}$`) }).first();
+  await optionLocator.click();
   return exact;
 }
 
