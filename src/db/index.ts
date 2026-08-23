@@ -1033,6 +1033,32 @@ function runApplicationRunMigrations(db: Database.Database) {
   `);
 }
 
+/**
+ * Stage: application run duplicate guard.
+ *
+ * A partial UNIQUE index enforces the single-active-run invariant at the DB layer: at most one
+ * protected (non-FAILED, non-CANCELLED) row may exist per (candidate_id, dedupe_key).
+ *
+ * WHY PARTIAL, NOT FULL. Only FAILED and CANCELLED may be retried; every other status means the
+ * run is in progress, waiting on a human, or already confirmed submitted. A full unique index
+ * would prevent even retrying a legitimately failed run. The partial form is the minimum-correct
+ * constraint.
+ *
+ * WHY ONE INDEX, NOT TWO. Two separate indexes (e.g., one for active + one for submitted) would
+ * allow one SUBMITTED row PLUS one active row simultaneously, defeating the invariant. A single
+ * partial index covering all non-retryable statuses is the only shape that works.
+ *
+ * Additive: CREATE UNIQUE INDEX IF NOT EXISTS is a no-op on a database that already has it.
+ */
+function runApplicationRunDuplicateGuardMigration(db: Database.Database) {
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_app_runs_active_per_job
+      ON application_runs(candidate_id, dedupe_key)
+      WHERE status NOT IN ('FAILED', 'CANCELLED');
+  `);
+}
+
+
 function ensureCandidateOne(db: Database.Database) {
   const existing = db.prepare("SELECT id FROM candidates WHERE id = 1").get();
   if (existing) return;
@@ -1081,6 +1107,7 @@ function createConnection(): Database.Database {
   runJobSourceReviewMigrations(db);
   runApplicationVaultMigrations(db);
   runApplicationRunMigrations(db);
+  runApplicationRunDuplicateGuardMigration(db);
   // 50K ATS/company registry: schema.sql creates the additive tables; this idempotent projection
   // runs only after every legacy company discovery/domain column is guaranteed to exist.
   runOrganizationRegistryBackfill(db);

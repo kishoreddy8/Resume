@@ -4,7 +4,7 @@ import { requireActiveCandidate } from "@/db/queries/candidates";
 import { requireCandidateAccess } from "@/lib/auth/guard";
 import { getJob } from "@/db/queries/jobs";
 import { getCompany } from "@/db/queries/companies";
-import { createRun, getRun } from "@/db/queries/applicationRuns";
+import { createRun, getRun, getExistingProtectedRun } from "@/db/queries/applicationRuns";
 import { loadKnownVariants, listAnswers } from "@/db/queries/applicationVault";
 import { resolveCandidateContact } from "@/lib/resumeQuality/candidateContact";
 import { resolveApplicationDocuments } from "@/lib/apply/documentLinkage";
@@ -149,6 +149,25 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
       /* No validated resume means no run at all — not a run that pauses later. Refusing before a
        * browser opens keeps the failure cheap and the message specific. */
       return NextResponse.json({ status: "resume_required", message: docs.reason });
+    }
+
+    /* Duplicate guard: refuse to create a new run while a protected one already exists for this
+     * (candidate, dedupe_key). A protected run is any run whose status is NOT FAILED or CANCELLED.
+     * This is enforced here (app layer) AND by the DB partial unique index — two layers, either
+     * sufficient alone but stronger together. */
+    const existing = getExistingProtectedRun(candidateId, job.dedupe_key);
+    if (existing) {
+      const alreadySubmitted = existing.status === "SUBMITTED";
+      return NextResponse.json(
+        {
+          status: alreadySubmitted ? "already_submitted" : "duplicate_run",
+          message: alreadySubmitted
+            ? "This job was already applied to and confirmed. A new run cannot be started."
+            : "An active application run already exists for this job. Resume or cancel the existing run before starting a new one.",
+          run: { id: existing.id, status: existing.status },
+        },
+        { status: 409 }
+      );
     }
 
     const run = createRun({

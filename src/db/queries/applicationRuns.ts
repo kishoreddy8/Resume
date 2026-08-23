@@ -1,5 +1,6 @@
 import { getDb } from "@/db";
 import { canTransition, type RunStatus } from "@/lib/apply/runState";
+import { setPipelineStatus } from "@/db/queries/candidateJobState";
 
 /**
  * Application runs, persisted.
@@ -38,6 +39,36 @@ export class IllegalTransitionError extends Error {
     super(`Illegal application-run transition: ${from} -> ${to}`);
     this.name = "IllegalTransitionError";
   }
+}
+
+/**
+ * The only two statuses where a new run may safely replace the old one.
+ *
+ * Everything else is "protected" — the run is either in progress, waiting on a human, or already
+ * confirmed submitted. A new run while any of those is active would duplicate the application,
+ * corrupt the human's in-progress review, or re-submit something already done.
+ */
+export const RETRYABLE_STATUSES: readonly RunStatus[] = ["FAILED", "CANCELLED"];
+
+/**
+ * Return the existing protected (non-retryable) run for this (candidate, dedupe_key), or undefined
+ * if no such run exists.
+ *
+ * The caller must refuse to createRun when this returns a row. "Protected" means anything that is
+ * NOT in RETRYABLE_STATUSES — there is deliberately no second path through which a new run might
+ * sneak past: one query, one check.
+ */
+export function getExistingProtectedRun(candidateId: number, dedupeKey: string): ApplicationRun | undefined {
+  const placeholders = RETRYABLE_STATUSES.map(() => "?").join(",");
+  return getDb()
+    .prepare(
+      `SELECT * FROM application_runs
+        WHERE candidate_id = ? AND dedupe_key = ?
+          AND status NOT IN (${placeholders})
+        ORDER BY id DESC
+        LIMIT 1`
+    )
+    .get(candidateId, dedupeKey, ...RETRYABLE_STATUSES) as ApplicationRun | undefined;
 }
 
 export function createRun(input: {
@@ -135,6 +166,18 @@ export function advanceRun(
   });
 
   recordEvent(runId, `status_${to.toLowerCase()}`, opts.blockingReason ?? opts.blockingQuestion ?? null);
+
+  /* SUBMITTED is the canonical confirmation boundary: the confirmation detector fired, and this
+   * is the ONLY place in the codebase that may move the candidate's pipeline status to Applied.
+   *
+   * SUBMISSION_UNCONFIRMED, FAILED, CANCELLED and every pre-confirmation state are explicitly
+   * excluded — the submit click alone does NOT prove submission. Only read the run AFTER this
+   * call to get the definitive row. */
+  if (to === "SUBMITTED") {
+    const confirmed = getRun(runId)!;
+    setPipelineStatus(confirmed.candidate_id, confirmed.dedupe_key, "Applied");
+  }
+
   return getRun(runId)!;
 }
 
