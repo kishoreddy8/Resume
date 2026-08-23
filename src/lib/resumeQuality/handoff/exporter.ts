@@ -197,13 +197,12 @@ export function buildExternalWriterPrompt(input: {
 
   const rewriteRule =
     writerMode === "INITIAL_GENERATION"
-      ? `2. **Initial generation must be genuinely tailored — light keyword replacement is a failure mode**:
+      ? `**Initial generation must be genuinely tailored — light keyword replacement is a failure mode**:
    - Rewrite the summary, skills ordering, project descriptions, and experience bullets from the authoritative evidence so this first draft is specific to this JD and company.
-   - The summary must be 3-4 concise recruiter-facing sentences with varied construction: target role, strongest relevant platform/capability, supported domain context, and 2-4 grounded differentiators. Do not use repetitive "Expertise spans" / "Proven ability" templates or dump technologies.
-   - Give each employer its own evidence-backed engineering identity. Do not make every role sound like the same project. Project descriptions are 1-2 short sentences about objective and architecture, never stack dumps.
-   - Bullet ceilings remain 7 / 6 / 5 by role recency and 18 total; ceilings are not targets. Add a bullet only for distinct employer-supported evidence that materially improves JD alignment.`
+   - Give each employer its own evidence-backed engineering identity. Do not make every role sound like the same project.
+   - Bullet ceilings and summary/project-description requirements are stated in full above (WRITER OUTPUT QUALITY / RESUME PRESENTATION STANDARD) — this item exists only to state the deep-rewrite requirement itself, not to restate their numbers.`
       : isPatchMode
-      ? `2. **Surgical repair, PATCH mode — return ONLY the changed values, never the full document**:
+      ? `**Surgical repair, PATCH mode — return ONLY the changed values, never the full document**:
    - You will output PATCH OPERATIONS (see the schema below), not a full resume/cover letter.
    - Every operation's \`path\` must be one of the EXACT editable paths listed in the targeted-repair contract above — nothing else.
    - Do NOT reproduce \`previous_resume_content.json\`${input.coverLetterContextOmitted ? "" : "/`previous_cover_letter_content.json`"} content for a path you are not changing — omitting an editable path means CareerOps leaves it at its current value; you never need to restate it.
@@ -215,12 +214,62 @@ export function buildExternalWriterPrompt(input: {
    - Do not rewrite, improve, reorder, re-tailor, or rephrase any content outside the listed editable paths, even if you prefer different wording.
    - Previously resolved findings must not return: ${input.resolvedFindingKeys?.length ? input.resolvedFindingKeys.join(" | ") : "none recorded"}.
    - Any operation whose path is not in the editable-paths allowlist is rejected and fails the whole repair — when in doubt, omit it rather than guess.`
-      : `2. **Surgical repair is mandatory — full/deep rewriting is forbidden**:
+      : `**Surgical repair is mandatory — full/deep rewriting is forbidden**:
    - Start from \`previous_resume_content.json\` and \`previous_cover_letter_content.json\`.
    - Apply only the explicit repair operations and editable paths in the targeted-repair contract above.
    - Do not rewrite, improve, reorder, re-tailor, or rephrase any frozen content, even if you prefer different wording.
    - Previously resolved findings must not return: ${input.resolvedFindingKeys?.length ? input.resolvedFindingKeys.join(" | ") : "none recorded"}.
    - A substantially different resume is a failed repair. CareerOps deterministically rejects any collateral change before consuming a quality iteration.`;
+
+  // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — CRITICAL TAILORING GUARDRAILS list, built as
+  // an array so item 4 can be adapted per mode without leaving a numbering gap. Item 4 used to be one
+  // fixed two-part item ("resolve corrections" + "ensure JD keywords appear prominently") sent
+  // unconditionally to every mode.
+  //
+  // "Resolve every CRITICAL/HIGH severity issue first" is dropped entirely: it is about
+  // requiredCorrections/blockingIssues/blockingFailures, which are structurally always empty for
+  // INITIAL_GENERATION (writerMode is only ever "INITIAL_GENERATION" when no prior review exists yet
+  // — see orchestrator.ts's `writerMode: repairPlan ? "TARGETED_REPAIR" : "INITIAL_GENERATION"`, and
+  // repairPlan is set in the exact same branch that populates those three fields) — dead instruction
+  // on iteration 1 — and already fully covered for TARGETED_REPAIR by the REPAIR REVIEW CONTRACT
+  // section, which points directly at the repair plan's own findings/operations.
+  //
+  // "Ensure JD keywords appear prominently in Technical Skills" is genuinely INITIAL_GENERATION-only
+  // guidance (a targeted repair is explicitly forbidden from reordering Technical Skills unless
+  // resume.skillGroups is itself an editable path — see rewriteRule's own "do not reorder" language —
+  // so instructing every repair to reorder skills would contradict that rule), so it is kept only for
+  // that mode.
+  //
+  // IMPORTANT: this item is the ONLY place extracted_job_requirements.json is named by filename
+  // anywhere in the prompt — the external Claude Code CLI writer only reads files literally
+  // referenced by name (see claudeCliInvoker.ts's DRIVING_PROMPT), so simply DROPPING this item for
+  // TARGETED_REPAIR (as an earlier draft of this change did) would have silently made the file
+  // unreachable for repair too, a real regression this fix caught before it shipped. TARGETED_REPAIR
+  // therefore keeps its own, repair-appropriate reference to the same file below — reachable, but
+  // framed as background only, never as license to reorder or add technologies outside its editable
+  // paths.
+  const guardrailItems = [
+    `**Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
+   - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
+   - You must NEVER fabricate an employer, title, degree, certification, or client.
+   - The Master Skills Inventory (\`master_skills_inventory.md\`) constrains what you may claim: only technologies genuinely present there (or in the Master Resume's own experience entries) may appear anywhere in the resume or cover letter — never introduce a technology solely because the JD mentions it.`,
+    rewriteRule,
+    `**Architecture integrity takes priority over raw keyword coverage**:
+   - Maintain a coherent, believable technology architecture within each employer/project. Do not combine competing tools (e.g. Azure Data Factory + AWS Glue, or Databricks + EMR) in the same bullet or the same project unless explicitly and legitimately framed as a migration.
+   - Prefer one primary technology per responsibility rather than listing every adjacent tool as a laundry list.`,
+    writerMode === "INITIAL_GENERATION"
+      ? `**JD Keyword Coverage**:
+   - Ensure all dominant required job keywords from \`extracted_job_requirements.json\` appear prominently in Technical Skills and are evidenced in relevant experience bullets — but never at the cost of guardrail 1-3 above.`
+      : `**JD Keyword Coverage (reference only)**:
+   - \`extracted_job_requirements.json\` in this package is the same structured JD requirement data the JD PRIORITY MATRIX above was built from. It is background only: it does not license reordering Technical Skills or adding a technology outside your listed editable paths.`,
+    `**Writing Style & Formatting — every bullet must be interview-defensible**:
+   - Begin bullets with strong, varied action verbs (e.g. "Architected", "Engineered", "Optimized", "Spearheaded"), past tense for past roles.
+   - NEVER use generic openers like "Responsible for" or "Worked on".
+   - Avoid AI clichés (e.g., "testament to", "delve", "leverage synergy", "spearheaded revolution").
+   - Every major achievement bullet should include quantifiable, realistic impact you could defend and elaborate on if asked about it in an interview — never an invented or exaggerated metric.`,
+    `**Self-check before returning**: before writing \`writer_output.json\`, re-read \`resume_tailoring_instructions.md\` end to end and verify your draft against every guardrail in it (hard facts, MSI, architecture integrity, technology grouping, no contradicting technologies, metric inference policy, banned language, duplicate bullets, years/education honesty, bullet caps, verb tense). Report your own findings in the optional \`writerValidation\` field below — but note that this is diagnostic only and does not substitute for CareerOps's own independent review.`,
+    `**Lock the resume before writing the cover letter**: finish and finalize the \`resume\` field FIRST, against the JD Priority Matrix below. Only once that resume is finalized, write the \`coverLetter\` field USING that finalized resume as one of its sources — never generate the cover letter from independent JD-only reasoning. Every technology or accomplishment the cover letter attributes to a specific past employer must be traceable to that SAME employer's bullets in the resume you just wrote (CareerOps's cross-document validator enforces this: e.g. a technology used only at Employer A can never be attributed to Employer B in the cover letter, even if it's genuinely evidenced elsewhere in your history).`,
+  ];
 
   const priorReviewSection =
     writerMode === "INITIAL_GENERATION"
@@ -406,30 +455,7 @@ Where each value goes:
 
 ${input.repairPlanSection ?? ""}${input.contextManifestSection ?? ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
-1. **Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
-   - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
-   - You must NEVER fabricate an employer, title, degree, certification, or client.
-   - The Master Skills Inventory (\`master_skills_inventory.md\`) constrains what you may claim: only technologies genuinely present there (or in the Master Resume's own experience entries) may appear anywhere in the resume or cover letter — never introduce a technology solely because the JD mentions it.
-
-${rewriteRule}
-
-3. **Architecture integrity takes priority over raw keyword coverage**:
-   - Maintain a coherent, believable technology architecture within each employer/project. Do not combine competing tools (e.g. Azure Data Factory + AWS Glue, or Databricks + EMR) in the same bullet or the same project unless explicitly and legitimately framed as a migration.
-   - Prefer one primary technology per responsibility rather than listing every adjacent tool as a laundry list.
-
-4. **Fix Required Quality Corrections & Blocking Issues**:
-   - Resolve every CRITICAL and HIGH severity issue first.
-   - Ensure all dominant required job keywords from \`extracted_job_requirements.json\` appear prominently in Technical Skills and are evidenced in relevant experience bullets — but never at the cost of guardrail 1-3 above.
-
-5. **Writing Style & Formatting — every bullet must be interview-defensible**:
-   - Begin bullets with strong, varied action verbs (e.g. "Architected", "Engineered", "Optimized", "Spearheaded"), past tense for past roles.
-   - NEVER use generic openers like "Responsible for" or "Worked on".
-   - Avoid AI clichés (e.g., "testament to", "delve", "leverage synergy", "spearheaded revolution").
-   - Every major achievement bullet should include quantifiable, realistic impact you could defend and elaborate on if asked about it in an interview — never an invented or exaggerated metric.
-
-6. **Self-check before returning**: before writing \`writer_output.json\`, re-read \`resume_tailoring_instructions.md\` end to end and verify your draft against every guardrail in it (hard facts, MSI, architecture integrity, technology grouping, no contradicting technologies, metric inference policy, banned language, duplicate bullets, years/education honesty, bullet caps, verb tense, ATS formatting). Report your own findings in the optional \`writerValidation\` field below — but note that this is diagnostic only and does not substitute for CareerOps's own independent review.
-
-7. **Lock the resume before writing the cover letter**: finish and finalize the \`resume\` field FIRST, against the JD Priority Matrix below. Only once that resume is finalized, write the \`coverLetter\` field USING that finalized resume as one of its sources — never generate the cover letter from independent JD-only reasoning. Every technology or accomplishment the cover letter attributes to a specific past employer must be traceable to that SAME employer's bullets in the resume you just wrote (CareerOps's cross-document validator enforces this: e.g. a technology used only at Employer A can never be attributed to Employer B in the cover letter, even if it's genuinely evidenced elsewhere in your history).
+${guardrailItems.map((item, i) => `${i + 1}. ${item}`).join("\n\n")}
 
 ---
 

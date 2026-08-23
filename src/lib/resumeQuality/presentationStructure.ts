@@ -329,8 +329,14 @@ export function renderPresentationStandardSection(profile: CandidateProfile | un
     "Summary → Technical Skills → Certifications → Professional Experience → Key Projects → Education**. " +
     "You do not control the layout; you control what goes into each part.\n\n";
 
-  out += "**Headline.** One line, pipe-separated, leading with the candidate's own professional identity, " +
-    "then the specialization this JD needs, then the defining technologies. Not a sentence.\n\n";
+  // The authoritative, detailed headline rule (with worked examples) lives in PROFESSIONAL IDENTITY —
+  // this restates only the one fact this module's own STRUCTURE ONLY framing needs: what belongs in
+  // the line, never a second, independently-worded version of the rule itself (a prior duplicate
+  // copy here said the opposite — "then the defining technologies" — of PROFESSIONAL IDENTITY's
+  // "Never put technologies in it", a live contradiction fixed alongside this consolidation).
+  out += "**Headline.** One line, pipe-separated: professional ROLE IDENTITIES ONLY, never technologies " +
+    "(see PROFESSIONAL IDENTITY above for the full rule and examples, when that section is present). " +
+    "Not a sentence.\n\n";
 
   out += "**Professional Summary.** Continuous prose, not bullets. Open by naming the profession and the " +
     "specialization this JD cares about.\n\n";

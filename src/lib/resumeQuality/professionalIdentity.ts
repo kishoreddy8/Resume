@@ -271,26 +271,20 @@ export function renderProfessionalIdentitySection(
     "the summary into a product list or marketing pitch. Never copy its wording or add a claim the candidate\u2019s " +
     "evidence does not support.\n\n";
   out +=
-    "**Voice.** Prefer concise implied-first-person resume language. A restrained first-person sentence is " +
-    "permitted only when it remains concrete and professional, never conversational or promotional. What is NOT permitted is " +
-    "third-person narration of the candidate: never open a sentence with \"Owns\u2026\", " +
-    "\"Works\u2026\", \"Builds\u2026\", \"Develops\u2026\", \"Manages\u2026\", \"Leads\u2026\", " +
-    "\"Creates\u2026\", \"Implements\u2026\" or \"Maintains\u2026\", which reads as a third party " +
-    "describing them. This is a voice rule, not a tense rule: current capabilities stay current.\n\n";
+    "**Voice.** Write the summary in implied first person, the way a resume is read \u2014 concise, concrete, " +
+    "professional, never conversational or promotional. What is NOT permitted is third-person narration of the " +
+    "candidate: never open a sentence with \"Owns\u2026\", \"Works\u2026\", \"Builds\u2026\", \"Develops\u2026\", " +
+    "\"Manages\u2026\", \"Leads\u2026\", \"Creates\u2026\", \"Implements\u2026\" or \"Maintains\u2026\", which " +
+    "reads as a third party describing them \u2014 use a noun-led or participial construction instead " +
+    "(\"Pipeline ownership spans\u2026\", \"Building governed lakehouse platforms for\u2026\"). This is a voice " +
+    "rule, not a tense rule: do not convert the summary to the past tense \u2014 current capabilities stay " +
+    "current. It applies to EVERY paragraph of the summary.\n\n";
   out +=
     "**Punctuation.** Do NOT use em dashes (\u2014) or en dashes (\u2013) as prose punctuation anywhere in the " +
     "resume or the cover letter. Use a comma, semicolon, colon, full stop, or parentheses. " +
     "Bad: \"Built scalable pipelines \u2014 improving processing reliability.\" " +
     "Good: \"Built scalable pipelines, improving processing reliability.\" " +
     "Ordinary hyphens inside terms stay correct: end-to-end, real-time, cloud-native.\n\n";
-  out +=
-    "**Summary voice.** Write the summary in implied first person, the way a resume is read \u2014 never " +
-    "narrate the candidate in the third person. Do NOT open a sentence with \"Owns\u2026\", \"Works\u2026\", " +
-    "\"Builds\u2026\", \"Develops\u2026\", \"Manages\u2026\", \"Leads\u2026\", \"Creates\u2026\", " +
-    "\"Implements\u2026\" or \"Maintains\u2026\". Use a noun-led or participial construction instead " +
-    "(\"Pipeline ownership spans\u2026\", \"Building governed lakehouse platforms for\u2026\"). This is a voice " +
-    "rule, not a tense rule: do not convert the summary to the past tense \u2014 current capabilities stay current. " +
-    "It applies to EVERY paragraph of the summary.\n\n";
   out +=
     statedYearsOfExperience === null
       ? "**Years of experience.** CareerOps computed no verified total for this candidate, so do NOT state one. " +

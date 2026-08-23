@@ -12,6 +12,7 @@ import { ExternalFileResumeWriter, ExternalWriterResultNotReadyError } from "../
 import type { ExternalWriterOutput, InstructionComplianceChecks } from "../types";
 import { INSTRUCTION_COMPLIANCE_CHECK_NAMES } from "../types";
 import { CANONICAL_TAILORING_INSTRUCTIONS, INITIAL_GENERATION_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
+import { measureHandoffContext } from "../handoff/contextMeasurement";
 
 let tmpDbDir: string;
 let tmpCandidatesDir: string;
@@ -2101,5 +2102,90 @@ test("53. buildTargetedRepairInstructions never invents text — every projected
       sections.some((s) => s.text === chunk),
       `every section-sized chunk must be verbatim canonical text — got an unrecognized chunk starting "${chunk.slice(0, 60)}"`
     );
+  }
+});
+
+test("54. extracted_job_requirements.json remains reachable (referenced by filename in writer_prompt.md) for INITIAL_GENERATION", async () => {
+  // Regression test for a real defect this same optimization pass introduced and caught before
+  // shipping: the external Claude Code CLI writer only reads files it can find named by filename
+  // inside writer_prompt.md's own text (see claudeCliInvoker.ts's DRIVING_PROMPT) — a file can be
+  // written to disk and still be functionally invisible to the writer if nothing in the prompt names
+  // it. An earlier draft of the CRITICAL TAILORING GUARDRAILS cleanup removed the ONLY sentence that
+  // named extracted_job_requirements.json, silently making it unreachable.
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 1,
+  });
+
+  const measurement = measureHandoffContext(exportRes.handoffDirectory);
+  const file = measurement.files.find((f) => f.filename === "extracted_job_requirements.json");
+  assert.ok(file, "extracted_job_requirements.json must exist in the package");
+  assert.equal(file!.readByWriter, true, "extracted_job_requirements.json must be referenced by filename in writer_prompt.md, or the real writer never reads it");
+});
+
+test("55. extracted_job_requirements.json remains reachable for TARGETED_REPAIR too", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: FLAWED_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const measurement = measureHandoffContext(exportRes.handoffDirectory);
+  const file = measurement.files.find((f) => f.filename === "extracted_job_requirements.json");
+  assert.ok(file, "extracted_job_requirements.json must exist in the package");
+  assert.equal(file!.readByWriter, true, "extracted_job_requirements.json must remain reachable for TARGETED_REPAIR too");
+});
+
+test("56. every file the exported package writes for INITIAL_GENERATION that the prompt's own README/step-by-step instructions claim exists is genuinely reachable", async () => {
+  // A broader sweep of test 54's specific regression: confirms the measurement tool's own
+  // readByWriter classification is being exercised sensibly across the whole package, not just for
+  // one file — every file this package actually needs the writer to read should be reachable.
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 1,
+  });
+
+  const measurement = measureHandoffContext(exportRes.handoffDirectory);
+  const mustBeReachable = [
+    "resume_tailoring_instructions.md",
+    "master_resume_reference.json",
+    "master_skills_inventory.md",
+    "extracted_job_requirements.json",
+  ];
+  for (const filename of mustBeReachable) {
+    const file = measurement.files.find((f) => f.filename === filename);
+    assert.ok(file, `${filename} must exist in the package`);
+    assert.equal(file!.readByWriter, true, `${filename} must be reachable — referenced by filename in writer_prompt.md`);
   }
 });
