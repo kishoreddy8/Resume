@@ -16,11 +16,16 @@ export interface RepairPreservationResult {
 
 type PackageContent = { resume: ResumeContent; coverLetter?: CoverLetterContent };
 
-function clone<T>(value: T): T {
+/** Exported (not just used internally) so patchRepair.ts's reconstruction reuses these EXACT
+ *  primitives rather than re-implementing path traversal a second time — the same "one evidence
+ *  engine" discipline this codebase applies elsewhere. clone() is a plain deep-clone via
+ *  JSON round-trip; safe here because every value that flows through it is already
+ *  JSON-serializable resume/cover-letter content. */
+export function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function pathTokens(path: string): Array<string | number> {
+export function pathTokens(path: string): Array<string | number> {
   const tokens: Array<string | number> = [];
   for (const match of path.matchAll(/([A-Za-z][A-Za-z0-9_]*)|\[(\d+)\]/g)) {
     tokens.push(match[2] === undefined ? match[1]! : Number(match[2]));
@@ -28,7 +33,7 @@ function pathTokens(path: string): Array<string | number> {
   return tokens;
 }
 
-function valueAt(root: unknown, tokens: Array<string | number>): unknown {
+export function valueAt(root: unknown, tokens: Array<string | number>): unknown {
   let current = root;
   for (const token of tokens) {
     if (current === null || current === undefined || typeof current !== "object") return undefined;
@@ -37,7 +42,7 @@ function valueAt(root: unknown, tokens: Array<string | number>): unknown {
   return current;
 }
 
-function setValueAt(root: unknown, tokens: Array<string | number>, value: unknown): boolean {
+export function setValueAt(root: unknown, tokens: Array<string | number>, value: unknown): boolean {
   if (tokens.length === 0) return false;
   let current = root;
   for (const token of tokens.slice(0, -1)) {

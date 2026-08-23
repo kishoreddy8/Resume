@@ -528,8 +528,17 @@ export interface WriterValidation {
   notes?: string[];
 }
 
+/** PATCH-BASED TARGETED_REPAIR (2026-08-23) — one replacement, scoped to a single editable path.
+ *  `path` is relative to `document` (e.g. "summary[1]", never prefixed with "resume."/"coverLetter.")
+ *  — see handoff/patchRepair.ts, the sole authority on authorizing and applying these. */
+export interface RepairPatchOperation {
+  document: "resume" | "coverLetter";
+  path: string;
+  replacement: unknown;
+}
+
 /** The strict JSON contract produced by external subscription agents (Claude Code, Codex, Antigravity, local agents) */
-export interface ExternalWriterOutput {
+export interface FullDocumentWriterOutput {
   schemaVersion: 1;
   candidateId: number;
   applicationId: number;
@@ -543,6 +552,26 @@ export interface ExternalWriterOutput {
   /** Additive, optional — see WriterValidation's own doc comment: never authoritative. */
   writerValidation?: WriterValidation;
 }
+
+/** PATCH-BASED TARGETED_REPAIR (2026-08-23) — additive alternative to FullDocumentWriterOutput,
+ *  offered to the writer only for a patch-eligible TARGETED_REPAIR (see patchRepair.ts's
+ *  isPatchEligibleRepairPlan). schemaVersion 1 remains fully supported and is what
+ *  INITIAL_GENERATION always uses. */
+export interface PatchWriterOutput {
+  schemaVersion: 2;
+  outputMode: "PATCH";
+  candidateId: number;
+  applicationId: number;
+  jobId: number | null;
+  tailoringRunId: number;
+  workflowId: number;
+  iterationNumber: number;
+  operations: RepairPatchOperation[];
+  agentMetadata?: ExternalWriterAgentMetadata;
+  writerValidation?: WriterValidation;
+}
+
+export type ExternalWriterOutput = FullDocumentWriterOutput | PatchWriterOutput;
 
 /** Informational snapshot written to handoffs/iteration-<n>/workflow_status.json */
 export interface WorkflowStatusFile {
