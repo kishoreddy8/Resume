@@ -163,6 +163,22 @@ export interface IterationTimings {
   /** Bytes handed to the writer, and returned by it — prompt/output size, for the same evidence. */
   promptBytes: number | null;
   outputBytes: number | null;
+  /** CLAUDE WRITER SPEED PHASE (2026-08-23) — the CLI's OWN truthful report of this run, for a real
+   *  A/B transport comparison (single-pass handoff vs. multi-file). Every field is null unless the
+   *  CLI's stdout JSON actually reported it (see claudeCliInvoker.ts's parseCliRunMetadata) — never
+   *  inferred, never defaulted. Purely diagnostic, exactly like the rest of this interface: nothing
+   *  here affects the quality gate, retry behavior, or approval. A process exit code is not recorded
+   *  separately because invokeClaudeWriter's own contract already guarantees the process exited 0
+   *  whenever it returns a result at all — any other exit code is a thrown ClaudeCliTechnicalFailure,
+   *  which this iteration never reaches (the outcome would be TECHNICAL_FAILURE instead). */
+  cli?: {
+    model: string | null;
+    numTurns: number | null;
+    totalCostUsd: number | null;
+    /** The CLI's own reported duration_ms — may differ slightly from claudeMs, which also includes
+     *  this module's own spawn/process-teardown overhead around the CLI call. */
+    cliDurationMs: number | null;
+  };
 }
 
 export interface ProcessWorkflowOptions {
@@ -413,6 +429,14 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
       totalMs: Date.now() - startedAtMs,
       promptBytes,
       outputBytes,
+      cli: cliMetadata
+        ? {
+            model: cliMetadata.model,
+            numTurns: cliMetadata.numTurns,
+            totalCostUsd: cliMetadata.totalCostUsd,
+            cliDurationMs: cliMetadata.durationMs,
+          }
+        : undefined,
     };
 
     clearTechnicalFailures(handoffDir);

@@ -13,6 +13,7 @@ import type { ExternalWriterOutput, InstructionComplianceChecks } from "../types
 import { INSTRUCTION_COMPLIANCE_CHECK_NAMES } from "../types";
 import { CANONICAL_TAILORING_INSTRUCTIONS, INITIAL_GENERATION_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
 import { measureHandoffContext } from "../handoff/contextMeasurement";
+import { DRIVING_PROMPT } from "../writers/claudeCliInvoker";
 
 let tmpDbDir: string;
 let tmpCandidatesDir: string;
@@ -2112,6 +2113,13 @@ test("54. extracted_job_requirements.json remains reachable (referenced by filen
   // written to disk and still be functionally invisible to the writer if nothing in the prompt names
   // it. An earlier draft of the CRITICAL TAILORING GUARDRAILS cleanup removed the ONLY sentence that
   // named extracted_job_requirements.json, silently making it unreachable.
+  //
+  // CLAUDE WRITER SPEED PHASE (2026-08-23) note: writer_handoff.md (unifiedHandoff.ts) now also
+  // exists in every package and embeds this same content, but DRIVING_PROMPT was deliberately NOT
+  // changed to point at it — a real live A/B comparison found a truthfulness-score regression when
+  // the writer reads only the consolidated file (see claudeCliInvoker.ts's own doc comment for the
+  // numbers) — so writer_prompt.md remains the real writer's actual entry point, and this test's
+  // original premise (readByWriter on the standalone file) is still the correct thing to assert.
   const wf = createResumeQualityWorkflow({
     candidateId: candidateAliceId,
     applicationId: appAliceJobOneId,
@@ -2131,7 +2139,7 @@ test("54. extracted_job_requirements.json remains reachable (referenced by filen
   assert.equal(file!.readByWriter, true, "extracted_job_requirements.json must be referenced by filename in writer_prompt.md, or the real writer never reads it");
 });
 
-test("55. extracted_job_requirements.json remains reachable for TARGETED_REPAIR too", async () => {
+test("55. extracted_job_requirements.json's content remains reachable for TARGETED_REPAIR too", async () => {
   const wf = createResumeQualityWorkflow({
     candidateId: candidateAliceId,
     applicationId: appAliceJobOneId,
@@ -2153,16 +2161,14 @@ test("55. extracted_job_requirements.json remains reachable for TARGETED_REPAIR 
     targetIterationNumber: 2,
   });
 
-  const measurement = measureHandoffContext(exportRes.handoffDirectory);
-  const file = measurement.files.find((f) => f.filename === "extracted_job_requirements.json");
-  assert.ok(file, "extracted_job_requirements.json must exist in the package");
-  assert.equal(file!.readByWriter, true, "extracted_job_requirements.json must remain reachable for TARGETED_REPAIR too");
+  const standalone = fs.readFileSync(path.join(exportRes.handoffDirectory, "extracted_job_requirements.json"), "utf-8");
+  const handoff = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_handoff.md"), "utf-8");
+  assert.ok(handoff.includes(standalone), "extracted_job_requirements.json's exact content must remain embedded in writer_handoff.md for TARGETED_REPAIR too");
 });
 
-test("56. every file the exported package writes for INITIAL_GENERATION that the prompt's own README/step-by-step instructions claim exists is genuinely reachable", async () => {
-  // A broader sweep of test 54's specific regression: confirms the measurement tool's own
-  // readByWriter classification is being exercised sensibly across the whole package, not just for
-  // one file — every file this package actually needs the writer to read should be reachable.
+test("56. every companion file's content for INITIAL_GENERATION is genuinely embedded in writer_handoff.md, the one file the real writer reads", async () => {
+  // A broader sweep of test 54's specific regression: confirms every companion file's content —
+  // not just one — is genuinely present in the single document the writer now reads.
   const wf = createResumeQualityWorkflow({
     candidateId: candidateAliceId,
     applicationId: appAliceJobOneId,
@@ -2176,17 +2182,16 @@ test("56. every file the exported package writes for INITIAL_GENERATION that the
     targetIterationNumber: 1,
   });
 
-  const measurement = measureHandoffContext(exportRes.handoffDirectory);
-  const mustBeReachable = [
+  const handoff = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_handoff.md"), "utf-8");
+  const mustBeEmbedded = [
     "resume_tailoring_instructions.md",
     "master_resume_reference.json",
     "master_skills_inventory.md",
     "extracted_job_requirements.json",
   ];
-  for (const filename of mustBeReachable) {
-    const file = measurement.files.find((f) => f.filename === filename);
-    assert.ok(file, `${filename} must exist in the package`);
-    assert.equal(file!.readByWriter, true, `${filename} must be reachable — referenced by filename in writer_prompt.md`);
+  for (const filename of mustBeEmbedded) {
+    const standalone = fs.readFileSync(path.join(exportRes.handoffDirectory, filename), "utf-8");
+    assert.ok(handoff.includes(standalone), `${filename}'s exact content must be embedded in writer_handoff.md`);
   }
 });
 
@@ -2208,4 +2213,246 @@ test("57. a genuine (fresh, no prior iteration) INITIAL_GENERATION export omits 
   assert.doesNotMatch(prompt, /## PRIOR QUALITY REVIEW FEEDBACK/);
   assert.doesNotMatch(prompt, /None identified\./);
   assert.doesNotMatch(prompt, /every named compliance check passes/);
+});
+
+// -------------------------------------------------------------------------------------------------
+// CLAUDE WRITER SPEED PHASE (2026-08-23) — SINGLE-PASS HANDOFF integration tests.
+// writer_handoff.md must carry every semantic section writer_prompt.md + companion files carried,
+// for BOTH writer modes, and the real driving prompt must reference only writer_handoff.md.
+// -------------------------------------------------------------------------------------------------
+
+test("58. writer_handoff.md exists for an INITIAL_GENERATION export", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  const exportRes = exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, targetIterationNumber: 1 });
+  assert(fs.existsSync(path.join(exportRes.handoffDirectory, "writer_handoff.md")));
+});
+
+test("59. the real Claude CLI driving prompt stays on the original, proven multi-file instruction — single-pass transport is built but deliberately not enabled", () => {
+  // A real live A/B comparison (2 multi-file runs, 2 single-pass runs) found both single-pass runs
+  // scored materially lower on truthfulness (55, 70) than both multi-file runs (100, 100), with more
+  // EMPLOYER_CONTRADICTION blocking failures. Per this phase's own governing principle
+  // ("QUALITY > SPEED... Do not ship merely for speed"), DRIVING_PROMPT was reverted to the original
+  // text. This test guards against silently re-enabling single-pass transport without a deliberate,
+  // re-validated decision — see claudeCliInvoker.ts's own DRIVING_PROMPT doc comment for the numbers.
+  assert.match(DRIVING_PROMPT, /writer_prompt\.md/);
+  assert.match(DRIVING_PROMPT, /every file it\s*\n?\s*references/);
+  assert.doesNotMatch(DRIVING_PROMPT, /writer_handoff\.md/);
+});
+
+test("60. measureHandoffContext still counts writer_prompt.md + its referenced files as writer-read for INITIAL_GENERATION — writer_handoff.md exists on disk but is never actually read", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  const exportRes = exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, targetIterationNumber: 1 });
+  const measurement = measureHandoffContext(exportRes.handoffDirectory);
+  const readFiles = measurement.files.filter((f) => f.readByWriter).map((f) => f.filename).sort();
+  assert.deepEqual(
+    readFiles,
+    ["extracted_job_requirements.json", "master_resume_reference.json", "master_skills_inventory.md", "resume_tailoring_instructions.md", "writer_prompt.md"].sort(),
+    "the real writer-read set is unchanged from before this phase — writer_handoff.md is not among them"
+  );
+
+  const handoffFile = measurement.files.find((f) => f.filename === "writer_handoff.md");
+  assert.ok(handoffFile, "writer_handoff.md must still exist on disk (built infrastructure, kept for future study)");
+  assert.equal(handoffFile!.readByWriter, false, "writer_handoff.md must NOT be counted as writer-read — the driving prompt was not changed to point at it");
+});
+
+test("61. writer_handoff.md is materially smaller than the sum of the files it replaces would have been read as (measurement-level proof the single Read call carries less total data than five separate ones, even though every companion file remains on disk)", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  const exportRes = exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, targetIterationNumber: 1 });
+  const dir = exportRes.handoffDirectory;
+  const handoffBytes = fs.statSync(path.join(dir, "writer_handoff.md")).size;
+  const legacySum =
+    fs.statSync(path.join(dir, "writer_prompt.md")).size +
+    fs.statSync(path.join(dir, "resume_tailoring_instructions.md")).size +
+    fs.statSync(path.join(dir, "master_resume_reference.json")).size +
+    fs.statSync(path.join(dir, "extracted_job_requirements.json")).size +
+    fs.statSync(path.join(dir, "master_skills_inventory.md")).size;
+  // The unified file adds a handful of short header lines per section — it should be close to, not
+  // wildly larger than, the sum of what it replaces (never a semantic-content bug producing bloat).
+  assert.ok(handoffBytes < legacySum * 1.05, `writer_handoff.md (${handoffBytes}B) should not be meaningfully larger than the sum of its sources (${legacySum}B)`);
+  assert.ok(handoffBytes > legacySum * 0.9, `writer_handoff.md (${handoffBytes}B) should not be suspiciously smaller either — that would suggest lost content`);
+});
+
+test("62. writer_handoff.md preserves every truthfulness/attribution/style guardrail marker present in the legacy multi-file package", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  const exportRes = exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, targetIterationNumber: 1 });
+  const dir = exportRes.handoffDirectory;
+  const handoff = fs.readFileSync(path.join(dir, "writer_handoff.md"), "utf-8");
+
+  // Truthfulness / MSI / employer attribution
+  assert.match(handoff, /The Master Resume is authoritative for/);
+  assert.match(handoff, /Assume every technology listed in my Master Skills/);
+  assert.match(handoff, /PER-EMPLOYER EVIDENCE/);
+  // YOE / education honesty
+  assert.match(handoff, /YEARS-OF-EXPERIENCE AND EDUCATION HONESTY/);
+  // Metric honesty
+  assert.match(handoff, /METRIC INFERENCE POLICY/);
+  // Summary rules
+  assert.match(handoff, /PROFESSIONAL SUMMARY STRUCTURE/);
+  // Bullet rules
+  assert.match(handoff, /BULLET WRITING/);
+  // Banned language
+  assert.match(handoff, /BANNED AI-SOUNDING LANGUAGE/);
+  // JD priorities
+  assert.match(handoff, /JD PRIORITY MATRIX/);
+  // Candidate facts
+  assert.match(handoff, /CANDIDATE CONTACT DETAILS/);
+  // Output contract
+  assert.match(handoff, /OUTPUT REQUIREMENT: `writer_output\.json`/);
+  assert.match(handoff, /"schemaVersion": 1/);
+});
+
+test("63. writer_handoff.md's master-reference projection remains compact for INITIAL_GENERATION (no skills[] leak, matching the standalone master_resume_reference.json)", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  const exportRes = exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, targetIterationNumber: 1 });
+  const dir = exportRes.handoffDirectory;
+  const standaloneMasterRef = JSON.parse(fs.readFileSync(path.join(dir, "master_resume_reference.json"), "utf-8"));
+  assert.equal("skills" in standaloneMasterRef, false, "sanity: the standalone file itself must stay compact");
+  const handoff = fs.readFileSync(path.join(dir, "writer_handoff.md"), "utf-8");
+  const embeddedBlock = handoff.match(/## MASTER RESUME FACTS[\s\S]*?```json\n([\s\S]*?)\n```/)?.[1] ?? "";
+  assert.ok(embeddedBlock.length > 0, "the embedded master resume facts block must be found");
+  const embeddedParsed = JSON.parse(embeddedBlock);
+  assert.equal("skills" in embeddedParsed, false, "the embedded copy must be exactly as compact as the standalone file");
+  assert.deepEqual(embeddedParsed, standaloneMasterRef, "the embedded block must be byte-for-byte the same JSON as the standalone file");
+});
+
+test("64. writer_handoff.md's canonical-instruction projection remains intact for a scoped TARGETED_REPAIR (Phase 3 optimization unaffected)", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: FLAWED_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+  const exportRes = exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, targetIterationNumber: 2 });
+  const dir = exportRes.handoffDirectory;
+  const standaloneInstructions = fs.readFileSync(path.join(dir, "resume_tailoring_instructions.md"), "utf-8");
+  const handoff = fs.readFileSync(path.join(dir, "writer_handoff.md"), "utf-8");
+  assert.ok(handoff.includes(standaloneInstructions), "the embedded canonical rules must be the exact same bytes as the standalone file, including its own projection/scope header");
+});
+
+test("65. writer_handoff.md's patch context projection remains intact — a patch-eligible repair's employer stubbing/bullet windowing is preserved in the embedded PREVIOUS RESUME CONTENT", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  const twoEmployerResume: ResumeContent = {
+    ...PERFECT_RESUME,
+    experience: [
+      { ...PERFECT_RESUME.experience[0], bullets: ["Built batch data ingestion pipelines using Azure Data Factory and AWS Glue.", ...PERFECT_RESUME.experience[0].bullets.slice(1)] },
+      { title: "Data Engineer", company: "Beta LLC", dates: "2017 - 2020", bullets: ["Built ETL pipelines with Informatica IICS.", "Maintained SQL Server reporting datasets."] },
+    ],
+  };
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: twoEmployerResume,
+    coverLetter: COVER_LETTER,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile({ skills: [{ rawSkillName: "Azure Data Factory", source: "employer", attributedTo: [{ employer: "Acme Corp" }] }] }),
+    reviewer: {
+      review: async () => ({
+        review: {
+          overallScore: 60, atsScore: 90, keywordAlignmentScore: 90, truthfulnessScore: 70,
+          architectureConsistencyScore: 90, recruiterReadabilityScore: 90, formattingScore: 90,
+          blockingFailures: [{ type: "UNSUPPORTED_CLAIM", description: '"AWS Glue" is claimed on the resume at Acme Corp but is not grounded in the Master Resume or Master Skills Inventory.', recommendedCorrection: 'Remove "AWS Glue".' }],
+          blockingIssues: [], requiredCorrections: [], missingRequiredSkills: [], incorrectTechnologyUsage: [],
+          genericBullets: [], missingImpactEvidence: [], summaryIssues: [], skillsOrderingIssues: [], truthfulnessIssues: [],
+          instructionCompliance: {
+            instructionVersion: INSTRUCTION_VERSION,
+            instructionHash: INSTRUCTION_HASH,
+            checks: Object.fromEntries(INSTRUCTION_COMPLIANCE_CHECK_NAMES.map((name) => [name, name === "finalValidation" ? "FAIL" : "PASS"])) as unknown as InstructionComplianceChecks,
+            notes: [],
+          },
+        },
+      }),
+    },
+  });
+  const exportRes = exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, targetIterationNumber: 2 });
+  const dir = exportRes.handoffDirectory;
+  const standalonePrev = fs.readFileSync(path.join(dir, "previous_resume_content.json"), "utf-8");
+  const handoff = fs.readFileSync(path.join(dir, "writer_handoff.md"), "utf-8");
+  assert.match(standalonePrev, /omitted/, "sanity: the standalone projection must have stubbed Beta LLC");
+  assert.ok(handoff.includes(standalonePrev), "the embedded previous-resume block must be the exact same bytes as the standalone (stubbed) projection");
+  assert.doesNotMatch(handoff.match(/## PREVIOUS RESUME CONTENT[\s\S]*?---/)?.[0] ?? "", /Informatica/, "Beta LLC's real bullets must not leak into the embedded copy either");
+});
+
+test("66. TARGETED_REPAIR semantic equivalence: writer_handoff.md carries the repair plan, employer evidence, and previous-document baseline together", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: FLAWED_RESUME,
+    coverLetter: COVER_LETTER,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+  const exportRes = exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, targetIterationNumber: 2 });
+  const dir = exportRes.handoffDirectory;
+  const handoff = fs.readFileSync(path.join(dir, "writer_handoff.md"), "utf-8");
+  assert.match(handoff, /## REPAIR REVIEW CONTRACT|## TARGETED REPAIR/);
+  assert.match(handoff, /## PER-EMPLOYER EVIDENCE/);
+  assert.match(handoff, /## PREVIOUS RESUME CONTENT/);
+  assert.match(handoff, /Writer mode: TARGETED_REPAIR\./);
+});
+
+test("67. writer_output.json import is completely unaffected by single-pass transport — the importer never reads writer_handoff.md, only the writer's own writer_output.json", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+  exportExternalWriterPackage({ candidateId: candidateAliceId, workflowId: wf.id, targetIterationNumber: 1 });
+  const validOutput: ExternalWriterOutput = {
+    schemaVersion: 1,
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    jobId: jobOne.id,
+    tailoringRunId: runAliceJobOneId,
+    workflowId: wf.id,
+    iterationNumber: 1,
+    resume: PERFECT_RESUME,
+  };
+  const outPath = path.join(getHandoffDirectory({ candidateId: candidateAliceId, dedupeKey: jobOne.dedupe_key, runId: runAliceJobOneId, workflowId: wf.id }, 1), "writer_output.json");
+  fs.writeFileSync(outPath, JSON.stringify(validOutput, null, 2));
+  const importRes = importExternalWriterResult({ candidateId: candidateAliceId, workflowId: wf.id, expectedIterationNumber: 1, inputPath: outPath });
+  assert.equal(importRes.validated, true);
 });

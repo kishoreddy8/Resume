@@ -12,12 +12,17 @@ import path from "node:path";
  * so it cannot discover a file it is not explicitly told about by name. That means the real Claude
  * input-token cost is NOT "every file this package writes to disk"; it is writer_prompt.md's own
  * byte count PLUS every OTHER file whose exact filename is named somewhere inside writer_prompt.md's
- * text. A file this package writes but never names inside writer_prompt.md (confirmed empirically:
- * `writer_input.json`, `workflow_status.json`, `review.json`, `review_feedback.md`, and — a genuine
- * finding of this pass — `job_description.md`, which is named only inside buildExternalWriterReadme's
- * README.md text, never inside buildExternalWriterPrompt's own output) is written for CareerOps's own
- * bookkeeping/audit trail or for a human debugging the package by hand, but is never actually read by
- * the writer and so costs nothing in writer context, however large it is on disk.
+ * text.
+ *
+ * CLAUDE WRITER SPEED PHASE (2026-08-23) note: exportExternalWriterPackage also writes
+ * writer_handoff.md (unifiedHandoff.ts), a single-pass consolidation of the same content. A real
+ * paired live A/B comparison found a real truthfulness-score regression when the writer actually
+ * reads only that file (see claudeCliInvoker.ts's own DRIVING_PROMPT doc comment for the numbers), so
+ * DRIVING_PROMPT was NOT changed to point at it — the writer still reads writer_prompt.md and its
+ * referenced files exactly as before. writer_handoff.md therefore exists on disk but is never
+ * actually read by the writer, exactly like the other companion/audit files below, and this module
+ * deliberately does NOT special-case it: it is measured like any other file and correctly reports
+ * readByWriter: false.
  *
  * Every count here is BYTES (exact, from the real files) and an ESTIMATED token count derived from
  * bytes at a fixed ~4 bytes/token heuristic for English/JSON text — labeled ESTIMATED throughout,

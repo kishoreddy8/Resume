@@ -33,6 +33,7 @@ import {
   shouldUseFullMasterReferenceForRepair,
 } from "./masterReferenceProjection";
 import { isPatchEligibleRepairPlan } from "./patchRepair";
+import { buildUnifiedWriterHandoff } from "./unifiedHandoff";
 import { projectResumeContextForPatchRepair, renderContextManifestSection, shouldOmitCoverLetterContext } from "./patchContextProjection";
 import {
   collectRoleProjectEvidence,
@@ -130,8 +131,15 @@ export function buildExternalWriterPrompt(input: {
    *  unmodified canonical standard, so the prompt's own description of the file can never overstate
    *  what it actually contains. Absent (undefined) means the file IS the complete document. */
   instructionsScopeNote?: string;
+  /** CLAUDE WRITER SPEED PHASE (2026-08-23) — true when this prompt is being embedded into
+   *  writer_handoff.md (unifiedHandoff.ts) rather than delivered as writer_prompt.md alongside
+   *  separate companion files. Adjusts the small number of sentences that tell the writer to open a
+   *  NAMED FILE, so they instead point at the section already embedded nearby in the same document —
+   *  every other word of the prompt is byte-for-byte identical either way. */
+  singlePassMode?: boolean;
 }): string {
   const { candidateName, iterationNumber, selectedTrack, latestReview, requiredCorrections, blockingIssues, blockingFailures } = input;
+  const singlePassMode = input.singlePassMode ?? false;
   const writerMode = input.writerMode ?? (input.repairPlanSection ? "TARGETED_REPAIR" : "INITIAL_GENERATION");
   const complianceCorrections = input.complianceCorrections ?? [];
   // PATCH-BASED TARGETED_REPAIR (2026-08-23) — only ever true for a repair the exporter has already
@@ -265,26 +273,36 @@ export function buildExternalWriterPrompt(input: {
   // therefore keeps its own, repair-appropriate reference to the same file below — reachable, but
   // framed as background only, never as license to reorder or add technologies outside its editable
   // paths.
+  // CLAUDE WRITER SPEED PHASE (2026-08-23) — in single-pass mode these three facts are embedded
+  // directly in writer_handoff.md (see unifiedHandoff.ts) rather than left as separate files the
+  // writer would otherwise have to open — the pointer phrases below say so, so the writer is never
+  // told to go looking for a file that, in this mode, was never handed to it separately. The
+  // SUBSTANCE of every guardrail below is completely unchanged either way.
+  const masterResumeRef = singlePassMode ? "the MASTER RESUME FACTS section embedded above" : "`master_resume_reference.json` / `master_resume.txt`";
+  const msiRef = singlePassMode ? "the MASTER SKILLS INVENTORY section embedded above" : "`master_skills_inventory.md`";
+  const jdReqRef = singlePassMode ? "the JD REQUIREMENTS section embedded above" : "`extracted_job_requirements.json`";
+  const instructionsRef = singlePassMode ? "the CANONICAL TAILORING RULES section above" : "`resume_tailoring_instructions.md`";
+
   const guardrailItems = [
     `**Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
-   - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
+   - The Master Resume (${masterResumeRef}) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
    - You must NEVER fabricate an employer, title, degree, certification, or client.
-   - The Master Skills Inventory (\`master_skills_inventory.md\`) constrains what you may claim: only technologies genuinely present there (or in the Master Resume's own experience entries) may appear anywhere in the resume or cover letter — never introduce a technology solely because the JD mentions it.`,
+   - The Master Skills Inventory (${msiRef}) constrains what you may claim: only technologies genuinely present there (or in the Master Resume's own experience entries) may appear anywhere in the resume or cover letter — never introduce a technology solely because the JD mentions it.`,
     rewriteRule,
     `**Architecture integrity takes priority over raw keyword coverage**:
    - Maintain a coherent, believable technology architecture within each employer/project. Do not combine competing tools (e.g. Azure Data Factory + AWS Glue, or Databricks + EMR) in the same bullet or the same project unless explicitly and legitimately framed as a migration.
    - Prefer one primary technology per responsibility rather than listing every adjacent tool as a laundry list.`,
     writerMode === "INITIAL_GENERATION"
       ? `**JD Keyword Coverage**:
-   - Ensure all dominant required job keywords from \`extracted_job_requirements.json\` appear prominently in Technical Skills and are evidenced in relevant experience bullets — but never at the cost of guardrail 1-3 above.`
+   - Ensure all dominant required job keywords from ${jdReqRef} appear prominently in Technical Skills and are evidenced in relevant experience bullets — but never at the cost of guardrail 1-3 above.`
       : `**JD Keyword Coverage (reference only)**:
-   - \`extracted_job_requirements.json\` in this package is the same structured JD requirement data the JD PRIORITY MATRIX above was built from. It is background only: it does not license reordering Technical Skills or adding a technology outside your listed editable paths.`,
+   - ${jdReqRef} is the same structured JD requirement data the JD PRIORITY MATRIX above was built from. It is background only: it does not license reordering Technical Skills or adding a technology outside your listed editable paths.`,
     `**Writing Style & Formatting — every bullet must be interview-defensible**:
    - Begin bullets with strong, varied action verbs (e.g. "Architected", "Engineered", "Optimized", "Spearheaded"), past tense for past roles.
    - NEVER use generic openers like "Responsible for" or "Worked on".
    - Avoid AI clichés (e.g., "testament to", "delve", "leverage synergy", "spearheaded revolution").
    - Every major achievement bullet should include quantifiable, realistic impact you could defend and elaborate on if asked about it in an interview — never an invented or exaggerated metric.`,
-    `**Self-check before returning**: before writing \`writer_output.json\`, re-read \`resume_tailoring_instructions.md\` end to end and verify your draft against every guardrail in it (hard facts, MSI, architecture integrity, technology grouping, no contradicting technologies, metric inference policy, banned language, duplicate bullets, years/education honesty, bullet caps, verb tense). Report your own findings in the optional \`writerValidation\` field below — but note that this is diagnostic only and does not substitute for CareerOps's own independent review.`,
+    `**Self-check before returning**: before writing \`writer_output.json\`, re-verify your draft end to end against every guardrail in ${instructionsRef} (hard facts, MSI, architecture integrity, technology grouping, no contradicting technologies, metric inference policy, banned language, duplicate bullets, years/education honesty, bullet caps, verb tense). Report your own findings in the optional \`writerValidation\` field below — but note that this is diagnostic only and does not substitute for CareerOps's own independent review.`,
     `**Lock the resume before writing the cover letter**: finish and finalize the \`resume\` field FIRST, against the JD Priority Matrix below. Only once that resume is finalized, write the \`coverLetter\` field USING that finalized resume as one of its sources — never generate the cover letter from independent JD-only reasoning. Every technology or accomplishment the cover letter attributes to a specific past employer must be traceable to that SAME employer's bullets in the resume you just wrote (CareerOps's cross-document validator enforces this: e.g. a technology used only at Employer A can never be attributed to Employer B in the cover letter, even if it's genuinely evidenced elsewhere in your history).`,
   ];
 
@@ -464,7 +482,9 @@ Target Role Track: **${selectedTrack ?? "General Engineering Track"}**
 
 ## THE CANONICAL STANDARD IS MANDATORY
 
-\`resume_tailoring_instructions.md\` in this package (instruction version **${INSTRUCTION_VERSION}**, full-standard hash \`${INSTRUCTION_HASH}\`) is drawn verbatim, word-for-word, from the authoritative Resume Tailoring System Instructions — never paraphrased or summarized. ${
+${
+    singlePassMode ? "The CANONICAL TAILORING RULES section below" : "`resume_tailoring_instructions.md` in this package"
+  } (instruction version **${INSTRUCTION_VERSION}**, full-standard hash \`${INSTRUCTION_HASH}\`) is drawn verbatim, word-for-word, from the authoritative Resume Tailoring System Instructions — never paraphrased or summarized. ${
     input.instructionsScopeNote ?? "It is the complete document."
   } You must follow every included section in its entirety, not just the highlights below. CareerOps will independently re-review your output against this exact same canonical text; nothing you self-report can substitute for actually satisfying it.
 
@@ -534,10 +554,16 @@ export function buildExternalWriterReadme(iterationNumber: number): string {
 
 This directory contains a complete, self-contained handoff package for an external subscription agent (Claude Code, OpenAI Codex, Google Antigravity, or a local agent) to perform an iteration of resume quality improvement.
 
-## Step-by-Step Instructions
+**The real Claude Code CLI writer reads exactly one file: \`writer_handoff.md\`.** It is a single
+self-contained document carrying the same content as every file listed below, spliced together
+under clearly-labelled section headers — see CLAUDE WRITER SPEED PHASE (2026-08-23) in
+unifiedHandoff.ts. Every file below still exists, unread by the automated writer, purely for a human
+debugging the package by hand, audit, and historical replay.
+
+## Step-by-Step Instructions (for a human reading this package by hand)
 
 1. **Review Instructions & Feedback**:
-   - Read \`writer_prompt.md\` for exact task requirements and prior review feedback.
+   - Read \`writer_prompt.md\` for exact task requirements and prior review feedback (this is the same prose embedded in \`writer_handoff.md\`).
    - Read \`review_feedback.md\` and \`review.json\` (if present) for detailed scoring diagnostics.
 2. **Examine Source Context**:
    - \`job_description.md\` — Full authoritative job posting.
@@ -1020,6 +1046,82 @@ export function exportExternalWriterPackage(
   }
   if (writerInput.currentCoverLetter && !exportOmitCoverLetter) {
     writePackageFile("previous_cover_letter_content.json", JSON.stringify(writerInput.currentCoverLetter, null, 2));
+  }
+
+  // 8b. writer_handoff.md — CLAUDE WRITER SPEED PHASE (2026-08-23) — SINGLE-PASS HANDOFF.
+  //
+  // Everything above (writer_prompt.md + every companion file just written) stays on disk exactly as
+  // before — for audit, debugging, and historical replay (see unifiedHandoff.ts's own doc comment).
+  // This ADDITIONALLY builds one self-contained document combining the exact same content, so the
+  // real Claude Code CLI writer needs only ONE Read call before it can start generating, instead of
+  // up to six (five for INITIAL_GENERATION; a TARGETED_REPAIR also has previous_resume_content.json
+  // and sometimes previous_cover_letter_content.json, both already written above by this point).
+  // Built by reading back the bytes just written — never a second independent computation — so this
+  // can never drift from the audit files sitting next to it. A second buildExternalWriterPrompt call
+  // (singlePassMode: true) reuses the exact same params as the writer_prompt.md call above; the only
+  // difference is a handful of sentences that point at an embedded section instead of a separate
+  // filename (see buildExternalWriterPrompt's own singlePassMode doc comment) — every guardrail,
+  // evidence section, and rule is byte-for-byte identical otherwise.
+  {
+    const singlePassPromptContent = buildExternalWriterPrompt({
+      candidateId,
+      candidateName,
+      applicationId: workflow.application_id,
+      jobId: tailoringRun.job_id,
+      tailoringRunId: workflow.tailoring_run_id,
+      workflowId: workflow.id,
+      iterationNumber: targetIterationNumber,
+      writerMode: writerInput.writerMode,
+      selectedTrack: wsPkg.selectedTrack,
+      latestReview: writerInput.latestReview,
+      requiredCorrections: writerInput.requiredCorrections,
+      blockingIssues: writerInput.blockingIssues,
+      blockingFailures: writerInput.blockingFailures,
+      complianceCorrections: writerInput.complianceCorrections,
+      candidateContact: writerInput.candidateContact,
+      employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
+      repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
+      resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,
+      professionalIdentitySection: writerInput.masterProfile
+        ? renderProfessionalIdentitySection(
+            deriveProfessionalIdentity(writerInput.masterProfile),
+            writerInput.masterProfile.totalYearsExperience ?? null
+          )
+        : undefined,
+      experienceEmphasisSection: isTargetedRepair ? undefined : exportExperienceEmphasis || undefined,
+      distributedEvidenceSection: isTargetedRepair ? undefined : exportDistributedEvidence || undefined,
+      presentationStandardSection: renderPresentationStandardSection(writerInput.masterProfile),
+      roleProjectEvidenceSection: renderRoleProjectEvidenceSection(scopedRoleEvidence),
+      jdPriorityMatrix: exportJdPriorityMatrix,
+      positioningRecommendation: exportPositioningRecommendation,
+      recommendedSkillOrder: exportSkillOrder,
+      atsCoverageReportText: exportAtsCoverageText,
+      patchEligiblePaths: exportPatchEligiblePaths,
+      coverLetterContextOmitted: exportOmitCoverLetter,
+      contextManifestSection: exportContextManifestSection || undefined,
+      instructionsScopeNote: exportInstructionsScopeNote,
+      singlePassMode: true,
+    });
+
+    const masterReferenceIsJson = fs.existsSync(path.join(handoffDir, "master_resume_reference.json"));
+    const masterReferenceFileContent = fs.readFileSync(
+      path.join(handoffDir, masterReferenceIsJson ? "master_resume_reference.json" : "master_resume.txt"),
+      "utf-8"
+    );
+    const previousResumePath = path.join(handoffDir, "previous_resume_content.json");
+    const previousCoverLetterPath = path.join(handoffDir, "previous_cover_letter_content.json");
+
+    const unifiedHandoff = buildUnifiedWriterHandoff({
+      promptContent: singlePassPromptContent,
+      instructionsFileContent: fs.readFileSync(path.join(handoffDir, "resume_tailoring_instructions.md"), "utf-8"),
+      masterReferenceFileContent,
+      masterReferenceIsJson,
+      jobRequirementsFileContent: fs.readFileSync(path.join(handoffDir, "extracted_job_requirements.json"), "utf-8"),
+      msiFileContent: fs.readFileSync(path.join(handoffDir, "master_skills_inventory.md"), "utf-8"),
+      previousResumeFileContent: fs.existsSync(previousResumePath) ? fs.readFileSync(previousResumePath, "utf-8") : undefined,
+      previousCoverLetterFileContent: fs.existsSync(previousCoverLetterPath) ? fs.readFileSync(previousCoverLetterPath, "utf-8") : undefined,
+    });
+    writePackageFile("writer_handoff.md", unifiedHandoff);
   }
 
   // 9. review.json & review_feedback.md (if previous iteration exists)

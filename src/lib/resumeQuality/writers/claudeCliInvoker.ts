@@ -133,7 +133,28 @@ const DEFAULT_MAX_BUDGET_USD = 2;
 const DEFAULT_ATTEMPTS = 3;
 const DEFAULT_RETRY_BACKOFF_MS = 3_000;
 
-const DRIVING_PROMPT =
+/**
+ * CLAUDE WRITER SPEED PHASE (2026-08-23) — SINGLE-PASS HANDOFF: BUILT, MEASURED, NOT ENABLED.
+ *
+ * exporter.ts now ALSO writes writer_handoff.md (unifiedHandoff.ts) — one self-contained document
+ * carrying the same semantic content as writer_prompt.md plus its companion files, spliced together
+ * so a writer that reads only it needs a single Read call instead of several. The architecture is
+ * real, tested (see unifiedHandoff.test.ts and externalHandoff.test.ts's CLAUDE WRITER SPEED PHASE
+ * tests), and available.
+ *
+ * IT IS DELIBERATELY NOT WIRED IN HERE. A real, paired live A/B comparison (2 multi-file runs, 2
+ * single-pass runs, same candidate/JD/model, real Claude Code CLI invocations) measured a real
+ * quality difference: both single-pass runs scored a truthfulnessScore of 55 and 70, against 100 and
+ * 100 for both multi-file runs, with more EMPLOYER_CONTRADICTION blocking failures in the single-pass
+ * pair. Two runs per arm is a small sample and this is not proof the transport CAUSES the difference —
+ * but the ticket this work was built under is explicit: "QUALITY > SPEED... TRUTHFULNESS > QUALITY...
+ * If single-pass produces materially worse quality: STOP. Do not ship merely for speed." A wall-clock
+ * gain (which itself did not clearly materialize either — see the phase's own final report) is not
+ * worth risking truthfulness on data this suggestive. DRIVING_PROMPT therefore stays on the original,
+ * proven multi-file instruction. Re-enabling single-pass transport needs a larger, dedicated
+ * quality-focused study before it should ever drive a real handoff.
+ */
+export const DRIVING_PROMPT =
   "Read writer_prompt.md in the current directory and follow it exactly. Read every file it " +
   "references that exists in this directory. When finished, write the single file " +
   "writer_output.json in this exact directory matching the schema in writer_prompt.md. Do not " +
