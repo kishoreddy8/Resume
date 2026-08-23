@@ -103,6 +103,15 @@ export interface EvaluateInstructionComplianceInput {
 
   // Banned language in the Professional Summary (from summaryChecks.evaluateSummaryAlignment)
   bannedLanguageInSummaryCount: number;
+  /** SUMMARY QUALITY V2 (2026-08-23): the actual finding text behind bannedLanguageInSummaryCount
+   *  (banned phrases, third-person narration, technology-dump wording, and — new this revision —
+   *  summaryChecks.ts's styleIssuesFound: abstract framing, missing target-role clarity, keyword
+   *  stuffing, secondary-differentiator dominance, missing JD-dominant technology). Optional so
+   *  every existing caller that only ever had the count keeps compiling; when present, it becomes
+   *  this check's checkNotes so the resulting correction is actionable instead of a bare "FAIL", and
+   *  — critically — so its text contains the word "Summary", which is what lets repairScope.ts route
+   *  the resulting correction to the summary as an editable path instead of leaving it unresolved. */
+  bannedLanguageInSummaryDetails?: string[];
 
   // Cross-document consistency (from crossDocumentChecks.evaluateCrossDocumentConsistency)
   crossDocumentStatus: ComplianceStatus;
@@ -272,6 +281,9 @@ export function evaluateInstructionCompliance(input: EvaluateInstructionComplian
   // P. Banned AI language (bullets + summary, combined)
   const bannedTotal = input.bannedLanguageInBulletsCount + input.bannedLanguageInSummaryCount;
   checks.bannedLanguage = bannedTotal > 0 ? "FAIL" : "PASS";
+  if (input.bannedLanguageInSummaryDetails && input.bannedLanguageInSummaryDetails.length > 0) {
+    note("bannedLanguage", ...input.bannedLanguageInSummaryDetails);
+  }
 
   // Q. No duplicate bullet phrasing
   checks.noDuplicateBulletPhrasing = input.duplicateBulletCount > 0 ? "FAIL" : "PASS";

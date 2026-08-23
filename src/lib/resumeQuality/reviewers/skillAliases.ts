@@ -102,3 +102,30 @@ export function extractCanonicalSkillsFromText(text: string): Set<string> {
   }
   return found;
 }
+
+/** Same matching as extractCanonicalSkillsFromText, but also returns each match's SkillCategory —
+ *  needed by summaryChecks.ts's secondary-differentiator-dominance check (e.g. detecting whether
+ *  "AI / ML" mentions outnumber the candidate's primary domain in a Professional Summary written for
+ *  a non-AI/ML target role). Kept as a separate function rather than changing
+ *  extractCanonicalSkillsFromText's return type, since that function's existing Set<string> callers
+ *  (ATS/keyword/skills-ordering checks) have no use for category and shouldn't have to unwrap it. */
+export function extractCanonicalSkillsWithCategoryFromText(text: string): Map<string, SkillCategory> {
+  const found = new Map<string, SkillCategory>();
+  const normalized = normalize(text);
+  const consumed: [number, number][] = [];
+
+  for (const { canonical, category, alias } of COMBINED_ALIASES) {
+    const regex = new RegExp(`(?<![\\w-])${escapeRegExp(alias)}(?![\\w-])`, "gi");
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(normalized)) !== null) {
+      const start = match.index;
+      const end = start + match[0].length;
+      const overlapsConsumed = consumed.some(([cs, ce]) => start < ce && end > cs);
+      if (!overlapsConsumed) {
+        found.set(canonical, category);
+        consumed.push([start, end]);
+      }
+    }
+  }
+  return found;
+}

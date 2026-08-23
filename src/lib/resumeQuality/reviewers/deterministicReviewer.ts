@@ -100,7 +100,7 @@ export function reviewResumeDeterministically(
   const bullets = evaluateBulletChecks(resume.experience);
   const truthfulness = evaluateTruthfulness(resume, masterResumeProfile);
   const architecture = evaluateArchitectureConsistency(resume.experience);
-  const summary = evaluateSummaryAlignment(resume.summary, jobRequirements);
+  const summary = evaluateSummaryAlignment(resume.summary, jobRequirements, targetRoleTitle);
   const skillsOrdering = evaluateSkillsOrdering(resume.skillGroups, jobRequirements);
 
   const recruiterReadabilityScore = clamp(100 - bullets.readabilityDeductions);
@@ -218,7 +218,21 @@ export function reviewResumeDeterministically(
     genericBulletsCount: bullets.genericBullets.length,
     bannedLanguageInBulletsCount: bullets.bannedLanguageCount,
     overlyLongOrShortCount: bullets.lengthViolationCount,
-    bannedLanguageInSummaryCount: summary.bannedLanguageFound.length + bannedStyleCount,
+    // SUMMARY QUALITY V2 (2026-08-23): summary.styleIssuesFound folds in real, deterministic
+    // summary quality defects (abstract framing, target-role clarity, keyword stuffing, secondary-
+    // differentiator dominance, missing JD-dominant technology) — previously these only reached
+    // summaryIssues (advisory-only, never gated), which is exactly why a live run's weak summary
+    // was untouched by a TARGETED_REPAIR: there was no compliance signal for it to trip. Folded into
+    // the SAME bannedLanguage soft-gate signal as summaryNarration/gateBlockingStyle above, per this
+    // file's own established precedent for summary-register defects that deserve teeth without
+    // becoming a new named compliance check or a truthfulness blocker.
+    bannedLanguageInSummaryCount: summary.bannedLanguageFound.length + bannedStyleCount + summary.styleIssuesFound.length,
+    // Every one of summary.styleIssuesFound's messages already starts with "Summary ..." (by
+    // construction in summaryChecks.ts) — this is what lets repairScope.ts's operationKind()/needle
+    // matching route the resulting correction to the summary as an editable path. Deliberately does
+    // NOT also carry summaryNarration/gateBlockingStyle here: those are pre-existing, already-tested
+    // signals with their own established (untouched) wiring — this field only carries the NEW checks.
+    bannedLanguageInSummaryDetails: summary.styleIssuesFound,
     crossDocumentStatus: crossDocument.status,
     crossDocumentContradictions: crossDocument.contradictions,
     duplicateBulletCount: bullets.duplicateBulletCount,

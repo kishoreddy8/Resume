@@ -23,17 +23,23 @@ import crypto from "node:crypto";
  * requirements — all per the user-approved scope for that task — and raises the bullet-cap ceilings
  * modestly (current role 7→8, second role 6→7, older roles 5→6, total 18→21) to give distributed
  * evidence room without unconfining overall resume length. The 2026-08-22b revision (same day, a
- * second pass) strengthens PROFESSIONAL SUMMARY STRUCTURE after a live run produced a 3-sentence
- * summary that skipped the candidate's own stated years of experience: years-of-experience is now
- * explicit and mandatory whenever a truthful figure exists, and each of the six information beats
- * must land as its own sentence rather than being compressible into fewer. It supersedes the earlier
- * text as the authoritative standard from this point on.
+ * second pass) strengthened PROFESSIONAL SUMMARY STRUCTURE after a live run produced a 3-sentence
+ * summary that skipped the candidate's own stated years of experience, requiring each of six
+ * information beats to land as its own sentence. A live run under 2026-08-22b then showed a
+ * real regression the mandate introduced: mechanically one-beat-per-sentence produced abstract,
+ * subject-driven prose ("Platform design spans...", "Pipeline ownership spans...") that scans
+ * slower than natural writing. The 2026-08-23 revision (SUMMARY QUALITY + WRITER TOKEN
+ * OPTIMIZATION) relaxes the one-beat-per-sentence mandate back to a preferred (not rigid) order,
+ * keeps years-of-experience honesty, and adds an explicit concrete-verb preference over abstract
+ * framing, an anti-keyword-stuffing rule, and an explicit "don't let a secondary differentiator
+ * dominate the primary domain" rule. It supersedes the earlier text as the authoritative standard
+ * from this point on.
  *
  * NEVER paraphrase or edit this string — any wording change to the actual standard must come from
  * the user, land here first, and get a new instructionVersion.
  */
 
-export const INSTRUCTION_VERSION = "2026-08-22b";
+export const INSTRUCTION_VERSION = "2026-08-23";
 
 export const CANONICAL_TAILORING_INSTRUCTIONS = `Resume Tailoring System Instructions
 Master + Guardrail Addendum — Updated 2026-08-22
@@ -143,15 +149,17 @@ Tailor primarily toward that architecture rather than attempting to force every 
 ⸻
 
 PROFESSIONAL SUMMARY STRUCTURE
-A recruiter must understand the candidate's positioning in about 5-8 seconds. Abstract, engineering-description-heavy openings ("Pipeline ownership spans ingestion, distributed processing...") are too slow to scan and must be avoided.
-Write 4-6 concise sentences, EACH covering exactly one of the six beats below as its own sentence. Do not compress two or more beats into one sentence, and do not skip a beat merely because it is convenient to fold into another one — the only reason to omit a beat is that the underlying fact genuinely does not exist or is not supported (never that it was inconvenient to phrase separately). A summary that lands at 3 sentences by merging beats together is NOT compliant with this structure even if it happens to read smoothly.
-1. Primary professional identity AND years of experience, in the SAME sentence, whenever a truthful total-years figure exists anywhere in the Master Resume/candidate profile (an explicit "X years" statement in the Master Resume's own text, or a computed total from employment dates) — this is mandatory, not optional, whenever that figure exists; only omit it when no such figure can be honestly established. Do not inflate it, and do not round up.
-2. Target-role/domain positioning, as its own sentence.
-3. The highest-priority JD technologies that the candidate has real evidence for, as its own sentence.
-4. Architecture/workload breadth (e.g. batch and real-time, scale, platform diversity) when genuinely supported, as its own sentence.
-5. Production/engineering strengths (data quality, performance, CI/CD, reliability) when genuinely supported, as its own sentence.
-6. A relevant secondary differentiator (for example AI/ML) only when it is genuinely supported and adds real value for this JD — never when it would outrank or crowd out the primary positioning — as its own sentence.
-Every sentence must be candidate-specific, JD-specific, and evidence-grounded. Do not claim a JD requirement the candidate has no evidence for. Do not repeat the same technology name across multiple sentences when it adds nothing new. Prefer concrete language over abstract description wherever a concrete one is available and supported.
+A recruiter must understand the candidate's positioning in about 5-8 seconds. Write approximately 4-6 concise sentences (or a visually equivalent short set of lines) covering, in roughly this order, whichever of the following the candidate genuinely has:
+1. Primary professional identity.
+2. Truthful years of experience, when safely available — an explicit "X years" statement in the Master Resume's own text, or a computed total from employment dates. Do not inflate it, do not round up, and never state a figure that cannot be honestly established.
+3. Target-role/domain positioning.
+4. The highest-priority JD technologies the candidate has real evidence for.
+5. Architecture/workload breadth (e.g. batch and real-time, scale, platform diversity) when genuinely supported.
+6. Production/engineering strengths (data quality, performance, CI/CD, reliability) when genuinely supported.
+7. A relevant secondary differentiator (for example AI/ML) only when it is genuinely supported and adds real value for this JD — never when it would outrank or crowd out the primary positioning.
+Do NOT mechanically force each item onto its own sentence — combine related beats into one sentence wherever that reads more naturally (identity + YOE in one sentence is normal and encouraged), and skip an item entirely when the candidate has nothing genuine to say for it. The order above is a preference, not a rigid template.
+Favor concrete, direct verbs the writer actually did: "Built...", "Delivered...", "Engineered...", "Experienced in...", "Hands-on experience with...", "Engineering experience includes...". Avoid vague, abstract subject-driven framing that names no concrete action — for example "Pipeline ownership spans...", "Platform design spans...", "Engineering practice pairs...", "Capabilities encompass..." — whenever a more concrete statement is available; a recruiter should see what the candidate DID, not an abstract description of a practice.
+Every sentence must be candidate-specific, JD-specific, and evidence-grounded. Do not claim a JD requirement the candidate has no evidence for. Do not repeat the same technology name across multiple sentences when it adds nothing new. Do not let a secondary differentiator (e.g. AI/ML) dominate the summary's technology mentions when the target role/JD is not itself in that domain. Do not turn the summary into a keyword list — every technology named must sit inside a real sentence about what the candidate did with it, not a comma-separated dump.
 This structure applies to INITIAL_GENERATION. A Professional Summary that already satisfies the deterministic reviewer must not be opportunistically rewritten by a later TARGETED_REPAIR pass unless a specific finding names it.
 
 ⸻
