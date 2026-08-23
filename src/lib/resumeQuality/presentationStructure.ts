@@ -473,27 +473,37 @@ export function filterRoleProjectEvidence(evidence: RoleProjectEvidence[], scope
  */
 export function renderRoleProjectEvidenceSection(evidence: RoleProjectEvidence[]): string {
   if (evidence.length === 0) return "";
+  // SUMMARY QUALITY + WRITER TOKEN OPTIMIZATION (2026-08-23, pass 2) — this section used to reprint
+  // every employer's full technology list a second time, identical to the "Already written here"
+  // list the PER-EMPLOYER EVIDENCE section (employerEvidence.ts's renderEmployerEvidenceSection)
+  // already renders — role.evidencedTechnologies IS that same `supported` array (see
+  // collectRoleProjectEvidence above: `employerEvidence?.supported`). It is dropped from THIS
+  // section's OUTPUT (the field itself stays on RoleProjectEvidence — still used internally, just
+  // above, to decide supportsProjectLine) and replaced with a reference, so the technology list
+  // exists in the prompt exactly once regardless of render order.
   let out = "## PER-ROLE EVIDENCE FOR THE Project: AND Environment: LINES\n\n";
   out +=
-    "For each role below you are given every technology CareerOps has recorded FOR THAT EMPLOYER. " +
-    "This is the complete set you may draw on — and it is a menu, not a checklist.\n\n";
+    "Each employer's full technology list is given once, in the PER-EMPLOYER EVIDENCE section " +
+    "(\"Already written here\" / \"Available here under the MSI rule\") — this section adds only what " +
+    "that one doesn't: whether a Project line is supported for each role, and how to select the " +
+    "Environment line from it.\n\n";
   for (const role of evidence) {
     out += `### ${role.employer} — ${role.title}\n`;
     out += `- Reviewed bullets available for this role: ${role.bulletCount}\n`;
-    out += `- Technologies evidenced at this employer (${role.evidencedTechnologies.length}): ${role.evidencedTechnologies.join(", ") || "none recorded"}\n`;
     out += role.supportsProjectLine
       ? `- **Project line: REQUIRED.** Write one sentence, or at most ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences, ` +
         `naming what this role's work was with no more than ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies, built only from the ` +
-        `bullets you wrote for it and the technologies above. No new client, system, domain or metric.\n\n`
+        `bullets you wrote for it and that employer's technology list above. No new client, system, domain or metric.\n\n`
       : `- **Project line: OMIT.** CareerOps has no recorded technologies or bullets for this role, so there is ` +
         `nothing to describe. Leave \`projectDescription\` out rather than inventing scope.\n\n`;
   }
   out +=
     `**Environment line.** Choose the ${ENVIRONMENT_MIN_ITEMS}-${ENVIRONMENT_MAX_ITEMS} technologies from that ` +
-    "employer's list that are strongest for THIS job description, most JD-relevant first. Do not paste the whole " +
-    "list — an Environment line that reproduces every recorded technology is a dump, not a selection, and is " +
-    "flagged as one. A technology may legitimately appear under more than one employer when that employer's own " +
-    "evidence supports it; what you may never do is move one to an employer whose evidence does not.\n\n";
+    "employer's list (in PER-EMPLOYER EVIDENCE above) that are strongest for THIS job description, most " +
+    "JD-relevant first. Do not paste the whole list — an Environment line that reproduces every recorded " +
+    "technology is a dump, not a selection, and is flagged as one. A technology may legitimately appear under " +
+    "more than one employer when that employer's own evidence supports it; what you may never do is move one to " +
+    "an employer whose evidence does not.\n\n";
   return out;
 }
 

@@ -223,7 +223,7 @@ Where each value goes:
 - **LinkedIn** — resume only, and only when given above. The cover letter header does not carry it.
   Omitting it from the cover letter is correct and is not an inconsistency between the documents.
 
-${input.repairPlanSection ?? ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.employerEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
+${input.repairPlanSection ?? ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
 1. **Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
    - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.

@@ -543,8 +543,12 @@ test("S31-28 the per-role evidence the writer needs is computed, and present on 
   const section = renderRoleProjectEvidenceSection(firstPass);
   assert.match(section, /Comerica Bank/);
   assert.match(section, /Project line: REQUIRED/);
-  assert.match(section, /Azure Data Factory/, "the writer must see the actual technologies");
-  assert.match(section, /it is a menu, not a checklist/);
+  // SUMMARY QUALITY + WRITER TOKEN OPTIMIZATION (2026-08-23, pass 2) — this section no longer
+  // repeats each employer's technology list a second time (it is identical to, and now deduplicated
+  // against, the "Already written here" list renderEmployerEvidenceSection already renders); it
+  // references that section by name instead.
+  assert.doesNotMatch(section, /Azure Data Factory/, "the technology list itself must live in PER-EMPLOYER EVIDENCE only, not be duplicated here");
+  assert.match(section, /PER-EMPLOYER EVIDENCE section/, "must point the writer at the single source of the technology list");
 
   // Later iterations reuse the draft's own roles and bullet counts.
   const later = collectRoleProjectEvidence(resume(), PROFILE);
