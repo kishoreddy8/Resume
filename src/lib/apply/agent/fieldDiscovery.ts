@@ -20,6 +20,14 @@ export interface RawControl {
   name: string | null;
   ariaLabel: string | null;
   labelText: string | null;
+  /** The `role` attribute. Modern searchable-select libraries (react-select and similar) render an
+   *  ordinary `<input>` with `role="combobox"` rather than a native `<select>` — without this, that
+   *  control is indistinguishable from a plain text field. */
+  role?: string | null;
+  /** The `class` attribute, as a generic secondary signal only — react-select's own default class
+   *  names (e.g. "…select__input…") are a library convention used across many ATS boards, not a
+   *  Celigo-specific hack. Never the primary signal; `role="combobox"` is checked first. */
+  className?: string | null;
   /**
    * Text from the element that visually captions this control, when there is no <label for>.
    *
@@ -33,9 +41,17 @@ export interface RawControl {
   options?: string[];
 }
 
+/** react-select's own generated class prefix — a library convention, not any one company's markup. */
+const COMBOBOX_CLASS_PATTERN = /\bselect__input\b/;
+
 function kindOf(raw: RawControl): DiscoveredField["kind"] {
   if (raw.tag === "textarea") return "textarea";
   if (raw.tag === "select") return "select";
+  // Checked before the type-based switch below: a combobox input's own `type` is ordinarily "text"
+  // (or absent), which would otherwise fall through to the generic text case and be filled the same
+  // unsafe way as a free-text box — exactly the GAP-2 bug observed on a real Greenhouse form.
+  if (raw.role === "combobox") return "combobox";
+  if (raw.className && COMBOBOX_CLASS_PATTERN.test(raw.className)) return "combobox";
   switch (raw.type) {
     case "email":
       return "email";
@@ -63,6 +79,14 @@ function cleanLabel(text: string | null): string | null {
   return cleaned.length > 0 ? cleaned : null;
 }
 
+/** Escapes a value for safe embedding inside a double-quoted CSS attribute selector. The only two
+ *  characters that could break out of the quotes — or be read as selector syntax — are the quote
+ *  itself and the backslash; both are escaped, and nothing else is altered. Never interpolates a
+ *  raw, unescaped value into a selector string. */
+function escapeAttributeValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 /**
  * A selector that will find this control again after a reload.
  *
@@ -71,8 +95,15 @@ function cleanLabel(text: string | null): string | null {
  * avoiding, and there is always the option of asking the user.
  */
 export function selectorFor(raw: RawControl): string | null {
-  if (raw.id && /^[A-Za-z][\w-]*$/.test(raw.id)) return `#${raw.id}`;
-  if (raw.name) return `[name="${raw.name}"]`;
+  if (raw.id) {
+    if (/^[A-Za-z][\w-]*$/.test(raw.id)) return `#${raw.id}`;
+    // A real id that doesn't parse as a bare CSS identifier — most commonly a numeric id like
+    // Greenhouse's demographic controls ("16768"), which `#16768` cannot address at all without
+    // CSS's own digit-escaping rules. An attribute selector addresses it exactly instead, with the
+    // value safely escaped rather than interpolated raw.
+    return `[id="${escapeAttributeValue(raw.id)}"]`;
+  }
+  if (raw.name) return `[name="${escapeAttributeValue(raw.name)}"]`;
   return null;
 }
 
@@ -113,6 +144,8 @@ export const COLLECT_CONTROLS_SCRIPT = `
     id: el.id || null,
     name: el.getAttribute("name"),
     ariaLabel: el.getAttribute("aria-label"),
+    role: el.getAttribute("role"),
+    className: el.getAttribute("class"),
     labelText: (el.id && document.querySelector('label[for="' + el.id + '"]')?.textContent) || null,
     ancestorText: (el.closest("li, .application-question, .application-field, fieldset")
       ?.querySelector(".application-label, legend, label, .text")?.textContent || null),

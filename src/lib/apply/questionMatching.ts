@@ -28,8 +28,15 @@ export function normalizeQuestion(raw: string): string {
 interface Rule {
   key: string;
   type: QuestionType;
-  /** ALL must appear in the normalised text. */
-  all: string[];
+  /** ALL must appear in the normalised text, as a plain substring. Safe for multi-word phrases
+   *  ("current location") which are vanishingly unlikely to occur as an accidental fragment of an
+   *  unrelated word; unsafe for a short single token — see `wordBoundary`. */
+  all?: string[];
+  /** A single token that must appear as a WHOLE WORD, not merely a substring — required for a short
+   *  token that could otherwise match inside an unrelated word (e.g. plain substring "city" would
+   *  also match inside "ethnicity", silently reclassifying a protected demographic question as an
+   *  ordinary contact one). May be combined with `all` — both must hold. */
+  wordBoundary?: string;
   /** NONE may appear — the guard that keeps opposite questions apart. */
   none?: string[];
 }
@@ -54,6 +61,14 @@ const RULES: Rule[] = [
   { key: "email", type: "contact", all: ["email"] },
   { key: "phone", type: "contact", all: ["phone"] },
   { key: "location_current", type: "contact", all: ["current location"] },
+  // "relocat" (stem, not "relocate" alone) excludes both "relocate" and "relocation" — a relocation
+  // question is about a DIFFERENT city than the one the candidate lives in now, never answered with
+  // the current-location value.
+  { key: "location_city", type: "contact", all: ["location"], wordBoundary: "city", none: ["relocat"] },
+  { key: "location_city", type: "contact", wordBoundary: "city", none: ["relocat"] },
+  // "Country code" is a phone dial-code control, not the residency/location question — excluded so
+  // it never gets the candidate's country typed into a phone-prefix field.
+  { key: "country", type: "contact", all: ["country"], none: ["code"] },
   { key: "linkedin_url", type: "contact", all: ["linkedin"] },
   { key: "github_url", type: "contact", all: ["github"] },
   { key: "portfolio_url", type: "contact", all: ["portfolio"] },
@@ -102,7 +117,8 @@ export function matchQuestion(
   if (seen) return { canonicalKey: seen.canonicalKey, type: seen.type, via: "exact_variant" };
 
   for (const rule of RULES) {
-    if (!rule.all.every((t) => normalized.includes(t))) continue;
+    if (rule.all && !rule.all.every((t) => normalized.includes(t))) continue;
+    if (rule.wordBoundary && !new RegExp(`\\b${rule.wordBoundary}\\b`).test(normalized)) continue;
     if (rule.none?.some((t) => normalized.includes(t))) continue;
     return { canonicalKey: rule.key, type: rule.type, via: "pattern" };
   }

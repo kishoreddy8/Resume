@@ -2,6 +2,7 @@ import type { Page } from "playwright";
 import { advanceRun, getRun, recordEvent, updateCheckpoint, type ApplicationRun } from "@/db/queries/applicationRuns";
 import { discoverFields, COLLECT_CONTROLS_SCRIPT, type RawControl } from "../agent/fieldDiscovery";
 import { planFields, firstBlocker } from "../agent/planFields";
+import { exactComboboxOption } from "../agent/comboboxSelection";
 import { detectBlocking, BLOCKING_STATUS } from "../agent/detectBlocking";
 import { selectAdapter } from "../agent/selectAdapter";
 import { buildFinalReview, readSubmissionOutcome, type FinalReview } from "../finalReview";
@@ -60,18 +61,54 @@ async function collectSignals(page: Page): Promise<{ url: string; text: string; 
   return { url: page.url(), text, markers };
 }
 
-async function applyPlan(page: Page, plan: FieldPlan): Promise<void> {
+/**
+ * Selects one option in a react-select-style combobox (`role="combobox"`, no native `<select>`).
+ *
+ * Types the approved value to filter, reads whatever the browser actually shows (options only exist
+ * once the menu is open — see comboboxSelection.ts), and clicks the exact match. Returns null,
+ * clicking nothing, when there is no exact match: never a closest guess. `[role="option"]` is the
+ * accessible-name contract these menus render to, not any one library's class names, so this holds
+ * across ATS boards rather than being a Celigo-only selector hack.
+ */
+async function selectComboboxOption(page: Page, selector: string, targetValue: string): Promise<string | null> {
+  await page.click(selector);
+  await page.fill(selector, targetValue);
+  await page.waitForSelector('[role="option"]', { timeout: 2000 }).catch(() => null);
+  const visibleOptions = await page.$$eval('[role="option"]', (els) => els.map((el) => el.textContent?.trim() ?? ""));
+  const exact = exactComboboxOption(visibleOptions, targetValue);
+  if (!exact) return null;
+  const escaped = exact.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  await page
+    .locator('[role="option"]')
+    .filter({ hasText: new RegExp(`^${escaped}$`) })
+    .first()
+    .click();
+  return exact;
+}
+
+async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (plan.action === "fill") {
     if (plan.field.kind === "select") {
       await page.selectOption(plan.field.selector, { label: plan.value });
-    } else {
-      await page.fill(plan.field.selector, plan.value);
+      return { ok: true };
     }
-    return;
+    if (plan.field.kind === "combobox") {
+      const selected = await selectComboboxOption(page, plan.field.selector, plan.value);
+      if (!selected) {
+        return {
+          ok: false,
+          reason: `No option in this list exactly matches "${plan.value}" — Career-Ops never selects a close match.`,
+        };
+      }
+      return { ok: true };
+    }
+    await page.fill(plan.field.selector, plan.value);
+    return { ok: true };
   }
   if (plan.action === "upload") {
     await page.setInputFiles(plan.field.selector, plan.filePath);
   }
+  return { ok: true };
 }
 
 /**
@@ -140,7 +177,17 @@ export async function executeRun(
 
     for (const plan of plans) {
       if (plan.action !== "fill" && plan.action !== "upload") continue;
-      await applyPlan(session.page, plan);
+      const result = await applyPlan(session.page, plan);
+      if (!result.ok) {
+        /* A combobox with no exact option for the approved value — discoverable only once the menu
+         * is actually open, so this is caught here rather than during planning. Falls back to the
+         * SAME pause-and-ask behavior as any other unanswerable field; nothing here guesses. */
+        return advanceRun(runId, "WAITING_FOR_ANSWER", {
+          checkpoint,
+          blockingQuestion: plan.field.label ?? plan.field.selector,
+          blockingReason: result.reason,
+        });
+      }
       checkpoint.completed.push({
         selector: plan.field.selector,
         canonicalKey: plan.action === "fill" ? plan.canonicalKey : null,
@@ -232,8 +279,19 @@ export async function approveAndSubmit(
           (a) => a.question === (field.label ?? completed.canonicalKey ?? "")
         );
         if (line) {
-          if (field.kind === "select") await session.page.selectOption(field.selector, { label: line.value });
-          else await session.page.fill(field.selector, line.value);
+          if (field.kind === "select") {
+            await session.page.selectOption(field.selector, { label: line.value });
+          } else if (field.kind === "combobox") {
+            // Re-filling a previously approved combobox selection. A missing exact match here means
+            // the page diverged from what the user approved — fail closed via the outer catch rather
+            // than submit with something else selected.
+            const selected = await selectComboboxOption(session.page, field.selector, line.value);
+            if (!selected) {
+              throw new Error(`Approved combobox value "${line.value}" is no longer an exact option for ${field.label ?? field.selector}.`);
+            }
+          } else {
+            await session.page.fill(field.selector, line.value);
+          }
         }
       }
     }

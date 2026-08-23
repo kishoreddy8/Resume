@@ -54,6 +54,18 @@ function contactValueFor(canonicalKey: string, ctx: AdapterContext): string | nu
       return ctx.contact.phone || null;
     case "location_current":
       return ctx.contact.location || null;
+    case "location_city":
+      // The verified contact record stores one free-text location string ("Dallas, TX", "Remote,
+      // US") — never a separate city field. This reads the part before the first comma from that
+      // SAME already-verified value; it is not a new schema and not an inference, just the city
+      // portion of data the candidate already confirmed.
+      return ctx.contact.location.split(",")[0]?.trim() || null;
+    case "country":
+      // No verified country field exists anywhere in the candidate/contact schema, and one is
+      // deliberately not invented here — a "Country" question falls through to the Answer Vault
+      // below like any other question with no profile source, so it is asked once and then reused,
+      // never guessed or derived from the job/employer.
+      return null;
     case "linkedin_url":
       return ctx.contact.linkedin ?? null;
     case "github_url":

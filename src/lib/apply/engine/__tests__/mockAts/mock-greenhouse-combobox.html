@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- GAP-2/EXEC — a minimal react-select-style combobox, for proving the discover -> plan -> execute
+     pipeline actually drives a live `role="combobox"` / `role="option"` control end to end. Options
+     only exist once the (simulated) menu is open, mirroring how react-select really renders. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Greenhouse — Combobox</title></head>
+<body>
+  <h1>Apply — Combobox Test</h1>
+  <form id="application_form">
+    <label for="resume">Resume/CV*</label>
+    <input id="resume" type="file" required>
+
+    <label for="country">Country*</label>
+    <input id="country" role="combobox" class="select__input" type="text" required autocomplete="off">
+    <ul role="listbox" id="country_listbox"></ul>
+
+    <button id="submit_application" type="button"
+      onclick="document.body.innerHTML='<h1>Thank you for applying!</h1><p>Confirmation #MC-1.</p>'">
+      Submit Application
+    </button>
+  </form>
+  <script>
+    var OPTIONS = ["Canada", "Mexico", "United Kingdom"];
+    var input = document.getElementById("country");
+    var listbox = document.getElementById("country_listbox");
+    function render(filterText) {
+      listbox.innerHTML = "";
+      var q = (filterText || "").toLowerCase();
+      for (var i = 0; i < OPTIONS.length; i++) {
+        var opt = OPTIONS[i];
+        if (!q || opt.toLowerCase().indexOf(q) !== -1) {
+          var li = document.createElement("li");
+          li.setAttribute("role", "option");
+          li.textContent = opt;
+          (function (value) {
+            li.addEventListener("click", function () {
+              input.value = value;
+              input.setAttribute("data-selected", value);
+              listbox.innerHTML = "";
+            });
+          })(opt);
+          listbox.appendChild(li);
+        }
+      }
+    }
+    input.addEventListener("input", function () { render(input.value); });
+    input.addEventListener("focus", function () { render(input.value); });
+  </script>
+</body>
+</html>

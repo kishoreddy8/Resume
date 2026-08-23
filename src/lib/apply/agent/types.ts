@@ -14,7 +14,7 @@ import type { AnswerSource, QuestionType } from "../questionTypes";
 export interface DiscoveredField {
   /** A selector that will find this control again. Prefer #id; see fieldDiscovery for why. */
   selector: string;
-  kind: "text" | "email" | "tel" | "textarea" | "select" | "checkbox" | "radio" | "file" | "unknown";
+  kind: "text" | "email" | "tel" | "textarea" | "select" | "combobox" | "checkbox" | "radio" | "file" | "unknown";
   /** The visible label, or the accessible name. This is what gets matched against questions. */
   label: string | null;
   id: string | null;
