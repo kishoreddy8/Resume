@@ -869,7 +869,7 @@ test("17. READY creates final artifacts in final/ directory", async () => {
   assert(fs.existsSync(path.join(res.finalDirectory, "resume_review_feedback.md")));
 });
 
-test("17b. a candidate's real embedded Master Resume certification badge is preserved through the orchestrator's OWN render path (not just tailoringExecution.ts)", async () => {
+test("17b. a candidate's real embedded Master Resume certification badge is preserved through the orchestrator's OWN render path (not just tailoringExecution.ts)", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   // Found live during the Srikanth (candidate 13) certification run: orchestrator.ts's own
   // generateTailoringOutputs call — the ONLY place a resume-quality workflow's Resume.docx is ever
   // actually rendered — never passed masterResumeDocxPath at all, so every INITIAL_GENERATION/

@@ -83,7 +83,7 @@ test("Phase H: badge runs are capped at 3 even with more recognized families", (
 
 // --- Integration: the real DOCX renderer, real ATS text extraction, real XML structure -------------
 
-test("Phase H: a candidate with a recognized certification gets a top-right badge run AND the full certification text, with no forbidden table", async () => {
+test("Phase H: a candidate with a recognized certification gets a top-right badge run AND the full certification text, with no forbidden table", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-certbadge-"));
   try {
     const outputPath = path.join(tmpDir, "Resume.docx");
@@ -172,7 +172,7 @@ test("Phase H: a candidate with zero certifications renders cleanly with no badg
   }
 });
 
-test("Phase H: multiple certifications across different vendor families all badge and all remain in text", async () => {
+test("Phase H: multiple certifications across different vendor families all badge and all remain in text", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-certbadge-multi-"));
   try {
     const outputPath = path.join(tmpDir, "Resume.docx");
@@ -244,7 +244,7 @@ test("Phase H: a targeted repair that never touches certifications leaves the ba
 
 const KNOWN_NON_BLACK_COLORS = new Set(["FFFFFF", "0563C1"]); // badge white; hyperlink blue
 
-test("Clarification: every run color is black except hyperlinks (blue, per the reference resume) and the badge cards' own white text", async () => {
+test("Clarification: every run color is black except hyperlinks (blue, per the reference resume) and the badge cards' own white text", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-resume-color-"));
   try {
     const withBadge = path.join(tmpDir, "with-badge.docx");

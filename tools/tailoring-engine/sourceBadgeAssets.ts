@@ -161,9 +161,11 @@ export async function extractSourceCertificationBadges(masterResumeDocxPath: str
 
 // Compact by construction: a fixed display height, width derived from the source image's own
 // pixel aspect ratio (never distorted), capped so an unusually wide source image cannot dominate
-// the line it sits on.
-const BADGE_DISPLAY_HEIGHT = 30;
-const BADGE_DISPLAY_MAX_WIDTH = 110;
+// the line it sits on. Sized against the name line's own text height (SIZE_NAME, 20pt/~46px cap
+// region) now that badges ride that line — large enough to read clearly at the top-right corner,
+// still visibly secondary to the candidate's own name.
+const BADGE_DISPLAY_HEIGHT = 46;
+const BADGE_DISPLAY_MAX_WIDTH = 140;
 
 function displaySize(asset: SourceBadgeAsset): { width: number; height: number } {
   const width = Math.round(BADGE_DISPLAY_HEIGHT * (asset.pixelWidth / asset.pixelHeight));
@@ -189,5 +191,27 @@ export function buildSourceCertificationBadgeRuns(assets: SourceBadgeAsset[]): I
         },
       })
   );
+}
+
+// docx.js ImageRun transformation width/height are in pixels at the standard 96 DPI OOXML uses for
+// EMU conversion (1 px = 9525 EMU); 1 twip = 635 EMU, so 1 px = 9525 / 635 = 15 twips exactly.
+const TWIPS_PER_PIXEL = 15;
+
+/**
+ * The combined display width of every badge, in twips — used to compute a LEFT tab-stop position
+ * that lands the badge ROW's own left edge exactly `totalWidth` short of the content's right
+ * margin, rather than relying on a right tab-stop to self-compute that from the trailing runs.
+ *
+ * WHY NOT JUST A RIGHT TAB STOP. That was the first implementation, and it is correct per the OOXML
+ * spec — but real-world testing against two independent renderers (docx-preview and macOS Quick
+ * Look) showed neither one correctly sums the width of multiple sequential ImageRun siblings
+ * following one <w:tab/> when computing where a right-aligned tab target actually lands; both
+ * under-shoot the true right margin by a growing margin as more badges are added. A LEFT tab stop
+ * at a position this module computes itself has no such dependency — the renderer only has to jump
+ * the cursor to a fixed X and then lay out ordinary inline content, the single most universally
+ * correct tab behavior there is.
+ */
+export function sumBadgeDisplayWidthTwips(assets: SourceBadgeAsset[]): number {
+  return assets.reduce((sum, asset) => sum + displaySize(asset).width * TWIPS_PER_PIXEL, 0);
 }
 

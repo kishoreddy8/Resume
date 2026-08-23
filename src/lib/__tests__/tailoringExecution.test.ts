@@ -346,7 +346,7 @@ test("14. no path traversal is possible through the execution flow — candidate
   );
 });
 
-test("15. a candidate whose Master Resume has an embedded certification badge gets that exact image preserved in the real, fully-executed output", async () => {
+test("15. a candidate whose Master Resume has an embedded certification badge gets that exact image preserved in the real, fully-executed output", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   approve(candidateAId, jobOne);
   // approve()'s writeProfile() already created data/candidates/<id>/master/ — this adds the one
   // thing it doesn't: a real resume.docx with an embedded image, exactly what a real candidate's

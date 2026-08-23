@@ -113,15 +113,26 @@ export async function validateDocx(
       violations.push("No role-header tab-stop paragraphs found — expected one per Professional Experience entry");
     }
     for (const [para] of tabsParagraphs) {
-      const posMatch = para.match(/<w:tab w:val="right" w:pos="(\d+)"\/>/);
+      // Right tab stops (company/dates, the headline text-badge row) always sit exactly at the
+      // content's right margin. Left tab stops exist for exactly one reason — the name-line source-
+      // badge row (resume-template.ts's nameLine) — where the position is deliberately
+      // CONTENT_WIDTH minus the badge row's own computed width, so its right EDGE (not the tab
+      // stop itself) lands at the margin; see sourceBadgeAssets.ts's sumBadgeDisplayWidthTwips for
+      // why that is computed here rather than trusted to a right-tab-stop's own width summation.
+      const rightMatch = para.match(/<w:tab w:val="right" w:pos="(\d+)"\/>/);
+      const leftMatch = para.match(/<w:tab w:val="left" w:pos="(\d+)"\/>/);
+      const posMatch = rightMatch ?? leftMatch;
       if (!posMatch) {
-        violations.push("A paragraph declares <w:tabs> but no right tab stop was found");
+        violations.push("A paragraph declares <w:tabs> but no real left/right tab stop was found");
         continue;
       }
-      if (Number(posMatch[1]) !== CONTENT_WIDTH) {
+      if (rightMatch && Number(rightMatch[1]) !== CONTENT_WIDTH) {
         violations.push(
-          `Tab stop position ${posMatch[1]} does not equal the derived content width ${CONTENT_WIDTH} (must be computed from page width minus margins, never hard-coded)`
+          `Right tab stop position ${rightMatch[1]} does not equal the derived content width ${CONTENT_WIDTH} (must be computed from page width minus margins, never hard-coded)`
         );
+      }
+      if (leftMatch && Number(leftMatch[1]) > CONTENT_WIDTH) {
+        violations.push(`Left tab stop position ${leftMatch[1]} exceeds the derived content width ${CONTENT_WIDTH} — it would sit past the right margin`);
       }
       if (!/<w:r>(?:(?!<\/w:r>).)*<w:tab\/>/.test(para)) {
         violations.push(

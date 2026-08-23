@@ -36,7 +36,9 @@ import {
 } from "./constants";
 import type { ExperienceEntry, KeyProject, ResumeContent } from "./types";
 import { buildCertificationBadgeRuns } from "./certificationBadges";
-import { extractSourceCertificationBadges, buildSourceCertificationBadgeRuns } from "./sourceBadgeAssets";
+// sourceBadgeAssets.ts's extraction/build functions are intentionally NOT imported here while
+// BADGES_ENABLED is false below — badges are disabled per explicit user request; the module itself
+// is untouched for a future re-enable.
 
 /**
  * Stage 31 — the reference-resume presentation standard.
@@ -79,36 +81,68 @@ function link(displayText: string, url: string, size = SIZE_CONTACT): ExternalHy
  * which is also what keeps the name, headline and contact line reading as one unit instead of
  * three separately-centred fragments of differing width.
  *
- * Phase H (clarified) — the candidate's certification badges, right tab-stopped to the content
- * margin, as one horizontal row on the headline line (see headlineLine below) — top-right, beside
- * the header, matching the reference resume's own badge placement. Tables, text boxes and floating
+ * Phase H (clarified again) — the candidate's certification badges, right tab-stopped to the
+ * content margin, as one horizontal row on the SAME line as the name — the true top-right corner,
+ * matching the reference resume's own badge placement exactly. Tables, text boxes and floating
  * shapes are forbidden for resume layout (validate-docx.ts — an existing ATS-safety gate this
- * change does not touch), so "beside the header, at the top right" is built the same way
- * `companyLine`'s dates already sit at the right margin: a real paragraph-level right tab stop,
- * never a second column — several ImageRun/TextRun badges simply flow left-to-right after that one
- * tab, exactly like any other inline run.
+ * change does not touch), so this is built the same way `companyLine`'s dates already sit at the
+ * right margin: a real paragraph-level right tab stop, never a second column — several ImageRun
+ * badges simply flow left-to-right after that one tab, exactly like any other inline run.
  *
- * The name line NEVER carries a badge run, deliberately: `texts[0]` of the rendered document is a
- * protected invariant elsewhere (stage311NameAndVoice.test.ts's "the display name survives
- * rendering exactly") — the candidate's own name is the one line in this document that must always
- * extract as pure, unaccompanied text, so it stays completely untouched by this feature.
+ * WHY THE NAME LINE IS SAFE HERE, WHEN IT WASN'T FOR TEXT BADGES. `texts[0]` of the rendered
+ * document is a protected invariant elsewhere (stage311NameAndVoice.test.ts's "the display name
+ * survives rendering exactly") — verified by extracting every `<w:t>` text node in the first
+ * paragraph and requiring it to equal the candidate's name exactly. A `Tab()` run and an `ImageRun`
+ * both produce zero `<w:t>` text content (`<w:tab/>` and `<w:drawing>` respectively) — only a run
+ * with an actual string produces `<w:t>`. So real preserved badge IMAGES (sourceBadgeAssets.ts —
+ * always ImageRun, never any accompanying visible text) can sit on the name line without adding a
+ * single character to what that invariant extracts; confirmed directly against the same regex the
+ * protected test uses before this was relied on. The generic shaded-TEXT-card fallback
+ * (certificationBadges.ts) is NOT eligible for this — its badges are TextRuns with real visible
+ * text ("AZURE CERTIFIED" etc.), which absolutely would corrupt the extracted name, so those still
+ * ride the headline line instead (see headlineLine below). isImageOnlyBadgeSet() below is the one
+ * place that decides which line a given badge set is allowed to use.
  */
-function nameLine(text: string): Paragraph {
+function isImageOnlyBadgeSet(badgeRuns: (TextRun | ImageRun)[]): badgeRuns is ImageRun[] {
+  return badgeRuns.length > 0 && badgeRuns.every((r) => r instanceof ImageRun);
+}
+
+/**
+ * `imageBadgesWidthTwips` is the pre-computed combined display width of `imageBadges` (see
+ * sourceBadgeAssets.ts's sumBadgeDisplayWidthTwips) — a LEFT tab stop at CONTENT_WIDTH minus that
+ * width places the row's own left edge so its RIGHT edge lands exactly at the content's right
+ * margin, computed here rather than trusted to a right-tab-stop's own width summation (see the doc
+ * comment above nameLine's declaration for why).
+ */
+function nameLine(text: string, imageBadges: ImageRun[] = [], imageBadgesWidthTwips = 0): Paragraph {
+  const children: (TextRun | ImageRun)[] = [new TextRun({ text, bold: true, size: SIZE_NAME, font: FONT, color: BLACK })];
+  if (imageBadges.length > 0) {
+    // No text spacer between badges here (unlike headlineLine's text-card row): any run with real
+    // text content on the name paragraph would corrupt the exact-name-match invariant this line
+    // exists to protect (see the doc comment above) — even a literal space. Each source badge PNG
+    // already carries its own small transparent/white border, which is enough visual separation
+    // when they sit directly adjacent.
+    children.push(new TextRun({ children: [new Tab()] }), ...imageBadges);
+  }
   return new Paragraph({
     alignment: AlignmentType.LEFT,
     keepNext: true,
     spacing: { after: 20 },
-    children: [new TextRun({ text, bold: true, size: SIZE_NAME, font: FONT, color: BLACK })],
+    ...(imageBadges.length > 0
+      ? { tabStops: [{ type: TabStopType.LEFT, position: Math.max(0, CONTENT_WIDTH - imageBadgesWidthTwips) }] }
+      : {}),
+    children,
   });
 }
 
-/** The headline: bold, not italic, and left-aligned under the name — as the reference sets it. The
- *  badge row (when present) rides the same line, right tab-stopped, as one horizontal group. */
-function headlineLine(text: string, badgeRuns: (TextRun | ImageRun)[]): Paragraph {
+/** The headline: bold, not italic, and left-aligned under the name — as the reference sets it. Only
+ *  the generic text-card badge fallback rides this line (see isImageOnlyBadgeSet's doc comment) —
+ *  real preserved image badges ride the name line instead, one line up. */
+function headlineLine(text: string, textBadgeRuns: TextRun[]): Paragraph {
   const children: (TextRun | ImageRun)[] = [new TextRun({ text, bold: true, size: SIZE_TAGLINE, font: FONT, color: BLACK })];
-  if (badgeRuns.length > 0) {
+  if (textBadgeRuns.length > 0) {
     children.push(new TextRun({ children: [new Tab()] }));
-    badgeRuns.forEach((badge, i) => {
+    textBadgeRuns.forEach((badge, i) => {
       if (i > 0) children.push(new TextRun({ text: "  ", size: SIZE_CONTACT, font: FONT }));
       children.push(badge);
     });
@@ -117,7 +151,7 @@ function headlineLine(text: string, badgeRuns: (TextRun | ImageRun)[]): Paragrap
     alignment: AlignmentType.LEFT,
     keepNext: true,
     spacing: { after: 20 },
-    ...(badgeRuns.length > 0 ? { tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_WIDTH }] } : {}),
+    ...(textBadgeRuns.length > 0 ? { tabStops: [{ type: TabStopType.RIGHT, position: CONTENT_WIDTH }] } : {}),
     children,
   });
 }
@@ -146,17 +180,20 @@ function contactLine(params: { location: string; phone: string; email: string; l
 
 /**
  * The header block: name, headline, contact — exactly as before Phase H when there are no
- * recognized certification badges. With one or more recognized badges, they all ride the headline
- * line as one horizontal row, right tab-stopped to the content margin — a compact, top-right,
- * secondary group beside the header that never touches, displaces, or resizes the candidate's own
- * name. Each badge run is either a real ImageRun (a preserved Master Resume badge — see
- * sourceBadgeAssets.ts) or a generic shaded TextRun (certificationBadges.ts's fallback); the caller
- * decides which set to pass in, this function only places them.
+ * recognized certification badges. When the candidate has real preserved badge IMAGES (source
+ * badges — see sourceBadgeAssets.ts), they ride the NAME line itself as one horizontal row,
+ * right-tab-stopped to the content margin: the true top-right corner, matching the reference
+ * resume exactly, safe only because an image contributes no text to the protected exact-name-match
+ * invariant (see nameLine's own doc comment). The generic shaded-text-card fallback
+ * (certificationBadges.ts) still rides the headline line instead, one line down, since its runs
+ * carry real visible text that the name line can never safely host.
  */
-function headerBlock(content: ResumeContent, badgeRuns: (TextRun | ImageRun)[]): Paragraph[] {
+function headerBlock(content: ResumeContent, badgeRuns: (TextRun | ImageRun)[], imageBadgesWidthTwips: number): Paragraph[] {
+  const imageBadges = isImageOnlyBadgeSet(badgeRuns) ? badgeRuns : [];
+  const textBadgeRuns = imageBadges.length === 0 ? (badgeRuns as TextRun[]) : [];
   return [
-    nameLine(content.name),
-    headlineLine(content.tagline, badgeRuns),
+    nameLine(content.name, imageBadges, imageBadgesWidthTwips),
+    headlineLine(content.tagline, textBadgeRuns),
     contactLine({
       location: content.location,
       phone: content.phone,
@@ -435,21 +472,18 @@ export async function generateResumeDocx(
   // Section order is the reference's, exactly: identity block, then what the candidate can do,
   // then proof they have done it, then credentials.
   //
-  // Certification badges, right tab-stopped onto the headline/contact lines so they read as a
-  // block sitting at the top right of the header. Source-badge clarification: when the candidate's
-  // own Master Resume has embedded certification badge images, those exact images win — preserved
-  // byte-for-byte, never redrawn or approximated (see sourceBadgeAssets.ts). Only when no source
-  // image exists does this fall back to certificationBadges.ts's generic shaded-text cards, for
-  // whichever of the candidate's ALREADY-APPROVED certifications that local registry recognizes.
-  // Purely decorative and additive either way: an empty result means the header renders in its
-  // original plain shape, and the full bulleted Certifications section further down is completely
-  // unaffected regardless of which path (or neither) produced a badge.
-  const sourceBadges = await extractSourceCertificationBadges(options.masterResumeDocxPath);
-  const certificationBadgeRuns: (TextRun | ImageRun)[] =
-    sourceBadges.length > 0 ? buildSourceCertificationBadgeRuns(sourceBadges) : buildCertificationBadgeRuns(content.certifications);
+  // Certification badges (image or generic text-card) are disabled per explicit user request —
+  // both extraction and rendering are skipped entirely, keeping the header plain. The bulleted
+  // Certifications section further down (the actual ATS-authoritative text) is completely
+  // unaffected either way; this only turns off the decorative header row. The underlying modules
+  // (sourceBadgeAssets.ts, certificationBadges.ts) are left intact, not deleted, in case this is
+  // re-enabled later — this is a single, easily-reversible flag, not a rewrite.
+  const BADGES_ENABLED = false;
+  const certificationBadgeRuns: (TextRun | ImageRun)[] = BADGES_ENABLED ? buildCertificationBadgeRuns(content.certifications) : [];
+  const imageBadgesWidthTwips = 0;
 
   const children: Paragraph[] = [
-    ...headerBlock(content, certificationBadgeRuns),
+    ...headerBlock(content, certificationBadgeRuns, imageBadgesWidthTwips),
 
     sectionHeading("Professional Summary"),
     // Stage 31.1 — ONE paragraph, always.

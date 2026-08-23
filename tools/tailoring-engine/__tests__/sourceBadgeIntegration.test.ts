@@ -45,7 +45,7 @@ async function docxText(filePath: string): Promise<string> {
 
 const CERTS = ["Microsoft Certified: Azure Data Engineer Associate (DP-203)", "AWS Certified Cloud Practitioner"];
 
-test("Source badges: preserved images win over the generic text-card fallback", async () => {
+test("Source badges: preserved images win over the generic text-card fallback", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   const dir = tempDir();
   const masterPath = path.join(dir, "resume.docx");
   const badgeA = makePng(120, 60, [31, 78, 121]);
@@ -70,7 +70,7 @@ test("Source badges: preserved images win over the generic text-card fallback", 
   assert.equal(validation.valid, true, `trusted source badges must validate cleanly: ${JSON.stringify(validation.violations)}`);
 });
 
-test("Source badges: image order is preserved end to end (headline badge first, contact badge second)", async () => {
+test("Source badges: image order is preserved end to end (headline badge first, contact badge second)", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   const dir = tempDir();
   const masterPath = path.join(dir, "resume.docx");
   const first = makePng(100, 50, [10, 10, 10]);
@@ -99,7 +99,7 @@ test("Source badges: image order is preserved end to end (headline badge first, 
   assert.ok(bytesInOrder[1].equals(second), "the contact-line badge must be the SECOND source image (document order)");
 });
 
-test("Source badges: aspect ratio is preserved (not distorted to a square)", async () => {
+test("Source badges: aspect ratio is preserved (not distorted to a square)", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   const dir = tempDir();
   const masterPath = path.join(dir, "resume.docx");
   const wide = makePng(300, 100, [5, 5, 5]); // 3:1
@@ -131,7 +131,12 @@ test("Source badges: top-right placement — reached via a real right tab stop, 
   assert.doesNotMatch(xml, /<w:tbl>/, "top-right placement must never use a table");
 });
 
-test("Source badges: the candidate's name paragraph is completely unaffected", async () => {
+test("Source badges: the candidate's name text stays exact even though real badges now ride the same line", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
+  // Badges moved from the headline line onto the name line itself (top-right corner, matching the
+  // reference resume) — this is deliberately safe, not an accident: an ImageRun contributes zero
+  // <w:t> text, so the protected "display name survives rendering exactly" invariant
+  // (stage311NameAndVoice.test.ts) only ever inspects the name's own TextRun. This test proves that
+  // holds with real badges actually present, not just in isolation.
   const dir = tempDir();
   const masterPath = path.join(dir, "resume.docx");
   await writeMasterResumeDocxFixture(masterPath, [
@@ -145,8 +150,8 @@ test("Source badges: the candidate's name paragraph is completely unaffected", a
   const xml = await documentXml(outputPath);
   const firstParagraph = xml.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/)?.[0] ?? "";
   const firstParagraphText = [...firstParagraph.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map((m) => m[1]).join("");
-  assert.equal(firstParagraphText, fixture.resume.name);
-  assert.doesNotMatch(firstParagraph, /<w:drawing>/, "the name paragraph must never carry an embedded image");
+  assert.equal(firstParagraphText, fixture.resume.name, "the name paragraph's extracted TEXT must stay exact regardless of any badge images riding the same line");
+  assert.match(firstParagraph, /<w:drawing>/, "with real source badges, they are now expected on the name paragraph itself — the top-right corner");
 });
 
 test("Source badges: ATS certification text is preserved regardless of image presence", async () => {
@@ -163,7 +168,7 @@ test("Source badges: ATS certification text is preserved regardless of image pre
   }
 });
 
-test("Source badges: candidate isolation end to end — one candidate's render never contains another's badge bytes", async () => {
+test("Source badges: candidate isolation end to end — one candidate's render never contains another's badge bytes", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   const dirA = tempDir();
   const dirB = tempDir();
   const masterA = path.join(dirA, "resume.docx");
@@ -186,7 +191,7 @@ test("Source badges: candidate isolation end to end — one candidate's render n
   assert.ok(!mediaB.some((b) => b.equals(imageA)), "candidate B's rendered resume must never contain candidate A's badge image");
 });
 
-test("Source badges: re-tailoring (re-rendering) produces no duplicate/accumulated images", async () => {
+test("Source badges: re-tailoring (re-rendering) produces no duplicate/accumulated images", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   const dir = tempDir();
   const masterPath = path.join(dir, "resume.docx");
   await writeMasterResumeDocxFixture(masterPath, [{ bytes: makePng(60, 60), width: 30, height: 30 }]);
@@ -230,7 +235,7 @@ test("Source badges: an unrelated TARGETED_REPAIR (same certifications, same mas
   for (let i = 0; i < mediaBefore.length; i++) assert.ok(mediaBefore[i].equals(mediaAfter[i]));
 });
 
-test("Source badges: no Master Resume image at all falls back safely to the existing generic text cards", async () => {
+test("Source badges: no Master Resume image at all falls back safely to the existing generic text cards", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   const dir = tempDir();
   const outputPath = path.join(dir, "Resume.docx");
   // masterResumeDocxPath omitted entirely — the pre-existing, already-shipped behavior.
@@ -245,7 +250,7 @@ test("Source badges: no Master Resume image at all falls back safely to the exis
   assert.equal(validation.valid, true);
 });
 
-test("Source badges: a Master Resume that exists but has no embedded images falls back safely, same as having none", async () => {
+test("Source badges: a Master Resume that exists but has no embedded images falls back safely, same as having none", { skip: "certification badges disabled per user request — see resume-template.ts BADGES_ENABLED" }, async () => {
   const dir = tempDir();
   const masterPath = path.join(dir, "resume.docx");
   await writeMasterResumeDocxFixture(masterPath, []); // real .docx, zero images
