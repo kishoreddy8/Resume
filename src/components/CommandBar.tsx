@@ -108,16 +108,15 @@ export function CommandBar() {
       { id: "nav-profile", label: "Profile", group: "Go to", keywords: "personal details contact preferences target role sponsorship salary", run: go("/profile") },
       { id: "nav-dashboard", label: "Dashboard", group: "Go to", keywords: "intelligence overview metrics", run: go("/dashboard") },
       { id: "nav-jobs", label: "Jobs", group: "Go to", keywords: "queue search match", run: go("/jobs") },
-      { id: "nav-pipeline", label: "Applications", group: "Go to", keywords: "pipeline applied interview offer", run: go("/pipeline") },
       { id: "nav-archived", label: "Archived jobs", group: "Go to", keywords: "closed old", run: go("/jobs/archived") },
       { id: "nav-companies", label: "Companies", group: "Go to", keywords: "sources career links admin", run: go("/admin/companies") },
       { id: "nav-ats", label: "ATS Scanner", group: "Go to", keywords: "scanner connectors health greenhouse lever workday admin", run: go("/admin/scanner") },
-      { id: "nav-coverage", label: "Connectors", group: "Go to", keywords: "coverage proposals ats admin", run: go("/admin/connectors") },
+      { id: "nav-coverage", label: "Connectors", group: "Go to", keywords: "coverage proposals ats admin", run: go("/admin/scanner?tab=connectors") },
       { id: "nav-candidate", label: "Candidate Intelligence", group: "Go to", keywords: "skills evidence experience certifications", run: go("/candidate-intelligence") },
       { id: "act-foryou", label: "What jobs fit my experience?", group: "Find", keywords: "for you recommended matches suitable", run: go("/jobs") },
       { id: "act-ready", label: "Show jobs ready to tailor", group: "Find", keywords: "ready for tailoring approve", run: go("/jobs") },
       { id: "act-applications", label: "Show active applications", group: "Find", keywords: "pipeline applied interviewing offer", run: go("/applications") },
-      { id: "act-scanner", label: "Show scanner health", group: "Find", keywords: "ats connectors ingestion operations", run: go("/scanner") },
+      { id: "act-scanner", label: "Show scanner health", group: "Find", keywords: "ats connectors ingestion operations", run: go("/admin/scanner") },
       { id: "nav-master", label: "Master Files", group: "Go to", keywords: "resume skills inventory upload", run: go("/master-files") },
       { id: "nav-ops", label: "System Operations", group: "Go to", keywords: "health workers queues scheduler admin", run: go("/admin/operations") },
       { id: "nav-settings", label: "Settings", group: "Go to", keywords: "configuration preferences ai providers", run: go("/settings") },
@@ -161,7 +160,7 @@ export function CommandBar() {
           label: `Find company “${q}”`,
           group: "Search",
           hint: "name",
-          run: () => router.push(`/companies?q=${encodeURIComponent(q)}`),
+          run: () => router.push(`/admin/companies?search=${encodeURIComponent(q)}`),
         }
       );
     }

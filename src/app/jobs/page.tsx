@@ -313,6 +313,7 @@ export default function JobsPage() {
             selectedJobId={selectedJobId}
             onSelect={setSelectedJobId}
             onQueueChange={setQueue}
+            onExploreJobs={() => setView("forYou")}
           />
         )
       ) : view === "all" ? (
@@ -332,7 +333,11 @@ export default function JobsPage() {
           </div>
         </div>
       ) : (
-        <WorkflowJobsList candidateId={candidateId} view={view} />
+        <WorkflowJobsList
+          candidateId={candidateId}
+          view={view}
+          onExploreJobs={() => setView("forYou")}
+        />
       )}
     </div>
   );

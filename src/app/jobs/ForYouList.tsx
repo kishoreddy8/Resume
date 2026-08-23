@@ -54,6 +54,7 @@ export function ForYouList({
   selectedJobId,
   onSelect,
   onQueueChange,
+  onExploreJobs,
 }: {
   mode: CandidateFeedMode;
   candidateId: number;
@@ -62,6 +63,7 @@ export function ForYouList({
   selectedJobId: number | null;
   onSelect: (id: number) => void;
   onQueueChange?: (queue: QueueItem[]) => void;
+  onExploreJobs?: () => void;
 }) {
   const router = useRouter();
   const setupNotice = useSetupNotice();
@@ -199,7 +201,17 @@ export function ForYouList({
         <EmptyState
           title={mode === "saved" ? "Save roles you want to revisit" : search.trim() ? "No recommendations match that search" : "No recommendations yet"}
           body={mode === "saved" ? "Tap the heart on any job to build a focused shortlist. Saved jobs stay here even when they get older." : "Try widening your role or match filters. New evaluated opportunities will appear here automatically."}
-          action={mode === "saved" ? <button type="button" onClick={() => router.push("/jobs")} className="rounded-[10px] bg-[var(--accent)] px-4 py-2 text-[13.5px] font-semibold text-[var(--accent-fg)]">Explore jobs</button> : null}
+          action={
+            mode === "saved" ? (
+              <button
+                type="button"
+                onClick={() => (onExploreJobs ? onExploreJobs() : router.push("/jobs"))}
+                className="rounded-[10px] bg-[var(--accent)] px-4 py-2 text-[13.5px] font-semibold text-[var(--accent-fg)]"
+              >
+                Explore jobs
+              </button>
+            ) : null
+          }
         />
       ) : (
         <div

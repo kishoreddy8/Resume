@@ -55,7 +55,15 @@ function relativeUpdated(value: string | null): string {
   return `Updated ${days} days ago`;
 }
 
-export function WorkflowJobsList({ candidateId, view }: { candidateId: number; view: WorkflowView }) {
+export function WorkflowJobsList({
+  candidateId,
+  view,
+  onExploreJobs,
+}: {
+  candidateId: number;
+  view: WorkflowView;
+  onExploreJobs?: () => void;
+}) {
   const [entries, setEntries] = useState<ResumeLibraryEntry[] | null>(null);
 
   useEffect(() => {
@@ -108,7 +116,15 @@ export function WorkflowJobsList({ candidateId, view }: { candidateId: number; v
         <EmptyState
           title={view === "tailoring" ? "No active tailoring right now" : "Nothing needs your review"}
           body={view === "tailoring" ? "Start from a strong match when you are ready. Active resume work will appear here." : "Blocked and human-review resume states will appear here with their safest next action."}
-          action={<Link href="/jobs" className="rounded-[10px] bg-[var(--accent)] px-4 py-2 text-[13.5px] font-semibold text-[var(--accent-fg)]">Explore jobs</Link>}
+          action={
+            <button
+              type="button"
+              onClick={() => (onExploreJobs ? onExploreJobs() : undefined)}
+              className="rounded-[10px] bg-[var(--accent)] px-4 py-2 text-[13.5px] font-semibold text-[var(--accent-fg)]"
+            >
+              Explore jobs
+            </button>
+          }
         />
       ) : (
         <div className="space-y-3">
