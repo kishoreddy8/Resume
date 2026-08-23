@@ -487,21 +487,26 @@ export function renderRoleProjectEvidenceSection(evidence: RoleProjectEvidence[]
   // section's OUTPUT (the field itself stays on RoleProjectEvidence — still used internally, just
   // above, to decide supportsProjectLine) and replaced with a reference, so the technology list
   // exists in the prompt exactly once regardless of render order.
+  // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — the "Project line: REQUIRED..." instruction
+  // used to repeat verbatim once per REQUIRED role (identical text, up to 4 times on the real corpus).
+  // It is now stated once, before the per-employer list, which just marks each role REQUIRED/OMIT —
+  // no information lost, since the instruction never varied by employer in the first place.
   let out = "## PER-ROLE EVIDENCE FOR THE Project: AND Environment: LINES\n\n";
   out +=
     "Each employer's full technology list is given once, in the PER-EMPLOYER EVIDENCE section " +
     "(\"Already written here\" / \"Available here under the MSI rule\") — this section adds only what " +
     "that one doesn't: whether a Project line is supported for each role, and how to select the " +
     "Environment line from it.\n\n";
+  out +=
+    `**Where marked REQUIRED below:** write one sentence, or at most ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences, ` +
+    `naming what that role's work was with no more than ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies, built only from the ` +
+    "bullets you wrote for it and that employer's technology list above. No new client, system, domain or metric. " +
+    "**Where marked OMIT:** CareerOps has no recorded technologies or bullets for that role, so there is nothing " +
+    "to describe — leave `projectDescription` out rather than inventing scope.\n\n";
   for (const role of evidence) {
     out += `### ${role.employer} — ${role.title}\n`;
     out += `- Reviewed bullets available for this role: ${role.bulletCount}\n`;
-    out += role.supportsProjectLine
-      ? `- **Project line: REQUIRED.** Write one sentence, or at most ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences, ` +
-        `naming what this role's work was with no more than ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies, built only from the ` +
-        `bullets you wrote for it and that employer's technology list above. No new client, system, domain or metric.\n\n`
-      : `- **Project line: OMIT.** CareerOps has no recorded technologies or bullets for this role, so there is ` +
-        `nothing to describe. Leave \`projectDescription\` out rather than inventing scope.\n\n`;
+    out += role.supportsProjectLine ? "- **Project line: REQUIRED.**\n\n" : "- **Project line: OMIT.**\n\n";
   }
   out +=
     `**Environment line.** Choose the ${ENVIRONMENT_MIN_ITEMS}-${ENVIRONMENT_MAX_ITEMS} technologies from that ` +

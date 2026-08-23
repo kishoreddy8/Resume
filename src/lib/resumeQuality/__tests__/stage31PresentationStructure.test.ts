@@ -555,6 +555,22 @@ test("S31-28 the per-role evidence the writer needs is computed, and present on 
   assert.equal(later.find((e) => e.employer === "Comerica Bank")?.bulletCount, 2);
 });
 
+test("S31-28b the REQUIRED/OMIT instruction sentence is stated once, not once per employer", () => {
+  // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — the full "Write one sentence, or at most..."
+  // instruction used to repeat verbatim for every REQUIRED role. It is now stated once, before the
+  // per-employer list, which marks each role with a compact REQUIRED/OMIT status only.
+  const firstPass = collectRoleProjectEvidence(undefined, PROFILE);
+  assert.ok(firstPass.length >= 2, "fixture must have at least two employers to prove no per-employer repeat");
+  const section = renderRoleProjectEvidenceSection(firstPass);
+  const occurrences = (section.match(/write one sentence, or at most/gi) ?? []).length;
+  assert.equal(occurrences, 1, "the REQUIRED instruction sentence must appear exactly once regardless of employer count");
+  // Every employer must still get its own REQUIRED/OMIT marker.
+  for (const role of firstPass) {
+    const block = section.split(`### ${role.employer}`)[1]?.split("### ")[0] ?? "";
+    assert.match(block, role.supportsProjectLine ? /Project line: REQUIRED/ : /Project line: OMIT/);
+  }
+});
+
 test("S31-29 an Environment line that dumps the whole evidence set is flagged as a dump", () => {
   const dumped = resume();
   // Preview B's behaviour: every technology recorded for the employer, pasted verbatim.
