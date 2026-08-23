@@ -1225,6 +1225,49 @@ CREATE TABLE IF NOT EXISTS resume_quality_iterations (
 CREATE INDEX IF NOT EXISTS idx_resume_quality_iterations_workflow
   ON resume_quality_iterations(candidate_id, workflow_id, iteration_number);
 
+-- Human approval for a SAFE_BEST_ATTEMPT resume (finalDisposition.ts). A candidate's explicit,
+-- auditable decision that a truthful-but-not-READY resume is safe to send. NEVER mutates
+-- resume_quality_workflows.status — READY continues to mean exactly "the autonomous quality gate
+-- passed" (qualityGate.ts). This table is a separate provenance/decision layer, append-only, one row
+-- per approved workflow.
+--
+-- PROVENANCE RULE: tied to the exact workflow_id (and the iteration selected within it) the candidate
+-- actually reviewed — never candidate_id + dedupe_key alone. A later retried/re-tailored workflow for
+-- the same job gets its own row, new id, and starts unapproved; it can never inherit an older
+-- approval. UNIQUE(workflow_id) makes approval idempotent: a repeated click reads the existing row
+-- instead of inserting a duplicate.
+CREATE TABLE IF NOT EXISTS resume_quality_human_approvals (
+  id INTEGER PRIMARY KEY,
+  candidate_id INTEGER NOT NULL REFERENCES candidates(id),
+  workflow_id INTEGER NOT NULL REFERENCES resume_quality_workflows(id),
+  tailoring_run_id INTEGER NOT NULL REFERENCES tailoring_runs(id),
+  job_id INTEGER REFERENCES jobs(id),
+  dedupe_key TEXT NOT NULL, -- convenience/debug, mirrors resume_quality_workflows' own identity discipline
+  selected_iteration_number INTEGER NOT NULL,
+
+  -- Snapshot of the safety-relevant identity/scores AT THE MOMENT OF APPROVAL, for audit only.
+  -- Access decisions never re-read these columns — evaluateSafety()/determineFinalDisposition() are
+  -- re-run fresh from review_json on every access check, exactly as they are everywhere else.
+  overall_score REAL,
+  ats_score REAL,
+  truthfulness_score REAL,
+  architecture_consistency_score REAL,
+  instruction_version TEXT,
+  instruction_hash TEXT,
+
+  -- The full SafetyVerdict (finalDisposition.ts) at approval time, JSON. Safe:true by construction —
+  -- the endpoint refuses to write this row otherwise — kept for audit completeness, never re-trusted.
+  safety_verdict_json TEXT NOT NULL,
+
+  notes TEXT,
+  approved_at TEXT NOT NULL DEFAULT (datetime('now')),
+
+  UNIQUE(workflow_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_resume_quality_human_approvals_candidate
+  ON resume_quality_human_approvals(candidate_id, dedupe_key);
+
 -- Discovery V2 Stage 3: durable source-replacement proposals, review/approval workflow. Deliberately
 -- its own table rather than reusing job_source_validation_runs — that table's "latest row per
 -- job_source" read pattern (see listGenericAdditiveReadyCompanies in organizationRegistry.ts) treats

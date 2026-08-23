@@ -61,12 +61,12 @@ test("DOCK-5 READY_FOR_TAILORING is the one place approval becomes the primary a
   assert.equal(s.actionable, true);
 });
 
-test("DOCK-6 an approved job states that nothing runs on its own — the writer is off", () => {
+test("DOCK-6 an approved job with no generated files yet reflects the automated writer, not a manual step", () => {
   const s = resolveDockState(match({ decision: "READY_FOR_TAILORING" }), marked, 0);
   assert.equal(s.phase, "approved-awaiting-resume");
-  assert.equal(s.actionable, false, "approval must not present as work in progress");
-  assert.ok(/Resume Writer is off/i.test(s.hint), "must say plainly that nothing generates automatically");
-  assert.ok(!/generating/i.test(s.label), "must not claim generation is underway");
+  assert.equal(s.actionable, false, "approval must not present as a clickable action — nothing for the candidate to do yet");
+  assert.ok(/automatically/i.test(s.hint), "must say the writer runs on its own schedule");
+  assert.ok(!/run it in claude code|run the tailoring skill/i.test(s.hint), "must not tell the candidate to run anything manually — the writer is automated");
 });
 
 test("DOCK-7 existing generated files take precedence and offer review", () => {

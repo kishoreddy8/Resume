@@ -109,6 +109,9 @@ test("historical structured corrections become readable validation issues", () =
     },
     iterations: [],
     revalidation: null,
+    workflowId: 1,
+    finalDisposition: null,
+    humanApproval: null,
   } satisfies QualityWorkflowData;
 
   assert.deepEqual(validationIssues(data), ["Verify employer evidence", "Remove unsupported claim"]);

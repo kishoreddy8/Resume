@@ -17,10 +17,11 @@ import type { JobMatch } from "./useJobMatch";
  * backend state, and no reinterpretation — BLOCKED still means blocked, and an unevaluated job is
  * still unevaluated.
  *
- * A deliberate deviation from the obvious design: there is no "Generating Resume…" state. Resume
- * Writer is OFF, so nothing generates on its own; tailoring runs when the user runs the skill in
- * Claude Code. A spinner claiming work was underway would be inventing progress that isn't
- * happening, so an approved-but-unwritten job says exactly that instead.
+ * The scheduled writer now runs automatically once a job is approved for tailoring — the dock's
+ * "Tailoring in progress" phase (marked, no generated files yet) reflects that: the candidate has
+ * nothing further to do until the writer's next scheduled pass produces the first iteration. See
+ * ResumeQualityPipeline.tsx / JobWorkspace.tsx for the richer lifecycle detail (writer health,
+ * SAFE_BEST_ATTEMPT, human approval) this single-action dock deliberately does not surface.
  */
 
 export type DockPhase =
@@ -91,8 +92,8 @@ export function resolveDockState(
   if (marked) {
     return {
       phase: "approved-awaiting-resume",
-      label: "Approved — run the tailoring skill",
-      hint: "Resume Writer is off, so nothing runs automatically. Copy the prompt and run it in Claude Code.",
+      label: "Tailoring in progress",
+      hint: "Approved. The resume writer runs automatically on its next scheduled pass — nothing else to run.",
       actionable: false,
     };
   }

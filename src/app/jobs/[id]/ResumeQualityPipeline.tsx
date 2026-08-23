@@ -176,6 +176,16 @@ interface QualityWorkflowResponse {
   } | null;
   /** Stage 28 — where a SAFE_BEST_ATTEMPT package was written, when one was. */
   safeAttemptPublication?: { directory: string; resume: string; coverLetter: string; reviewFeedback: string | null } | null;
+  /** The candidate's own explicit approval of THIS exact workflow's safe best attempt, or null. A
+   *  prior (superseded) workflow's approval never appears here — this is always scoped to workflow.id. */
+  humanApproval?: {
+    workflowId: number;
+    selectedIterationNumber: number;
+    overallScore: number | null;
+    truthfulnessScore: number | null;
+    architectureConsistencyScore: number | null;
+    approvedAt: string;
+  } | null;
 }
 
 /** Stage 26 — one short label per writer state, for the pipeline status chip. */
@@ -432,6 +442,35 @@ export function ResumeQualityPipeline({
     }
   }
 
+  /**
+   * The candidate's explicit approval of a SAFE_BEST_ATTEMPT resume. Calls the approve endpoint,
+   * which recomputes the canonical safety authority (determineFinalDisposition) server-side and
+   * refuses anything this component's own state does not already agree is safe — this handler
+   * carries no scores or verdicts of its own, only the workflow id being approved.
+   */
+  async function handleApprove() {
+    setActionBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowId: data?.workflow?.id ?? null }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to approve this resume");
+      setActionMessage({
+        type: "success",
+        text: body.alreadyApproved ? "Already approved." : "Approved. This resume is now eligible for applications.",
+      });
+      await loadData();
+    } catch (err: unknown) {
+      setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Error approving resume" });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   async function handleExportPackage() {
     setActionBusy(true);
     setActionMessage(null);
@@ -515,7 +554,8 @@ export function ResumeQualityPipeline({
     return null;
   }
 
-  const { workflow, authorization, applicationId, tailoringRun, iterations, bestAttempt, availableArtifacts, writer, iterationBudget, publication, finalDisposition } = data;
+  const { workflow, authorization, applicationId, tailoringRun, iterations, bestAttempt, availableArtifacts, writer, iterationBudget, publication, finalDisposition, humanApproval } = data;
+  const isApprovedForCurrentWorkflow = humanApproval != null && humanApproval.workflowId === workflow?.id;
 
   // Stage 28 — a terminal FAILED workflow is NOT automatically a failure to the user. When every
   // absolute truthfulness guardrail passed, the safest attempt is a usable human-review package and
@@ -922,6 +962,29 @@ export function ResumeQualityPipeline({
                 {data.safeAttemptPublication.directory}
               </code>
             </p>
+          )}
+
+          {/* The candidate's own explicit decision, separate from the autonomous gate. Approving
+              records an auditable row tied to this exact workflow/iteration — it never sets
+              workflow.status to READY and never overrides the safety verdict above. */}
+          {isApprovedForCurrentWorkflow ? (
+            <div className="rounded border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/30">
+              <p className="text-xs font-semibold text-emerald-900 dark:text-emerald-200">Human approved</p>
+              <p className="mt-1 text-[11px] text-emerald-800 dark:text-emerald-300">
+                Score: {humanApproval?.overallScore ?? "—"} · Reviewed:{" "}
+                {humanApproval ? new Date(humanApproval.approvedAt).toLocaleString() : "—"}. This resume is
+                eligible for applications.
+              </p>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleApprove}
+              disabled={actionBusy}
+              className="rounded-md bg-amber-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {actionBusy ? "Approving…" : "Approve & Use for Applications"}
+            </button>
           )}
 
           {finalDisposition.selectionReason && (

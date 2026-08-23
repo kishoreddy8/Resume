@@ -31,6 +31,7 @@ export interface ReviewScores {
 }
 
 export interface QualityWorkflowData {
+  workflowId: number | null;
   workflowStatus: string | null;
   review: ReviewScores | null;
   gate: { passed: boolean; outcome: string | null } | null;
@@ -39,6 +40,31 @@ export interface QualityWorkflowData {
   iterations: { iteration: number; overall: number | null; ats: number | null; blocking: number }[];
   /** The one blocking condition a candidate can act on: a review written before today's checks. */
   revalidation: { isLegacyMissingAnalysis: boolean; canRevalidate: boolean } | null;
+  /**
+   * Stage 28 — READY / SAFE_BEST_ATTEMPT / BLOCKED, computed from the whole iteration history.
+   * Distinct from `readiness` (the older, score-only authority): a safe-but-not-optimised resume
+   * reads BLOCKED under `readiness` but SAFE_BEST_ATTEMPT here, which is what actually unlocks the
+   * approval flow. Never mutated by anything in this hook, never re-derived.
+   */
+  finalDisposition: {
+    disposition: "READY" | "SAFE_BEST_ATTEMPT" | "BLOCKED";
+    selectedIterationNumber: number | null;
+    selectionReason: string | null;
+    safety: { safe: boolean; blockers: string[] };
+    optimizationScore: number | null;
+    optimizationFindings: string[];
+    humanMaySend: boolean;
+  } | null;
+  /** The candidate's own explicit approval of the CURRENT workflow's safe best attempt, or null if
+   *  this exact workflow has never been approved — a prior workflow's approval never appears here. */
+  humanApproval: {
+    workflowId: number;
+    selectedIterationNumber: number;
+    overallScore: number | null;
+    truthfulnessScore: number | null;
+    architectureConsistencyScore: number | null;
+    approvedAt: string;
+  } | null;
 }
 
 export type QualityWorkflowState =
@@ -71,6 +97,7 @@ export function useQualityWorkflow(
         setValue({
           state: "ready",
           data: {
+            workflowId: body.workflow.id ?? null,
             workflowStatus: body.workflow.status ?? null,
             review: r
               ? {
@@ -112,6 +139,30 @@ export function useQualityWorkflow(
               })
             ),
             revalidation: body.revalidation ?? null,
+            finalDisposition: body.finalDisposition
+              ? {
+                  disposition: body.finalDisposition.disposition,
+                  selectedIterationNumber: body.finalDisposition.selectedIterationNumber ?? null,
+                  selectionReason: body.finalDisposition.selectionReason ?? null,
+                  safety: {
+                    safe: Boolean(body.finalDisposition.safety?.safe),
+                    blockers: body.finalDisposition.safety?.blockers ?? [],
+                  },
+                  optimizationScore: body.finalDisposition.optimizationScore ?? null,
+                  optimizationFindings: body.finalDisposition.optimizationFindings ?? [],
+                  humanMaySend: Boolean(body.finalDisposition.humanMaySend),
+                }
+              : null,
+            humanApproval: body.humanApproval
+              ? {
+                  workflowId: body.humanApproval.workflowId,
+                  selectedIterationNumber: body.humanApproval.selectedIterationNumber,
+                  overallScore: body.humanApproval.overallScore ?? null,
+                  truthfulnessScore: body.humanApproval.truthfulnessScore ?? null,
+                  architectureConsistencyScore: body.humanApproval.architectureConsistencyScore ?? null,
+                  approvedAt: body.humanApproval.approvedAt,
+                }
+              : null,
           },
         });
       })

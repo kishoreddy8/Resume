@@ -85,26 +85,37 @@ export function ApplicationReadyStep({
   const ats = sourceLabel(job.source_type);
   const domain = domainOf(job.url);
 
-  /* The resume row follows readiness, which is the authority on whether a package may be sent. */
-  const resumeState: RowState = !quality?.readiness
-    ? "unknown"
-    : quality.readiness.humanMaySend
-      ? "ready"
-      : quality.readiness.humanMaySend === false
-        ? "blocked"
-        : "unknown";
+  /**
+   * Human-approved bridge. `readiness.humanMaySend` (evaluateApplicationReadiness) only ever answers
+   * for the AUTONOMOUS gate and stays false for a truthful-but-not-READY package by design — it is
+   * never re-implemented here. A SAFE_BEST_ATTEMPT the candidate explicitly approved is a second,
+   * separate way to reach the same "a human may send this" outcome. The approval must name THIS
+   * exact workflow (never an older, superseded one) — `quality.workflowId` is always the CURRENT
+   * workflow's id, so a stale/inherited approval can never pass this check.
+   */
+  const humanApprovedCurrentWorkflow =
+    quality?.finalDisposition?.disposition === "SAFE_BEST_ATTEMPT" &&
+    quality.humanApproval !== null &&
+    quality.humanApproval.workflowId === quality.workflowId;
+  const effectiveMaySend = quality?.readiness?.humanMaySend === true || humanApprovedCurrentWorkflow;
+
+  /* The resume row follows readiness (autonomous or human-approved), the authority on whether a
+   * package may be sent. */
+  const resumeState: RowState = !quality?.readiness ? "unknown" : effectiveMaySend ? "ready" : "blocked";
 
   /* Canonical refusal changes presentation only: the guarded StartApplication control is not
-   * advertised while the authority says a human may not send this package. Nothing is overridden
+   * advertised while neither authority says a human may send this package. Nothing is overridden
    * or re-evaluated here. */
-  if (!quality?.readiness || quality.readiness.humanMaySend === false) {
+  if (!quality?.readiness || !effectiveMaySend) {
     const isUnverified = !quality?.readiness;
     const reason =
       quality?.readiness?.blockingReasons[0] ??
       quality?.readiness?.improvementReasons[0] ??
       (isUnverified
         ? "Open Validation to confirm the current resume is safe to use."
-        : "Validation must clear this resume before an application can start.");
+        : quality?.finalDisposition?.disposition === "SAFE_BEST_ATTEMPT"
+          ? "This safe best attempt needs your explicit approval in Validation before an application can start."
+          : "Validation must clear this resume before an application can start.");
     return (
       <div>
         <StepSectionHeading

@@ -51,7 +51,7 @@ test("validation leads with the verdict and limits visible issues before technic
 test("canonical refusal or missing readiness hides StartApplication behind a review state", () => {
   const application = read("src/app/jobs/[id]/ApplicationReadyStep.tsx");
   const workspace = read("src/app/jobs/[id]/JobWorkspace.tsx");
-  const guard = application.indexOf("!quality?.readiness || quality.readiness.humanMaySend === false");
+  const guard = application.indexOf("!quality?.readiness || !effectiveMaySend");
   const unavailable = application.indexOf("Application unavailable");
   const normalScreen = application.indexOf("Application overview");
   assert.ok(guard >= 0 && unavailable > guard && normalScreen > unavailable);

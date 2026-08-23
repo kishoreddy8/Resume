@@ -11,6 +11,7 @@ import {
   getResumeQualityWorkflow,
   listResumeQualityIterations,
 } from "@/db/queries/resumeQualityWorkflows";
+import { getHumanApprovalForWorkflow, type ResumeQualityHumanApprovalRow } from "@/db/queries/resumeQualityHumanApprovals";
 import { listTailoringRuns } from "@/db/queries/tailoringRuns";
 import { loadCandidateProfile } from "@/lib/match/candidateProfile";
 import { matchesCurrentInstructions } from "@/lib/resumeQuality/canonicalInstructions";
@@ -123,6 +124,14 @@ export async function GET(
   /** Stage 28 — where the SAFE_BEST_ATTEMPT package was written, read from disk rather than assumed. */
   let safeAttemptPublication: { directory: string; resume: string; coverLetter: string; reviewFeedback: string | null } | null = null;
 
+  /**
+   * Human approval — the candidate's own explicit, auditable decision that THIS workflow's best
+   * attempt is safe to send (resume_quality_human_approvals). Always looked up against the CURRENT
+   * latest workflow's id, so a prior workflow's approval never appears to apply to a newer one. Never
+   * implies the workflow is READY — that remains solely evaluateQualityGate's word.
+   */
+  let humanApproval: ResumeQualityHumanApprovalRow | null = null;
+
   let bestAttempt: {
     iterationNumber: number;
     selectionReason: string;
@@ -166,6 +175,7 @@ export async function GET(
   };
 
   if (workflow) {
+    humanApproval = getHumanApprovalForWorkflow(candidateId, workflow.id) ?? null;
     iterations = listResumeQualityIterations(candidateId, workflow.id);
     const latestIter = iterations[iterations.length - 1];
     if (latestIter?.review_json) {
@@ -452,6 +462,20 @@ export async function GET(
     // running: a disposition is only meaningful once there is a completed attempt to judge.
     finalDisposition,
     safeAttemptPublication,
+    // Human approval for the CURRENT workflow only — see the field's own comment above for why a
+    // prior workflow's approval can never surface here for a newer one.
+    humanApproval: humanApproval
+      ? {
+          id: humanApproval.id,
+          workflowId: humanApproval.workflow_id,
+          selectedIterationNumber: humanApproval.selected_iteration_number,
+          overallScore: humanApproval.overall_score,
+          atsScore: humanApproval.ats_score,
+          truthfulnessScore: humanApproval.truthfulness_score,
+          architectureConsistencyScore: humanApproval.architecture_consistency_score,
+          approvedAt: humanApproval.approved_at,
+        }
+      : null,
     // Stage 28 — the writer queue, stated plainly. Concurrency is 1 by construction (the
     // machine-wide writer lease), and this makes that observable rather than implied.
     writerQueue: {

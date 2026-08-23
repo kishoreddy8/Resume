@@ -55,16 +55,136 @@ function toneFor(score: number | null): { dot: string; text: string; word: strin
 /** The engine's readiness, in a candidate's words. BLOCKED is never softened. */
 function verdict(data: QualityWorkflowData): { text: string; tone: "ok" | "warn" | "bad"; note: string | null } {
   const readiness = data.readiness?.readiness ?? null;
+  const disposition = data.finalDisposition?.disposition ?? null;
+  const isApprovedForThisWorkflow = data.humanApproval !== null && data.humanApproval.workflowId === data.workflowId;
+
   if (readiness === "READY") return { text: "Ready to use", tone: "ok", note: null };
-  if (readiness === "BLOCKED")
-    return { text: "Blocked", tone: "bad", note: data.readiness?.blockingReasons[0] ?? null };
-  if (readiness === "SAFE_BEST_ATTEMPT" || readiness === "NEEDS_REVIEW" || data.gate?.passed === false)
+  if (disposition === "SAFE_BEST_ATTEMPT" && isApprovedForThisWorkflow) {
+    return { text: "Human approved", tone: "ok", note: null };
+  }
+  if (disposition === "BLOCKED" || readiness === "BLOCKED")
+    return {
+      text: "Blocked",
+      tone: "bad",
+      note: data.finalDisposition?.safety.blockers[0] ?? data.readiness?.blockingReasons[0] ?? null,
+    };
+  if (disposition === "SAFE_BEST_ATTEMPT" || readiness === "NEEDS_REVIEW" || data.gate?.passed === false)
     return {
       text: "Needs your review",
       tone: "warn",
       note: data.readiness?.improvementReasons[0] ?? data.readiness?.blockingReasons[0] ?? null,
     };
   return { text: "Not validated yet", tone: "warn", note: null };
+}
+
+/**
+ * Stage 28 bridge — a truthful package that fell short of the autonomous READY bar. Every absolute
+ * safety guardrail already holds (evaluateSafety, reused server-side by the approve endpoint — never
+ * re-implemented here); what remains is the candidate's own explicit decision to send it. Approving
+ * records an auditable row tied to this EXACT workflow/iteration; it never flips workflow.status to
+ * READY and never overrides a safety failure — the button below only ever appears once the server has
+ * already said SAFE_BEST_ATTEMPT.
+ */
+function SafeBestAttemptCard({
+  data,
+  candidateId,
+  jobId,
+  onApproved,
+}: {
+  data: QualityWorkflowData;
+  candidateId: number;
+  jobId: number;
+  onApproved: () => void;
+}) {
+  const [state, setState] = useState<"idle" | "approving" | "error">("idle");
+  const [errorText, setErrorText] = useState<string | null>(null);
+
+  const disposition = data.finalDisposition;
+  const isApproved = data.humanApproval !== null && data.humanApproval.workflowId === data.workflowId;
+
+  if (!disposition || disposition.disposition !== "SAFE_BEST_ATTEMPT") return null;
+
+  async function approve() {
+    setState("approving");
+    setErrorText(null);
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowId: data.workflowId }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.ok) {
+        setState("error");
+        setErrorText(body?.error ?? "Approval failed. Nothing changed.");
+        return;
+      }
+      onApproved();
+      setState("idle");
+    } catch {
+      setState("error");
+      setErrorText("Approval failed. Nothing changed.");
+    }
+  }
+
+  return (
+    <WsCard tone="warm" title={isApproved ? "Human approved" : "Human review required"} className="mt-4">
+      {isApproved ? (
+        <>
+          <p className="text-[12.5px] leading-relaxed text-secondary">
+            Score: <strong className="text-primary">{data.humanApproval?.overallScore ?? "—"}</strong> · Reviewed:{" "}
+            <strong className="text-primary">
+              {data.humanApproval ? new Date(data.humanApproval.approvedAt).toLocaleString() : "—"}
+            </strong>
+          </p>
+          <p className="mt-2 text-[11px] leading-relaxed text-tertiary">
+            You approved this exact resume for applications. It did not meet the autonomous READY bar (score
+            ≥ 95 with every gate passed) — it was truthful and safe, and you chose to use it.
+          </p>
+        </>
+      ) : (
+        <>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12.5px] sm:grid-cols-3">
+            <div>
+              <dt className="text-tertiary">Overall quality</dt>
+              <dd className="font-semibold text-primary">{disposition.optimizationScore ?? "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-tertiary">Truthfulness</dt>
+              <dd className="font-semibold text-[var(--pill-success-fg)]">100</dd>
+            </div>
+            <div>
+              <dt className="text-tertiary">Safety blockers</dt>
+              <dd className="font-semibold text-[var(--pill-success-fg)]">0</dd>
+            </div>
+          </dl>
+          {disposition.optimizationFindings[0] && (
+            <p className="mt-2.5 text-[12px] leading-relaxed text-secondary">
+              Reason autonomous READY was not reached: {disposition.optimizationFindings[0]}
+            </p>
+          )}
+          <p className="mt-2.5 text-[11px] leading-relaxed text-tertiary">
+            This resume passed every truthfulness and safety check but did not clear the full quality gate.
+            Review it, then decide for yourself — CareerOps never submits an application.
+          </p>
+          <button
+            type="button"
+            onClick={approve}
+            disabled={state === "approving"}
+            aria-busy={state === "approving"}
+            className="mt-3 flex h-[40px] items-center rounded-[9px] bg-[var(--accent)] px-4 text-[13px] font-semibold text-[var(--accent-fg)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {state === "approving" ? "Approving…" : "Approve & Use for Applications"}
+          </button>
+          {state === "error" && errorText && (
+            <p aria-live="polite" className="mt-2 text-[11px] leading-relaxed text-[var(--error)]">
+              {errorText}
+            </p>
+          )}
+        </>
+      )}
+    </WsCard>
+  );
 }
 
 /**
@@ -179,6 +299,11 @@ export function ValidationStep({
               className="workspace-focus-target mt-5 scroll-mt-24"
             >
               <RevalidateCard candidateId={candidateId} jobId={jobId} onDone={() => onRevalidated?.()} />
+            </div>
+          )}
+          {data.finalDisposition?.disposition === "SAFE_BEST_ATTEMPT" && (
+            <div data-workspace-focus="approve" tabIndex={-1} className="workspace-focus-target scroll-mt-24">
+              <SafeBestAttemptCard data={data} candidateId={candidateId} jobId={jobId} onApproved={() => onRevalidated?.()} />
             </div>
           )}
         </section>
