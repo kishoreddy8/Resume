@@ -20,6 +20,7 @@ import { buildEmployerEvidenceMap, filterEmployerEvidenceMap, renderEmployerEvid
 import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orchestrator";
 import { employerScopeForRepair, renderRepairPlanSection } from "../repairScope";
 import { deriveProfessionalIdentity, renderProfessionalIdentitySection } from "../professionalIdentity";
+import { buildRepairScopedMasterReference, shouldUseFullMasterReferenceForRepair } from "./masterReferenceProjection";
 import {
   collectRoleProjectEvidence,
   filterRoleProjectEvidence,
@@ -704,8 +705,33 @@ export function exportExternalWriterPackage(
   );
 
   // 6. master_resume_reference.json / master_resume.txt
+  //
+  // TARGETED_REPAIR MASTER-REFERENCE SCOPING (2026-08-23) — the skills array is 79–86% of this file
+  // (20–44 KB), and per-employer skill evidence is ALREADY rendered inline into writer_prompt.md by
+  // renderEmployerEvidenceSection above. During TARGETED_REPAIR, the writer is forbidden from
+  // re-tailoring frozen content, so the global skills dump serves no purpose the existing inline
+  // employer evidence does not already cover. The compact projection omits `skills` entirely and
+  // reduces untouched employer records to identity stubs, while keeping all hard-fact fields the
+  // writer's truthfulness guardrails reference (employers, titles, dates, education, certifications,
+  // totalYearsExperience).
+  //
+  // SAFETY: this projection is writer-facing context only. The deterministic reviewer
+  // (deterministicReviewer.ts), repairPreservation.ts, and every validation gate continue to receive
+  // and validate against the FULL authoritative CandidateProfile — see orchestrator.ts L1268 and
+  // deterministicReviewer.ts L95. Nothing here changes what CareerOps knows or verifies.
+  //
+  // FALLBACK: if the repair touches global sections (summary, tagline, skillGroups, education,
+  // certifications), employer scope is ambiguous (null), or no repair plan exists, the full profile
+  // is written exactly as before — fail toward MORE context, not less.
   if (writerInput.masterProfile) {
-    writePackageFile("master_resume_reference.json", JSON.stringify(writerInput.masterProfile, null, 2));
+    const useFullForRepair =
+      !isTargetedRepair ||
+      repairEmployerScope === null ||
+      shouldUseFullMasterReferenceForRepair(writerInput.repairPlan);
+    const masterReferenceContent = useFullForRepair
+      ? writerInput.masterProfile
+      : buildRepairScopedMasterReference(writerInput.masterProfile, repairEmployerScope!);
+    writePackageFile("master_resume_reference.json", JSON.stringify(masterReferenceContent, null, 2));
   } else if (!copyPackageFile(wsPkg.masterResumePath, "master_resume.txt")) {
     writePackageFile("master_resume_reference.json", "{}");
   }

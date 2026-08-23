@@ -9,7 +9,9 @@ import { getHandoffDirectory, type QualityWorkflowLocation } from "../workspace"
 import { exportExternalWriterPackage } from "../handoff/exporter";
 import { importExternalWriterResult, validateResumeContentStructure } from "../handoff/importer";
 import { ExternalFileResumeWriter, ExternalWriterResultNotReadyError } from "../writers/externalFileResumeWriter";
-import type { ExternalWriterOutput } from "../types";
+import type { ExternalWriterOutput, InstructionComplianceChecks } from "../types";
+import { INSTRUCTION_COMPLIANCE_CHECK_NAMES } from "../types";
+import { INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
 
 let tmpDbDir: string;
 let tmpCandidatesDir: string;
@@ -1302,4 +1304,172 @@ test("39. .claude/.agents skill instructions remain methodology-equivalent", () 
 test("40. no external AI process automatically launched", () => {
   const writer = new ExternalFileResumeWriter();
   assert.equal(typeof writer.generate, "function");
+});
+
+test("41. INITIAL_GENERATION export writes full master_resume_reference.json with skills array", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 1,
+  });
+
+  const masterRefPath = path.join(exportRes.handoffDirectory, "master_resume_reference.json");
+  assert(fs.existsSync(masterRefPath));
+  const parsed = JSON.parse(fs.readFileSync(masterRefPath, "utf-8"));
+  assert.equal(Array.isArray(parsed.skills), true, "INITIAL_GENERATION must contain skills array");
+  assert.equal(Array.isArray(parsed.experience), true);
+});
+
+test("42. TARGETED_REPAIR export with employer scope writes compact master_resume_reference.json (skills omitted)", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  // Iteration 1 run with a flaw in experience bullet attributed to Acme Corp
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: PERFECT_RESUME,
+    coverLetter: {
+      ...COVER_LETTER,
+      paragraphs: ["At Acme Corp, I designed Databricks notebooks and data pipelines."],
+    },
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile({
+      skills: [
+        { rawSkillName: "Azure", source: "employer", attributedTo: [{ employer: "Acme Corp" }] },
+      ],
+    }),
+    reviewer: {
+      review: async () => ({
+        review: {
+          overallScore: 75,
+          atsScore: 80,
+          keywordAlignmentScore: 80,
+          truthfulnessScore: 70,
+          architectureConsistencyScore: 80,
+          recruiterReadabilityScore: 80,
+          formattingScore: 90,
+          blockingFailures: [
+            {
+              type: "EMPLOYER_CONTRADICTION",
+              description: 'Cover letter attributes "Databricks" to Acme Corp.',
+            },
+          ],
+          blockingIssues: [],
+          requiredCorrections: [],
+          missingRequiredSkills: [],
+          incorrectTechnologyUsage: [],
+          genericBullets: [],
+          missingImpactEvidence: [],
+          summaryIssues: [],
+          skillsOrderingIssues: [],
+          truthfulnessIssues: [],
+          instructionCompliance: {
+            instructionVersion: INSTRUCTION_VERSION,
+            instructionHash: INSTRUCTION_HASH,
+            checks: Object.fromEntries(
+              INSTRUCTION_COMPLIANCE_CHECK_NAMES.map((name) => [name, name === "finalValidation" ? "FAIL" : "PASS"])
+            ) as unknown as InstructionComplianceChecks,
+            notes: [],
+          },
+        },
+      }),
+    },
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const masterRefPath = path.join(exportRes.handoffDirectory, "master_resume_reference.json");
+  assert(fs.existsSync(masterRefPath));
+  const parsed = JSON.parse(fs.readFileSync(masterRefPath, "utf-8"));
+  assert.equal(Array.isArray(parsed.experience), true);
+  assert.equal(parsed.schemaVersion, 1);
+  assert.equal("education" in parsed, true);
+  assert.equal("certifications" in parsed, true);
+  assert.equal("skills" in parsed, false, "skills array must be omitted during TARGETED_REPAIR");
+});
+
+test("43. TARGETED_REPAIR export touching summary falls back to full master_resume_reference.json", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  // Iteration 1 run with a summary finding (global section)
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: PERFECT_RESUME,
+    coverLetter: COVER_LETTER,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile({
+      skills: [
+        { rawSkillName: "Azure", source: "employer", attributedTo: [{ employer: "Acme Corp" }] },
+      ],
+    }),
+    reviewer: {
+      review: async () => ({
+        review: {
+          overallScore: 75,
+          atsScore: 80,
+          keywordAlignmentScore: 80,
+          truthfulnessScore: 70,
+          architectureConsistencyScore: 80,
+          recruiterReadabilityScore: 80,
+          formattingScore: 90,
+          blockingFailures: [
+            {
+              type: "UNSUPPORTED_CLAIM",
+              description: 'Summary claims 10 years experience.',
+            },
+          ],
+          blockingIssues: [],
+          requiredCorrections: [],
+          missingRequiredSkills: [],
+          incorrectTechnologyUsage: [],
+          genericBullets: [],
+          missingImpactEvidence: [],
+          summaryIssues: ["Summary claims 10 years experience."],
+          skillsOrderingIssues: [],
+          truthfulnessIssues: [],
+          instructionCompliance: {
+            instructionVersion: INSTRUCTION_VERSION,
+            instructionHash: INSTRUCTION_HASH,
+            checks: Object.fromEntries(
+              INSTRUCTION_COMPLIANCE_CHECK_NAMES.map((name) => [name, name === "finalValidation" ? "FAIL" : "PASS"])
+            ) as unknown as InstructionComplianceChecks,
+            notes: [],
+          },
+        },
+      }),
+    },
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const masterRefPath = path.join(exportRes.handoffDirectory, "master_resume_reference.json");
+  assert(fs.existsSync(masterRefPath));
+  const parsed = JSON.parse(fs.readFileSync(masterRefPath, "utf-8"));
+  assert.equal(Array.isArray(parsed.skills), true, "global summary repair must fall back to full reference with skills");
 });
