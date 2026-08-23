@@ -422,7 +422,10 @@ test("4. export creates review.json when improvement feedback exists", async () 
   assert(fs.existsSync(reviewJsonPath));
   const prompt = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_prompt.md"), "utf-8");
   assert.match(prompt, /Writer mode: TARGETED_REPAIR/);
-  assert.match(prompt, /Surgical repair is mandatory/);
+  // "Surgical repair" alone (not "...is mandatory") so this passes whether this fixture's repair
+  // plan happens to be patch-eligible (see patchRepair.ts) or falls back to the legacy full-document
+  // contract — both variants open with the same phrase; only what follows differs.
+  assert.match(prompt, /Surgical repair/);
   assert.doesNotMatch(prompt, /Deep rewrite is required/);
   assert.doesNotMatch(prompt, /### Compliance Checks Blocking Approval/, "derived compliance rows must not be separate repair tasks");
 });
@@ -1472,4 +1475,192 @@ test("43. TARGETED_REPAIR export touching summary falls back to full master_resu
   assert(fs.existsSync(masterRefPath));
   const parsed = JSON.parse(fs.readFileSync(masterRefPath, "utf-8"));
   assert.equal(Array.isArray(parsed.skills), true, "global summary repair must fall back to full reference with skills");
+});
+
+// --- PATCH-BASED TARGETED_REPAIR (2026-08-23) ------------------------------------------------------
+
+test("44. a patch-eligible TARGETED_REPAIR export offers the PATCH schema with the exact editable paths", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: FLAWED_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+  const prompt = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_prompt.md"), "utf-8");
+
+  assert.match(prompt, /"schemaVersion": 2/);
+  assert.match(prompt, /"outputMode": "PATCH"/);
+  assert.match(prompt, /Surgical repair, PATCH mode/);
+  assert.match(prompt, /return ONLY the changed values/);
+  // The exact editable paths repairScope.ts computed must be stated verbatim so the writer knows
+  // precisely which `path` values are authorized.
+  assert.match(prompt, /`resume\.experience\[0\]\.bullets\[0\]`/);
+  assert.match(prompt, /`resume\.summary\[0\]`/);
+});
+
+test("45. a valid PATCH response reconstructs correctly and reaches the SAME writer output shape a legacy full-document response would", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: FLAWED_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const patchOutput = {
+    schemaVersion: 2,
+    outputMode: "PATCH",
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    jobId: jobOne.id,
+    tailoringRunId: runAliceJobOneId,
+    workflowId: wf.id,
+    iterationNumber: 2,
+    operations: [
+      { document: "resume", path: "experience[0].bullets[0]", replacement: "Built batch data ingestion pipelines using Azure Data Factory." },
+      { document: "resume", path: "summary[0]", replacement: "Senior Data Engineer with 5+ years building Azure Data Factory and Databricks pipelines for enterprise analytics platforms." },
+    ],
+  };
+  fs.writeFileSync(path.join(exportRes.handoffDirectory, "writer_output.json"), JSON.stringify(patchOutput, null, 2));
+
+  const writer = new ExternalFileResumeWriter();
+  const { buildResumeWriterInput } = await import("../orchestrator");
+  const writerInput = buildResumeWriterInput(candidateAliceId, wf.id);
+  writerInput.iterationNumber = 2;
+
+  const output = await writer.generate(writerInput);
+  assert.equal(output.resume.experience[0].bullets[0], "Built batch data ingestion pipelines using Azure Data Factory.");
+  assert.equal(output.resume.summary[0], "Senior Data Engineer with 5+ years building Azure Data Factory and Databricks pipelines for enterprise analytics platforms.");
+  // Every field the legacy full-document contract also produces must still be present — the
+  // reconstructed output is indistinguishable in SHAPE from a legacy writer's full response.
+  assert.equal(typeof output.resume.name, "string");
+  assert.equal(typeof output.resume.tagline, "string");
+  assert.deepEqual(output.resume.education, FLAWED_RESUME.education);
+});
+
+test("46. an unauthorized PATCH operation is rejected before it ever reaches persistence", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: FLAWED_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const patchOutput = {
+    schemaVersion: 2,
+    outputMode: "PATCH",
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    jobId: jobOne.id,
+    tailoringRunId: runAliceJobOneId,
+    workflowId: wf.id,
+    iterationNumber: 2,
+    operations: [
+      // "education" was never in this repair's editablePaths — must be refused, not silently ignored.
+      { document: "resume", path: "education[0]", replacement: "Fabricated Degree, Fabricated University" },
+    ],
+  };
+  fs.writeFileSync(path.join(exportRes.handoffDirectory, "writer_output.json"), JSON.stringify(patchOutput, null, 2));
+
+  const writer = new ExternalFileResumeWriter();
+  const { buildResumeWriterInput } = await import("../orchestrator");
+  const writerInput = buildResumeWriterInput(candidateAliceId, wf.id);
+  writerInput.iterationNumber = 2;
+
+  await assert.rejects(() => writer.generate(writerInput), (err: unknown) => {
+    assert.ok(err instanceof ResumeQualityOrchestrationError);
+    assert.equal((err as InstanceType<typeof ResumeQualityOrchestrationError>).code, "PATCH_AUTHORIZATION_FAILED");
+    return true;
+  });
+});
+
+test("47. a legacy schemaVersion 1 full-document response still works after PATCH mode was added", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: FLAWED_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const repairedResume: ResumeContent = {
+    ...FLAWED_RESUME,
+    summary: ["Senior Data Engineer with 5+ years building Azure Data Factory and Databricks pipelines for enterprise analytics platforms."],
+    experience: [
+      { ...FLAWED_RESUME.experience[0], bullets: ["Built batch data ingestion pipelines using Azure Data Factory."] },
+    ],
+  };
+  const legacyOutput = {
+    schemaVersion: 1,
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    jobId: jobOne.id,
+    tailoringRunId: runAliceJobOneId,
+    workflowId: wf.id,
+    iterationNumber: 2,
+    resume: repairedResume,
+  };
+  fs.writeFileSync(path.join(exportRes.handoffDirectory, "writer_output.json"), JSON.stringify(legacyOutput, null, 2));
+
+  const writer = new ExternalFileResumeWriter();
+  const { buildResumeWriterInput } = await import("../orchestrator");
+  const writerInput = buildResumeWriterInput(candidateAliceId, wf.id);
+  writerInput.iterationNumber = 2;
+
+  const output = await writer.generate(writerInput);
+  assert.equal(output.resume.summary[0], repairedResume.summary[0]);
 });

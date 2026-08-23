@@ -5,9 +5,12 @@ import { getResumeQualityWorkflow } from "@/db/queries/resumeQualityWorkflows";
 import { getCandidateJobState } from "@/db/queries/candidateJobState";
 import { getTailoringRun } from "@/db/queries/tailoringRuns";
 import { ResumeQualityOrchestrationError } from "../orchestrator";
+import { reconstructFromPatchOperations } from "./patchRepair";
 import type {
   ExternalHandoffImportResult,
   ExternalWriterOutput,
+  FullDocumentWriterOutput,
+  PatchWriterOutput,
   ResumeWriterOutput,
 } from "../types";
 import type { CoverLetterContent, ResumeContent } from "../../../../tools/tailoring-engine/types";
@@ -20,6 +23,15 @@ export interface ImportExternalWriterResultInput {
   inputPath?: string;
   rawJson?: string;
   parsedOutput?: unknown;
+  /** PATCH-BASED TARGETED_REPAIR (2026-08-23) — required to authorize/reconstruct a schemaVersion 2
+   *  patch response; absent means a patch payload is refused outright (PATCH_CONTEXT_MISSING) rather
+   *  than reconstructed against nothing. A legacy schemaVersion 1 full-document payload never needs
+   *  this and ignores it entirely. */
+  patchContext?: {
+    baselineResume: ResumeContent;
+    baselineCoverLetter?: CoverLetterContent;
+    editablePaths: readonly string[];
+  };
 }
 
 /**
@@ -240,11 +252,11 @@ export function importExternalWriterResult(
 
   const payload = rawPayload as Partial<ExternalWriterOutput>;
 
-  // 2. Validate Schema Version
-  if (payload.schemaVersion !== 1) {
+  // 2. Validate Schema Version — 1 (legacy full-document) or 2 (PATCH-BASED TARGETED_REPAIR, 2026-08-23).
+  if (payload.schemaVersion !== 1 && payload.schemaVersion !== 2) {
     throw new ResumeQualityOrchestrationError(
       "UNSUPPORTED_SCHEMA_VERSION",
-      `Expected schemaVersion 1, got ${payload.schemaVersion}`
+      `Expected schemaVersion 1 or 2, got ${payload.schemaVersion}`
     );
   }
 
@@ -287,8 +299,43 @@ export function importExternalWriterResult(
   }
 
   // 4. Validate Content Structure
-  const validatedResume = validateResumeContentStructure(payload.resume);
-  const validatedCoverLetter = payload.coverLetter ? validateCoverLetterContentStructure(payload.coverLetter) : undefined;
+  let validatedResume: ResumeContent;
+  let validatedCoverLetter: CoverLetterContent | undefined;
+
+  if (payload.schemaVersion === 2) {
+    const patchPayload = payload as Partial<PatchWriterOutput>;
+    if (patchPayload.outputMode !== "PATCH") {
+      throw new ResumeQualityOrchestrationError(
+        "INVALID_PATCH_OUTPUT_MODE",
+        `schemaVersion 2 requires outputMode "PATCH", got ${String(patchPayload.outputMode)}`
+      );
+    }
+    if (!input.patchContext) {
+      throw new ResumeQualityOrchestrationError(
+        "PATCH_CONTEXT_MISSING",
+        "A patch response requires baseline/editablePaths context the importer was not given — cannot reconstruct."
+      );
+    }
+    const reconstruction = reconstructFromPatchOperations(
+      input.patchContext.baselineResume,
+      input.patchContext.baselineCoverLetter,
+      patchPayload.operations,
+      input.patchContext.editablePaths
+    );
+    if (reconstruction.violations.length > 0) {
+      throw new ResumeQualityOrchestrationError(
+        "PATCH_AUTHORIZATION_FAILED",
+        `Patch response rejected: ${reconstruction.violations.join(", ")}`,
+        { violations: reconstruction.violations }
+      );
+    }
+    validatedResume = validateResumeContentStructure(reconstruction.resume);
+    validatedCoverLetter = reconstruction.coverLetter ? validateCoverLetterContentStructure(reconstruction.coverLetter) : undefined;
+  } else {
+    const fullPayload = payload as Partial<FullDocumentWriterOutput>;
+    validatedResume = validateResumeContentStructure(fullPayload.resume);
+    validatedCoverLetter = fullPayload.coverLetter ? validateCoverLetterContentStructure(fullPayload.coverLetter) : undefined;
+  }
 
   const writerOutput: ResumeWriterOutput = {
     resume: validatedResume,

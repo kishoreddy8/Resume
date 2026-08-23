@@ -70,6 +70,16 @@ export class ExternalFileResumeWriter implements ResumeWriterAgent {
       workflowId: input.workflowId,
       expectedIterationNumber: targetIteration,
       inputPath: outputFilePath,
+      // PATCH-BASED TARGETED_REPAIR (2026-08-23) — only meaningful (and only consulted by the
+      // importer) if the writer actually returned a schemaVersion 2 patch response; a legacy
+      // full-document response ignores this entirely. `input` is this same ResumeWriterInput the
+      // exporter built the handoff from, so `currentResume`/`currentCoverLetter`/`repairPlan` here
+      // are the EXACT baseline and editable-path allowlist the writer was told about — never
+      // re-derived independently.
+      patchContext:
+        input.currentResume && input.repairPlan?.editablePaths
+          ? { baselineResume: input.currentResume, baselineCoverLetter: input.currentCoverLetter, editablePaths: input.repairPlan.editablePaths }
+          : undefined,
     });
 
     return importRes.writerOutput;

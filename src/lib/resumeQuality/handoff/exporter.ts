@@ -21,6 +21,7 @@ import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orch
 import { employerScopeForRepair, renderRepairPlanSection } from "../repairScope";
 import { deriveProfessionalIdentity, renderProfessionalIdentitySection } from "../professionalIdentity";
 import { buildRepairScopedMasterReference, shouldUseFullMasterReferenceForRepair } from "./masterReferenceProjection";
+import { isPatchEligibleRepairPlan } from "./patchRepair";
 import {
   collectRoleProjectEvidence,
   filterRoleProjectEvidence,
@@ -98,10 +99,20 @@ export function buildExternalWriterPrompt(input: {
   positioningRecommendation?: string;
   recommendedSkillOrder?: string[];
   atsCoverageReportText?: string;
+  /** PATCH-BASED TARGETED_REPAIR (2026-08-23) — the FULL ("resume."/"coverLetter."-prefixed)
+   *  editable paths this repair authorizes, offered to the writer ONLY when
+   *  patchRepair.ts's isPatchEligibleRepairPlan already confirmed every one of them is safely
+   *  reconstructable. Absent (or on INITIAL_GENERATION) means the legacy full-document schema is
+   *  used, exactly as before this feature existed. */
+  patchEligiblePaths?: readonly string[];
 }): string {
   const { candidateName, iterationNumber, selectedTrack, latestReview, requiredCorrections, blockingIssues, blockingFailures } = input;
   const writerMode = input.writerMode ?? (input.repairPlanSection ? "TARGETED_REPAIR" : "INITIAL_GENERATION");
   const complianceCorrections = input.complianceCorrections ?? [];
+  // PATCH-BASED TARGETED_REPAIR (2026-08-23) — only ever true for a repair the exporter has already
+  // confirmed is patch-eligible (see exportExternalWriterPackage's own call to
+  // isPatchEligibleRepairPlan before setting this). INITIAL_GENERATION never sets it.
+  const isPatchMode = writerMode === "TARGETED_REPAIR" && (input.patchEligiblePaths?.length ?? 0) > 0;
 
   // Stated as hard facts, in the same breath as the truthfulness guardrail, because that is exactly
   // what they are: the writer may format them but must never substitute or invent one. Before this
@@ -166,6 +177,14 @@ export function buildExternalWriterPrompt(input: {
    - The summary must be 3-4 concise recruiter-facing sentences with varied construction: target role, strongest relevant platform/capability, supported domain context, and 2-4 grounded differentiators. Do not use repetitive "Expertise spans" / "Proven ability" templates or dump technologies.
    - Give each employer its own evidence-backed engineering identity. Do not make every role sound like the same project. Project descriptions are 1-2 short sentences about objective and architecture, never stack dumps.
    - Bullet ceilings remain 7 / 6 / 5 by role recency and 18 total; ceilings are not targets. Add a bullet only for distinct employer-supported evidence that materially improves JD alignment.`
+      : isPatchMode
+      ? `2. **Surgical repair, PATCH mode — return ONLY the changed values, never the full document**:
+   - You will output PATCH OPERATIONS (see the schema below), not a full resume/cover letter.
+   - Every operation's \`path\` must be one of the EXACT editable paths listed in the targeted-repair contract above — nothing else.
+   - Do NOT reproduce \`previous_resume_content.json\`/\`previous_cover_letter_content.json\` content for a path you are not changing — omitting an editable path means CareerOps leaves it at its current value; you never need to restate it.
+   - Do not rewrite, improve, reorder, re-tailor, or rephrase any content outside the listed editable paths, even if you prefer different wording.
+   - Previously resolved findings must not return: ${input.resolvedFindingKeys?.length ? input.resolvedFindingKeys.join(" | ") : "none recorded"}.
+   - Any operation whose path is not in the editable-paths allowlist is rejected and fails the whole repair — when in doubt, omit it rather than guess.`
       : `2. **Surgical repair is mandatory — full/deep rewriting is forbidden**:
    - Start from \`previous_resume_content.json\` and \`previous_cover_letter_content.json\`.
    - Apply only the explicit repair operations and editable paths in the targeted-repair contract above.
@@ -194,6 +213,135 @@ ${correctionsBlock}`
       : `## REPAIR REVIEW CONTRACT
 
 The normalized root findings and explicit operations in **TARGETED REPAIR** above are the complete content-edit instructions for this pass. Raw compliance statuses, duplicate reporting layers, and the derived \`finalValidation\` status are deliberately not repeated as separate writing tasks. The full CareerOps validator still runs after the repair.`;
+
+  // PATCH-BASED TARGETED_REPAIR (2026-08-23) — the patch schema replaces the full-document schema
+  // ONLY when isPatchMode; every field the writer must state (identity tokens, agentMetadata,
+  // writerValidation) stays identical between the two so importer.ts's identity checks (candidateId/
+  // applicationId/jobId/tailoringRunId/workflowId/iterationNumber — see importer.ts step 3) apply
+  // unchanged to both.
+  const outputSchemaSection = isPatchMode
+    ? `### Strict JSON Output Schema — PATCH mode (\`writer_output.json\`)
+\`\`\`json
+{
+  "schemaVersion": 2,
+  "outputMode": "PATCH",
+  "candidateId": ${input.candidateId},
+  "applicationId": ${input.applicationId},
+  "jobId": ${input.jobId ?? "null"},
+  "tailoringRunId": ${input.tailoringRunId},
+  "workflowId": ${input.workflowId},
+  "iterationNumber": ${iterationNumber},
+  "operations": [
+    { "document": "resume", "path": "<one of the exact editable paths below>", "replacement": "<the new value for that path>" }
+  ],
+  "agentMetadata": {
+    "provider": "claude-code | codex | antigravity | local | other",
+    "model": "your-model-identifier",
+    "completedAt": "${new Date().toISOString()}"
+  },
+  "writerValidation": {
+    "instructionVersion": "${INSTRUCTION_VERSION}",
+    "instructionHash": "${INSTRUCTION_HASH}",
+    "checks": {
+      "hardCareerFacts": "PASS | FAIL | REVIEW",
+      "masterSkillsInventoryCompliance": "PASS | FAIL | REVIEW",
+      "deepRewrite": "PASS | FAIL | REVIEW",
+      "architectureIntegrity": "PASS | FAIL | REVIEW",
+      "noContradictingTechnologies": "PASS | FAIL | REVIEW"
+    },
+    "notes": ["Optional free-text notes on anything you were unsure about."]
+  }
+}
+\`\`\`
+
+**The ONLY paths you may use** (each \`path\` above must be one of these exactly, relative to its \`document\` — e.g. for \`resume.summary[0]\` write \`"document": "resume", "path": "summary[0]"\`):
+${(input.patchEligiblePaths ?? []).map((p) => `- \`${p}\``).join("\n")}
+
+One \`operations\` entry per path you are actually changing — never one for a path you're leaving alone, and never more than one entry for the same path. \`replacement\` is a plain string for every path above except \`resume.skillGroups\`, whose replacement is the COMPLETE new skill-groups array (\`[{ "label": "...", "items": ["...", "..."] }]\`) — CareerOps replaces the whole array atomically, it does not merge it.
+
+\`writerValidation\` is entirely optional and purely diagnostic — CareerOps computes its own independent \`instructionCompliance\` result over every guardrail regardless of what you report here, and a self-reported PASS never overrides a CareerOps-detected FAIL.`
+    : `### Strict JSON Output Schema (\`writer_output.json\`)
+\`\`\`json
+{
+  "schemaVersion": 1,
+  "candidateId": ${input.candidateId},
+  "applicationId": ${input.applicationId},
+  "jobId": ${input.jobId ?? "null"},
+  "tailoringRunId": ${input.tailoringRunId},
+  "workflowId": ${input.workflowId},
+  "iterationNumber": ${iterationNumber},
+  "resume": {
+    "name": "${candidateName}",
+    "tagline": "<candidate's professional identity> | <JD-relevant specialization> | <key technologies>",
+    "location": "City, State or Remote",
+    "phone": "Phone",
+    "email": "Email",
+    "summary": [
+      "Opens by naming the candidate's professional identity and the specialization this JD needs — never 'Engineer with...', 'Professional with...' or any other generic opener, and never a years-of-experience figure CareerOps has not verified..."
+    ],
+    "skillGroups": [
+      {
+        "label": "Category Name (e.g. Cloud & Data Platforms)",
+        "items": ["Skill 1", "Skill 2", "Skill 3"]
+      }
+    ],
+    "experience": [
+      {
+        "title": "Title (must match Master Resume)",
+        "company": "Company (must match Master Resume)",
+        "location": "City, ST — OMIT this field entirely unless the Master Resume states it",
+        "dates": "Dates (must match Master Resume)",
+        "projectDescription": "One sentence naming what this role's work was — restating ONLY scope this same role's bullets already establish. Never a new system, client, domain or metric.",
+        "bullets": [
+          "Action-oriented bullet with measurable impact and relevant technologies..."
+        ],
+        "environment": ["Only technologies THIS employer's evidence supports", "..."]
+      }
+    ],
+    "keyProjects": [
+      { "name": "Project name", "description": "What it does", "technologies": ["..."], "url": "https://... (only if the Master Resume records one)" }
+    ],
+    "education": [
+      "Degree, Institution - Dates"
+    ],
+    "certifications": [
+      "Certification Name"
+    ]
+  },
+  "coverLetter": {
+    "name": "${candidateName}",
+    "location": "City, State",
+    "phone": "Phone",
+    "email": "Email",
+    "salutation": "Dear Hiring Team,",
+    "paragraphs": [
+      "Opening paragraph...",
+      "Core alignment paragraph...",
+      "Closing paragraph..."
+    ],
+    "closing": "Sincerely,\\n${candidateName}"
+  },
+  "agentMetadata": {
+    "provider": "claude-code | codex | antigravity | local | other",
+    "model": "your-model-identifier",
+    "completedAt": "${new Date().toISOString()}"
+  },
+  "writerValidation": {
+    "instructionVersion": "${INSTRUCTION_VERSION}",
+    "instructionHash": "${INSTRUCTION_HASH}",
+    "checks": {
+      "hardCareerFacts": "PASS | FAIL | REVIEW",
+      "masterSkillsInventoryCompliance": "PASS | FAIL | REVIEW",
+      "deepRewrite": "PASS | FAIL | REVIEW",
+      "architectureIntegrity": "PASS | FAIL | REVIEW",
+      "noContradictingTechnologies": "PASS | FAIL | REVIEW"
+    },
+    "notes": ["Optional free-text notes on anything you were unsure about."]
+  }
+}
+\`\`\`
+
+\`writerValidation\` is entirely optional and purely diagnostic — CareerOps computes its own independent \`instructionCompliance\` result over every guardrail regardless of what you report here, and a self-reported PASS never overrides a CareerOps-detected FAIL.`;
 
   return `# External Resume Writer Agent Task — Iteration ${iterationNumber}
 
@@ -288,88 +436,7 @@ ${priorReviewSection}
 
 When your improvements are complete, create the file **\`writer_output.json\`** in this exact directory matching the strict schema below.
 
-### Strict JSON Output Schema (\`writer_output.json\`)
-\`\`\`json
-{
-  "schemaVersion": 1,
-  "candidateId": ${input.candidateId},
-  "applicationId": ${input.applicationId},
-  "jobId": ${input.jobId ?? "null"},
-  "tailoringRunId": ${input.tailoringRunId},
-  "workflowId": ${input.workflowId},
-  "iterationNumber": ${iterationNumber},
-  "resume": {
-    "name": "${candidateName}",
-    "tagline": "<candidate's professional identity> | <JD-relevant specialization> | <key technologies>",
-    "location": "City, State or Remote",
-    "phone": "Phone",
-    "email": "Email",
-    "summary": [
-      "Opens by naming the candidate's professional identity and the specialization this JD needs — never 'Engineer with...', 'Professional with...' or any other generic opener, and never a years-of-experience figure CareerOps has not verified..."
-    ],
-    "skillGroups": [
-      {
-        "label": "Category Name (e.g. Cloud & Data Platforms)",
-        "items": ["Skill 1", "Skill 2", "Skill 3"]
-      }
-    ],
-    "experience": [
-      {
-        "title": "Title (must match Master Resume)",
-        "company": "Company (must match Master Resume)",
-        "location": "City, ST — OMIT this field entirely unless the Master Resume states it",
-        "dates": "Dates (must match Master Resume)",
-        "projectDescription": "One sentence naming what this role's work was — restating ONLY scope this same role's bullets already establish. Never a new system, client, domain or metric.",
-        "bullets": [
-          "Action-oriented bullet with measurable impact and relevant technologies..."
-        ],
-        "environment": ["Only technologies THIS employer's evidence supports", "..."]
-      }
-    ],
-    "keyProjects": [
-      { "name": "Project name", "description": "What it does", "technologies": ["..."], "url": "https://... (only if the Master Resume records one)" }
-    ],
-    "education": [
-      "Degree, Institution - Dates"
-    ],
-    "certifications": [
-      "Certification Name"
-    ]
-  },
-  "coverLetter": {
-    "name": "${candidateName}",
-    "location": "City, State",
-    "phone": "Phone",
-    "email": "Email",
-    "salutation": "Dear Hiring Team,",
-    "paragraphs": [
-      "Opening paragraph...",
-      "Core alignment paragraph...",
-      "Closing paragraph..."
-    ],
-    "closing": "Sincerely,\\n${candidateName}"
-  },
-  "agentMetadata": {
-    "provider": "claude-code | codex | antigravity | local | other",
-    "model": "your-model-identifier",
-    "completedAt": "${new Date().toISOString()}"
-  },
-  "writerValidation": {
-    "instructionVersion": "${INSTRUCTION_VERSION}",
-    "instructionHash": "${INSTRUCTION_HASH}",
-    "checks": {
-      "hardCareerFacts": "PASS | FAIL | REVIEW",
-      "masterSkillsInventoryCompliance": "PASS | FAIL | REVIEW",
-      "deepRewrite": "PASS | FAIL | REVIEW",
-      "architectureIntegrity": "PASS | FAIL | REVIEW",
-      "noContradictingTechnologies": "PASS | FAIL | REVIEW"
-    },
-    "notes": ["Optional free-text notes on anything you were unsure about."]
-  }
-}
-\`\`\`
-
-\`writerValidation\` is entirely optional and purely diagnostic — CareerOps computes its own independent \`instructionCompliance\` result over every guardrail regardless of what you report here, and a self-reported PASS never overrides a CareerOps-detected FAIL.
+${outputSchemaSection}
 `;
 }
 
@@ -632,6 +699,14 @@ export function exportExternalWriterPackage(
   const exportRoleEvidence = collectRoleProjectEvidence(writerInput.currentResume, writerInput.masterProfile);
   const scopedRoleEvidence = filterRoleProjectEvidence(exportRoleEvidence, repairEmployerScope);
 
+  // PATCH-BASED TARGETED_REPAIR (2026-08-23) — offered only when isPatchEligibleRepairPlan has
+  // already confirmed every one of this repair's editablePaths is a shape patchRepair.ts knows how
+  // to reconstruct (never for a cover-letter path, a whole-array path other than skillGroups, or any
+  // unrecognized shape). Fails toward the legacy full-document contract on any ambiguity — never
+  // toward patch mode.
+  const exportPatchEligiblePaths =
+    isTargetedRepair && isPatchEligibleRepairPlan(writerInput.repairPlan?.editablePaths) ? writerInput.repairPlan!.editablePaths! : undefined;
+
   // 2. writer_prompt.md
   const promptContent = buildExternalWriterPrompt({
     candidateId,
@@ -671,6 +746,7 @@ export function exportExternalWriterPackage(
     positioningRecommendation: exportPositioningRecommendation,
     recommendedSkillOrder: exportSkillOrder,
     atsCoverageReportText: exportAtsCoverageText,
+    patchEligiblePaths: exportPatchEligiblePaths,
   });
   writePackageFile("writer_prompt.md", promptContent);
 
