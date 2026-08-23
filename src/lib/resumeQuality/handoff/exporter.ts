@@ -195,6 +195,23 @@ export function buildExternalWriterPrompt(input: {
 - Formatting & Structural Completeness Score: ${latestReview.formattingScore}/100`
     : "Initial tailoring iteration (no prior review scores).";
 
+  // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — true only when every one of the five blocks
+  // above is genuinely its vacuous "None"/default value. In the real orchestrator path this is
+  // ALWAYS true for INITIAL_GENERATION (latestReview/requiredCorrections/blockingIssues/
+  // blockingFailures/complianceCorrections are only ever populated alongside a repairPlan, which
+  // forces writerMode to "TARGETED_REPAIR" — see orchestrator.ts's own
+  // `writerMode: repairPlan ? "TARGETED_REPAIR" : "INITIAL_GENERATION"`) — but this is computed from
+  // the actual rendered blocks, not assumed from writerMode alone, so a caller that somehow supplies
+  // real content alongside "INITIAL_GENERATION" (the exact defensive scenario
+  // promptAssemblyConsistency.test.ts's Phase L tests guard) still gets it rendered in full, never
+  // silently dropped.
+  const priorReviewIsEmpty =
+    !latestReview &&
+    correctionsBlock === "None identified." &&
+    complianceBlock === "None — every named compliance check passes." &&
+    blockingBlock === "None." &&
+    blockingFailuresBlock === "None.";
+
   const rewriteRule =
     writerMode === "INITIAL_GENERATION"
       ? `**Initial generation must be genuinely tailored — light keyword replacement is a failure mode**:
@@ -271,9 +288,20 @@ export function buildExternalWriterPrompt(input: {
     `**Lock the resume before writing the cover letter**: finish and finalize the \`resume\` field FIRST, against the JD Priority Matrix below. Only once that resume is finalized, write the \`coverLetter\` field USING that finalized resume as one of its sources — never generate the cover letter from independent JD-only reasoning. Every technology or accomplishment the cover letter attributes to a specific past employer must be traceable to that SAME employer's bullets in the resume you just wrote (CareerOps's cross-document validator enforces this: e.g. a technology used only at Employer A can never be attributed to Employer B in the cover letter, even if it's genuinely evidenced elsewhere in your history).`,
   ];
 
+  // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — PRIOR QUALITY REVIEW FEEDBACK is omitted
+  // entirely for INITIAL_GENERATION exactly when priorReviewIsEmpty (every block above is genuinely
+  // its vacuous default) rather than rendered as five straight "None."/"None identified." subsections.
+  // In the real orchestrator path this is ALWAYS the case for INITIAL_GENERATION — see
+  // priorReviewIsEmpty's own comment for why — so nothing is lost by omitting it: the prompt already
+  // states "Writer mode: INITIAL_GENERATION" and the iteration number at the top, so nothing is lost
+  // by not restating "no prior review" a second time. If content SOMEHOW exists anyway (never true via
+  // the real orchestrator, but a defensive fallback for a caller that supplies it directly — see
+  // promptAssemblyConsistency.test.ts's Phase L tests), it is rendered in full, never silently dropped.
   const priorReviewSection =
     writerMode === "INITIAL_GENERATION"
-      ? `## PRIOR QUALITY REVIEW FEEDBACK
+      ? priorReviewIsEmpty
+        ? ""
+        : `## PRIOR QUALITY REVIEW FEEDBACK
 
 ### Review Scores
 ${scoresBlock}

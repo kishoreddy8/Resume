@@ -2189,3 +2189,23 @@ test("56. every file the exported package writes for INITIAL_GENERATION that the
     assert.equal(file!.readByWriter, true, `${filename} must be reachable — referenced by filename in writer_prompt.md`);
   }
 });
+
+test("57. a genuine (fresh, no prior iteration) INITIAL_GENERATION export omits PRIOR QUALITY REVIEW FEEDBACK entirely", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 1,
+  });
+
+  const prompt = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_prompt.md"), "utf-8");
+  assert.doesNotMatch(prompt, /## PRIOR QUALITY REVIEW FEEDBACK/);
+  assert.doesNotMatch(prompt, /None identified\./);
+  assert.doesNotMatch(prompt, /every named compliance check passes/);
+});
