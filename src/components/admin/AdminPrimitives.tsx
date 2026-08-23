@@ -12,18 +12,23 @@ export function AdminPageHeader({
   title,
   description,
   eyebrow,
+  statusSummary,
   actions,
 }: {
   title: string;
   description: string;
   eyebrow?: string;
+  statusSummary?: ReactNode;
   actions?: ReactNode;
 }) {
   return (
     <header className="admin-page-header">
-      <div className="min-w-0">
+      <div className="min-w-0 max-w-3xl">
         {eyebrow && <p className="admin-eyebrow">{eyebrow}</p>}
-        <h1>{title}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1>{title}</h1>
+          {statusSummary && <div className="inline-flex items-center">{statusSummary}</div>}
+        </div>
         <p className="admin-page-description">{description}</p>
       </div>
       {actions && <div className="admin-page-actions">{actions}</div>}
@@ -31,15 +36,29 @@ export function AdminPageHeader({
   );
 }
 
-export function AdminStatus({ status, label }: { status: AdminStatusKey | string; label?: string }) {
+export function AdminStatus({
+  status,
+  label,
+  size = "normal",
+}: {
+  status: AdminStatusKey | string;
+  label?: string;
+  size?: "normal" | "compact";
+}) {
   const normalized = normalizeAdminStatus(status);
   const presentation = ADMIN_STATUS_PRESENTATION[normalized];
   return (
-    <span className={`admin-status admin-status-${presentation.tone}`} data-status={normalized}>
+    <span
+      className={`admin-status admin-status-${presentation.tone} ${
+        size === "compact" ? "admin-status-compact" : ""
+      }`}
+      data-status={normalized}
+      role="status"
+    >
       <span className="admin-status-symbol" aria-hidden="true">
         {presentation.symbol}
       </span>
-      {label ?? presentation.label}
+      <span>{label ?? presentation.label}</span>
     </span>
   );
 }
@@ -68,7 +87,7 @@ export function HealthTile({
     </div>
   );
   return href ? (
-    <Link href={href} className="admin-health-link">
+    <Link href={href} className="admin-health-link" aria-label={`${label} details`}>
       {body}
     </Link>
   ) : (
@@ -86,21 +105,28 @@ export interface InterventionItem {
 }
 
 export function InterventionList({ items }: { items: InterventionItem[] }) {
-  if (items.length === 0) return <AdminEmptyState title="No intervention needed" detail="There is no operator action waiting in this view." />;
+  if (items.length === 0) {
+    return (
+      <AdminEmptyState
+        title="No intervention needed"
+        detail="There are no operator actions waiting in this view."
+      />
+    );
+  }
   return (
     <ul className="admin-intervention-list">
       {items.map((item) => (
         <li key={item.id}>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2.5">
               <h3>{item.title}</h3>
-              <AdminStatus status={item.status} />
+              <AdminStatus status={item.status} size="compact" />
             </div>
             <p>{item.detail}</p>
             {item.meta && <span className="admin-meta">{item.meta}</span>}
           </div>
           {item.href && (
-            <Link className="admin-inline-action" href={item.href}>
+            <Link className="admin-button admin-button-secondary shrink-0" href={item.href}>
               Review
             </Link>
           )}
@@ -110,7 +136,13 @@ export function InterventionList({ items }: { items: InterventionItem[] }) {
   );
 }
 
-export function OperationalTable({ label, children }: { label: string; children: ReactNode }) {
+export function OperationalTable({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
   return (
     <div className="admin-table-scroll" role="region" aria-label={label} tabIndex={0}>
       <table className="admin-table">{children}</table>
@@ -122,7 +154,13 @@ export function OperationalCardList({ children }: { children: ReactNode }) {
   return <div className="admin-operational-cards">{children}</div>;
 }
 
-export function TechnicalDetails({ summary = "Technical details", children }: { summary?: string; children: ReactNode }) {
+export function TechnicalDetails({
+  summary = "Technical details",
+  children,
+}: {
+  summary?: string;
+  children: ReactNode;
+}) {
   return (
     <details className="admin-technical-details">
       <summary>{summary}</summary>
@@ -159,18 +197,126 @@ export function TimeWindowControl<T extends string>({
   );
 }
 
-export function AdminEmptyState({ title, detail, action }: { title: string; detail: string; action?: ReactNode }) {
+export function AdminGuidanceCard({
+  title,
+  purpose,
+  currentState,
+  whyDisabled,
+  nextSteps,
+  action,
+  tone = "info",
+}: {
+  title: string;
+  purpose: string;
+  currentState?: string;
+  whyDisabled?: string;
+  nextSteps?: string;
+  action?: ReactNode;
+  tone?: "info" | "warning" | "neutral";
+}) {
+  const toneClasses = {
+    info: "border-[var(--accent-tint)] bg-[var(--accent-tint-weak)] text-primary",
+    warning: "border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200",
+    neutral: "border-[var(--border)] bg-[var(--z2-bg)] text-primary",
+  };
+
+  return (
+    <div className={`rounded-2xl border p-5 md:p-6 ${toneClasses[tone]}`}>
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+        <div className="space-y-2 max-w-3xl">
+          <h3 className="text-[17px] font-bold text-primary flex items-center gap-2">
+            <span aria-hidden="true" className="text-[var(--accent)] font-extrabold">ℹ</span>
+            {title}
+          </h3>
+          <p className="text-[14.5px] leading-relaxed text-secondary">{purpose}</p>
+          {currentState && (
+            <p className="text-[14px] text-tertiary">
+              <strong className="text-secondary">Current state:</strong> {currentState}
+            </p>
+          )}
+          {whyDisabled && (
+            <p className="text-[14px] text-amber-800 dark:text-amber-300 font-medium">
+              <strong>Requirement:</strong> {whyDisabled}
+            </p>
+          )}
+          {nextSteps && (
+            <p className="text-[14px] text-secondary">
+              <strong>Next step:</strong> {nextSteps}
+            </p>
+          )}
+        </div>
+        {action && <div className="shrink-0 pt-1">{action}</div>}
+      </div>
+    </div>
+  );
+}
+
+export function AdminFeedbackBanner({
+  tone = "success",
+  message,
+  onDismiss,
+}: {
+  tone?: "success" | "error" | "info" | "warning";
+  message: string;
+  onDismiss?: () => void;
+}) {
+  const toneClasses = {
+    success: "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300",
+    error: "border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300",
+    warning: "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
+    info: "border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300",
+  };
+
+  return (
+    <div className={`flex items-center justify-between gap-3 rounded-xl border p-4 text-[14.5px] font-medium ${toneClasses[tone]}`} role="alert">
+      <div className="flex items-center gap-2.5">
+        <span aria-hidden="true" className="font-bold">
+          {tone === "success" ? "✓" : tone === "error" ? "×" : "!"}
+        </span>
+        <span>{message}</span>
+      </div>
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="text-xs font-semibold underline opacity-80 hover:opacity-100"
+          aria-label="Dismiss feedback"
+        >
+          Dismiss
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function AdminEmptyState({
+  title,
+  detail,
+  action,
+}: {
+  title: string;
+  detail: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="admin-state admin-state-empty">
       <span aria-hidden="true">○</span>
       <h2>{title}</h2>
       <p>{detail}</p>
-      {action}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }
 
-export function AdminErrorState({ title = "Unable to load", detail, retry }: { title?: string; detail: string; retry?: () => void }) {
+export function AdminErrorState({
+  title = "Unable to load",
+  detail,
+  retry,
+}: {
+  title?: string;
+  detail: string;
+  retry?: () => void;
+}) {
   return (
     <div className="admin-state admin-state-error" role="alert">
       <span aria-hidden="true">!</span>
@@ -189,7 +335,7 @@ export function AdminLoadingState({ label = "Loading operational data" }: { labe
   return (
     <div className="admin-loading" role="status" aria-live="polite">
       <span className="admin-loading-mark" aria-hidden="true" />
-      {label}
+      <span>{label}</span>
     </div>
   );
 }
@@ -252,7 +398,12 @@ export function AdminConfirmDialog({
         <h2 id={titleId}>{title}</h2>
         <p id={descriptionId}>{description}</p>
         <div className="admin-dialog-actions">
-          <button type="button" className="admin-button admin-button-secondary" disabled={busy} onClick={close}>
+          <button
+            type="button"
+            className="admin-button admin-button-secondary"
+            disabled={busy}
+            onClick={close}
+          >
             Cancel
           </button>
           <button

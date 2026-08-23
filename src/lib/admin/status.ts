@@ -38,9 +38,31 @@ export const ADMIN_STATUS_PRESENTATION: Record<
 };
 
 export function normalizeAdminStatus(value: string | null | undefined): AdminStatusKey {
-  const normalized = value?.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  if (normalized && (ADMIN_STATUSES as readonly string[]).includes(normalized)) {
+  if (!value) return "unknown";
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if ((ADMIN_STATUSES as readonly string[]).includes(normalized)) {
     return normalized as AdminStatusKey;
   }
-  return "unknown";
+  const aliases: Record<string, AdminStatusKey> = {
+    ready: "healthy",
+    active: "healthy",
+    success: "completed",
+    passed: "completed",
+    stopped: "disabled",
+    paused: "disabled",
+    off: "disabled",
+    warning: "degraded",
+    recovering: "degraded",
+    partial: "degraded",
+    error: "failed",
+    down: "offline",
+    unauthorized: "needs_intervention",
+    needs_configuration: "needs_intervention",
+    blocked: "needs_intervention",
+    processing: "running",
+    started: "running",
+    mismatch: "version_mismatch",
+    uninitialized: "idle",
+  };
+  return aliases[normalized] ?? "unknown";
 }
