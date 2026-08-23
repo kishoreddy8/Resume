@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CandidateProfile } from "@/lib/match/types";
 import {
+  buildInitialGenerationMasterReference,
   buildRepairScopedMasterReference,
   shouldUseFullMasterReferenceForRepair,
 } from "../handoff/masterReferenceProjection";
@@ -373,4 +374,91 @@ test("19. repairPreservation behavior: baseline preservation is unaffected by wr
   });
   assert.equal(resultB.valid, false);
   assert.ok(resultB.violations.some((v) => v.includes("experience[1]")));
+});
+
+// -------------------------------------------------------------------------------------------------
+// INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — buildInitialGenerationMasterReference
+// -------------------------------------------------------------------------------------------------
+
+test("20. INITIAL_GENERATION reference omits skills, sourceHashes, builtAt, and every experience entry's technologies", () => {
+  const profile = fixtureProfile();
+  const compact = buildInitialGenerationMasterReference(profile);
+
+  assert.equal("skills" in compact, false, "skills array must not exist");
+  assert.equal("sourceHashes" in compact, false);
+  assert.equal("builtAt" in compact, false);
+  for (const entry of compact.experience) {
+    assert.equal("technologies" in entry, false, `${entry.employer} must not carry a technologies dump`);
+  }
+});
+
+test("21. INITIAL_GENERATION reference preserves employer/title/dates for EVERY employer, not just some", () => {
+  const profile = fixtureProfile();
+  const compact = buildInitialGenerationMasterReference(profile);
+
+  assert.equal(compact.experience.length, profile.experience.length);
+  for (const source of profile.experience) {
+    const projected = compact.experience.find((e) => e.employer === source.employer);
+    assert.ok(projected, `${source.employer} must be present`);
+    assert.equal(projected.title, source.title);
+    assert.equal(projected.startDate, source.startDate);
+    assert.equal(projected.endDate, source.endDate);
+    assert.ok("preservation" in projected && projected.preservation === "UNCHANGED");
+  }
+});
+
+test("22. INITIAL_GENERATION reference preserves education, certifications, schemaVersion, totalYearsExperience", () => {
+  const profile = fixtureProfile();
+  const compact = buildInitialGenerationMasterReference(profile);
+
+  assert.equal(compact.schemaVersion, profile.schemaVersion);
+  assert.equal(compact.totalYearsExperience, profile.totalYearsExperience);
+  assert.deepEqual(compact.education, profile.education);
+  assert.deepEqual(compact.certifications, profile.certifications);
+});
+
+test("23. every technology omitted from the INITIAL_GENERATION reference is provably represented in the employer evidence map", async () => {
+  // The safety argument for this optimization: nothing that was reachable via master_resume_reference
+  // .json's skills[]/experience[].technologies before this change is now invisible to the writer —
+  // buildEmployerEvidenceMap (the SAME function that renders PER-EMPLOYER EVIDENCE) is built from
+  // that exact same source data, so every omitted technology string still surfaces there.
+  const { buildEmployerEvidenceMap } = await import("../employerEvidence");
+  const profile = fixtureProfile();
+  const evidenceMap = buildEmployerEvidenceMap(profile);
+
+  for (const entry of profile.experience) {
+    const evidence = evidenceMap.employers.find((e) => e.employer === entry.employer);
+    assert.ok(evidence, `${entry.employer} must have an evidence block`);
+    for (const tech of entry.technologies) {
+      assert.ok(
+        evidence!.supported.includes(tech),
+        `${entry.employer}'s own technology "${tech}" must appear in the employer evidence map's supported list`
+      );
+    }
+  }
+  // Inventory-only skills (no employer attribution) must still be reachable via availableViaMsi for
+  // at least one role whose domain accepts inventory evidence — never silently dropped.
+  const inventoryOnly = profile.skills.filter((s) => (s.attributedTo ?? []).length === 0);
+  for (const skill of inventoryOnly) {
+    const reachable = evidenceMap.employers.some((e) => e.availableViaMsi.includes(skill.rawSkillName));
+    assert.ok(reachable, `inventory-only skill "${skill.rawSkillName}" must be reachable via some employer's availableViaMsi list`);
+  }
+});
+
+test("24. INITIAL_GENERATION reference source profile is never mutated (pure projection)", () => {
+  const profile = fixtureProfile();
+  const originalJson = JSON.stringify(profile);
+  const compact = buildInitialGenerationMasterReference(profile);
+
+  compact.education.push({ level: "PhD", field: "AI", institution: "MIT" });
+  compact.certifications.push({ name: "Fake Cert" });
+
+  assert.equal(JSON.stringify(profile), originalJson, "profile must be byte-identical to original");
+});
+
+test("25. INITIAL_GENERATION reference is materially smaller than the full profile for a skills-heavy candidate", () => {
+  const profile = fixtureProfile();
+  const compactBytes = JSON.stringify(buildInitialGenerationMasterReference(profile)).length;
+  const fullBytes = JSON.stringify(profile).length;
+  assert.ok(compactBytes < fullBytes, "projection must be smaller than the full profile");
 });

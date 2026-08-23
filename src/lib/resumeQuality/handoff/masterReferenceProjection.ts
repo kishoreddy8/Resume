@@ -11,9 +11,12 @@ import type { RepairPlan } from "../repairScope";
  * "Already written", "Available under MSI rule", and "EXPLICITLY SCOPED TO OTHER CLIENTS" for every
  * touched employer, and is explicitly forbidden from re-tailoring frozen content during repair.
  *
- * WHAT THIS MODULE DOES. Builds a compact writer-facing projection of CandidateProfile for
- * TARGETED_REPAIR only, omitting the giant `skills` array and reducing untouched employer records
- * to identity stubs. INITIAL_GENERATION always receives the full profile, unchanged.
+ * WHAT THIS MODULE DOES. Builds a compact writer-facing projection of CandidateProfile: for
+ * TARGETED_REPAIR, omitting the giant `skills` array and reducing untouched employer records to
+ * identity stubs (buildRepairScopedMasterReference); for INITIAL_GENERATION (2026-08-23 addition,
+ * see buildInitialGenerationMasterReference below), omitting `skills` unconditionally, since
+ * INITIAL_GENERATION's own employer-evidence section is never scoped and always covers every
+ * employer's technologies in full regardless.
  *
  * WHAT THIS MODULE DOES NOT CHANGE. The projection is writer-facing context only. The deterministic
  * reviewer (deterministicReviewer.ts), repairPreservation.ts, and every validation gate continue to
@@ -116,6 +119,63 @@ export function buildRepairScopedMasterReference(
         preservation: "UNCHANGED" as const,
       };
     }),
+    education: profile.education.map((e) => ({ ...e })),
+    certifications: profile.certifications.map((c) => ({ ...c })),
+    totalYearsExperience: profile.totalYearsExperience,
+  };
+}
+
+/**
+ * INITIAL_GENERATION MASTER-REFERENCE PROJECTION (2026-08-23) — same rationale as the repair-scoped
+ * projection above, applied to INITIAL_GENERATION, which previously always received the full profile
+ * unconditionally.
+ *
+ * WHY THIS IS SAFE WITHOUT A FALLBACK CONDITION, UNLIKE THE REPAIR VERSION ABOVE. The repair-scoped
+ * projection needs shouldUseFullMasterReferenceForRepair because a repair's employer-evidence section
+ * is SCOPED to only the touched employers (repairEmployerScope can be a narrow set) — so a repair
+ * touching a global section needs the full profile as a safety net. INITIAL_GENERATION's own
+ * employer-evidence section is NEVER scoped: exportExternalWriterPackage computes
+ * `repairEmployerScope = isTargetedRepair ? employerScopeForRepair(...) : null`, and `null` means "no
+ * filter" — filterEmployerEvidenceMap returns every employer's full supported/availableViaMsi/
+ * prohibitedHere breakdown unconditionally whenever a master profile exists at all. That is exactly
+ * the same condition under which master_resume_reference.json itself gets written
+ * (`writerInput.masterProfile` truthy), so there is no scenario where this projection's omissions
+ * (`skills`, and each experience entry's own `technologies`) are not ALREADY fully covered elsewhere
+ * in the same handoff package. No ambiguity dimension exists for this case, so no fallback is needed.
+ *
+ * WHAT IS OMITTED AND WHY IT IS PROVABLY REDUNDANT, NOT MERELY SMALLER:
+ *   - `skills` (the ~79-86% giant array): every entry is either attributed to a real employer, in
+ *     which case buildEmployerEvidenceMap folds it into that employer's `supported` (if the role's
+ *     own `technologies` names it) or the MSI-derived `availableViaMsi`/`prohibitedHere` buckets — or
+ *     it carries no attribution at all, in which case `evidenceForEmployer`'s MSI classification is
+ *     the SAME logic that already decides which employers' `availableViaMsi` lists include it. There
+ *     is no skill whose only writer-visible representation was the raw `skills` array.
+ *   - each experience entry's own `technologies`: this is literally the same array
+ *     buildEmployerEvidenceMap reads to build that employer's `supported` list (see
+ *     buildEmployerEvidenceMap's own `for (const tech of entry.technologies)` loop) — an exact,
+ *     byte-for-byte duplicate of PER-EMPLOYER EVIDENCE's "Already written here" line for that
+ *     employer, not an approximation of it.
+ *   - `schemaVersion`, `sourceHashes`, `builtAt`: bookkeeping/provenance metadata with no bearing on
+ *     what the writer should write.
+ *
+ * WHAT IS RETAINED AND WHY: `employer`/`title`/`startDate`/`endDate` for every role (the writer's ONLY
+ * source for the literal date strings it must reproduce — PER-EMPLOYER EVIDENCE never renders dates),
+ * `education`, `certifications` (never rendered as full text anywhere else in the prompt), and
+ * `totalYearsExperience` (the professional-identity section states it in prose when available, but
+ * the raw value stays here too as a zero-cost safety net for the rare case that section is absent).
+ *
+ * NEVER mutates the input profile.
+ */
+export function buildInitialGenerationMasterReference(profile: CandidateProfile): RepairScopedMasterReference {
+  return {
+    schemaVersion: profile.schemaVersion,
+    experience: profile.experience.map((entry) => ({
+      employer: entry.employer,
+      title: entry.title,
+      startDate: entry.startDate,
+      endDate: entry.endDate,
+      preservation: "UNCHANGED" as const,
+    })),
     education: profile.education.map((e) => ({ ...e })),
     certifications: profile.certifications.map((c) => ({ ...c })),
     totalYearsExperience: profile.totalYearsExperience,

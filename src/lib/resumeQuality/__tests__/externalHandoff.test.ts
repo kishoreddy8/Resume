@@ -1309,7 +1309,13 @@ test("40. no external AI process automatically launched", () => {
   assert.equal(typeof writer.generate, "function");
 });
 
-test("41. INITIAL_GENERATION export writes full master_resume_reference.json with skills array", async () => {
+test("41. INITIAL_GENERATION export writes the compact master_resume_reference.json (skills omitted, every employer's identity/dates present)", async () => {
+  // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — INITIAL_GENERATION previously received the
+  // FULL profile including the giant `skills` array unconditionally. It now receives
+  // buildInitialGenerationMasterReference's compact projection instead, exactly like
+  // TARGETED_REPAIR already did (see masterReferenceProjection.ts for the full safety argument: the
+  // employer-evidence section is never scoped for INITIAL_GENERATION, so every omitted technology is
+  // already rendered in full elsewhere in the same package).
   const wf = createResumeQualityWorkflow({
     candidateId: candidateAliceId,
     applicationId: appAliceJobOneId,
@@ -1326,8 +1332,27 @@ test("41. INITIAL_GENERATION export writes full master_resume_reference.json wit
   const masterRefPath = path.join(exportRes.handoffDirectory, "master_resume_reference.json");
   assert(fs.existsSync(masterRefPath));
   const parsed = JSON.parse(fs.readFileSync(masterRefPath, "utf-8"));
-  assert.equal(Array.isArray(parsed.skills), true, "INITIAL_GENERATION must contain skills array");
+  assert.equal("skills" in parsed, false, "INITIAL_GENERATION must NOT contain the giant skills array — it is fully redundant with PER-EMPLOYER EVIDENCE");
+  assert.equal("sourceHashes" in parsed, false);
+  assert.equal("builtAt" in parsed, false);
   assert.equal(Array.isArray(parsed.experience), true);
+  assert.ok(parsed.experience.length > 0);
+  for (const entry of parsed.experience) {
+    assert.equal("technologies" in entry, false, `${entry.employer} must not carry a technologies dump`);
+    assert.ok(typeof entry.employer === "string" && entry.employer.length > 0);
+    assert.ok(typeof entry.title === "string" && entry.title.length > 0);
+    assert.equal(entry.preservation, "UNCHANGED");
+  }
+  assert.ok(Array.isArray(parsed.education));
+  assert.ok(Array.isArray(parsed.certifications));
+
+  // Every technology this compact reference omits must be recoverable from the same package's
+  // PER-EMPLOYER EVIDENCE section (writer_prompt.md) — never silently invisible.
+  const prompt = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_prompt.md"), "utf-8");
+  assert.match(prompt, /## PER-EMPLOYER EVIDENCE/);
+  for (const entry of parsed.experience) {
+    assert.match(prompt, new RegExp(`### ${entry.employer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} `), `${entry.employer} must have its own PER-EMPLOYER EVIDENCE block`);
+  }
 });
 
 test("42. TARGETED_REPAIR export with employer scope writes compact master_resume_reference.json (skills omitted)", async () => {

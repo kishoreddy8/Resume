@@ -26,7 +26,11 @@ import { buildEmployerEvidenceMap, filterEmployerEvidenceMap, renderEmployerEvid
 import { buildResumeWriterInput, ResumeQualityOrchestrationError } from "../orchestrator";
 import { employerScopeForRepair, renderRepairPlanSection } from "../repairScope";
 import { deriveProfessionalIdentity, renderProfessionalIdentitySection } from "../professionalIdentity";
-import { buildRepairScopedMasterReference, shouldUseFullMasterReferenceForRepair } from "./masterReferenceProjection";
+import {
+  buildInitialGenerationMasterReference,
+  buildRepairScopedMasterReference,
+  shouldUseFullMasterReferenceForRepair,
+} from "./masterReferenceProjection";
 import { isPatchEligibleRepairPlan } from "./patchRepair";
 import { projectResumeContextForPatchRepair, renderContextManifestSection, shouldOmitCoverLetterContext } from "./patchContextProjection";
 import {
@@ -888,7 +892,16 @@ export function exportExternalWriterPackage(
   // writer's truthfulness guardrails reference (employers, titles, dates, education, certifications,
   // totalYearsExperience).
   //
-  // SAFETY: this projection is writer-facing context only. The deterministic reviewer
+  // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — the SAME `skills` array is redundant for
+  // INITIAL_GENERATION too, and provably more so: employerEvidenceSection is NEVER scoped for
+  // INITIAL_GENERATION (repairEmployerScope is always null on this path — see its own computation
+  // above), so every employer's complete supported/availableViaMsi/prohibitedHere breakdown is
+  // already rendered in full, unconditionally, whenever a master profile exists at all — the exact
+  // same condition under which this file gets written. Unlike the repair case, there is no scope
+  // ambiguity dimension here, so buildInitialGenerationMasterReference needs no fallback condition of
+  // its own (see its doc comment in masterReferenceProjection.ts for the full safety argument).
+  //
+  // SAFETY: both projections are writer-facing context only. The deterministic reviewer
   // (deterministicReviewer.ts), repairPreservation.ts, and every validation gate continue to receive
   // and validate against the FULL authoritative CandidateProfile — see orchestrator.ts L1268 and
   // deterministicReviewer.ts L95. Nothing here changes what CareerOps knows or verifies.
@@ -898,12 +911,12 @@ export function exportExternalWriterPackage(
   // is written exactly as before — fail toward MORE context, not less.
   if (writerInput.masterProfile) {
     const useFullForRepair =
-      !isTargetedRepair ||
-      repairEmployerScope === null ||
-      shouldUseFullMasterReferenceForRepair(writerInput.repairPlan);
+      isTargetedRepair && (repairEmployerScope === null || shouldUseFullMasterReferenceForRepair(writerInput.repairPlan));
     const masterReferenceContent = useFullForRepair
       ? writerInput.masterProfile
-      : buildRepairScopedMasterReference(writerInput.masterProfile, repairEmployerScope!);
+      : isTargetedRepair
+      ? buildRepairScopedMasterReference(writerInput.masterProfile, repairEmployerScope!)
+      : buildInitialGenerationMasterReference(writerInput.masterProfile);
     writePackageFile("master_resume_reference.json", JSON.stringify(masterReferenceContent, null, 2));
   } else if (!copyPackageFile(wsPkg.masterResumePath, "master_resume.txt")) {
     writePackageFile("master_resume_reference.json", "{}");
