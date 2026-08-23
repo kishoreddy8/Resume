@@ -11,7 +11,7 @@ import { importExternalWriterResult, validateResumeContentStructure } from "../h
 import { ExternalFileResumeWriter, ExternalWriterResultNotReadyError } from "../writers/externalFileResumeWriter";
 import type { ExternalWriterOutput, InstructionComplianceChecks } from "../types";
 import { INSTRUCTION_COMPLIANCE_CHECK_NAMES } from "../types";
-import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
+import { CANONICAL_TAILORING_INSTRUCTIONS, INITIAL_GENERATION_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
 
 let tmpDbDir: string;
 let tmpCandidatesDir: string;
@@ -1866,7 +1866,7 @@ test("49. a legacy (non-patch-eligible) TARGETED_REPAIR export still writes the 
 // correctly includes SUMMARY_STRUCTURE (tests 52).
 // -------------------------------------------------------------------------------------------------
 
-test("50. INITIAL_GENERATION always receives the FULL, unmodified canonical instructions — unaffected by Phase 3 projection", async () => {
+test("50. INITIAL_GENERATION receives INITIAL_GENERATION_INSTRUCTIONS — unaffected by Phase 3's TARGETED_REPAIR projection, but trimmed of the three legacy sections proven obsolete for any writer", async () => {
   const wf = createResumeQualityWorkflow({
     candidateId: candidateAliceId,
     applicationId: appAliceJobOneId,
@@ -1881,12 +1881,22 @@ test("50. INITIAL_GENERATION always receives the FULL, unmodified canonical inst
   });
 
   const instructionsFile = fs.readFileSync(path.join(exportRes.handoffDirectory, "resume_tailoring_instructions.md"), "utf-8");
-  assert.ok(instructionsFile.includes(CANONICAL_TAILORING_INSTRUCTIONS), "INITIAL_GENERATION must receive the complete canonical text verbatim");
-  assert.match(instructionsFile, /This file is the complete canonical standard\./);
-  assert.doesNotMatch(instructionsFile, /DETERMINISTIC SUBSET/);
+  assert.ok(instructionsFile.includes(INITIAL_GENERATION_INSTRUCTIONS), "INITIAL_GENERATION must receive INITIAL_GENERATION_INSTRUCTIONS verbatim");
+  // Not the Phase 3 TARGETED_REPAIR per-path selection logic — this is a fixed, unconditional trim.
+  assert.doesNotMatch(instructionsFile, /scoped to this targeted repair's editable paths/);
+  // Every truthfulness/quality-critical section must still be present in full.
+  assert.match(instructionsFile, /The Master Resume is authoritative for/);
+  assert.match(instructionsFile, /BANNED AI-SOUNDING LANGUAGE/);
+  assert.match(instructionsFile, /ARCHITECTURE INTEGRITY RULE/);
+  assert.match(instructionsFile, /PROFESSIONAL SUMMARY STRUCTURE/);
+  assert.match(instructionsFile, /DEEP-REWRITE REQUIREMENT/);
+  // The three proven-obsolete sections must be gone.
+  assert.doesNotMatch(instructionsFile, /OUTPUT REQUIREMENTS\nFor every completed tailoring run/);
+  assert.doesNotMatch(instructionsFile, /FILE REQUIREMENTS\nGenerate:/);
+  assert.doesNotMatch(instructionsFile, /ATS FORMATTING\nUse:/);
 
   const prompt = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_prompt.md"), "utf-8");
-  assert.match(prompt, /It is the complete document\./);
+  assert.match(prompt, /Three legacy sections are omitted/);
 });
 
 test("51. a narrow bullet-only TARGETED_REPAIR receives a materially smaller, correctly-scoped instruction projection", async () => {

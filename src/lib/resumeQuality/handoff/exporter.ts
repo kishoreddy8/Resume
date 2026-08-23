@@ -11,6 +11,7 @@ import { renderExperienceEmphasisSection, renderDistributedEvidenceSection } fro
 import { buildAtsCoverageReport, renderAtsCoverageReport } from "../atsCoverageReport";
 import {
   CANONICAL_TAILORING_INSTRUCTIONS,
+  INITIAL_GENERATION_INSTRUCTIONS,
   INSTRUCTION_HASH,
   INSTRUCTION_VERSION,
   buildTargetedRepairInstructions,
@@ -124,14 +125,11 @@ export function buildExternalWriterPrompt(input: {
    *  handoff's previous_resume_content.json actually contains, so the writer (and anyone debugging
    *  the package by hand) knows exactly what was reduced. Rendered verbatim; absent renders nothing. */
   contextManifestSection?: string;
-  /** PHASE 3 TOKEN OPTIMIZATION (2026-08-23) — true when resume_tailoring_instructions.md in this
-   *  package is a deterministic, section-based SUBSET of the canonical standard (see
-   *  canonicalInstructions.ts's buildTargetedRepairInstructions) rather than the full document.
-   *  Only ever true for a TARGETED_REPAIR whose editable paths were fully, unambiguously classified;
-   *  every other case (including every INITIAL_GENERATION) gets the complete standard, exactly as
-   *  before this feature existed. This flag exists purely so the prompt's own description of the
-   *  file never overstates what it actually contains. */
-  instructionsProjected?: boolean;
+  /** PHASE 3 / INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — describes exactly what
+   *  resume_tailoring_instructions.md contains in THIS package whenever it is not the full,
+   *  unmodified canonical standard, so the prompt's own description of the file can never overstate
+   *  what it actually contains. Absent (undefined) means the file IS the complete document. */
+  instructionsScopeNote?: string;
 }): string {
   const { candidateName, iterationNumber, selectedTrack, latestReview, requiredCorrections, blockingIssues, blockingFailures } = input;
   const writerMode = input.writerMode ?? (input.repairPlanSection ? "TARGETED_REPAIR" : "INITIAL_GENERATION");
@@ -390,9 +388,7 @@ Target Role Track: **${selectedTrack ?? "General Engineering Track"}**
 ## THE CANONICAL STANDARD IS MANDATORY
 
 \`resume_tailoring_instructions.md\` in this package (instruction version **${INSTRUCTION_VERSION}**, full-standard hash \`${INSTRUCTION_HASH}\`) is drawn verbatim, word-for-word, from the authoritative Resume Tailoring System Instructions — never paraphrased or summarized. ${
-    input.instructionsProjected
-      ? "For this targeted repair it is a deterministic SUBSET: every section that governs what this repair's editable paths actually touch, selected by CareerOps — not by you, and not by relevance judgment at write time. Sections outside this repair's scope (e.g. from-scratch generation guidance) are omitted because they do not apply to a surgical repair, never because they were judged unimportant."
-      : "It is the complete document."
+    input.instructionsScopeNote ?? "It is the complete document."
   } You must follow every included section in its entirety, not just the highlights below. CareerOps will independently re-review your output against this exact same canonical text; nothing you self-report can substitute for actually satisfying it.
 
 ## CANDIDATE CONTACT DETAILS — VERIFIED HARD FACTS, REPRODUCE EXACTLY
@@ -784,12 +780,29 @@ export function exportExternalWriterPackage(
       ? classifyRepairInstructionPaths(exportRepairEditablePaths)
       : null;
   const exportInstructionsProjected = exportInstructionSelection?.isFullyClassified === true;
+  // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — a genuine INITIAL_GENERATION handoff
+  // (never a TARGETED_REPAIR fallback — that path is untouched, still CANONICAL_TAILORING_
+  // INSTRUCTIONS in full, exactly as Phase 3 shipped it) gets INITIAL_GENERATION_INSTRUCTIONS: the
+  // full canonical standard minus three sections proven obsolete for a writer under the current
+  // architecture (OUTPUT_REQUIREMENTS, FILE_REQUIREMENTS, ATS_FORMATTING — see
+  // canonicalInstructions.ts's own doc comment on INITIAL_GENERATION_INSTRUCTIONS for why each is
+  // safe to omit). Still 100% verbatim canonical text.
   const exportTailoringInstructionsText = exportInstructionsProjected
     ? buildTargetedRepairInstructions(exportInstructionSelection!, {
         isPatchMode: exportPatchEligiblePaths !== undefined,
         includeCoverLetterSections: !exportOmitCoverLetter,
       })
-    : CANONICAL_TAILORING_INSTRUCTIONS;
+    : isTargetedRepair
+    ? CANONICAL_TAILORING_INSTRUCTIONS
+    : INITIAL_GENERATION_INSTRUCTIONS;
+  // Precise, honest description of what the file above actually contains — undefined only for the
+  // true, complete, unmodified 33-section document (a TARGETED_REPAIR whose scope could not be
+  // classified, falling back to CANONICAL_TAILORING_INSTRUCTIONS exactly as Phase 3 shipped it).
+  const exportInstructionsScopeNote = exportInstructionsProjected
+    ? "For this targeted repair it is a deterministic SUBSET: every section that governs what this repair's editable paths actually touch, selected by CareerOps — not by you, and not by relevance judgment at write time. Sections outside this repair's scope (e.g. from-scratch generation guidance) are omitted because they do not apply to a surgical repair, never because they were judged unimportant."
+    : !isTargetedRepair
+    ? "Three legacy sections are omitted (OUTPUT REQUIREMENTS, FILE REQUIREMENTS, ATS FORMATTING) because they describe deliverables/formatting you do not control under the current architecture — you produce one JSON file, writer_output.json, per the schema below; document generation and layout are handled entirely by CareerOps' own deterministic code. Every other section is included in full."
+    : undefined;
 
   // 2. writer_prompt.md
   const promptContent = buildExternalWriterPrompt({
@@ -833,7 +846,7 @@ export function exportExternalWriterPackage(
     patchEligiblePaths: exportPatchEligiblePaths,
     coverLetterContextOmitted: exportOmitCoverLetter,
     contextManifestSection: exportContextManifestSection || undefined,
-    instructionsProjected: exportInstructionsProjected,
+    instructionsScopeNote: exportInstructionsScopeNote,
   });
   writePackageFile("writer_prompt.md", promptContent);
 
@@ -866,18 +879,23 @@ export function exportExternalWriterPackage(
   // classified (exportInstructionsProjected, computed above alongside every other repair-scoping
   // decision this package makes), this is the deterministic SECTION-BASED PROJECTION built by
   // buildTargetedRepairInstructions — every word still verbatim canonical text, just not every
-  // section. INITIAL_GENERATION, and any TARGETED_REPAIR whose scope isn't cleanly classified, still
-  // gets CANONICAL_TAILORING_INSTRUCTIONS in full, unconditionally, exactly as before this feature
-  // existed. The header states the FULL-STANDARD hash either way (this is what CareerOps's own
-  // deterministic review identity check actually compares against — see currentInstructionIdentity()
-  // — never the literal byte content of this file), and explicitly says whether what follows is the
-  // complete document or a scoped subset, so the writer is never misled about what it's looking at.
+  // section. Any TARGETED_REPAIR whose scope isn't cleanly classified still gets
+  // CANONICAL_TAILORING_INSTRUCTIONS in full, unconditionally, exactly as before this feature
+  // existed.
+  //
+  // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — INITIAL_GENERATION gets
+  // INITIAL_GENERATION_INSTRUCTIONS: the full standard minus three sections proven obsolete for any
+  // writer under the current architecture (see canonicalInstructions.ts). Still verbatim canonical
+  // text throughout.
+  //
+  // The header states the FULL-STANDARD hash either way (this is what CareerOps's own deterministic
+  // review identity check actually compares against — see currentInstructionIdentity() — never the
+  // literal byte content of this file), and explicitly says whether what follows is the complete
+  // document or a scoped subset, so the writer is never misled about what it's looking at.
   writePackageFile(
     "resume_tailoring_instructions.md",
     `# Resume Tailoring Instructions\n\nInstruction version: ${INSTRUCTION_VERSION}\nFull-standard hash (SHA-256): ${INSTRUCTION_HASH}\n${
-      exportInstructionsProjected
-        ? "\nThis file is a DETERMINISTIC SUBSET of the full canonical standard, scoped to this targeted repair's editable paths by CareerOps (see canonicalInstructions.ts). Every word below is verbatim canonical text; sections outside this repair's scope are omitted, not summarized.\n"
-        : "\nThis file is the complete canonical standard.\n"
+      exportInstructionsScopeNote ? `\nThis file is a DETERMINISTIC SUBSET of the full canonical standard. ${exportInstructionsScopeNote}\n` : "\nThis file is the complete canonical standard.\n"
     }\n---\n\n${exportTailoringInstructionsText}`
   );
 

@@ -344,3 +344,52 @@ export function buildTargetedRepairInstructions(selection: RepairInstructionSele
     .map((s) => s.text)
     .join(SECTION_SEPARATOR);
 }
+
+// -----------------------------------------------------------------------------------------------
+// INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — CLEAN OBSOLETE CANONICAL RULES
+// -----------------------------------------------------------------------------------------------
+//
+// Three sections describe deliverables/formatting the writer never actually controls under the
+// current architecture — verified against the real running system, not assumed from the section
+// name:
+//
+//   OUTPUT_REQUIREMENTS  lists a legacy prose deliverable list including "10. Cold Follow-up Email",
+//                        which is not a field of writer_output.json's schema at all. The ACTUAL,
+//                        current output contract is stated precisely and unambiguously elsewhere in
+//                        the same prompt (see the "OUTPUT REQUIREMENT: writer_output.json" section
+//                        exporter.ts always renders, with the exact JSON schema). Sending both risks
+//                        the writer treating the stale list as additional required deliverables.
+//   FILE_REQUIREMENTS    describes generating literal .docx files ("Resume: <Name>_Resume.docx") and
+//                        never overwriting the Master Resume file. The writer never produces a .docx
+//                        file — it writes one JSON file (writer_output.json); DOCX rendering and
+//                        naming are handled entirely by deterministic code (resume-template.ts /
+//                        the final-artifact pipeline), which the writer has no ability to affect
+//                        either way, so this guidance is inert for it regardless of whether it's sent.
+//   ATS_FORMATTING       is entirely presentation-layer (one-column layout, Calibri/Arial, no tables/
+//                        graphics/headers/footers). The writer never chooses layout or fonts — the
+//                        DOCX renderer does, unconditionally, regardless of what the writer produces.
+//                        There is no semantic-content guidance mixed into this section to lose.
+//
+// Every other section stays included, unconditionally — this is intentionally a much smaller, fixed
+// omission set than buildTargetedRepairInstructions' conditional selection above, because
+// INITIAL_GENERATION genuinely needs the full creative-writing standard (truthfulness, MSI,
+// architecture, summary, skills, bullets, projects, metrics, cover letter, cross-document
+// consistency, banned language, YOE/education honesty, quality standard) every time, with no
+// per-request scoping question to answer the way a targeted repair has.
+const INITIAL_GENERATION_OBSOLETE_SECTION_IDS: ReadonlySet<CanonicalInstructionSectionId> = new Set([
+  "OUTPUT_REQUIREMENTS",
+  "FILE_REQUIREMENTS",
+  "ATS_FORMATTING",
+]);
+
+/**
+ * The canonical instruction text for INITIAL_GENERATION: every section except the three proven
+ * obsolete ones above. Still 100% verbatim canonical text — this never paraphrases or rewrites a
+ * rule, it only omits sections that describe deliverables/formatting outside the writer's actual
+ * responsibility under the current architecture.
+ */
+export const INITIAL_GENERATION_INSTRUCTIONS = CANONICAL_INSTRUCTION_SECTIONS.filter(
+  (s) => !INITIAL_GENERATION_OBSOLETE_SECTION_IDS.has(s.id)
+)
+  .map((s) => s.text)
+  .join(SECTION_SEPARATOR);

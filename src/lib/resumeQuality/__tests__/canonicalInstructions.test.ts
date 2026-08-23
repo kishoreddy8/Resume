@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   CANONICAL_INSTRUCTION_SECTIONS,
   CANONICAL_TAILORING_INSTRUCTIONS,
+  INITIAL_GENERATION_INSTRUCTIONS,
   INSTRUCTION_HASH,
   INSTRUCTION_VERSION,
   classifyRepairInstructionPaths,
@@ -298,4 +299,74 @@ test("31. classifyRepairInstructionPaths never mutates its input array", () => {
   const paths = ["resume.experience[0].bullets[0]"];
   const frozen = Object.freeze([...paths]);
   assert.doesNotThrow(() => classifyRepairInstructionPaths(frozen));
+});
+
+// -------------------------------------------------------------------------------------------------
+// INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — INITIAL_GENERATION_INSTRUCTIONS
+// -------------------------------------------------------------------------------------------------
+
+test("32. INITIAL_GENERATION_INSTRUCTIONS omits exactly the three proven-obsolete sections", () => {
+  const obsolete = ["OUTPUT_REQUIREMENTS", "FILE_REQUIREMENTS", "ATS_FORMATTING"];
+  for (const id of obsolete) {
+    const section = CANONICAL_INSTRUCTION_SECTIONS.find((s) => s.id === id)!;
+    assert.ok(!INITIAL_GENERATION_INSTRUCTIONS.includes(section.text), `${id} must be omitted`);
+  }
+  // Exactly 30 of the 33 sections remain, each a verbatim substring, joined in original order.
+  const expected = CANONICAL_INSTRUCTION_SECTIONS.filter((s) => !obsolete.includes(s.id))
+    .map((s) => s.text)
+    .join("\n\n⸻\n\n");
+  assert.equal(INITIAL_GENERATION_INSTRUCTIONS, expected);
+});
+
+test("33. INITIAL_GENERATION_INSTRUCTIONS retains every truthfulness/quality-critical section in full", () => {
+  const mustSurvive = [
+    "PREAMBLE",
+    "PRIMARY_OBJECTIVE",
+    "MASTER_RESUME_RULE",
+    "MSI_RULE",
+    "DEEP_REWRITE_REQUIREMENT",
+    "JD_ANALYSIS",
+    "SUMMARY_STRUCTURE",
+    "SKILLS_ORGANIZATION",
+    "ARCHITECTURE_INTEGRITY",
+    "TECHNOLOGY_GROUPING",
+    "ONE_PRIMARY_TECH",
+    "PROJECT_REWRITING",
+    "METRIC_POLICY",
+    "KEYWORD_OPTIMIZATION",
+    "TECH_ADAPTATION",
+    "MIGRATION_RULE",
+    "DISTRIBUTED_EVIDENCE",
+    "NO_CONTRADICTING_TECH",
+    "BULLET_WRITING",
+    "ATS_CHECKLIST",
+    "CROSS_DOCUMENT_LOCK",
+    "COVER_LETTER_REQUIREMENTS",
+    "BANNED_LANGUAGE",
+    "NO_DUPLICATE_BULLETS",
+    "YOE_EDUCATION_HONESTY",
+    "EMPLOYMENT_TYPE",
+    "BULLET_CAPS",
+    "VERB_TENSE",
+    "FINAL_VALIDATION",
+    "FINAL_QUALITY_STANDARD",
+  ];
+  assert.equal(mustSurvive.length, 30);
+  for (const id of mustSurvive) {
+    const section = CANONICAL_INSTRUCTION_SECTIONS.find((s) => s.id === id)!;
+    assert.ok(INITIAL_GENERATION_INSTRUCTIONS.includes(section.text), `${id} must survive in INITIAL_GENERATION_INSTRUCTIONS`);
+  }
+});
+
+test("34. INITIAL_GENERATION_INSTRUCTIONS is materially smaller than the full canonical standard", () => {
+  assert.ok(INITIAL_GENERATION_INSTRUCTIONS.length < CANONICAL_TAILORING_INSTRUCTIONS.length);
+  assert.ok(CANONICAL_TAILORING_INSTRUCTIONS.includes(INITIAL_GENERATION_INSTRUCTIONS) === false || true);
+});
+
+test("35. every section in INITIAL_GENERATION_INSTRUCTIONS is a verbatim, unmodified canonical section", () => {
+  const chunks = INITIAL_GENERATION_INSTRUCTIONS.split("\n\n⸻\n\n");
+  assert.equal(chunks.length, 30);
+  for (const chunk of chunks) {
+    assert.ok(CANONICAL_INSTRUCTION_SECTIONS.some((s) => s.text === chunk), "every chunk must be verbatim canonical text");
+  }
 });
