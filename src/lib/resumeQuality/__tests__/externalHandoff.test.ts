@@ -1664,3 +1664,168 @@ test("47. a legacy schemaVersion 1 full-document response still works after PATC
   const output = await writer.generate(writerInput);
   assert.equal(output.resume.summary[0], repairedResume.summary[0]);
 });
+
+test("48. a patch-eligible export writes a REDUCED previous_resume_content.json — untouched employer stubbed, cover letter omitted", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  // A two-employer resume with a controlled, UNAMBIGUOUS review (a stub reviewer, matching tests
+  // 42/43's own pattern) — one clean bullet-level finding at Acme Corp only, zero unattributed
+  // findings, zero cover-letter findings. FLAWED_RESUME's real deterministic-reviewer output turned
+  // out to carry 2 unattributed findings (needing candidate clarification) for its own unrelated
+  // reasons, which correctly (per shouldOmitCoverLetterContext's fail-toward-inclusion rule) keeps
+  // the cover letter in context — not a bug, just the wrong fixture for testing OMISSION
+  // specifically. This fixture isolates that one behavior cleanly.
+  const twoEmployerResume: ResumeContent = {
+    ...PERFECT_RESUME,
+    experience: [
+      {
+        ...PERFECT_RESUME.experience[0],
+        bullets: ["Built batch data ingestion pipelines using Azure Data Factory and AWS Glue.", ...PERFECT_RESUME.experience[0].bullets.slice(1)],
+      },
+      {
+        title: "Data Engineer",
+        company: "Beta LLC",
+        dates: "2017 - 2020",
+        bullets: ["Built ETL pipelines with Informatica IICS.", "Maintained SQL Server reporting datasets."],
+      },
+    ],
+  };
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: twoEmployerResume,
+    coverLetter: COVER_LETTER,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile({
+      skills: [{ rawSkillName: "Azure Data Factory", source: "employer", attributedTo: [{ employer: "Acme Corp" }] }],
+    }),
+    reviewer: {
+      review: async () => ({
+        review: {
+          overallScore: 60,
+          atsScore: 90,
+          keywordAlignmentScore: 90,
+          truthfulnessScore: 70,
+          architectureConsistencyScore: 90,
+          recruiterReadabilityScore: 90,
+          formattingScore: 90,
+          blockingFailures: [
+            {
+              type: "UNSUPPORTED_CLAIM",
+              description: '"AWS Glue" is claimed on the resume at Acme Corp but is not grounded in the Master Resume or Master Skills Inventory.',
+              recommendedCorrection: 'Remove "AWS Glue" or replace it with a genuinely evidenced technology.',
+            },
+          ],
+          blockingIssues: [],
+          requiredCorrections: [],
+          missingRequiredSkills: [],
+          incorrectTechnologyUsage: [],
+          genericBullets: [],
+          missingImpactEvidence: [],
+          summaryIssues: [],
+          skillsOrderingIssues: [],
+          truthfulnessIssues: [],
+          instructionCompliance: {
+            instructionVersion: INSTRUCTION_VERSION,
+            instructionHash: INSTRUCTION_HASH,
+            checks: Object.fromEntries(INSTRUCTION_COMPLIANCE_CHECK_NAMES.map((name) => [name, name === "finalValidation" ? "FAIL" : "PASS"])) as unknown as InstructionComplianceChecks,
+            notes: [],
+          },
+        },
+      }),
+    },
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const prevResumePath = path.join(exportRes.handoffDirectory, "previous_resume_content.json");
+  assert(fs.existsSync(prevResumePath));
+  const parsed = JSON.parse(fs.readFileSync(prevResumePath, "utf-8"));
+  assert.equal(parsed.experience[0].company, "Acme Corp");
+  // Beta LLC is untouched by this repair — its real bullets must not leak into writer context.
+  assert.equal(parsed.experience[1].company, "Beta LLC");
+  assert.match(parsed.experience[1].bullets[0], /omitted/);
+  assert.ok(!parsed.experience[1].bullets.some((b: string) => b.includes("Informatica")));
+
+  // No cover-letter finding, no unattributed finding, resume-only repair — cover-letter context
+  // must be omitted from the package entirely.
+  const prevCoverPath = path.join(exportRes.handoffDirectory, "previous_cover_letter_content.json");
+  assert.equal(fs.existsSync(prevCoverPath), false, "cover-letter context must be omitted when nothing about this repair concerns it");
+
+  const prompt = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_prompt.md"), "utf-8");
+  assert.match(prompt, /not included in this package/);
+  assert.match(prompt, /## CONTEXT MANIFEST/);
+  assert.match(prompt, /Beta LLC/); // named in the manifest as a reduced employer
+});
+
+test("49. a legacy (non-patch-eligible) TARGETED_REPAIR export still writes the FULL previous_resume_content.json", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  // A summary-touching finding forces the legacy (full-context) path per patchContextProjection.ts's
+  // own explicit summary/tagline fallback rule.
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: PERFECT_RESUME,
+    coverLetter: COVER_LETTER,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile({
+      skills: [{ rawSkillName: "Azure", source: "employer", attributedTo: [{ employer: "Acme Corp" }] }],
+    }),
+    reviewer: {
+      review: async () => ({
+        review: {
+          overallScore: 75,
+          atsScore: 80,
+          keywordAlignmentScore: 80,
+          truthfulnessScore: 70,
+          architectureConsistencyScore: 80,
+          recruiterReadabilityScore: 80,
+          formattingScore: 90,
+          blockingFailures: [{ type: "UNSUPPORTED_CLAIM", description: "Summary claims 10 years experience." }],
+          blockingIssues: [],
+          requiredCorrections: [],
+          missingRequiredSkills: [],
+          incorrectTechnologyUsage: [],
+          genericBullets: [],
+          missingImpactEvidence: [],
+          summaryIssues: [],
+          skillsOrderingIssues: [],
+          truthfulnessIssues: [],
+          instructionCompliance: {
+            instructionVersion: INSTRUCTION_VERSION,
+            instructionHash: INSTRUCTION_HASH,
+            checks: Object.fromEntries(INSTRUCTION_COMPLIANCE_CHECK_NAMES.map((name) => [name, name === "finalValidation" ? "FAIL" : "PASS"])) as unknown as InstructionComplianceChecks,
+            notes: [],
+          },
+        },
+      }),
+    },
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const prevResumePath = path.join(exportRes.handoffDirectory, "previous_resume_content.json");
+  const parsed = JSON.parse(fs.readFileSync(prevResumePath, "utf-8"));
+  assert.ok(!parsed.experience[0].bullets.some((b: string) => b.includes("omitted")), "a summary-touching repair must never stub any employer's bullets");
+  assert(fs.existsSync(path.join(exportRes.handoffDirectory, "previous_cover_letter_content.json")), "full-context fallback must still include the cover letter");
+});

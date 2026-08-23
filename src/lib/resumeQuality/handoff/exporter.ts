@@ -22,6 +22,7 @@ import { employerScopeForRepair, renderRepairPlanSection } from "../repairScope"
 import { deriveProfessionalIdentity, renderProfessionalIdentitySection } from "../professionalIdentity";
 import { buildRepairScopedMasterReference, shouldUseFullMasterReferenceForRepair } from "./masterReferenceProjection";
 import { isPatchEligibleRepairPlan } from "./patchRepair";
+import { projectResumeContextForPatchRepair, renderContextManifestSection, shouldOmitCoverLetterContext } from "./patchContextProjection";
 import {
   collectRoleProjectEvidence,
   filterRoleProjectEvidence,
@@ -105,6 +106,14 @@ export function buildExternalWriterPrompt(input: {
    *  reconstructable. Absent (or on INITIAL_GENERATION) means the legacy full-document schema is
    *  used, exactly as before this feature existed. */
   patchEligiblePaths?: readonly string[];
+  /** PHASE 2 TOKEN OPTIMIZATION (2026-08-23) — true when this handoff omitted
+   *  previous_cover_letter_content.json entirely (see patchContextProjection.ts's
+   *  shouldOmitCoverLetterContext). Only ever true alongside isPatchMode. */
+  coverLetterContextOmitted?: boolean;
+  /** PHASE 2 TOKEN OPTIMIZATION (2026-08-23) — compact, human-readable record of what this
+   *  handoff's previous_resume_content.json actually contains, so the writer (and anyone debugging
+   *  the package by hand) knows exactly what was reduced. Rendered verbatim; absent renders nothing. */
+  contextManifestSection?: string;
 }): string {
   const { candidateName, iterationNumber, selectedTrack, latestReview, requiredCorrections, blockingIssues, blockingFailures } = input;
   const writerMode = input.writerMode ?? (input.repairPlanSection ? "TARGETED_REPAIR" : "INITIAL_GENERATION");
@@ -181,7 +190,12 @@ export function buildExternalWriterPrompt(input: {
       ? `2. **Surgical repair, PATCH mode — return ONLY the changed values, never the full document**:
    - You will output PATCH OPERATIONS (see the schema below), not a full resume/cover letter.
    - Every operation's \`path\` must be one of the EXACT editable paths listed in the targeted-repair contract above — nothing else.
-   - Do NOT reproduce \`previous_resume_content.json\`/\`previous_cover_letter_content.json\` content for a path you are not changing — omitting an editable path means CareerOps leaves it at its current value; you never need to restate it.
+   - Do NOT reproduce \`previous_resume_content.json\`${input.coverLetterContextOmitted ? "" : "/`previous_cover_letter_content.json`"} content for a path you are not changing — omitting an editable path means CareerOps leaves it at its current value; you never need to restate it.
+   - \`previous_resume_content.json\` in this package may already be a REDUCED view (some employers shown only by name/title/dates, not their bullets) — see the context manifest below. This is not missing data; those employers are frozen and unrelated to this repair.${
+       input.coverLetterContextOmitted
+         ? "\n   - This repair does not touch the cover letter and no finding concerns it — `previous_cover_letter_content.json` is not included in this package. Do not reference or invent cover-letter content."
+         : ""
+     }
    - Do not rewrite, improve, reorder, re-tailor, or rephrase any content outside the listed editable paths, even if you prefer different wording.
    - Previously resolved findings must not return: ${input.resolvedFindingKeys?.length ? input.resolvedFindingKeys.join(" | ") : "none recorded"}.
    - Any operation whose path is not in the editable-paths allowlist is rejected and fails the whole repair — when in doubt, omit it rather than guess.`
@@ -372,7 +386,7 @@ Where each value goes:
 - **LinkedIn** — resume only, and only when given above. The cover letter header does not carry it.
   Omitting it from the cover letter is correct and is not an inconsistency between the documents.
 
-${input.repairPlanSection ?? ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
+${input.repairPlanSection ?? ""}${input.contextManifestSection ?? ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
 1. **Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
    - The Master Resume (\`master_resume_reference.json\` / \`master_resume.txt\`) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
@@ -707,6 +721,19 @@ export function exportExternalWriterPackage(
   const exportPatchEligiblePaths =
     isTargetedRepair && isPatchEligibleRepairPlan(writerInput.repairPlan?.editablePaths) ? writerInput.repairPlan!.editablePaths! : undefined;
 
+  // PHASE 2 TOKEN OPTIMIZATION (2026-08-23) — computed once, before the prompt is built, and reused
+  // both for the prompt's context-manifest section and for what actually gets written as
+  // previous_resume_content.json/previous_cover_letter_content.json below, so the prompt's own
+  // description of what it contains can never drift from what was actually written.
+  const exportResumeProjection =
+    isTargetedRepair && writerInput.currentResume
+      ? projectResumeContextForPatchRepair(writerInput.currentResume, writerInput.repairPlan)
+      : null;
+  const exportOmitCoverLetter = isTargetedRepair && shouldOmitCoverLetterContext(writerInput.repairPlan);
+  const exportContextManifestSection = exportResumeProjection
+    ? renderContextManifestSection(exportResumeProjection.manifest, exportOmitCoverLetter)
+    : "";
+
   // 2. writer_prompt.md
   const promptContent = buildExternalWriterPrompt({
     candidateId,
@@ -747,6 +774,8 @@ export function exportExternalWriterPackage(
     recommendedSkillOrder: exportSkillOrder,
     atsCoverageReportText: exportAtsCoverageText,
     patchEligiblePaths: exportPatchEligiblePaths,
+    coverLetterContextOmitted: exportOmitCoverLetter,
+    contextManifestSection: exportContextManifestSection || undefined,
   });
   writePackageFile("writer_prompt.md", promptContent);
 
@@ -818,10 +847,25 @@ export function exportExternalWriterPackage(
   }
 
   // 8. previous_resume_content.json & previous_cover_letter_content.json
+  //
+  // PHASE 2 TOKEN OPTIMIZATION (2026-08-23) — for a patch-eligible repair, previous_resume_content
+  // .json is the writer-facing PROJECTION (touched employers get a bounded bullet window, untouched
+  // employers reduce to an identity stub) rather than the full document; previous_cover_letter_
+  // content.json is omitted entirely when nothing about this repair concerns the cover letter. Both
+  // reductions fail toward the ORIGINAL full content on any ambiguity (see patchContextProjection.ts)
+  // and touch ONLY what the writer is shown — repairPreservation.ts and the deterministic reviewer
+  // still validate against writerInput.currentResume/currentCoverLetter directly, never this
+  // projection. INITIAL_GENERATION (isTargetedRepair false) always gets the original content, exactly
+  // as before this feature existed. exportResumeProjection/exportOmitCoverLetter were already
+  // computed above (before the prompt was built) so the prompt's own context-manifest description
+  // can never drift from what's actually written here.
   if (writerInput.currentResume) {
-    writePackageFile("previous_resume_content.json", JSON.stringify(writerInput.currentResume, null, 2));
+    writePackageFile(
+      "previous_resume_content.json",
+      JSON.stringify(exportResumeProjection ? exportResumeProjection.resume : writerInput.currentResume, null, 2)
+    );
   }
-  if (writerInput.currentCoverLetter) {
+  if (writerInput.currentCoverLetter && !exportOmitCoverLetter) {
     writePackageFile("previous_cover_letter_content.json", JSON.stringify(writerInput.currentCoverLetter, null, 2));
   }
 
