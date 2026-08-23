@@ -9,7 +9,13 @@ import { deserializeJobMatchResult, getLatestJobMatchResult } from "@/db/queries
 import { buildTailoringPlan } from "@/lib/tailoringIntelligence/plan";
 import { renderExperienceEmphasisSection, renderDistributedEvidenceSection } from "@/lib/tailoringIntelligence/writerSection";
 import { buildAtsCoverageReport, renderAtsCoverageReport } from "../atsCoverageReport";
-import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
+import {
+  CANONICAL_TAILORING_INSTRUCTIONS,
+  INSTRUCTION_HASH,
+  INSTRUCTION_VERSION,
+  buildTargetedRepairInstructions,
+  classifyRepairInstructionPaths,
+} from "../canonicalInstructions";
 import { buildJdPriorityMatrix, type JdPriorityMatrix } from "../jdPriorityMatrix";
 import { recommendedPositioningSummary } from "../positioningEngine";
 import { recommendedSkillOrder } from "../skillRanking";
@@ -114,6 +120,14 @@ export function buildExternalWriterPrompt(input: {
    *  handoff's previous_resume_content.json actually contains, so the writer (and anyone debugging
    *  the package by hand) knows exactly what was reduced. Rendered verbatim; absent renders nothing. */
   contextManifestSection?: string;
+  /** PHASE 3 TOKEN OPTIMIZATION (2026-08-23) — true when resume_tailoring_instructions.md in this
+   *  package is a deterministic, section-based SUBSET of the canonical standard (see
+   *  canonicalInstructions.ts's buildTargetedRepairInstructions) rather than the full document.
+   *  Only ever true for a TARGETED_REPAIR whose editable paths were fully, unambiguously classified;
+   *  every other case (including every INITIAL_GENERATION) gets the complete standard, exactly as
+   *  before this feature existed. This flag exists purely so the prompt's own description of the
+   *  file never overstates what it actually contains. */
+  instructionsProjected?: boolean;
 }): string {
   const { candidateName, iterationNumber, selectedTrack, latestReview, requiredCorrections, blockingIssues, blockingFailures } = input;
   const writerMode = input.writerMode ?? (input.repairPlanSection ? "TARGETED_REPAIR" : "INITIAL_GENERATION");
@@ -371,7 +385,11 @@ Target Role Track: **${selectedTrack ?? "General Engineering Track"}**
 
 ## THE CANONICAL STANDARD IS MANDATORY
 
-\`resume_tailoring_instructions.md\` in this package (instruction version **${INSTRUCTION_VERSION}**, hash \`${INSTRUCTION_HASH}\`) is the full, authoritative Resume Tailoring System Instructions — not a summary. You must follow it in its entirety, not just the highlights below. CareerOps will independently re-review your output against this exact same text; nothing you self-report can substitute for actually satisfying it.
+\`resume_tailoring_instructions.md\` in this package (instruction version **${INSTRUCTION_VERSION}**, full-standard hash \`${INSTRUCTION_HASH}\`) is drawn verbatim, word-for-word, from the authoritative Resume Tailoring System Instructions — never paraphrased or summarized. ${
+    input.instructionsProjected
+      ? "For this targeted repair it is a deterministic SUBSET: every section that governs what this repair's editable paths actually touch, selected by CareerOps — not by you, and not by relevance judgment at write time. Sections outside this repair's scope (e.g. from-scratch generation guidance) are omitted because they do not apply to a surgical repair, never because they were judged unimportant."
+      : "It is the complete document."
+  } You must follow every included section in its entirety, not just the highlights below. CareerOps will independently re-review your output against this exact same canonical text; nothing you self-report can substitute for actually satisfying it.
 
 ## CANDIDATE CONTACT DETAILS — VERIFIED HARD FACTS, REPRODUCE EXACTLY
 ${contactBlock}
@@ -734,6 +752,41 @@ export function exportExternalWriterPackage(
     ? renderContextManifestSection(exportResumeProjection.manifest, exportOmitCoverLetter)
     : "";
 
+  // PHASE 3 TOKEN OPTIMIZATION (2026-08-23) — TARGETED_REPAIR CANONICAL-INSTRUCTION PROJECTION.
+  //
+  // resume_tailoring_instructions.md was, until now, always the full 28.4KB canonical standard —
+  // the single largest fixed writer-read artifact, sent unconditionally regardless of how narrow the
+  // repair was. Every section is CLASSIFIED (see canonicalInstructions.ts's own module-level
+  // classification map) as either always-required (truthfulness/attribution/style guardrails a
+  // writer producing ANY text still needs), conditional on what this repair's editablePaths actually
+  // touch, or INITIAL_GENERATION-only framing that a scoped repair does not need and — in the case of
+  // DEEP_REWRITE_REQUIREMENT/FINAL_QUALITY_STANDARD — would actively contradict ("rewrite outside
+  // scope" vs. "every relevant sentence reconsidered").
+  //
+  // FAIL TOWARD FULL INSTRUCTIONS. Projection is used ONLY when every one of the following holds;
+  // any other case — including every INITIAL_GENERATION — gets the complete, unmodified
+  // CANONICAL_TAILORING_INSTRUCTIONS, exactly as before this feature existed:
+  //   - this is a TARGETED_REPAIR
+  //   - a repairPlan exists with a non-empty editablePaths (no plan / no paths means the repair's
+  //     own scope was never narrowed to specific content, so neither can the instructions be)
+  //   - classifyRepairInstructionPaths finds every single path a recognized shape (isFullyClassified)
+  //     — one unrecognized path fails the WHOLE selection toward full text, never a partial guess
+  // Patch-mode-vs-legacy and cover-letter-inclusion are read from the SAME signals already computed
+  // above (exportPatchEligiblePaths, exportOmitCoverLetter) rather than re-derived independently, so
+  // this can never disagree with what the rest of the handoff package already decided.
+  const exportRepairEditablePaths = writerInput.repairPlan?.editablePaths;
+  const exportInstructionSelection =
+    isTargetedRepair && exportRepairEditablePaths && exportRepairEditablePaths.length > 0
+      ? classifyRepairInstructionPaths(exportRepairEditablePaths)
+      : null;
+  const exportInstructionsProjected = exportInstructionSelection?.isFullyClassified === true;
+  const exportTailoringInstructionsText = exportInstructionsProjected
+    ? buildTargetedRepairInstructions(exportInstructionSelection!, {
+        isPatchMode: exportPatchEligiblePaths !== undefined,
+        includeCoverLetterSections: !exportOmitCoverLetter,
+      })
+    : CANONICAL_TAILORING_INSTRUCTIONS;
+
   // 2. writer_prompt.md
   const promptContent = buildExternalWriterPrompt({
     candidateId,
@@ -776,6 +829,7 @@ export function exportExternalWriterPackage(
     patchEligiblePaths: exportPatchEligiblePaths,
     coverLetterContextOmitted: exportOmitCoverLetter,
     contextManifestSection: exportContextManifestSection || undefined,
+    instructionsProjected: exportInstructionsProjected,
   });
   writePackageFile("writer_prompt.md", promptContent);
 
@@ -797,16 +851,30 @@ export function exportExternalWriterPackage(
     }
   }
 
-  // 5. resume_tailoring_instructions.md — ALWAYS the full canonical standard (CANONICAL_TAILORING_INSTRUCTIONS),
-  // never the copyPackageFile fallback: wsPkg.tailoringInstructionsPath is populated only by a legacy
-  // workspace-package path that the resume-quality POST route never writes to in practice, so relying
-  // on it silently degraded every real handoff package down to a 1-line placeholder instead of the
-  // real guardrails. The canonical module is the single source of truth (see canonicalInstructions.ts)
-  // and is what CareerOps's own reviewer independently checks against, so the writer must see the
-  // exact same text.
+  // 5. resume_tailoring_instructions.md — the copyPackageFile fallback is never used:
+  // wsPkg.tailoringInstructionsPath is populated only by a legacy workspace-package path that the
+  // resume-quality POST route never writes to in practice, so relying on it silently degraded every
+  // real handoff package down to a 1-line placeholder instead of the real guardrails. The canonical
+  // module (canonicalInstructions.ts) is the single source of truth CareerOps's own reviewer
+  // independently checks against, so the writer must see verbatim text drawn from it.
+  //
+  // PHASE 3 TOKEN OPTIMIZATION (2026-08-23) — for a TARGETED_REPAIR whose editable paths were fully
+  // classified (exportInstructionsProjected, computed above alongside every other repair-scoping
+  // decision this package makes), this is the deterministic SECTION-BASED PROJECTION built by
+  // buildTargetedRepairInstructions — every word still verbatim canonical text, just not every
+  // section. INITIAL_GENERATION, and any TARGETED_REPAIR whose scope isn't cleanly classified, still
+  // gets CANONICAL_TAILORING_INSTRUCTIONS in full, unconditionally, exactly as before this feature
+  // existed. The header states the FULL-STANDARD hash either way (this is what CareerOps's own
+  // deterministic review identity check actually compares against — see currentInstructionIdentity()
+  // — never the literal byte content of this file), and explicitly says whether what follows is the
+  // complete document or a scoped subset, so the writer is never misled about what it's looking at.
   writePackageFile(
     "resume_tailoring_instructions.md",
-    `# Resume Tailoring Instructions\n\nInstruction version: ${INSTRUCTION_VERSION}\nInstruction hash (SHA-256): ${INSTRUCTION_HASH}\n\n---\n\n${CANONICAL_TAILORING_INSTRUCTIONS}`
+    `# Resume Tailoring Instructions\n\nInstruction version: ${INSTRUCTION_VERSION}\nFull-standard hash (SHA-256): ${INSTRUCTION_HASH}\n${
+      exportInstructionsProjected
+        ? "\nThis file is a DETERMINISTIC SUBSET of the full canonical standard, scoped to this targeted repair's editable paths by CareerOps (see canonicalInstructions.ts). Every word below is verbatim canonical text; sections outside this repair's scope are omitted, not summarized.\n"
+        : "\nThis file is the complete canonical standard.\n"
+    }\n---\n\n${exportTailoringInstructionsText}`
   );
 
   // 6. master_resume_reference.json / master_resume.txt

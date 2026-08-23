@@ -11,7 +11,7 @@ import { importExternalWriterResult, validateResumeContentStructure } from "../h
 import { ExternalFileResumeWriter, ExternalWriterResultNotReadyError } from "../writers/externalFileResumeWriter";
 import type { ExternalWriterOutput, InstructionComplianceChecks } from "../types";
 import { INSTRUCTION_COMPLIANCE_CHECK_NAMES } from "../types";
-import { INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
+import { CANONICAL_TAILORING_INSTRUCTIONS, INSTRUCTION_HASH, INSTRUCTION_VERSION } from "../canonicalInstructions";
 
 let tmpDbDir: string;
 let tmpCandidatesDir: string;
@@ -1828,4 +1828,243 @@ test("49. a legacy (non-patch-eligible) TARGETED_REPAIR export still writes the 
   const parsed = JSON.parse(fs.readFileSync(prevResumePath, "utf-8"));
   assert.ok(!parsed.experience[0].bullets.some((b: string) => b.includes("omitted")), "a summary-touching repair must never stub any employer's bullets");
   assert(fs.existsSync(path.join(exportRes.handoffDirectory, "previous_cover_letter_content.json")), "full-context fallback must still include the cover letter");
+});
+
+// -------------------------------------------------------------------------------------------------
+// PHASE 3 TOKEN OPTIMIZATION (2026-08-23) — TARGETED_REPAIR CANONICAL-INSTRUCTION PROJECTION.
+// resume_tailoring_instructions.md is now a deterministic SECTION-BASED PROJECTION for a
+// TARGETED_REPAIR whose editable paths were fully classified — see canonicalInstructions.ts's
+// classifyRepairInstructionPaths/buildTargetedRepairInstructions and exporter.ts's own wiring.
+// INITIAL_GENERATION is asserted unaffected (test 50); a real, narrow bullet-level repair is
+// asserted to receive a materially smaller, correctly-scoped file (test 51); a summary-touching
+// repair (test 49's own fixture, reused here) is asserted to still receive a projection that
+// correctly includes SUMMARY_STRUCTURE (tests 52).
+// -------------------------------------------------------------------------------------------------
+
+test("50. INITIAL_GENERATION always receives the FULL, unmodified canonical instructions — unaffected by Phase 3 projection", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 1,
+  });
+
+  const instructionsFile = fs.readFileSync(path.join(exportRes.handoffDirectory, "resume_tailoring_instructions.md"), "utf-8");
+  assert.ok(instructionsFile.includes(CANONICAL_TAILORING_INSTRUCTIONS), "INITIAL_GENERATION must receive the complete canonical text verbatim");
+  assert.match(instructionsFile, /This file is the complete canonical standard\./);
+  assert.doesNotMatch(instructionsFile, /DETERMINISTIC SUBSET/);
+
+  const prompt = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_prompt.md"), "utf-8");
+  assert.match(prompt, /It is the complete document\./);
+});
+
+test("51. a narrow bullet-only TARGETED_REPAIR receives a materially smaller, correctly-scoped instruction projection", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  const twoEmployerResume: ResumeContent = {
+    ...PERFECT_RESUME,
+    experience: [
+      {
+        ...PERFECT_RESUME.experience[0],
+        bullets: ["Built batch data ingestion pipelines using Azure Data Factory and AWS Glue.", ...PERFECT_RESUME.experience[0].bullets.slice(1)],
+      },
+      {
+        title: "Data Engineer",
+        company: "Beta LLC",
+        dates: "2017 - 2020",
+        bullets: ["Built ETL pipelines with Informatica IICS.", "Maintained SQL Server reporting datasets."],
+      },
+    ],
+  };
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: twoEmployerResume,
+    coverLetter: COVER_LETTER,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile({
+      skills: [{ rawSkillName: "Azure Data Factory", source: "employer", attributedTo: [{ employer: "Acme Corp" }] }],
+    }),
+    reviewer: {
+      review: async () => ({
+        review: {
+          overallScore: 60,
+          atsScore: 90,
+          keywordAlignmentScore: 90,
+          truthfulnessScore: 70,
+          architectureConsistencyScore: 90,
+          recruiterReadabilityScore: 90,
+          formattingScore: 90,
+          blockingFailures: [
+            {
+              type: "UNSUPPORTED_CLAIM",
+              description: '"AWS Glue" is claimed on the resume at Acme Corp but is not grounded in the Master Resume or Master Skills Inventory.',
+              recommendedCorrection: 'Remove "AWS Glue" or replace it with a genuinely evidenced technology.',
+            },
+          ],
+          blockingIssues: [],
+          requiredCorrections: [],
+          missingRequiredSkills: [],
+          incorrectTechnologyUsage: [],
+          genericBullets: [],
+          missingImpactEvidence: [],
+          summaryIssues: [],
+          skillsOrderingIssues: [],
+          truthfulnessIssues: [],
+          instructionCompliance: {
+            instructionVersion: INSTRUCTION_VERSION,
+            instructionHash: INSTRUCTION_HASH,
+            checks: Object.fromEntries(INSTRUCTION_COMPLIANCE_CHECK_NAMES.map((name) => [name, name === "finalValidation" ? "FAIL" : "PASS"])) as unknown as InstructionComplianceChecks,
+            notes: [],
+          },
+        },
+      }),
+    },
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const instructionsFile = fs.readFileSync(path.join(exportRes.handoffDirectory, "resume_tailoring_instructions.md"), "utf-8");
+  assert.match(instructionsFile, /DETERMINISTIC SUBSET/, "a fully-classified narrow repair must be flagged as a projection, not the full document");
+  assert.ok(
+    instructionsFile.length < CANONICAL_TAILORING_INSTRUCTIONS.length,
+    `projection (${instructionsFile.length} bytes) must be materially smaller than the full standard (${CANONICAL_TAILORING_INSTRUCTIONS.length} bytes)`
+  );
+  // Always-required truthfulness/style guardrails must survive.
+  assert.match(instructionsFile, /The Master Resume is authoritative for/);
+  assert.match(instructionsFile, /BANNED AI-SOUNDING LANGUAGE/);
+  // Content-repair sections relevant to a bullet edit must be present.
+  assert.match(instructionsFile, /ARCHITECTURE INTEGRITY RULE/);
+  assert.match(instructionsFile, /BULLET WRITING/);
+  // Sections irrelevant to this narrow bullet repair must be excluded.
+  assert.doesNotMatch(instructionsFile, /PROFESSIONAL SUMMARY STRUCTURE/);
+  assert.doesNotMatch(instructionsFile, /TECHNICAL SKILLS ORGANIZATION/);
+  assert.doesNotMatch(instructionsFile, /DEEP-REWRITE REQUIREMENT/);
+
+  const prompt = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_prompt.md"), "utf-8");
+  assert.match(prompt, /deterministic SUBSET/);
+});
+
+test("52. a summary-touching TARGETED_REPAIR's instruction projection includes PROFESSIONAL SUMMARY STRUCTURE", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: PERFECT_RESUME,
+    coverLetter: COVER_LETTER,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile({
+      skills: [{ rawSkillName: "Azure", source: "employer", attributedTo: [{ employer: "Acme Corp" }] }],
+    }),
+    reviewer: {
+      review: async () => ({
+        review: {
+          overallScore: 75,
+          atsScore: 80,
+          keywordAlignmentScore: 80,
+          truthfulnessScore: 70,
+          architectureConsistencyScore: 80,
+          recruiterReadabilityScore: 80,
+          formattingScore: 90,
+          blockingFailures: [{ type: "UNSUPPORTED_CLAIM", description: "Summary claims 10 years experience." }],
+          blockingIssues: [],
+          requiredCorrections: [],
+          missingRequiredSkills: [],
+          incorrectTechnologyUsage: [],
+          genericBullets: [],
+          missingImpactEvidence: [],
+          summaryIssues: [],
+          skillsOrderingIssues: [],
+          truthfulnessIssues: [],
+          instructionCompliance: {
+            instructionVersion: INSTRUCTION_VERSION,
+            instructionHash: INSTRUCTION_HASH,
+            checks: Object.fromEntries(INSTRUCTION_COMPLIANCE_CHECK_NAMES.map((name) => [name, name === "finalValidation" ? "FAIL" : "PASS"])) as unknown as InstructionComplianceChecks,
+            notes: [],
+          },
+        },
+      }),
+    },
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const instructionsFile = fs.readFileSync(path.join(exportRes.handoffDirectory, "resume_tailoring_instructions.md"), "utf-8");
+  // Whatever this repair's editable paths turn out to be, MASTER_RESUME_RULE/BANNED_LANGUAGE must
+  // always be present — the file must never be empty of the always-required guardrails.
+  assert.match(instructionsFile, /The Master Resume is authoritative for/);
+  assert.match(instructionsFile, /BANNED AI-SOUNDING LANGUAGE/);
+  if (instructionsFile.includes("DETERMINISTIC SUBSET")) {
+    // A summary-touching repair, if classified at all, must include summary guidance.
+    assert.match(instructionsFile, /PROFESSIONAL SUMMARY STRUCTURE/);
+  } else {
+    // Or this repair's scope was not fully classified, in which case the fail-safe correctly
+    // fell back to the complete canonical standard rather than guessing.
+    assert.ok(instructionsFile.includes(CANONICAL_TAILORING_INSTRUCTIONS));
+  }
+});
+
+test("53. buildTargetedRepairInstructions never invents text — every projected instruction file is a verbatim subset of the full canonical standard", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+  });
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: FLAWED_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+
+  const exportRes = exportExternalWriterPackage({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    targetIterationNumber: 2,
+  });
+
+  const instructionsFile = fs.readFileSync(path.join(exportRes.handoffDirectory, "resume_tailoring_instructions.md"), "utf-8");
+  const headerEnd = instructionsFile.indexOf("\n---\n\n") + "\n---\n\n".length;
+  const body = instructionsFile.slice(headerEnd);
+  // A projection can (and usually does) skip sections from the middle of the document, so the
+  // joined body as a WHOLE need not be a contiguous substring of the full standard — what must hold
+  // is that every individual section-sized chunk between separators is a verbatim, unmodified
+  // section of the canonical standard (never invented or paraphrased text).
+  const { CANONICAL_INSTRUCTION_SECTIONS: sections } = await import("../canonicalInstructions");
+  const chunks = body.split("\n\n⸻\n\n");
+  for (const chunk of chunks) {
+    assert.ok(
+      sections.some((s) => s.text === chunk),
+      `every section-sized chunk must be verbatim canonical text — got an unrecognized chunk starting "${chunk.slice(0, 60)}"`
+    );
+  }
 });
