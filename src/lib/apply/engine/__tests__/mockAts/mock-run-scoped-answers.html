@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mock ATS – Run Scoped Answers</title>
+</head>
+<body>
+  <form id="application-form">
+    <div>
+      <label for="first_name">First Name*</label>
+      <input id="first_name" name="first_name" type="text" required>
+    </div>
+    <div>
+      <label for="dw-role">Primary Data Warehouse Role*</label>
+      <input id="dw-role" role="combobox" class="select__input" type="text" required autocomplete="off" aria-controls="dw-role-listbox">
+      <ul id="dw-role-listbox" role="listbox"></ul>
+    </div>
+    <div>
+      <label for="de-env">Primary Data Engineering Environment*</label>
+      <input id="de-env" role="combobox" class="select__input" type="text" required autocomplete="off" aria-controls="de-env-listbox">
+      <ul id="de-env-listbox" role="listbox"></ul>
+    </div>
+    <button id="submit_application" type="submit">Submit Application</button>
+  </form>
+
+  <script>
+    function setupCombobox(inputId, listboxId, options) {
+      var input = document.getElementById(inputId);
+      var listbox = document.getElementById(listboxId);
+      if (!input || !listbox) return;
+
+      function render() {
+        listbox.innerHTML = "";
+        for (var i = 0; i < options.length; i++) {
+          var li = document.createElement("li");
+          li.setAttribute("role", "option");
+          li.textContent = options[i];
+          (function(val) {
+            li.addEventListener("click", function() {
+              input.value = val.trim();
+              listbox.innerHTML = "";
+            });
+          })(options[i]);
+          listbox.appendChild(li);
+        }
+      }
+
+      input.addEventListener("click", render);
+      input.addEventListener("focus", render);
+      input.addEventListener("keydown", function(e) {
+        if (e.key === "Escape") {
+          listbox.innerHTML = "";
+        }
+      });
+      input.addEventListener("blur", function() {
+        setTimeout(function() {
+          listbox.innerHTML = "";
+        }, 100);
+      });
+    }
+
+    setupCombobox("dw-role", "dw-role-listbox", [
+      "Architect",
+      "Lead Developer",
+      "Senior Developer",
+      "Data Analyst"
+    ]);
+
+    setupCombobox("de-env", "de-env-listbox", [
+      "Snowflake",
+      "Databricks",
+      "AWS Redshift"
+    ]);
+  </script>
+</body>
+</html>

@@ -47,6 +47,22 @@ export interface HumanQuestion {
   reason: string;
 }
 
+/**
+ * A candidate-approved answer scoped strictly to the current ApplicationRun.
+ *
+ * PROVENANCE: The candidate explicitly answered this question during this run (USER_INTERVENTION).
+ * This answer may be used to fill matching fields for THIS run even when canonicalKey is null
+ * (i.e. custom/unrecognised employer screening questions), without polluting the global Answer Vault.
+ */
+export interface RunApprovedAnswer {
+  questionId: string;
+  selector: string;
+  label: string;
+  answer: string;
+  canonicalKey: string | null;
+  questionType: QuestionType | null;
+}
+
 /** What the agent decided to do with one field. Every fill carries its provenance. */
 export type FieldPlan =
   | {

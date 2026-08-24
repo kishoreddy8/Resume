@@ -9,7 +9,9 @@ import { WAITING_PROMPT, type RunStatus } from "@/lib/apply/runState";
 import { loadKnownVariants, getAnswer, saveAnswer } from "@/db/queries/applicationVault";
 import { matchQuestion } from "@/lib/apply/questionMatching";
 import { resolveAnswer } from "@/lib/apply/resolveAnswer";
-import { DEFAULT_POLICY } from "@/lib/apply/questionTypes";
+import { DEFAULT_POLICY, type QuestionType } from "@/lib/apply/questionTypes";
+import type { RunApprovedAnswer } from "@/lib/apply/agent/types";
+import type { ExecutionCheckpoint } from "@/lib/apply/engine/executor";
 
 /**
  * The Needs Your Input inbox.
@@ -201,13 +203,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
     }
 
     type StoredHumanQuestion = {
-      id: string; label: string; canonicalKey: string | null; questionType: string | null;
+      id: string; selector?: string; label: string; canonicalKey: string | null; questionType: string | null;
       required: boolean; options: string[] | null;
     };
     let humanQuestions: StoredHumanQuestion[] = [];
+    let existingCheckpoint: ExecutionCheckpoint | null = null;
     try {
-      const cp = batchRun.checkpoint_json ? JSON.parse(batchRun.checkpoint_json) as { humanQuestions?: StoredHumanQuestion[] } : null;
-      humanQuestions = cp?.humanQuestions ?? [];
+      existingCheckpoint = batchRun.checkpoint_json ? (JSON.parse(batchRun.checkpoint_json) as ExecutionCheckpoint) : null;
+      humanQuestions = (existingCheckpoint?.humanQuestions as StoredHumanQuestion[]) ?? [];
     } catch { /* malformed checkpoint — treat as no humanQuestions */ }
 
     /* Validate: every required question must have a submitted answer. */
@@ -231,6 +234,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
       }
     }
 
+    const updatedRunAnswers: Record<string, RunApprovedAnswer> = {
+      ...(existingCheckpoint?.runAnswers ?? {}),
+    };
+
     const knownVariants = loadKnownVariants();
     for (const submitted of answers) {
       const question = humanQuestions.find((q) => q.id === submitted.id);
@@ -239,28 +246,59 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
       /* Re-match by label to get the freshest canonicalKey and type. Fall back to what the
        * checkpoint carried if matching fails (e.g. a newly added variant not yet in this DB). */
       const rematch = matchQuestion(question.label, knownVariants);
-      const canonicalKey = rematch?.canonicalKey ?? question.canonicalKey;
-      const questionType = (rematch?.type ?? question.questionType ?? "other") as import("@/lib/apply/questionTypes").QuestionType;
-      if (!canonicalKey) continue; // unrecognised question — saved nowhere, but run continues
+      const canonicalKey = rematch?.canonicalKey ?? question.canonicalKey ?? null;
+      const questionType = (rematch?.type ?? question.questionType ?? null) as QuestionType | null;
 
-      const policy = DEFAULT_POLICY[questionType];
-      saveAnswer({
-        candidateId,
+      const runApproved: RunApprovedAnswer = {
+        questionId: question.id,
+        selector: question.selector ?? `#${question.id}`,
+        label: question.label,
+        answer: submitted.answer,
         canonicalKey,
         questionType,
-        observedText: question.label,
-        answerValue: submitted.answer,
-        answerSource: "USER_INTERVENTION",
-        approvedByUser: true,
-        /* auto_fill_allowed only when explicitly opted in AND the policy permits reuse.
-         * saveAnswer enforces this again internally — belt and braces. */
-        autoFillAllowed: Boolean(submitted.reuseForEquivalentQuestions) && policy.reusePolicy === "auto_after_approval",
-        sourceAts: batchRun.ats,
-      });
+      };
+
+      updatedRunAnswers[question.id] = runApproved;
+      if (question.selector) {
+        updatedRunAnswers[question.selector] = runApproved;
+      }
+      updatedRunAnswers[question.label] = runApproved;
+
+      if (canonicalKey) {
+        const policy = DEFAULT_POLICY[questionType ?? "other"] ?? DEFAULT_POLICY.other;
+        saveAnswer({
+          candidateId,
+          canonicalKey,
+          questionType: questionType ?? "other",
+          observedText: question.label,
+          answerValue: submitted.answer,
+          answerSource: "USER_INTERVENTION",
+          approvedByUser: true,
+          /* auto_fill_allowed only when explicitly opted in AND the policy permits reuse.
+           * saveAnswer enforces this again internally — belt and braces. */
+          autoFillAllowed: Boolean(submitted.reuseForEquivalentQuestions) && policy.reusePolicy === "auto_after_approval",
+          sourceAts: batchRun.ats,
+        });
+      }
     }
 
+    const checkpoint: ExecutionCheckpoint = {
+      url: existingCheckpoint?.url ?? batchRun.apply_url,
+      ats: existingCheckpoint?.ats ?? batchRun.ats,
+      step: "filling",
+      completed: existingCheckpoint?.completed ?? [],
+      runAnswers: updatedRunAnswers,
+      humanQuestions: [],
+      review: existingCheckpoint?.review,
+      lastAction: "human batch answers recorded",
+    };
+
     recordEvent(batchRun.id, "user_intervention_completed", `batch: answered ${answers.length} question(s)`);
-    const advanced = advanceRun(batchRun.id, "FILLING", { blockingReason: null, blockingQuestion: null });
+    const advanced = advanceRun(batchRun.id, "FILLING", {
+      blockingReason: null,
+      blockingQuestion: null,
+      checkpoint,
+    });
     return NextResponse.json({ status: "resumed", run: { id: advanced.id, status: advanced.status } });
   }
 
@@ -296,8 +334,41 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
     });
   }
 
+  let singleCheckpoint: ExecutionCheckpoint | null = null;
+  try {
+    singleCheckpoint = run.checkpoint_json ? (JSON.parse(run.checkpoint_json) as ExecutionCheckpoint) : null;
+  } catch { /* malformed */ }
+
+  const singleRunAnswers: Record<string, RunApprovedAnswer> = {
+    ...(singleCheckpoint?.runAnswers ?? {}),
+  };
+  const singleRunApproved: RunApprovedAnswer = {
+    questionId: run.blocking_question,
+    selector: run.blocking_question,
+    label: run.blocking_question,
+    answer: parsed.data.answer,
+    canonicalKey: match?.canonicalKey ?? null,
+    questionType: match?.type ?? null,
+  };
+  singleRunAnswers[run.blocking_question] = singleRunApproved;
+
+  const checkpoint: ExecutionCheckpoint = {
+    url: singleCheckpoint?.url ?? run.apply_url,
+    ats: singleCheckpoint?.ats ?? run.ats,
+    step: "filling",
+    completed: singleCheckpoint?.completed ?? [],
+    runAnswers: singleRunAnswers,
+    humanQuestions: [],
+    review: singleCheckpoint?.review,
+    lastAction: "single human answer recorded",
+  };
+
   recordEvent(run.id, "user_intervention_completed", match ? `answered ${match.canonicalKey}` : "answered (unmapped question)");
-  const resumed = advanceRun(run.id, "FILLING", { blockingReason: null, blockingQuestion: null });
+  const resumed = advanceRun(run.id, "FILLING", {
+    blockingReason: null,
+    blockingQuestion: null,
+    checkpoint,
+  });
 
   return NextResponse.json({
     status: "resumed",

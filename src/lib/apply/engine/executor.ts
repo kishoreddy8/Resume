@@ -8,7 +8,7 @@ import { findCanonicalPhoneCountry } from "../agent/phoneCountryNormalizer";
 import { detectBlocking, BLOCKING_STATUS } from "../agent/detectBlocking";
 import { selectAdapter } from "../agent/selectAdapter";
 import { buildFinalReview, readSubmissionOutcome, type FinalReview } from "../finalReview";
-import type { AdapterContext, FieldPlan, HumanQuestion } from "../agent/types";
+import type { AdapterContext, FieldPlan, HumanQuestion, RunApprovedAnswer } from "../agent/types";
 import type { StoredAnswer } from "../resolveAnswer";
 import type { QuestionType } from "../questionTypes";
 import { ApplicationBrowserRuntime, type BrowserSession } from "./browserRuntime";
@@ -43,6 +43,8 @@ export interface ExecutionCheckpoint {
   step: "starting" | "navigating" | "filling" | "review" | "submitting";
   /** Selectors already acted on, with provenance. Values live in the review, never duplicated here. */
   completed: { selector: string; canonicalKey: string | null; source: string; kind: "fill" | "upload" }[];
+  /** Candidate-approved answers scoped strictly to this ApplicationRun. */
+  runAnswers?: Record<string, RunApprovedAnswer>;
   /** The review shown to the user, once built. It IS what the approval covers. */
   review?: FinalReview;
   /** Required unanswered questions collected for batch human input. Present only while WAITING_FOR_ANSWER. */
@@ -237,11 +239,14 @@ export async function executeRun(
 
   const adapter = selectAdapter({ source_type: (run.ats as never) ?? null, url: applyUrl });
 
+  const previousCheckpoint = run.checkpoint_json ? (JSON.parse(run.checkpoint_json) as ExecutionCheckpoint) : null;
+
   const checkpoint: ExecutionCheckpoint = {
     url: null,
     ats: run.ats,
     step: "starting",
     completed: [],
+    runAnswers: previousCheckpoint?.runAnswers ?? {},
     lastAction: "run loaded",
   };
 
@@ -277,6 +282,7 @@ export async function executeRun(
       context: deps.context,
       knownVariants: deps.knownVariants,
       storedAnswers: deps.storedAnswers,
+      runAnswers: checkpoint.runAnswers,
       selectorHints: adapter?.adapter.fieldSelectorHints(),
     });
 

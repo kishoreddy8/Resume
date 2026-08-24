@@ -1,4 +1,4 @@
-import type { DiscoveredField, FieldPlan, AdapterContext, HumanQuestion } from "./types";
+import type { DiscoveredField, FieldPlan, AdapterContext, HumanQuestion, RunApprovedAnswer } from "./types";
 import { matchQuestion } from "../questionMatching";
 import { resolveAnswer, mayFill, type StoredAnswer } from "../resolveAnswer";
 import { locationsCompatible } from "./locationNormalizer";
@@ -24,6 +24,11 @@ export interface PlanInputs {
   knownVariants: Map<string, { canonicalKey: string; type: QuestionType }>;
   /** Stored answers by canonical key, for this candidate. */
   storedAnswers: Map<string, StoredAnswer>;
+  /**
+   * Candidate-approved answers scoped strictly to this ApplicationRun.
+   * Keyed by questionId, selector, id, or label.
+   */
+  runAnswers?: Record<string, RunApprovedAnswer> | Map<string, RunApprovedAnswer>;
   /**
    * The adapter's canonicalKey -> selector map.
    *
@@ -130,6 +135,48 @@ const HINT_TYPES: Record<string, QuestionType> = {
   portfolio_url: "contact",
 };
 
+/**
+ * Look up a candidate-approved answer scoped strictly to this application run.
+ *
+ * Matching hierarchy:
+ * 1. field.id / #id
+ * 2. field.name / [name="..."]
+ * 3. field.selector
+ * 4. field.label
+ */
+function findRunApprovedAnswer(
+  field: DiscoveredField,
+  runAnswers?: Record<string, RunApprovedAnswer> | Map<string, RunApprovedAnswer>
+): RunApprovedAnswer | null {
+  if (!runAnswers) return null;
+
+  const getAnswer = (key: string): RunApprovedAnswer | undefined => {
+    if (runAnswers instanceof Map) {
+      return runAnswers.get(key);
+    }
+    return runAnswers[key];
+  };
+
+  if (field.id) {
+    const ans = getAnswer(field.id) ?? getAnswer(`#${field.id}`);
+    if (ans) return ans;
+  }
+  if (field.name) {
+    const ans = getAnswer(field.name) ?? getAnswer(`[name="${field.name}"]`);
+    if (ans) return ans;
+  }
+  if (field.selector) {
+    const ans = getAnswer(field.selector);
+    if (ans) return ans;
+  }
+  if (field.label) {
+    const ans = getAnswer(field.label);
+    if (ans) return ans;
+  }
+
+  return null;
+}
+
 export function planFields(input: PlanInputs): FieldPlan[] {
   const plans: FieldPlan[] = [];
 
@@ -165,12 +212,55 @@ export function planFields(input: PlanInputs): FieldPlan[] {
 
     // --- a field with neither a label nor a hint ------------------------------------------------
     if (!field.label && !hinted) {
+      const runApproved = findRunApprovedAnswer(field, input.runAnswers);
+      if (runApproved) {
+        if (field.options && field.options.length > 0 && !field.options.includes(runApproved.answer)) {
+          plans.push({
+            action: "ask",
+            field,
+            question: field.id ?? field.selector,
+            reason: "Saved answer is no longer one of the options offered by this form.",
+            questionType: runApproved.questionType ?? null,
+          });
+          continue;
+        }
+        plans.push({
+          action: "fill",
+          field,
+          value: runApproved.answer,
+          source: "USER_INTERVENTION",
+          canonicalKey: runApproved.canonicalKey ?? null,
+        });
+        continue;
+      }
       plans.push({ action: "ask", field, question: field.id ?? field.selector, reason: "This field has no label to identify it.", questionType: null });
       continue;
     }
 
     const match = hinted ?? matchQuestion(field.label!, input.knownVariants);
     if (!match) {
+      const runApproved = findRunApprovedAnswer(field, input.runAnswers);
+      if (runApproved) {
+        if (field.options && field.options.length > 0 && !field.options.includes(runApproved.answer)) {
+          plans.push({
+            action: "ask",
+            field,
+            question: field.label!,
+            reason: "Saved answer is no longer one of the options offered by this form.",
+            questionType: runApproved.questionType ?? null,
+          });
+          continue;
+        }
+        plans.push({
+          action: "fill",
+          field,
+          value: runApproved.answer,
+          source: "USER_INTERVENTION",
+          canonicalKey: runApproved.canonicalKey ?? null,
+        });
+        continue;
+      }
+
       plans.push({ action: "ask", field, question: field.label!, reason: "Career-Ops has no answer for this question.", questionType: null });
       continue;
     }
@@ -280,6 +370,29 @@ export function planFields(input: PlanInputs): FieldPlan[] {
     const resolution = resolveAnswer(match.type, input.storedAnswers.get(match.canonicalKey));
     if (resolution.action === "fill" && mayFill(resolution.source)) {
       plans.push({ action: "fill", field, value: resolution.value, source: resolution.source, canonicalKey: match.canonicalKey });
+      continue;
+    }
+
+    // --- candidate-approved answer for this run ------------------------------------------------
+    const runApproved = findRunApprovedAnswer(field, input.runAnswers);
+    if (runApproved) {
+      if (field.options && field.options.length > 0 && !field.options.includes(runApproved.answer)) {
+        plans.push({
+          action: "ask",
+          field,
+          question: field.label ?? match.canonicalKey,
+          reason: "Saved answer is no longer one of the options offered by this form.",
+          questionType: match.type,
+        });
+        continue;
+      }
+      plans.push({
+        action: "fill",
+        field,
+        value: runApproved.answer,
+        source: "USER_INTERVENTION",
+        canonicalKey: match.canonicalKey,
+      });
       continue;
     }
 
