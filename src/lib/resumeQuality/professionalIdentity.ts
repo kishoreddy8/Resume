@@ -217,81 +217,25 @@ export function renderProfessionalIdentitySection(
   out += `**Derived identity: ${identity.identity}.** Taken from the roles actually held: ${identity.evidenceTitles.join("; ")}.\n\n`;
   out +=
     "**Headline rule.** The line under the name carries **professional ROLE IDENTITIES ONLY** — one to " +
-    "three of them, separated by pipes, each supported by a title the candidate actually held. " +
-    "Good: `Data Engineer | AI Engineer`. Good: `Senior Data Engineer | Analytics Engineer`. " +
-    "**Never put technologies in it.** Bad: `Data Engineer | Cloud Data Ingestion & Distributed Batch " +
-    "Processing | Spark, PySpark, Python, Azure Databricks, Delta Lake, Snowflake`. Bad: " +
-    "`Data Engineer | Python | Spark | Databricks`. Technologies belong in Technical Skills and in each " +
-    "role's Environment line.\n\n" +
-    "The JD may influence WHICH evidenced identity leads, but it can never introduce one: do not claim " +
-    "`AI Engineer`, `ML Engineer` or `Cloud Engineer` because the posting uses those words. The job's " +
-    "title never replaces the candidate's own, and never invent seniority the evidence does not show.\n\n";
+    "three of them, separated by pipes, each supported by a title the candidate actually held " +
+    "(e.g. `Senior Data Engineer | Analytics Engineer`). **Never put technologies in it.** " +
+    "The job's title never replaces the candidate's own, and never invent seniority the evidence does not show.\n\n";
   out +=
-    "**Summary opening rule.** The summary must open by naming that same professional identity and then the " +
-    "specialization this JD cares about, but write a natural sentence rather than filling the template " +
-    "`<Identity> specializing in ...`. Name the governed platform, engineering scope, or business domain the " +
-    "candidate actually delivers.\n\n" +
-    "NEVER open with the identity followed immediately by \"with\". All of these are rejected automatically: " +
-    "\"Data Engineer with…\", \"Engineer with…\", \"Professional with…\", \"Candidate with…\", " +
-    "\"<identity> with nearly X years…\", \"<identity> with X+ years…\", \"Experienced professional…\", " +
-    "\"Results-driven professional…\". The specialization you name must be JD-specific and supported by the " +
-    "candidate's evidence — never a capability they cannot demonstrate.\n\n";
-  out +=
-    "**Summary shape.** ONE paragraph, 3-4 sentences, about 650 characters (3-5 rendered lines). Never bullets, " +
-    "never a stack of mini-paragraphs.\n\n";
-  out +=
-    "**A summary is POSITIONING, not inventory.** This is the most common failure and the hardest to " +
-    "get right. A summary that lists technologies is the Technical Skills section written as prose, and it " +
-    "wastes the one paragraph a recruiter always reads. Name at most SEVEN technologies in the whole " +
-    "paragraph, at most four in any one sentence \u2014 and preferably far fewer, or none at all. Spend the " +
-    "words instead on:\n\n" +
-    "  - what the candidate designs, builds and maintains, and at what scale;\n" +
-    "  - the breadth of the discipline they cover (ingestion, storage, processing, modelling, analysis);\n" +
-    "  - the foundation underneath it (software engineering, database design, governance);\n" +
-    "  - demonstrated ability to deliver outcomes the business felt, with a real figure IF the evidence " +
-    "supports one;\n" +
-    "  - what genuinely distinguishes this engineer from another with the same tool list.\n\n";
-  out +=
-    "**Register.** Write it as confident professional prose, in full sentences that flow \u2014 not as clipped " +
-    "fragments and not as a bulleted list flattened into a paragraph. Avoid stock capability stems such as " +
-    "\"Expertise spans\u2026\", \"Proven ability to\u2026\", and \"Experienced in\u2026\"; vary the construction and lead with " +
-    "the work, its context, or a supported outcome.\n\n" +
-    "Weak \u2014 a keyword dump in four identical frames, and the exact failure this candidate\u2019s last " +
-    "resume shipped with: \"Data Engineer specializing in Spark-based distributed processing, Python and SQL " +
-    "pipeline development, and cloud data ingestion across Azure Databricks, Delta Lake and Snowflake. " +
-    "Experienced in delivering end-to-end ETL from Oracle, DB2 and SQL Server sources into medallion " +
-    "architecture lakehouse layers, with CDC-driven incremental loads, SCD history tracking and dimensional " +
-    "models. Hands-on experience with PySpark performance tuning\u2026 Skilled in partnering with\u2026\" " +
-    "Thirteen product names; nothing about the person.\n\n" +
-    "Strong \u2014 the register to aim for: \"Data Engineer building governed data platforms for banking and " +
-    "payments teams. Pipeline ownership spans ingestion, transformation, testing, and dependable production " +
-    "delivery. Platform design balances scalable processing with traceable data controls. Delivery experience " +
-    "connects engineering decisions to the analysts and operations teams that rely on the data.\"\n\n" +
-    "That shape describes role identity, scope, engineering strengths, and delivery context without turning " +
-    "the summary into a product list or marketing pitch. Never copy its wording or add a claim the candidate\u2019s " +
-    "evidence does not support.\n\n";
-  out +=
-    "**Voice.** Write the summary in implied first person, the way a resume is read \u2014 concise, concrete, " +
-    "professional, never conversational or promotional. What is NOT permitted is third-person narration of the " +
-    "candidate: never open a sentence with \"Owns\u2026\", \"Works\u2026\", \"Builds\u2026\", \"Develops\u2026\", " +
-    "\"Manages\u2026\", \"Leads\u2026\", \"Creates\u2026\", \"Implements\u2026\" or \"Maintains\u2026\", which " +
-    "reads as a third party describing them \u2014 use a noun-led or participial construction instead " +
-    "(\"Pipeline ownership spans\u2026\", \"Building governed lakehouse platforms for\u2026\"). This is a voice " +
-    "rule, not a tense rule: do not convert the summary to the past tense \u2014 current capabilities stay " +
-    "current. It applies to EVERY paragraph of the summary.\n\n";
-  out +=
-    "**Punctuation.** Do NOT use em dashes (\u2014) or en dashes (\u2013) as prose punctuation anywhere in the " +
-    "resume or the cover letter. Use a comma, semicolon, colon, full stop, or parentheses. " +
-    "Bad: \"Built scalable pipelines \u2014 improving processing reliability.\" " +
-    "Good: \"Built scalable pipelines, improving processing reliability.\" " +
-    "Ordinary hyphens inside terms stay correct: end-to-end, real-time, cloud-native.\n\n";
+    "**Summary rule: POSITIONING, not inventory.** Write ONE continuous paragraph (3-4 sentences, ~650 chars). " +
+    "Lead with the candidate's professional identity and JD specialization. " +
+    "NEVER open with the identity followed immediately by \"with\" (e.g. \"Data Engineer with…\", \"Candidate with…\"). " +
+    "Name at most SEVEN technologies in the entire summary. Avoid stock capability stems (\"Expertise spans…\", \"Proven ability to…\"); " +
+    "lead with the work, its context, or a supported outcome.\n\n" +
+    "- **Weak — a keyword dump:** \"Data Engineer specializing in Spark, Python, SQL, Databricks, Delta Lake, Snowflake, CDC, SCD...\"\n" +
+    "- **Strong — the register to aim for:** \"Data Engineer building governed cloud data platforms for banking and payments platforms, scaling pipeline execution while maintaining end-to-end data quality controls.\"\n\n" +
+    "Write in confident implied first person without turning the summary into a product list or marketing pitch. " +
+    "Never narrate in third person (\"Owns...\", \"Builds...\"). Do not use em or en dashes.\n\n";
   out +=
     statedYearsOfExperience === null
       ? "**Years of experience.** CareerOps computed no verified total for this candidate, so do NOT state one. " +
-        "Do not add up employment dates yourself, and do not approximate with phrases like \"close to five years\" " +
-        "or \"over four years\". Describe the depth of the work instead of counting it.\n\n"
+        "Do not add up dates yourself or approximate with phrases like \"close to five years\". Describe the depth of the work instead.\n\n"
       : `**Years of experience.** The only verified figure is ${statedYearsOfExperience}. If you state years at all, ` +
-        "state that number and nothing else — never your own arithmetic over employment dates.\n\n";
+        `state that number and nothing else — never your own arithmetic over employment dates.\n\n`;
   return out;
 }
 

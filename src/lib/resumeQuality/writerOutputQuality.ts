@@ -13,42 +13,15 @@ export const PROJECT_DESCRIPTION_MAX_TECHNOLOGIES = 4;
 /** Writer-facing quality guidance. Evidence still decides membership; this section only controls
  * selection, emphasis, and readable decomposition of already-supported material. */
 export function renderWriterOutputQualitySection(): string {
-  return `## WRITER OUTPUT QUALITY — JD TARGETING WITHOUT EVIDENCE DRIFT
+  return `## WRITER OUTPUT QUALITY & BULLET STANDARDS
 
-**Professional Summary.** Write one paragraph of 3-4 concise sentences: (1) the candidate's real role
-identity, (2) the strongest evidence-backed platform/domain for this JD, (3) core engineering strengths,
-and (4) concrete delivery context. Vary sentence construction. Do not stack template stems such as
-"Data Engineer specializing...", "Expertise spans...", or "Proven ability...". Keep the closing sentence
-professional and factual, not conversational or promotional. Avoid passionate, results-driven, seasoned,
-dynamic, and other vague marketing language.
+**Summary standards.** Write 3-4 concise sentences. Do not stack template stems such as "Data Engineer specializing...", "Expertise spans...", or "Proven ability...".
 
-**Project descriptions.** Use one sentence, or two short sentences only when one would be hard to scan.
-State the platform/system and business or data purpose, naming at most ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES}
-defining technologies. Detailed tools belong in bullets and Environment; Project is never a technology inventory.
+**Bullet limits & caps.** Current role: max ${CURRENT_ROLE_BULLET_CAP}; second role: max ${SECOND_ROLE_BULLET_CAP}; older roles: max ${OLDER_ROLE_BULLET_CAP}; total experience: max ${TOTAL_EXPERIENCE_BULLET_CAP} bullets. These are ceilings, not targets: never pad to a cap.
 
-**Bullets and limited expansion.** Current role: at most ${CURRENT_ROLE_BULLET_CAP}; second role: at most
-${SECOND_ROLE_BULLET_CAP}; older roles: at most ${OLDER_ROLE_BULLET_CAP} each; at most
-${TOTAL_EXPERIENCE_BULLET_CAP} experience bullets total. These are ceilings, not targets: never pad to a cap.
-Add a bullet only when ALL are true: it is JD-relevant; the Master Resume or MSI policy permits it at that
-employer; it adds a distinct capability not already represented; separating it improves readability; and the
-role and total caps still hold. For every added bullet, record the employer and exact evidence source in
-writerValidation.notes. If evidence cannot support an employer attribution, do not create the bullet.
+**Bullet composition & evidence.** Prefer 1 primary capability per bullet. When a sentence is overloaded, split it only when each resulting bullet has its own employer-scoped evidence; Otherwise simplify the original bullet. For every added bullet, record the employer and exact evidence source in writerValidation.notes. If evidence cannot support an employer attribution, do not create the bullet. Reject duplicate ideas, synonymous repeats, keyword stuffing, and fabricated metrics.
 
-Prefer one primary capability per bullet. When a sentence mixes ingestion, transformation, security,
-governance, CI/CD, and reporting, split it only when each resulting bullet has its own employer-scoped evidence
-and distinct responsibility. Otherwise simplify the original bullet. Reject duplicate ideas, synonymous repeats,
-keyword stuffing, fabricated metrics, and repeated environment-list content.
-
-**JD-driven skill order.** The recommended skill order below is evidence-only. Move the group containing the
-strongest supported JD skills earlier, and reorder items within each group so supported P1/P2 skills lead.
-Retain useful supported depth later; never add an unsupported JD term. For an AWS-heavy JD, supported AWS skills
-may rise above less-relevant Azure skills, and vice versa for an Azure-heavy JD. Never rewrite an Azure employer
-claim as AWS (or the reverse) unless that same employer's evidence permits it. Inventory-only knowledge may be
-shown only where the existing MSI evidence policy permits it; it is not employer evidence by itself.
-
-**Text cleanup.** Use ordinary ATS-safe text: "Dallas, TX" comma spacing, normal spaces, standard ASCII hyphens
-inside compounds, and clean punctuation. Remove zero-width or malformed encoding characters. Never alter an
-employer, title, date, certification, degree, metric, or other hard fact while cleaning presentation text.
+**JD-driven skill order.** Prioritize supported JD skills naturally. Never rewrite an Azure employer claim as AWS (or the reverse) unless that same employer's evidence permits it.
 
 `;
 }

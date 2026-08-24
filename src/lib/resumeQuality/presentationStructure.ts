@@ -326,72 +326,29 @@ export function renderPresentationStandardSection(profile: CandidateProfile | un
   out += "## RESUME PRESENTATION STANDARD (STRUCTURE ONLY)\n\n";
   out +=
     "The resume renders in this exact section order: **name → headline → contact line → Professional " +
-    "Summary → Technical Skills → Certifications → Professional Experience → Key Projects → Education**. " +
-    "You do not control the layout; you control what goes into each part.\n\n";
+    "Summary → Technical Skills → Certifications → Professional Experience → Key Projects → Education**.\n\n";
 
-  // The authoritative, detailed headline rule (with worked examples) lives in PROFESSIONAL IDENTITY —
-  // this restates only the one fact this module's own STRUCTURE ONLY framing needs: what belongs in
-  // the line, never a second, independently-worded version of the rule itself (a prior duplicate
-  // copy here said the opposite — "then the defining technologies" — of PROFESSIONAL IDENTITY's
-  // "Never put technologies in it", a live contradiction fixed alongside this consolidation).
   out += "**Headline.** One line, pipe-separated: professional ROLE IDENTITIES ONLY, never technologies " +
-    "(see PROFESSIONAL IDENTITY above for the full rule and examples, when that section is present). " +
-    "Not a sentence.\n\n";
+    "(see PROFESSIONAL IDENTITY above for the full rule and examples, when that section is present). Not a sentence.\n\n";
 
   out += "**Professional Summary.** Continuous prose, not bullets. Open by naming the profession and the " +
     "specialization this JD cares about.\n\n";
 
-  out += "**Technical Skills — the candidate's technical ECOSYSTEM, not a transcription of the posting.**\n\n" +
-    "The job description decides ORDER. The candidate's evidence decides MEMBERSHIP. Build the section from the " +
-    "Master Skills Inventory, the candidate's evidence, the target domain, and the JD's priorities — in that " +
-    "combination.\n\n" +
-    "  - Put the JD-required skills FIRST, in the earliest categories and first within them, so they have the " +
-    "strongest visibility.\n" +
-    "  - THEN include the other evidence-backed technologies from the SAME domain that strengthen the profile. If " +
-    "the JD asks for Python, Spark and Snowflake and the candidate also genuinely has PySpark, Spark SQL, " +
-    "Databricks, Delta Lake, ADF, ADLS Gen2, Synapse, Airflow, Kafka, dbt, Azure DevOps, Pytest and Power BI, do " +
-    "NOT discard those simply because the posting omitted them — a section listing only what the posting named " +
-    "reads as a transcription and tells a recruiter nothing about depth.\n" +
-    "  - Exclude technologies from unrelated domains, and never pad: this is not an excuse to dump the whole " +
-    "inventory, and keyword stuffing is still a failure.\n" +
-    "  - Never add a technology the candidate does not actually have.\n\n" +
-    "Use clean, ATS-safe category labels for the target domain — for example Languages; Data Engineering / " +
-    "Processing; Cloud; ETL / ELT; Databases / Warehouses; Lakehouse / Storage; Streaming; Orchestration; Data " +
-    "Modeling; Data Quality / Testing; DevOps / CI-CD; BI / Analytics; AI / ML; Governance / Security — keeping " +
-    "only the categories the candidate's evidence actually supports.\n\n";
+  out += "**Technical Skills.** Group by ATS-safe categories (Languages, Cloud, Data Engineering, Databases, Orchestration, DevOps). " +
+    "Put JD-required technologies first. Include verified candidate skills from the same domain; exclude unrelated domains. Never add unsupported skills.\n\n";
 
-  out += "**Certifications.** Exactly those the Master Resume records, verbatim, never expanded or " +
-    "abbreviated. Whenever the candidate has at least one, the section is always rendered, as a bulleted list. " +
+  out += "**Certifications.** Exactly those the Master Resume records, verbatim, never expanded or abbreviated. " +
     "Omit the field entirely if there are none — never invent one to fill the section.\n\n";
 
-  out += "**Professional Experience.** Each role renders as: employer (and location, only if the Master " +
-    "Resume states one) with the dates right-aligned; the job title beneath; then two labelled lines around " +
-    "the bullets:\n\n";
-  out +=
+  out += "**Professional Experience.** Each role renders with two labelled lines around the bullets:\n" +
     `  - \`projectDescription\` — ONE sentence, or at most ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences, ` +
-    `naming what this role's work was with no more than ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies, so a reader knows the scope ` +
-    "before the bullets. It is a restatement, not an addition: every system, domain, client, technology and " +
-    "figure in it must already appear in THIS role's own bullets. Introducing anything new here is a " +
-    "truthfulness failure and is checked automatically.\n" +
-    "  - NEVER open this sentence by echoing the job title back (the title already renders on its own line " +
-    "directly above this one — repeating it here is redundant filler, not scope). Do not write \"<Job Title> " +
-    "role delivering/building/performing ...\" or any paraphrase of that shape. Open instead with the work " +
-    "itself — the system, platform or outcome — as the grammatical subject.\n" +
-    "    Bad: \"AI Engineer role delivering a GenAI chatbot and multi-agent systems on Databricks and " +
-    "Kubernetes infrastructure.\"\n" +
-    "    Good: \"Delivered a GenAI chatbot and multi-agent systems on Databricks and Kubernetes " +
-    "infrastructure, integrating Azure OpenAI-based retrieval-augmented generation for structured and " +
-    "unstructured enterprise data.\"\n";
-  out +=
-    "  - `environment` — the technology stack of THIS role. Every entry must be either Already written " +
-    "for THIS employer or Available here under the MSI rule, per the per-employer evidence section above. " +
-    "A technology the candidate cannot evidence at all, or one the inventory explicitly scopes to another " +
-    "client, may not be listed. This is checked automatically, per employer, per item.\n\n";
-  out +=
-    "Write every bullet as a complete sentence. Never abbreviate, elide or end one with \"…\" to save space — " +
-    "the layout is dense enough to carry full bullets, and a cut bullet is a defect, not a fit.\n\n";
+    `naming what this role's work was with no more than ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies, built only from that role's own bullets. ` +
+    "Introducing anything new here is a truthfulness failure. Do not echo the job title as the subject.\n" +
+    "  - `environment` — the technology stack of THIS role. Every entry must be Available here under the MSI rule or already written for this employer, " +
+    "checked automatically, per employer, per item.\n\n" +
+    "Write every bullet as a complete sentence without trailing '...'.\n\n";
 
-  const hasProjectEvidence = false; // CandidateProfile records no projects; see note below.
+  const hasProjectEvidence = false;
   void profile;
   out += "**Key Projects.** ";
   out += hasProjectEvidence
@@ -399,9 +356,8 @@ export function renderPresentationStandardSection(profile: CandidateProfile | un
     : "CareerOps holds NO recorded project evidence for this candidate, so **omit `keyProjects` entirely**. " +
       "The section then does not render at all. Do not invent projects, repositories or demos to fill it.\n\n";
 
-  out += "**Education.** One string per entry in the form `\"<Degree>, <Institution> - <Dates>\"` (a plain hyphen, ' + 'not an em or en dash), matching the " +
-    "Master Resume exactly. The renderer lays that out as degree with right-aligned dates and the institution " +
-    "beneath; a line in any other form still renders correctly, just on one line.\n\n";
+  out += "**Education.** One string per entry in the form `\"<Degree>, <Institution> - <Dates>\"` (a plain hyphen, not an em or en dash), matching the " +
+    "Master Resume exactly.\n\n";
 
   return out;
 }
@@ -479,40 +435,24 @@ export function filterRoleProjectEvidence(evidence: RoleProjectEvidence[], scope
  */
 export function renderRoleProjectEvidenceSection(evidence: RoleProjectEvidence[]): string {
   if (evidence.length === 0) return "";
-  // SUMMARY QUALITY + WRITER TOKEN OPTIMIZATION (2026-08-23, pass 2) — this section used to reprint
-  // every employer's full technology list a second time, identical to the "Already written here"
-  // list the PER-EMPLOYER EVIDENCE section (employerEvidence.ts's renderEmployerEvidenceSection)
-  // already renders — role.evidencedTechnologies IS that same `supported` array (see
-  // collectRoleProjectEvidence above: `employerEvidence?.supported`). It is dropped from THIS
-  // section's OUTPUT (the field itself stays on RoleProjectEvidence — still used internally, just
-  // above, to decide supportsProjectLine) and replaced with a reference, so the technology list
-  // exists in the prompt exactly once regardless of render order.
-  // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — the "Project line: REQUIRED..." instruction
-  // used to repeat verbatim once per REQUIRED role (identical text, up to 4 times on the real corpus).
-  // It is now stated once, before the per-employer list, which just marks each role REQUIRED/OMIT —
-  // no information lost, since the instruction never varied by employer in the first place.
   let out = "## PER-ROLE EVIDENCE FOR THE Project: AND Environment: LINES\n\n";
   out +=
-    "Each employer's full technology list is given once, in the PER-EMPLOYER EVIDENCE section " +
-    "(\"Already written here\" / \"Available here under the MSI rule\") — this section adds only what " +
-    "that one doesn't: whether a Project line is supported for each role, and how to select the " +
-    "Environment line from it.\n\n";
-  out +=
+    "Each employer's full technology list is given once, in the PER-EMPLOYER EVIDENCE section above. " +
     `**Where marked REQUIRED below:** write one sentence, or at most ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences, ` +
     `naming what that role's work was with no more than ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies, built only from the ` +
-    "bullets you wrote for it and that employer's technology list above. No new client, system, domain or metric. " +
-    "**Where marked OMIT:** CareerOps has no recorded technologies or bullets for that role, so there is nothing " +
-    "to describe — leave `projectDescription` out rather than inventing scope.\n\n";
+    "bullets you wrote for it and that employer's technology list. No new client, system, domain or metric. " +
+    "**Where marked OMIT:** leave `projectDescription` out rather than inventing scope.\n\n";
+
   for (const role of evidence) {
     out += `### ${role.employer} — ${role.title}\n`;
     out += `- Reviewed bullets available for this role: ${role.bulletCount}\n`;
     out += role.supportsProjectLine ? "- **Project line: REQUIRED.**\n\n" : "- **Project line: OMIT.**\n\n";
   }
+
   out +=
     `**Environment line.** Choose the ${ENVIRONMENT_MIN_ITEMS}-${ENVIRONMENT_MAX_ITEMS} technologies from that ` +
     "employer's list (in PER-EMPLOYER EVIDENCE above) that are strongest for THIS job description, most " +
-    "JD-relevant first. Do not paste the whole list — an Environment line that reproduces every recorded " +
-    "technology is a dump, not a selection, and is flagged as one. A technology may legitimately appear under " +
+    "JD-relevant first. Do not paste the whole list. A technology may legitimately appear under " +
     "more than one employer when that employer's own evidence supports it; what you may never do is move one to " +
     "an employer whose evidence does not.\n\n";
   return out;
