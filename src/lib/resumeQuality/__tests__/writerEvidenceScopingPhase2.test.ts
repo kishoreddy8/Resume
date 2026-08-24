@@ -581,7 +581,6 @@ test("EVIDSCOPE-16: writer full-rewrite schema remains unchanged", () => {
   assert.match(prompt, /Strict JSON Output Schema/);
   assert.match(prompt, /"schemaVersion": 1/);
   assert.match(prompt, /"resume"/);
-  assert.match(prompt, /"coverLetter"/);
 });
 
 test("EVIDSCOPE-17: PATCH architecture remains unchanged", () => {

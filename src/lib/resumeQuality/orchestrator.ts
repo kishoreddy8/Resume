@@ -37,6 +37,7 @@ import { renderReviewFeedbackMarkdown } from "./reviewFeedback";
 import { DeterministicResumeReviewer } from "./reviewers/deterministicReviewer";
 import { assertValidWorkflowTransition } from "./stateMachine";
 import { normalizeResumeWriterOutput } from "./writerOutputQuality";
+import { generateDeterministicCoverLetter } from "./coverLetterGenerator";
 import { generateTailoringOutputs } from "../../../tools/tailoring-engine/generate";
 import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring-engine/types";
 import { validateDocx } from "../../../tools/tailoring-engine/validate-docx";
@@ -580,6 +581,44 @@ export async function executeResumeQualityIteration(
       const finalResumeName = finalResumeFilename(firstName);
       const finalCoverName = finalCoverLetterFilename(firstName);
 
+      let resolvedCoverLetter = input.coverLetter;
+      if (!resolvedCoverLetter) {
+        try {
+          const job = getJobByDedupeKey(workflow.dedupe_key);
+          const company = job ? getCompany(job.company_id) : undefined;
+          resolvedCoverLetter = generateDeterministicCoverLetter({
+            candidateName: resume.name,
+            candidateLocation: resume.location,
+            candidateEmail: resume.email,
+            candidatePhone: resume.phone,
+            companyName: company?.name ?? "Company",
+            jobTitle: job?.title ?? "Position",
+            finalResume: resume,
+          });
+        } catch {
+          // If decoupled cover letter generation fails, resume remains valid and READY
+        }
+      }
+
+      if (resolvedCoverLetter && !fs.existsSync(iterCoverDocx)) {
+        try {
+          const job = getJobByDedupeKey(workflow.dedupe_key);
+          const company = job ? getCompany(job.company_id) : undefined;
+          await generateTailoringOutputs(
+            {
+              company: company?.name ?? "Company",
+              jobId: job?.id ?? workflow.id,
+              resume,
+              coverLetter: resolvedCoverLetter,
+              masterResumeDocxPath: resolveMasterResumeDocxPath(candidateId),
+            },
+            { outputDir: iterDir }
+          );
+        } catch {
+          // Failure to render docx does not invalidate READY resume
+        }
+      }
+
       let finalResumePath: string | undefined;
       if (fs.existsSync(iterResumeDocx)) {
         finalResumePath = path.join(finalDir, finalResumeName);
@@ -598,9 +637,9 @@ export async function executeResumeQualityIteration(
       const finalResumeJson = path.join(finalDir, "resume_content.json");
       fs.writeFileSync(finalResumeJson, JSON.stringify(resume, null, 2), "utf-8");
 
-      if (input.coverLetter) {
+      if (resolvedCoverLetter) {
         const finalCoverJson = path.join(finalDir, "cover_letter_content.json");
-        fs.writeFileSync(finalCoverJson, JSON.stringify(input.coverLetter, null, 2), "utf-8");
+        fs.writeFileSync(finalCoverJson, JSON.stringify(resolvedCoverLetter, null, 2), "utf-8");
       }
 
       // Machine-readable copy of the final approved review — same content as the iteration's own

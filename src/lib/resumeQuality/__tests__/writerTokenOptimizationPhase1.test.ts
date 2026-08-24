@@ -440,7 +440,6 @@ test("PROMPTOPT-07: Output schema remains valid and sufficient for importer", as
   assert.match(prompt, /Strict JSON Output Schema/);
   assert.match(prompt, /"schemaVersion": 1/);
   assert.match(prompt, /"resume"/);
-  assert.match(prompt, /"coverLetter"/);
 });
 
 test("PROMPTOPT-08: Full-rewrite writer handoff remains compatible with existing importer", async () => {

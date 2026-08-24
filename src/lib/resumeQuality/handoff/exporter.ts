@@ -289,7 +289,7 @@ export function buildExternalWriterPrompt(input: {
     `**Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
    - The Master Resume (${masterResumeRef}) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
    - You must NEVER fabricate an employer, title, degree, certification, or client.
-   - The Master Skills Inventory (${msiRef}) constrains what you may claim: only technologies genuinely present there (or in the Master Resume's own experience entries) may appear anywhere in the resume or cover letter — never introduce a technology solely because the JD mentions it.`,
+   - The Master Skills Inventory (${msiRef}) constrains what you may claim: only technologies genuinely present there (or in the Master Resume's own experience entries) may appear anywhere in the resume — never introduce a technology solely because the JD mentions it.`,
     rewriteRule,
     `**Architecture integrity takes priority over raw keyword coverage**:
    - Maintain a coherent, believable technology architecture within each employer/project. Do not combine competing tools (e.g. Azure Data Factory + AWS Glue, or Databricks + EMR) in the same bullet or the same project unless explicitly and legitimately framed as a migration.
@@ -305,7 +305,6 @@ export function buildExternalWriterPrompt(input: {
    - Avoid AI clichés (e.g., "testament to", "delve", "leverage synergy", "spearheaded revolution").
    - Every major achievement bullet should include quantifiable, realistic impact you could defend and elaborate on if asked about it in an interview — never an invented or exaggerated metric.`,
     `**Self-check before returning**: before writing \`writer_output.json\`, re-verify your draft end to end against every guardrail in ${instructionsRef} (hard facts, MSI, architecture integrity, technology grouping, no contradicting technologies, metric inference policy, banned language, duplicate bullets, years/education honesty, bullet caps, verb tense). Report your own findings in the optional \`writerValidation\` field below — but note that this is diagnostic only and does not substitute for CareerOps's own independent review.`,
-    `**Lock the resume before writing the cover letter**: finish and finalize the \`resume\` field FIRST, against the JD Priority Matrix below. Only once that resume is finalized, write the \`coverLetter\` field USING that finalized resume as one of its sources — never generate the cover letter from independent JD-only reasoning. Every technology or accomplishment the cover letter attributes to a specific past employer must be traceable to that SAME employer's bullets in the resume you just wrote (CareerOps's cross-document validator enforces this: e.g. a technology used only at Employer A can never be attributed to Employer B in the cover letter, even if it's genuinely evidenced elsewhere in your history).`,
   ];
 
   // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — PRIOR QUALITY REVIEW FEEDBACK is omitted
@@ -435,19 +434,6 @@ One \`operations\` entry per path you are actually changing — never one for a 
       "Certification Name"
     ]
   },
-  "coverLetter": {
-    "name": "${candidateName}",
-    "location": "City, State",
-    "phone": "Phone",
-    "email": "Email",
-    "salutation": "Dear Hiring Team,",
-    "paragraphs": [
-      "Opening paragraph...",
-      "Core alignment paragraph...",
-      "Closing paragraph..."
-    ],
-    "closing": "Sincerely,\\n${candidateName}"
-  },
   "agentMetadata": {
     "provider": "claude-code | codex | antigravity | local | other",
     "model": "your-model-identifier",
@@ -500,10 +486,8 @@ into a different value, or substitute a placeholder for any of them, and you
 must never invent one that is missing.
 
 Where each value goes:
-- **Full name, email, phone, location** — reproduce verbatim in BOTH the resume and the cover letter
-  header. These four must be character-for-character identical in the two documents.
-- **LinkedIn** — resume only, and only when given above. The cover letter header does not carry it.
-  Omitting it from the cover letter is correct and is not an inconsistency between the documents.
+- **Full name, email, phone, location** — reproduce verbatim in the resume header.
+- **LinkedIn** — resume header, only when given above.
 
 ${input.repairPlanSection ?? ""}${input.contextManifestSection ?? ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
