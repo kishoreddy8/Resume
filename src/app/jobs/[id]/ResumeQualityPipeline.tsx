@@ -375,6 +375,41 @@ export function ResumeQualityPipeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAwaitingWriter, candidateId, jobId]);
 
+  /**
+   * Explicit user-initiated re-tailor from a READY workflow. Sends freshRewrite:true so
+   * evaluateWorkflowRetry creates a new version alongside the existing READY one — never overwrites
+   * it. The old READY artifacts remain eligible for applications until the new version passes review.
+   */
+  async function handleReTailor() {
+    const confirmed = window.confirm(
+      "Create a fresh tailored version for this job?\n\n" +
+        "Your current READY resume will remain available until the new version passes review."
+    );
+    if (!confirmed) return;
+    setActionBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ freshRewrite: true }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to start re-tailor");
+      setActionMessage({
+        type: "success",
+        text: body.awaitingWriter
+          ? "Re-tailor started. The resume writer will pick this up automatically — your current READY version remains available until the new one is approved."
+          : "New tailoring version created.",
+      });
+      await loadData();
+    } catch (err: unknown) {
+      setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Error starting re-tailor" });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   async function handleStartTailoring(approvalType?: "READY_DIRECT" | "NEEDS_REVIEW_OVERRIDE") {
     setActionBusy(true);
     setActionMessage(null);
@@ -863,6 +898,24 @@ export function ResumeQualityPipeline({
               from here. The approved documents above are authoritative.
             </p>
           )}
+
+          {/* Re-tailor: explicit user action that creates a NEW version beside this READY one.
+              Not a retry of a failure — a deliberate choice to generate a fresh tailored draft.
+              The current READY artifacts remain available until the new version passes review. */}
+          <div className="mt-4 border-t border-emerald-200/70 pt-3 dark:border-emerald-900/40">
+            <button
+              type="button"
+              onClick={handleReTailor}
+              disabled={actionBusy}
+              className="rounded border border-emerald-600/60 px-3 py-1.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100/60 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-900/30"
+            >
+              {actionBusy ? "Starting…" : "Re-tailor Resume"}
+            </button>
+            <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-400">
+              Creates a new tailored version alongside this one. Your current READY resume stays available until the new
+              version passes review.
+            </p>
+          </div>
         </div>
       )}
 

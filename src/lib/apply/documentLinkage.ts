@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getLatestResumeQualityWorkflowForJob } from "@/db/queries/resumeQualityWorkflows";
+import { listResumeQualityWorkflowsForJob } from "@/db/queries/resumeQualityWorkflows";
 import { getHumanApprovalForWorkflow } from "@/db/queries/resumeQualityHumanApprovals";
 import { getJob } from "@/db/queries/jobs";
 import { resolvePublishedApplicationTarget } from "@/lib/resumeQuality/finalPublication";
@@ -58,9 +58,9 @@ export function resolveApplicationDocuments(input: {
   jobId: number;
   companyName: string | null;
 }): DocumentReadiness {
-  const workflow = getLatestResumeQualityWorkflowForJob(input.candidateId, input.dedupeKey);
+  const workflows = listResumeQualityWorkflowsForJob(input.candidateId, input.dedupeKey);
 
-  if (!workflow) {
+  if (workflows.length === 0) {
     return {
       ready: false,
       workflowStatus: null,
@@ -70,47 +70,45 @@ export function resolveApplicationDocuments(input: {
 
   const job = getJob(input.jobId);
   if (!job) {
-    return { ready: false, workflowStatus: workflow.status, reason: "The job for this application could not be found." };
+    return { ready: false, workflowStatus: workflows[0].status, reason: "The job for this application could not be found." };
   }
 
-  // CASE A — AUTONOMOUS READY. Unchanged semantics: only workflow.status === "READY" ever qualifies,
-  // and only when the published manifest actually names THIS workflow.
-  if (workflow.status === "READY") {
-    const target = resolvePublishedApplicationTarget({
-      companyId: job.company_id,
-      companyName: job.company_name,
-      jobId: job.id,
-      jobTitle: job.title,
-    });
-    const manifest = readJsonFile<PublishedApplicationManifest>(path.join(target.directory, "manifest.json"));
-    if (!manifest || manifest.workflowId !== workflow.id) {
+  /* Iterate newest-first so that:
+   * — A newly-completed READY re-tailor immediately supersedes the old one.
+   * — While a re-tailor is in-progress (CREATED/IMPROVEMENT_RUNNING) or has FAILED without an
+   *   approval, the previous READY version remains eligible and Start Application still works.
+   * — An old approval can never bleed forward onto a newer unapproved workflow's content, because
+   *   the manifest on disk is checked against the exact workflow/iteration that was approved. */
+  for (const workflow of workflows) {
+    // CASE A — AUTONOMOUS READY. Only this workflow's own published manifest qualifies.
+    if (workflow.status === "READY") {
+      const target = resolvePublishedApplicationTarget({
+        companyId: job.company_id,
+        companyName: job.company_name,
+        jobId: job.id,
+        jobTitle: job.title,
+      });
+      const manifest = readJsonFile<PublishedApplicationManifest>(path.join(target.directory, "manifest.json"));
+      if (!manifest || manifest.workflowId !== workflow.id) continue; // manifest mismatch — try older
+      const resumePath = path.join(target.directory, manifest.files.resume);
+      if (!fs.existsSync(resumePath)) continue; // file gone — try older
+      const coverLetterPath = manifest.files.coverLetter ? path.join(target.directory, manifest.files.coverLetter) : null;
       return {
-        ready: false,
-        workflowStatus: workflow.status,
-        reason: "The resume passed validation but its published files are missing. Re-export from Resume Studio.",
+        ready: true,
+        resumePath,
+        coverLetterPath: coverLetterPath && fs.existsSync(coverLetterPath) ? coverLetterPath : null,
+        workflowId: workflow.id,
+        source: "AUTONOMOUS_READY",
       };
     }
-    const resumePath = path.join(target.directory, manifest.files.resume);
-    if (!fs.existsSync(resumePath)) {
-      return { ready: false, workflowStatus: workflow.status, reason: "No generated resume document was found for this job." };
-    }
-    const coverLetterPath = manifest.files.coverLetter ? path.join(target.directory, manifest.files.coverLetter) : null;
-    return {
-      ready: true,
-      resumePath,
-      coverLetterPath: coverLetterPath && fs.existsSync(coverLetterPath) ? coverLetterPath : null,
-      workflowId: workflow.id,
-      source: "AUTONOMOUS_READY",
-    };
-  }
 
-  // CASE B — HUMAN-APPROVED SAFE ATTEMPT. Only a terminal FAILED workflow can carry an approval at
-  // all (see the approval endpoint, which refuses to approve anything else). The approval lookup is
-  // keyed to THIS EXACT workflow_id — a prior job workflow's approval is a different row entirely and
-  // is never found here for a newer workflow.id.
-  if (workflow.status === "FAILED") {
-    const approval = getHumanApprovalForWorkflow(input.candidateId, workflow.id);
-    if (approval) {
+    // CASE B — HUMAN-APPROVED SAFE ATTEMPT. Only a terminal FAILED workflow can carry an approval
+    // (the approve endpoint refuses anything else). The manifest on disk must name THIS exact
+    // workflow/iteration — a later workflow that published to the shared human-review/ directory
+    // would overwrite it, and that mismatch blocks the old approval from carrying forward.
+    if (workflow.status === "FAILED") {
+      const approval = getHumanApprovalForWorkflow(input.candidateId, workflow.id);
+      if (!approval) continue; // no approval for this workflow — try older
       const target = resolveSafeAttemptTarget({
         companyId: job.company_id,
         companyName: job.company_name,
@@ -118,10 +116,6 @@ export function resolveApplicationDocuments(input: {
         jobTitle: job.title,
       });
       const manifest = readJsonFile<SafeAttemptManifest>(path.join(target.safeAttemptDirectory, "manifest.json"));
-      // The manifest on disk must still describe THIS approved workflow/iteration. A later workflow
-      // for the same job that also reached SAFE_BEST_ATTEMPT would overwrite this shared directory —
-      // if that happened, the manifest now names a different workflow/iteration than what was
-      // approved, and this approval must not be honored against someone else's content.
       if (
         manifest &&
         manifest.workflowId === approval.workflow_id &&
@@ -139,22 +133,29 @@ export function resolveApplicationDocuments(input: {
           };
         }
       }
+      // Approval exists but files/manifest cannot be verified — do not fall through to an older
+      // workflow, because an explicitly-approved job should not silently use a prior version's docs.
       return {
         ready: false,
         workflowStatus: workflow.status,
         reason: "The approved resume's published files could not be verified. Re-review and re-approve in Resume Studio.",
       };
     }
-    return {
-      ready: false,
-      workflowStatus: workflow.status,
-      reason: "The resume for this job did not pass validation. Review it in Resume Studio before applying.",
-    };
+
+    // CREATED / IMPROVEMENT_RUNNING / other in-progress status — skip and try older workflows.
   }
 
+  // No valid workflow found. Describe the state using the newest workflow's status.
+  const latest = workflows[0];
+  if (latest.status === "READY") {
+    return { ready: false, workflowStatus: "READY", reason: "The resume passed validation but its published files are missing. Re-export from Resume Studio." };
+  }
+  if (latest.status === "FAILED") {
+    return { ready: false, workflowStatus: "FAILED", reason: "The resume for this job did not pass validation. Review it in Resume Studio before applying." };
+  }
   return {
     ready: false,
-    workflowStatus: workflow.status,
-    reason: `The resume for this job is still being worked on (${workflow.status.replace(/_/g, " ").toLowerCase()}).`,
+    workflowStatus: latest.status,
+    reason: `The resume for this job is still being worked on (${latest.status.replace(/_/g, " ").toLowerCase()}).`,
   };
 }

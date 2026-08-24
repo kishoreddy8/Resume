@@ -545,6 +545,9 @@ export async function POST(
       : null,
     tailoringMarkedAt: state.tailoring_marked_at ?? null,
     authorization: retryAuthorization,
+    /* freshRewrite === true is the explicit user-initiated re-tailor signal. It must not be set by
+     * a page refresh or an ordinary queue/resume click — only the Re-tailor UI button sends it. */
+    userRequestedRetailor: freshRewrite,
   });
 
   if (retryDecision.action === "REFUSE") {

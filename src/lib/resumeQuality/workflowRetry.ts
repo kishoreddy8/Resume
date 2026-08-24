@@ -46,6 +46,12 @@ export interface WorkflowRetryInput {
   /** When the human most recently approved this job for tailoring (candidate_job_state). */
   tailoringMarkedAt: string | null;
   authorization: Pick<TailoringAuthorization, "isAuthorized" | "blockingReason">;
+  /**
+   * True when the user explicitly requested a fresh new version of an already-READY workflow.
+   * Only this explicit signal may override the READY → REUSE_EXISTING guard; a normal page load
+   * or retry request never sets this, so the READY state is never spontaneously regenerated.
+   */
+  userRequestedRetailor?: boolean;
 }
 
 /**
@@ -82,6 +88,12 @@ export function evaluateWorkflowRetry(input: WorkflowRetryInput): WorkflowRetryD
   }
 
   if (existingWorkflow.status === "READY") {
+    if (input.userRequestedRetailor) {
+      return {
+        action: "CREATE_RETRY",
+        reason: `Workflow ${existingWorkflow.id} is READY; creating a new version at explicit user request. The existing READY workflow is preserved.`,
+      };
+    }
     return {
       action: "REUSE_EXISTING",
       reason: `Workflow ${existingWorkflow.id} is READY and its artifacts are published; there is nothing to retry.`,
