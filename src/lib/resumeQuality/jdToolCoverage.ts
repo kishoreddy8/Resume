@@ -194,19 +194,19 @@ export function renderJdToolCoverageSection(plan: JdToolCoveragePlan): string {
 
   out += `**SUPPORTED JD TECHNOLOGIES (Pass to Writer):**\n`;
   if (plan.supportedP1.length > 0) {
-    out += `- **P1 Critical (Highest Writer Priority):** ${plan.supportedP1.map((i) => i.canonical).join(", ")}\n`;
+    out += `- **P1 Critical (Highest Priority):** ${plan.supportedP1.map((i) => i.canonical).join(", ")}\n`;
   }
   if (plan.supportedP2.length > 0) {
     out += `- **P2 Required (Strong Priority):** ${plan.supportedP2.map((i) => i.canonical).join(", ")}\n`;
   }
   if (plan.supportedP3.length > 0) {
-    out += `- **P3 Preferred (Supporting Priority):** ${plan.supportedP3.map((i) => i.canonical).join(", ")}\n`;
+    out += `- **P3 Preferred (Supporting):** ${plan.supportedP3.map((i) => i.canonical).join(", ")}\n`;
   }
-  out += `\n*Distribution Rule:* Distribute supported tools naturally across Summary, Skills, Project Descriptions, Bullets, and Environment lines. Do NOT force every tool into every employer or every bullet.\n\n`;
+  out += `\n*Distribution Rule:* Distribute supported tools naturally across Summary, Skills, Project Descriptions, Bullets, and Environment lines.\n\n`;
 
   if (plan.unsupportedTools.length > 0) {
-    out += `**UNSUPPORTED JD TECHNOLOGIES (DO_NOT_CLAIM — Zero Candidate Evidence):**\n`;
-    out += `- **Strict Guardrail:** The following tools were requested by the JD but are absent from the candidate's Master Skills Inventory and experience history. **DO NOT CLAIM OR INVENT THESE TOOLS:** ${plan.unsupportedTools.map((i) => i.canonical).join(", ")}\n\n`;
+    out += `**UNSUPPORTED JD TECHNOLOGIES (DO_NOT_CLAIM — Zero Evidence):**\n`;
+    out += `- **Strict Guardrail:** Requested by JD but absent from candidate records. **DO NOT CLAIM OR INVENT:** ${plan.unsupportedTools.map((i) => i.canonical).join(", ")}\n\n`;
   }
 
   return out;

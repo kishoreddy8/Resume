@@ -9,23 +9,8 @@ import type { CandidateAccomplishmentPackage } from "./accomplishmentEvidence";
 import type { WriterJobIntent } from "./jobIntent";
 import type { JdEvidenceMappingResult } from "./jobEvidenceMapping";
 import { deriveProfessionalIdentity } from "./professionalIdentity";
-
-/**
- * MINIMAL REPAIR CONTEXT COMPILER (Phase 5 Hardening)
- *
- * Assembles a dedicated, minimal, path-specific writer context for surgical TARGETED_REPAIR passes.
- * Unlike INITIAL_GENERATION (which receives rich full-resume accomplishment evidence and broad
- * styling contracts), TARGETED_REPAIR receives ONLY:
- * 1. The exact editable paths authorized for modification.
- * 2. Current text and specific reviewer findings for those paths.
- * 3. Bounded, employer-scoped accomplishment evidence and JD priorities matching those paths.
- * 4. A concise truthfulness and metric-inference contract.
- * 5. A strict JSON PATCH output schema.
- *
- * Crucially, companion files (previous_resume_content.json, master_resume_reference.json, etc.)
- * remain available on disk for the importer and audit inspection, but are NOT named as required
- * reading in writer_prompt.md, keeping Claude context within ~1,500-2,500 tokens.
- */
+import type { TargetEcosystemResult } from "./targetEcosystem";
+import type { EmployerArchitecturePalette } from "./architecturePalette";
 
 export interface BuildRepairWriterPromptParams {
   candidateId: number;
@@ -46,6 +31,8 @@ export interface BuildRepairWriterPromptParams {
   jobIntent?: WriterJobIntent;
   accomplishmentPackage?: CandidateAccomplishmentPackage;
   evidenceMapping?: JdEvidenceMappingResult;
+  targetEcosystem?: TargetEcosystemResult;
+  employerPalettes?: EmployerArchitecturePalette[];
   resolvedFindingKeys?: string[];
   contextManifestSection?: string;
   instructionsScopeNote?: string;
@@ -338,6 +325,19 @@ export function buildRepairWriterPrompt(params: BuildRepairWriterPromptParams): 
       } else if (roleProfile) {
         lines.push(`- **Title & Dates**: ${roleProfile.title} (${roleProfile.startDate || ""} - ${roleProfile.endDate || "Present"})`);
         lines.push(`- **Supported Technologies**: ${roleProfile.technologies.slice(0, 10).join(", ")}`);
+      }
+
+      if (params.employerPalettes) {
+        const pal = params.employerPalettes.find((p) => p.employer.toLowerCase() === empName.toLowerCase());
+        if (pal && (pal.orchestration.length > 0 || pal.processing.length > 0)) {
+          lines.push(`- **Approved Architecture Stack (Assigned Cloud: ${pal.employerCloud})**:`);
+          if (pal.sources.length > 0) lines.push(`  - Sources: ${pal.sources.join(", ")}`);
+          if (pal.orchestration.length > 0) lines.push(`  - Ingestion/Orchestration: ${pal.orchestration.join(", ")}`);
+          if (pal.storage.length > 0) lines.push(`  - Storage: ${pal.storage.join(", ")}`);
+          if (pal.processing.length > 0) lines.push(`  - Processing: ${pal.processing.join(", ")}`);
+          if (pal.warehouses.length > 0) lines.push(`  - Warehouse: ${pal.warehouses.join(", ")}`);
+          if (pal.languages.length > 0 || pal.devops.length > 0) lines.push(`  - Languages/DevOps: ${[...pal.languages, ...pal.devops].join(", ")}`);
+        }
       }
 
       // Check specific path requirements for this employer

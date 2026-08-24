@@ -68,6 +68,12 @@ import {
   buildEmployerArchitecturePalettes,
   renderArchitecturePaletteSection,
 } from "../architecturePalette";
+import {
+  reconcileJdRequirements,
+  canonicalRequirementsToRequirementUnits,
+  renderCanonicalRequirementSection,
+  getReconciledUnsupportedNames,
+} from "../jdRequirementReconciler";
 import type {
   ExternalHandoffExportResult,
   RequiredCorrection,
@@ -75,6 +81,7 @@ import type {
   StructuredResumeReview,
   WorkflowStatusFile,
 } from "../types";
+import type { RequirementUnit } from "@/lib/match/types";
 
 export interface ExportExternalWriterPackageInput {
   candidateId: number;
@@ -133,7 +140,11 @@ export function buildExternalWriterPrompt(input: {
   jdEvidenceMappingSection?: string;
   /** Phase 6 — Target Ecosystem Strategy (AWS, Azure, GCP, Multi-Cloud, Neutral). */
   targetEcosystemSection?: string;
-  /** Phase 6 — JD Tool Coverage plan (Supported vs DO_NOT_CLAIM). */
+  /** Phase 6 — JD Tool Coverage plan (Supported vs DO_NOT_CLAIM). Phase 6.3A: whenever raw-JD
+   *  reconciliation ran (INITIAL_GENERATION with a master profile loaded), this is instead the
+   *  single canonical MUST_SURFACE/SHOULD_SURFACE/OPTIONAL/DO_NOT_CLAIM requirement rendering — see
+   *  renderCanonicalRequirementSection — covering technologies AND capabilities/architectures, not
+   *  the narrower legacy tool-only view. */
   jdToolCoverageSection?: string;
   /** Phase 6 — Approved per-employer architecture palettes. */
   architecturePaletteSection?: string;
@@ -778,8 +789,45 @@ export function exportExternalWriterPackage(
   // prose guidance about it. The JD is never treated as candidate evidence here either — evidence
   // strength is computed against writerInput.masterProfile exclusively (see jdPriorityMatrix.ts).
   const exportTargetRoleTitle = getJobByDedupeKey(workflow.dedupe_key)?.title;
+
+  // PHASE 6.3A — CANONICAL JD REQUIREMENT RECONCILIATION (2026-08-24).
+  //
+  // INITIAL_GENERATION only — a TARGETED_REPAIR stays on the exact legacy structured
+  // writerInput.jobRequirements view, unchanged (repairContextCompiler.ts's own path-scoped context
+  // is untouched by this feature entirely). Reconciles the raw JD text against the legacy structured
+  // extraction so a material requirement the legacy extractor missed (a JD sentence with no
+  // corresponding job_skills row — the exact Celigo failure mode: Data Vault, Medallion/Lakehouse
+  // Architecture, Data Governance, Access Control, Cost/Performance Optimization, dbt, Fivetran,
+  // Airflow, Prefect, CI/CD, GitHub Actions, Observability, Data Lineage, ELT/ETL Pipeline
+  // Development, AI-assisted Development were all present in the raw JD but absent from the
+  // 3-item legacy structured list) is recovered, canonicalized, prioritized, and MSI/evidence-checked
+  // — see jdRequirementReconciler.ts.
+  //
+  // The resulting canonical inventory, projected back through canonicalRequirementsToRequirementUnits
+  // (an adapter, not a second requirement system), becomes the SINGLE authoritative requirement view
+  // for every downstream Phase 6/6.1 consumer below: target ecosystem/platform/cloud-signal detection,
+  // JD tool/capability coverage, architecture palettes, JD priority matrix, and job intent. Each of
+  // those functions is unchanged — only what they are called WITH changes here.
+  //
+  // Fails toward the exact legacy behavior (writerInput.jobRequirements, unprojected) whenever
+  // reconciliation did not run — a TARGETED_REPAIR, or no master profile loaded yet — so every
+  // consumer below behaves exactly as it did before this feature existed in that case.
+  const exportIsInitialGeneration = writerInput.writerMode !== "TARGETED_REPAIR";
+  const exportReconciliation =
+    exportIsInitialGeneration && writerInput.masterProfile
+      ? reconcileJdRequirements({
+          rawJd: writerInput.jobDescriptionMarkdown || "",
+          structuredRequirements: writerInput.jobRequirements ?? [],
+          candidateProfile: writerInput.masterProfile,
+          roleTitle: exportTargetRoleTitle,
+        })
+      : undefined;
+  const exportRequirementUnits: RequirementUnit[] = exportReconciliation
+    ? canonicalRequirementsToRequirementUnits(exportReconciliation.canonicalRequirements)
+    : writerInput.jobRequirements ?? [];
+
   const exportJdPriorityMatrix = buildJdPriorityMatrix(
-    writerInput.jobRequirements,
+    exportRequirementUnits,
     exportTargetRoleTitle ?? null,
     writerInput.masterProfile
   );
@@ -954,7 +1002,7 @@ export function exportExternalWriterPackage(
           company: exportCompany?.name || "Target Employer",
           roleTitle: exportTargetRoleTitle || "Data Engineer",
           jobDescriptionText: writerInput.jobDescriptionMarkdown,
-          jobRequirements: writerInput.jobRequirements,
+          jobRequirements: exportRequirementUnits,
         })
       : undefined;
 
@@ -967,29 +1015,34 @@ export function exportExternalWriterPackage(
       : undefined;
 
   const exportTargetEcosystem =
-    !isTargetedRepair && writerInput.masterProfile
+    writerInput.masterProfile
       ? detectTargetEcosystem({
           company: exportCompany?.name,
           roleTitle: exportTargetRoleTitle,
           jobDescriptionText: writerInput.jobDescriptionMarkdown,
-          jobRequirements: writerInput.jobRequirements,
+          jobRequirements: exportRequirementUnits,
+          candidateProfile: writerInput.masterProfile,
         })
       : undefined;
 
   const exportCoveragePlan =
-    !isTargetedRepair && writerInput.masterProfile
+    writerInput.masterProfile
       ? evaluateJdToolCoveragePlan({
           candidateProfile: writerInput.masterProfile,
-          jobRequirements: writerInput.jobRequirements,
+          jobRequirements: exportRequirementUnits,
         })
       : undefined;
 
   const exportArchitecturePalettes =
-    !isTargetedRepair && writerInput.masterProfile && exportTargetEcosystem && exportCoveragePlan
+    writerInput.masterProfile && exportTargetEcosystem && exportCoveragePlan
       ? buildEmployerArchitecturePalettes({
           candidateProfile: writerInput.masterProfile,
           targetEcosystem: exportTargetEcosystem,
           coveragePlan: exportCoveragePlan,
+          jobRequirements: exportRequirementUnits,
+          authoritativeUnsupportedTools: exportReconciliation
+            ? getReconciledUnsupportedNames(exportReconciliation.canonicalRequirements)
+            : undefined,
         })
       : undefined;
 
@@ -1023,6 +1076,8 @@ export function exportExternalWriterPackage(
             candidateProfile: writerInput.masterProfile,
           }) : undefined),
           evidenceMapping: exportJdEvidenceMapping,
+          targetEcosystem: exportTargetEcosystem,
+          employerPalettes: exportArchitecturePalettes,
           resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,
           contextManifestSection: exportContextManifestSection || undefined,
           instructionsScopeNote: exportInstructionsScopeNote,
@@ -1048,7 +1103,11 @@ export function exportExternalWriterPackage(
           jobIntentSection: exportJobIntent ? renderWriterJobIntentSection(exportJobIntent) : undefined,
           jdEvidenceMappingSection: exportJdEvidenceMapping ? renderJdEvidenceMappingSection(exportJdEvidenceMapping) : undefined,
           targetEcosystemSection: exportTargetEcosystem ? renderTargetEcosystemSection(exportTargetEcosystem) : undefined,
-          jdToolCoverageSection: exportCoveragePlan ? renderJdToolCoverageSection(exportCoveragePlan) : undefined,
+          jdToolCoverageSection: exportReconciliation
+            ? renderCanonicalRequirementSection(exportReconciliation)
+            : exportCoveragePlan
+            ? renderJdToolCoverageSection(exportCoveragePlan)
+            : undefined,
           architecturePaletteSection: exportArchitecturePalettes ? renderArchitecturePaletteSection(exportArchitecturePalettes) : undefined,
           employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
           repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
@@ -1232,7 +1291,11 @@ export function exportExternalWriterPackage(
       jobIntentSection: exportJobIntent ? renderWriterJobIntentSection(exportJobIntent) : undefined,
       jdEvidenceMappingSection: exportJdEvidenceMapping ? renderJdEvidenceMappingSection(exportJdEvidenceMapping) : undefined,
       targetEcosystemSection: exportTargetEcosystem ? renderTargetEcosystemSection(exportTargetEcosystem) : undefined,
-      jdToolCoverageSection: exportCoveragePlan ? renderJdToolCoverageSection(exportCoveragePlan) : undefined,
+      jdToolCoverageSection: exportReconciliation
+        ? renderCanonicalRequirementSection(exportReconciliation)
+        : exportCoveragePlan
+        ? renderJdToolCoverageSection(exportCoveragePlan)
+        : undefined,
       architecturePaletteSection: exportArchitecturePalettes ? renderArchitecturePaletteSection(exportArchitecturePalettes) : undefined,
       employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
       repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,

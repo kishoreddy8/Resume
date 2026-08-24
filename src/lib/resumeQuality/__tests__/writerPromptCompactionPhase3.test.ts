@@ -482,7 +482,11 @@ test("PROMPTCOMPACT-14: Scoped Phase-2 evidence remains active", () => {
   assert.ok(selected.globalRelevantSkills.primary.includes("Python"));
 });
 
-test("PROMPTCOMPACT-15: Fresh Celigo writer read context <= 6,500 tokens", () => {
+// PHASE 6.3A (2026-08-24) — ceiling raised from 6,500 to 7,000 tokens; see the matching comment on
+// SUMMARY-I1-12 (iteration1SummaryQualityGate.test.ts) for why: canonical JD reconciliation now
+// surfaces the JD's full material requirement inventory instead of the legacy 3-item structured list,
+// at a genuine, modest token cost that stays well inside this phase's own explicit hard ceiling.
+test("PROMPTCOMPACT-15: Fresh Celigo writer read context <= 7,000 tokens", () => {
   const wf = createResumeQualityWorkflow({
     candidateId: candidateAliceId,
     applicationId: appAliceCeligoId,
@@ -499,8 +503,8 @@ test("PROMPTCOMPACT-15: Fresh Celigo writer read context <= 6,500 tokens", () =>
 
   const measurement = measureHandoffContext(exportRes.handoffDirectory);
   assert.ok(
-    measurement.totalReadEstimatedTokens <= 6500,
-    `Total read tokens (${measurement.totalReadEstimatedTokens}) exceeds target of 6,500 tokens`
+    measurement.totalReadEstimatedTokens <= 7000,
+    `Total read tokens (${measurement.totalReadEstimatedTokens}) exceeds target of 7,000 tokens`
   );
 });
 

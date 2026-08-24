@@ -145,10 +145,15 @@ export function renderWriterJobIntentSection(intent: WriterJobIntent): string {
   ];
 
   if (intent.criticalCapabilities.length > 0) {
-    lines.push("- **Critical (P1)**: " + intent.criticalCapabilities.map((c) => `${c.name} [${c.kind === "EXPLICIT_EMPLOYER_REQUIREMENT" ? "Explicit" : "Derived"}]`).join(", "));
+    // PHASE 6.3A — the [Explicit]/[Derived] tag is dropped here: with canonical reconciliation wired
+    // (see handoff/exporter.ts), every capability's evidenceSnippets is populated, so this tag was
+    // always rendering "[Explicit]" — zero information, pure token cost. The dedicated "## TARGET JOB
+    // REQUIREMENTS" canonical section (jdRequirementReconciler.ts) is the authoritative place for
+    // per-requirement provenance detail; this section stays a compact hiring-priorities summary.
+    lines.push("- **Critical (P1)**: " + intent.criticalCapabilities.map((c) => c.name).join(", "));
   }
   if (intent.requiredCapabilities.length > 0) {
-    lines.push("- **Required (P2)**: " + intent.requiredCapabilities.map((c) => `${c.name} [${c.kind === "EXPLICIT_EMPLOYER_REQUIREMENT" ? "Explicit" : "Derived"}]`).join(", "));
+    lines.push("- **Required (P2)**: " + intent.requiredCapabilities.map((c) => c.name).join(", "));
   }
   if (intent.preferredCapabilities.length > 0) {
     lines.push("- **Preferred (P3)**: " + intent.preferredCapabilities.slice(0, 8).map((c) => `${c.name}`).join(", "));

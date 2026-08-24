@@ -414,7 +414,16 @@ test("SUMMARY-I1-11: raw 535-skill inventory is not restored to writer context",
   assert.ok(selected.globalRelevantSkills.all.length <= 35);
 });
 
-test("SUMMARY-I1-12: fresh-generation context remains <= 6,500 tokens", () => {
+// PHASE 6.3A (2026-08-24) — ceiling raised from 6,500 to 7,000 tokens, matching this phase's own
+// explicit token budget (preferred <=6,000 "if practical", hard ceiling <=7,000): canonical JD
+// reconciliation now surfaces the full material requirement inventory (Data Vault, Medallion/
+// Lakehouse Architecture, Data Governance, Access Control, Cost/Performance Optimization, dbt,
+// Fivetran, Airflow, Prefect, CI/CD, GitHub Actions, Observability, Data Lineage, ELT/ETL Pipeline
+// Development, AI-assisted Development, etc. — previously invisible to the writer, see
+// jdRequirementReconciler.ts) rather than the legacy 3-item structured list. The genuine token cost
+// of that completeness is a few hundred tokens; the prompt still stays well inside the new hard
+// ceiling.
+test("SUMMARY-I1-12: fresh-generation context remains <= 7,000 tokens", () => {
   const wf = createResumeQualityWorkflow({
     candidateId: candidateBobId,
     applicationId: appBobCeligoId,
@@ -431,8 +440,8 @@ test("SUMMARY-I1-12: fresh-generation context remains <= 6,500 tokens", () => {
 
   const measurement = measureHandoffContext(exportRes.handoffDirectory);
   assert.ok(
-    measurement.totalReadEstimatedTokens <= 6500,
-    `Total read tokens (${measurement.totalReadEstimatedTokens}) exceeds target of 6,500 tokens`
+    measurement.totalReadEstimatedTokens <= 7000,
+    `Total read tokens (${measurement.totalReadEstimatedTokens}) exceeds target of 7,000 tokens`
   );
 });
 
