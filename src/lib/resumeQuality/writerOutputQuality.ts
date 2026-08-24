@@ -1,29 +1,89 @@
 import type { ResumeWriterOutput } from "./types";
+import type { ResumeContent } from "../../../tools/tailoring-engine/types";
 
 export const CURRENT_ROLE_BULLET_CAP = 8;
 export const SECOND_ROLE_BULLET_CAP = 7;
 export const OLDER_ROLE_BULLET_CAP = 6;
-// Deliberately >= CURRENT_ROLE_BULLET_CAP + SECOND_ROLE_BULLET_CAP + OLDER_ROLE_BULLET_CAP (21) so a
-// three-role resume can legitimately reach every individual role cap at once without the total cap
-// contradicting them; a resume with more roles is still bounded here, just not by the per-role sum.
 export const TOTAL_EXPERIENCE_BULLET_CAP = 21;
 export const PROJECT_DESCRIPTION_MAX_SENTENCES = 2;
 export const PROJECT_DESCRIPTION_MAX_TECHNOLOGIES = 4;
+export const ENVIRONMENT_RECOMMENDED_MAX = 8;
 
-/** Writer-facing quality guidance. Evidence still decides membership; this section only controls
- * selection, emphasis, and readable decomposition of already-supported material. */
+export interface QualitySignal {
+  dimension: "repeatedOpeningVerb" | "technologyDensity" | "environmentLength" | "summaryQuality" | "visibleSkillsRedundancy";
+  severity: "WARNING" | "ADVISORY";
+  description: string;
+}
+
+/** Writer-facing quality guidance for Phase 5. */
 export function renderWriterOutputQualitySection(): string {
   return `## WRITER OUTPUT QUALITY & BULLET STANDARDS
 
-**Summary standards (Iteration 1 publication quality).** The Professional Summary must be publication-ready on the first pass. Write 3-4 concise sentences: (1) Verified Professional Identity & target domain, (2) Core architecture ownership, (3) Concrete delivery impact, (4) Defining supported tools (max 7 total). Do not stack template stems such as "Data Engineer specializing...", "Expertise spans...", or "Proven ability...". Reject generic marketing fluff ("results-driven", "highly motivated", "seasoned professional", "proven track record").
+**Summary standards (Iteration 1 publication quality).** The Professional Summary must be publication-ready on the first pass. Write 3-4 concise sentences: (1) Verified Professional Identity & target domain, (2) Core architecture ownership, (3) Concrete delivery impact, (4) Defining supported tools (max 7 total, max 4 per sentence). Do not use sentence fragments ("Design layered lakehouses...", "Work across Python..."). Write in polished executive resume register. Reject generic marketing fluff ("results-driven", "highly motivated", "seasoned professional", "proven track record"). Do not stack template stems ("Expertise spans...", "Proven ability to...", "Experienced in...").
 
-**Bullet limits & caps.** Current role: max ${CURRENT_ROLE_BULLET_CAP}; second role: max ${SECOND_ROLE_BULLET_CAP}; older roles: max ${OLDER_ROLE_BULLET_CAP}; total experience: max ${TOTAL_EXPERIENCE_BULLET_CAP} bullets. These are ceilings, not targets: never pad to a cap.
+**Experience bullets composition.** Communicate: Engineering Action + System/Architecture Context + Purpose/Outcome. Prefer 1 primary capability per bullet. Bullet caps: current role max ${CURRENT_ROLE_BULLET_CAP}, second role max ${SECOND_ROLE_BULLET_CAP}, older roles max ${OLDER_ROLE_BULLET_CAP} (total cap: ${TOTAL_EXPERIENCE_BULLET_CAP}) — ceilings, not targets: never pad to a cap. If a bullet is overloaded, split it only when each resulting bullet has its own employer-scoped evidence. Otherwise simplify the original bullet. Vary opening action verbs across bullets (avoid repeating "Built", "Engineered", or "Implemented" 3+ times under the same role). Reject duplicate ideas, synonymous repeats, or redundant claims. Always record the employer and exact evidence source in mind; If evidence cannot support an employer attribution, do not create the bullet.
 
-**Bullet composition & evidence.** Prefer 1 primary capability per bullet. When a sentence is overloaded, split it only when each resulting bullet has its own employer-scoped evidence; Otherwise simplify the original bullet. For every added bullet, record the employer and exact evidence source in writerValidation.notes. If evidence cannot support an employer attribution, do not create the bullet. Reject duplicate ideas, synonymous repeats, keyword stuffing, and fabricated metrics.
+**Metric policy.** Use explicit verified metrics faithfully where present. Where no explicit metric exists, you MAY generate a conservative, defensible metric when existing CareerOps policy permits it, context supports it, and it strengthens the accomplishment. Never invent extreme scale or artificial precision, and reject fabricated metrics.
 
-**JD-driven skill order.** Prioritize supported JD skills naturally. Never rewrite an Azure employer claim as AWS (or the reverse) unless that same employer's evidence permits it.
+**Visible Skills & Environment.** Visible Technical Skills: target 15-22 distinct high-value skills; deduplicate obvious aliases (e.g. use Azure Data Factory, not both ADF and Azure Data Factory). Never rewrite an Azure employer claim as AWS (or the reverse) unless that same employer's evidence permits it. Keep Environment lines compact (target 5-8 defining technologies per employer; do not duplicate the entire skills section).
 
+**Project Descriptions.** Exactly 1-2 concise sentences naming domain, business context, and architectural scope. Max ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} named technologies.
 `;
+}
+
+/**
+ * Analyzes recruiter-facing quality signals (warnings/advisories, not hard blocking failures).
+ */
+export function analyzeRecruiterQualitySignals(resume: ResumeContent): QualitySignal[] {
+  const signals: QualitySignal[] = [];
+
+  // 1. Repeated opening verbs check per employer
+  for (const exp of resume.experience) {
+    const verbCounts = new Map<string, number>();
+    for (const bullet of exp.bullets) {
+      const firstWord = bullet.trim().split(/\s+/)[0]?.replace(/[^a-zA-Z]/g, "").toLowerCase();
+      if (firstWord && firstWord.length > 2) {
+        verbCounts.set(firstWord, (verbCounts.get(firstWord) || 0) + 1);
+      }
+    }
+
+    for (const [verb, count] of verbCounts.entries()) {
+      if (count >= 3) {
+        signals.push({
+          dimension: "repeatedOpeningVerb",
+          severity: "WARNING",
+          description: `At ${exp.company}, ${count} bullets start with the same verb ("${verb}") — consider varying action verbs for stronger recruiter engagement.`,
+        });
+      }
+    }
+
+    // 2. Environment line length check
+    if (exp.environment && exp.environment.length > ENVIRONMENT_RECOMMENDED_MAX) {
+      signals.push({
+        dimension: "environmentLength",
+        severity: "ADVISORY",
+        description: `At ${exp.company}, Environment has ${exp.environment.length} items (recommended: 5-8) — consider keeping it focused on defining stack technologies.`,
+      });
+    }
+  }
+
+  // 3. Summary technology density check
+  if (resume.summary && resume.summary.length > 0) {
+    const summaryText = resume.summary.join(" ");
+    const sentences = summaryText.split(/(?<=[.!?])\s+/);
+    for (const [i, s] of sentences.entries()) {
+      const words = s.split(/\s+/);
+      if (words.length > 45) {
+        signals.push({
+          dimension: "summaryQuality",
+          severity: "ADVISORY",
+          description: `Summary sentence ${i + 1} is long (${words.length} words) — aim for concise, crisp sentences.`,
+        });
+      }
+    }
+  }
+
+  return signals;
 }
 
 const NONSTANDARD_SPACES = /[\u00a0\u2007\u2028\u2029\u202f]/g;

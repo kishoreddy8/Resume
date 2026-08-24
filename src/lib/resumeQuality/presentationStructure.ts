@@ -325,39 +325,27 @@ export function renderPresentationStandardSection(profile: CandidateProfile | un
   let out = renderWriterOutputQualitySection();
   out += "## RESUME PRESENTATION STANDARD (STRUCTURE ONLY)\n\n";
   out +=
-    "The resume renders in this exact section order: **name → headline → contact line → Professional " +
-    "Summary → Technical Skills → Certifications → Professional Experience → Key Projects → Education**.\n\n";
+    "Section order: name → headline → contact line → Professional Summary → Technical Skills → Certifications → Professional Experience → Key Projects → Education.\n\n";
 
-  out += "**Headline.** One line, pipe-separated: professional ROLE IDENTITIES ONLY, never technologies " +
-    "(see PROFESSIONAL IDENTITY above for the full rule and examples, when that section is present). Not a sentence.\n\n";
+  out += "**Headline.** Pipe-separated: professional ROLE IDENTITIES ONLY, never technologies (see PROFESSIONAL IDENTITY).\n\n";
 
-  out += "**Professional Summary.** Continuous prose, not bullets. Open by naming the profession and the " +
-    "specialization this JD cares about.\n\n";
+  out += "**Technical Skills.** Group by ATS-safe categories with JD-driven skill order.\n\n";
 
-  out += "**Technical Skills.** Group by ATS-safe categories (Languages, Cloud, Data Engineering, Databases, Orchestration, DevOps). " +
-    "Put JD-required technologies first. Include verified candidate skills from the same domain; exclude unrelated domains. Never add unsupported skills.\n\n";
+  out += "**Certifications.** Master Resume certifications verbatim. Omit if none.\n\n";
 
-  out += "**Certifications.** Exactly those the Master Resume records, verbatim, never expanded or abbreviated. " +
-    "Omit the field entirely if there are none — never invent one to fill the section.\n\n";
-
-  out += "**Professional Experience.** Each role renders with two labelled lines around the bullets:\n" +
-    `  - \`projectDescription\` — ONE sentence, or at most ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences, ` +
-    `naming what this role's work was with no more than ${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies, built only from that role's own bullets. ` +
-    "Introducing anything new here is a truthfulness failure. Do not echo the job title as the subject.\n" +
-    "  - `environment` — the technology stack of THIS role. Every entry must be Available here under the MSI rule or already written for this employer, " +
-    "checked automatically, per employer, per item.\n\n" +
+  out += "**Professional Experience.** Two labelled lines around bullets:\n" +
+    `  - \`projectDescription\` — 1 to ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences (${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} max tech), built from role bullets. Introducing anything new here is a truthfulness failure.\n` +
+    "  - `environment` — technology stack of THIS role. Every entry must be Available here under the MSI rule or already written for this employer, checked automatically, per employer, per item.\n\n" +
     "Write every bullet as a complete sentence without trailing '...'.\n\n";
 
   const hasProjectEvidence = false;
   void profile;
-  out += "**Key Projects.** ";
-  out += hasProjectEvidence
-    ? "List the projects the Master Resume records, with their real technologies.\n\n"
-    : "CareerOps holds NO recorded project evidence for this candidate, so **omit `keyProjects` entirely**. " +
-      "The section then does not render at all. Do not invent projects, repositories or demos to fill it.\n\n";
+  out += "**Key Projects.** " +
+    (hasProjectEvidence
+      ? "List recorded projects with real technologies.\n\n"
+      : "No recorded projects — omit `keyProjects` entirely. Do not invent projects.\n\n");
 
-  out += "**Education.** One string per entry in the form `\"<Degree>, <Institution> - <Dates>\"` (a plain hyphen, not an em or en dash), matching the " +
-    "Master Resume exactly.\n\n";
+  out += "**Education.** String: `\"<Degree>, <Institution> - <Dates>\"` (plain hyphen), matching Master Resume.\n\n";
 
   return out;
 }

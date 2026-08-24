@@ -41,6 +41,7 @@ import { generateDeterministicCoverLetter } from "./coverLetterGenerator";
 import { generateTailoringOutputs } from "../../../tools/tailoring-engine/generate";
 import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring-engine/types";
 import { validateDocx } from "../../../tools/tailoring-engine/validate-docx";
+import { validateResumeArtifactParity, validateCoverLetterArtifactParity } from "./artifactParity";
 import {
   structuredResumeReviewSchema,
   type BlockingFailure,
@@ -600,7 +601,7 @@ export async function executeResumeQualityIteration(
         }
       }
 
-      if (resolvedCoverLetter && !fs.existsSync(iterCoverDocx)) {
+      if (resolvedCoverLetter) {
         try {
           const job = getJobByDedupeKey(workflow.dedupe_key);
           const company = job ? getCompany(job.company_id) : undefined;
@@ -710,7 +711,22 @@ export async function executeResumeQualityIteration(
           `Publication skipped: no company row could be resolved for company_id ${coldEmailJob.company_id} ` +
           `(job ${coldEmailJob.id}). The approved artifacts remain available in the workflow's final/ directory.`;
       }
-      if (finalResumePath && coldEmailJob && coldEmailCompany) {
+
+      // Phase 5 — Enforce semantic artifact parity before publication
+      if (!publicationError && finalResumePath) {
+        const resumeParity = await validateResumeArtifactParity(finalResumePath, resume);
+        if (!resumeParity.valid) {
+          publicationError = `Resume artifact parity validation failed: ${resumeParity.violations.join("; ")}`;
+        }
+      }
+      if (!publicationError && finalCoverPath && resolvedCoverLetter) {
+        const coverParity = await validateCoverLetterArtifactParity(finalCoverPath, resolvedCoverLetter);
+        if (!coverParity.valid) {
+          publicationError = `Cover letter artifact parity validation failed: ${coverParity.violations.join("; ")}`;
+        }
+      }
+
+      if (finalResumePath && coldEmailJob && coldEmailCompany && !publicationError) {
         try {
           publishedApplication = publishFinalApplicationArtifacts({
             candidateId,

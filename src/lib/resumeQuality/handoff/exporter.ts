@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getCandidate } from "@/db/queries/candidates";
+import { getCompany } from "@/db/queries/companies";
 import { getJobByDedupeKey } from "@/db/queries/jobs";
 import { getResumeQualityWorkflow } from "@/db/queries/resumeQualityWorkflows";
 import { getCandidateJobState } from "@/db/queries/candidateJobState";
@@ -42,6 +43,18 @@ import {
   renderPresentationStandardSection,
   renderRoleProjectEvidenceSection,
 } from "../presentationStructure";
+import {
+  buildCandidateAccomplishmentPackageSync,
+  renderAccomplishmentEvidenceSection,
+} from "../accomplishmentEvidence";
+import {
+  extractWriterJobIntent,
+  renderWriterJobIntentSection,
+} from "../jobIntent";
+import {
+  mapJdPrioritiesToCandidateEvidence,
+  renderJdEvidenceMappingSection,
+} from "../jobEvidenceMapping";
 import type {
   ExternalHandoffExportResult,
   RequiredCorrection,
@@ -99,6 +112,12 @@ export function buildExternalWriterPrompt(input: {
   /** Stage 31 correction — the per-employer material the Project:/Environment: lines are built from.
    *  Without it the writer was being asked for a scope line with no evidence in front of it. */
   roleProjectEvidenceSection?: string;
+  /** Phase 5 — Verified candidate accomplishment units extracted from master resume with full provenance. */
+  accomplishmentEvidenceSection?: string;
+  /** Phase 5 — Structured JD hiring intent distinguishing explicit requirements from derived expectations. */
+  jobIntentSection?: string;
+  /** Phase 5 — Deterministic mapping between target JD priorities and top candidate proof points. */
+  jdEvidenceMappingSection?: string;
   /** Stage 21 (Evidence-Grounded Resume Quality V2) — the computed JD Priority Matrix/positioning/
    *  skill-order/ATS-coverage data the writer should actually USE, not just prose guidance about it.
    *  All optional: absent only when neither jobRequirements nor a target role title were available
@@ -489,7 +508,7 @@ Where each value goes:
 - **Full name, email, phone, location** — reproduce verbatim in the resume header.
 - **LinkedIn** — resume header, only when given above.
 
-${input.repairPlanSection ?? ""}${input.contextManifestSection ?? ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
+${input.repairPlanSection ?? ""}${input.contextManifestSection ?? ""}${input.jobIntentSection ? input.jobIntentSection + "\n\n---\n\n" : ""}${input.accomplishmentEvidenceSection ? input.accomplishmentEvidenceSection + "\n\n---\n\n" : ""}${input.jdEvidenceMappingSection ? input.jdEvidenceMappingSection + "\n\n---\n\n" : ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
 ${guardrailItems.map((item, i) => `${i + 1}. ${item}`).join("\n\n")}
 
@@ -897,6 +916,40 @@ export function exportExternalWriterPackage(
     ? "Three legacy sections are omitted (OUTPUT REQUIREMENTS, FILE REQUIREMENTS, ATS FORMATTING) because they describe deliverables/formatting you do not control under the current architecture — you produce one JSON file, writer_output.json, per the schema below; document generation and layout are handled entirely by CareerOps' own deterministic code. Every other section is included in full."
     : undefined;
 
+  // PHASE 5 — RICH ACCOMPLISHMENT EVIDENCE & STRUCTURED JD INTENT (2026-08-24).
+  //
+  // INITIAL_GENERATION receives authentic candidate accomplishment units with full provenance,
+  // structured JD hiring intent distinguishing explicit vs derived signals, and deterministic
+  // JD-to-candidate evidence mapping.
+  const exportAccomplishmentPackage =
+    writerInput.masterProfile && !isTargetedRepair
+      ? buildCandidateAccomplishmentPackageSync({
+          candidateId,
+          candidateProfile: writerInput.masterProfile,
+        })
+      : undefined;
+
+  const exportJob = getJobByDedupeKey(workflow.dedupe_key);
+  const exportCompany = exportJob ? getCompany(exportJob.company_id) : undefined;
+
+  const exportJobIntent =
+    !isTargetedRepair
+      ? extractWriterJobIntent({
+          company: exportCompany?.name || "Target Employer",
+          roleTitle: exportTargetRoleTitle || "Data Engineer",
+          jobDescriptionText: writerInput.jobDescriptionMarkdown,
+          jobRequirements: writerInput.jobRequirements,
+        })
+      : undefined;
+
+  const exportJdEvidenceMapping =
+    exportJobIntent && exportAccomplishmentPackage
+      ? mapJdPrioritiesToCandidateEvidence({
+          jobIntent: exportJobIntent,
+          accomplishmentPackage: exportAccomplishmentPackage,
+        })
+      : undefined;
+
   // 2. writer_prompt.md
   const promptContent = buildExternalWriterPrompt({
     candidateId,
@@ -914,6 +967,9 @@ export function exportExternalWriterPackage(
     blockingFailures: writerInput.blockingFailures,
     complianceCorrections: writerInput.complianceCorrections,
     candidateContact: writerInput.candidateContact,
+    accomplishmentEvidenceSection: exportAccomplishmentPackage ? renderAccomplishmentEvidenceSection(exportAccomplishmentPackage) : undefined,
+    jobIntentSection: exportJobIntent ? renderWriterJobIntentSection(exportJobIntent) : undefined,
+    jdEvidenceMappingSection: exportJdEvidenceMapping ? renderJdEvidenceMappingSection(exportJdEvidenceMapping) : undefined,
     employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
     repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
     resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,
@@ -931,7 +987,7 @@ export function exportExternalWriterPackage(
     experienceEmphasisSection: isTargetedRepair ? undefined : exportExperienceEmphasis || undefined,
     distributedEvidenceSection: isTargetedRepair ? undefined : exportDistributedEvidence || undefined,
     presentationStandardSection: renderPresentationStandardSection(writerInput.masterProfile),
-    roleProjectEvidenceSection: renderRoleProjectEvidenceSection(scopedRoleEvidence),
+    roleProjectEvidenceSection: exportAccomplishmentPackage ? undefined : renderRoleProjectEvidenceSection(scopedRoleEvidence),
     jdPriorityMatrix: exportJdPriorityMatrix,
     positioningRecommendation: exportPositioningRecommendation,
     recommendedSkillOrder: exportSkillOrder,
