@@ -51,12 +51,13 @@
   <script>
     /* City combobox — async (400 ms), options keyed by city prefix.
        Lookup uses prefix matching so the executor can fill the full option text
-       ("Dallas, Texas, United States") and still trigger the right options. */
-    // "Dallas" is included as an exact option so the contact-derived city value (always "Dallas"
-    // from "Dallas, TX") matches exactly, making the city fill succeed in integration tests.
+       ("Dallas, Texas, United States") and still trigger the right options.
+       Mirrors real Greenhouse: only canonical "City, State, Country" strings are returned — bare
+       "Dallas" is not an ATS option. The location normaliser (locationNormalizer.ts) resolves
+       the contact-derived bare city to the unambiguous "Dallas, Texas, United States". */
     var CITY_DATA = {
-      "Dallas": ["Dallas", "Dallas, Georgia, United States", "Dallas, Oregon, United States"],
-      "Atlanta": ["Atlanta", "Atlanta, Georgia, United States"]
+      "Dallas": ["Dallas, Texas, United States", "Dallas, Georgia, United States", "Dallas, Oregon, United States"],
+      "McKinney": ["McKinney, Texas, United States"]
     };
 
     function lookupCities(q) {

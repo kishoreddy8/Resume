@@ -26,10 +26,11 @@ import { pathToFileURL } from "node:url";
  *   - a city combobox with aria-controls, async-loaded (400 ms), prefix-match lookup
  *   - a country combobox with aria-controls, synchronously filtered
  *
- * planFields always uses the contact-derived city value ("Dallas" from "Dallas, TX"), not the vault.
- * All integration tests therefore drive the city combobox with "Dallas". CITY_DATA in the mock
- * includes "Dallas" as an exact option so the city fill succeeds in the happy path.
- * Country is vault-driven and is used to exercise the scoping + no-match scenarios.
+ * planFields uses the contact-derived bare city ("Dallas" from "Dallas, TX") as the search query when
+ * no vault answer is stored for location_city. The location normaliser (locationNormalizer.ts) then
+ * maps it to the unambiguous canonical ATS option "Dallas, Texas, United States" at click time.
+ * CITY_DATA in the mock returns only canonical "City, State, Country" options — no bare "Dallas" —
+ * matching real Greenhouse behaviour. Country is vault-driven and exercises scoping + no-match paths.
  */
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-async-combobox-"));
@@ -89,9 +90,10 @@ test.after(async () => {
 // ── ASYNC-01: scoped option reads only see the city listbox, not the unrelated one ───────────────
 
 test("ASYNC-01: city fill reads from aria-controls listbox; unrelated listbox options are invisible", async () => {
-  // Contact location "Dallas, TX" → city value "Dallas". CITY_DATA["Dallas"] includes "Dallas" as an
-  // exact option. The fix scopes option reads to city-listbox via aria-controls; if the unrelated
-  // listbox (Unrelated-A/B/C) bled in, "Dallas" would be invisible and the fill would fail.
+  // Contact location "Dallas, TX" → city search value "Dallas". CITY_DATA returns canonical options
+  // (no bare "Dallas"); the normaliser maps "Dallas, TX" to "Dallas, Texas, United States".
+  // The fix scopes option reads to city-listbox via aria-controls; if the unrelated listbox
+  // (Unrelated-A/B/C) bled in, the scoped options would be wrong and the fill would fail.
   const stored = new Map([
     [
       "country",

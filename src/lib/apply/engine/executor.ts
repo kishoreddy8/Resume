@@ -3,6 +3,7 @@ import { advanceRun, getRun, recordEvent, updateCheckpoint, type ApplicationRun 
 import { discoverFields, COLLECT_CONTROLS_SCRIPT, type RawControl } from "../agent/fieldDiscovery";
 import { planFields, firstBlocker } from "../agent/planFields";
 import { exactComboboxOption } from "../agent/comboboxSelection";
+import { findCanonicalLocation } from "../agent/locationNormalizer";
 import { detectBlocking, BLOCKING_STATUS } from "../agent/detectBlocking";
 import { selectAdapter } from "../agent/selectAdapter";
 import { buildFinalReview, readSubmissionOutcome, type FinalReview } from "../finalReview";
@@ -75,10 +76,18 @@ async function collectSignals(page: Page): Promise<{ url: string; text: string; 
  * the initial snapshot and wait (up to 3 s) for it to change before reading the final option list —
  * a synchronous combobox that already has options resolves this immediately at zero extra cost.
  *
- * EXACT MATCH ONLY. See comboboxSelection.ts. Returns null when no option matches exactly; never
- * picks the closest guess.
+ * EXACT MATCH FIRST. If the typed value matches an option exactly, that option is used.
+ * If not, the optional `normalize` callback is called with the visible options — it may return an
+ * unambiguous canonical option (e.g. mapping bare "Dallas" to "Dallas, Texas, United States" for a
+ * location_city field). If normalize also returns null, the function returns null and the run pauses.
+ * The normaliser is the ONLY extension point; all other matching remains exact. See comboboxSelection.ts.
  */
-async function selectComboboxOption(page: Page, selector: string, targetValue: string): Promise<string | null> {
+async function selectComboboxOption(
+  page: Page,
+  selector: string,
+  targetValue: string,
+  normalize?: (opts: readonly string[]) => string | null
+): Promise<string | null> {
   await page.click(selector);
 
   // React Select sets aria-controls on the input to the id of its listbox once the menu opens.
@@ -109,15 +118,15 @@ async function selectComboboxOption(page: Page, selector: string, targetValue: s
     .catch(() => null); // timeout is safe — we proceed with whatever options are present
 
   const visibleOptions = await page.$$eval(optionSelector, (els) => els.map((el) => (el.textContent ?? "").trim()));
-  const exact = exactComboboxOption(visibleOptions, targetValue);
-  if (!exact) return null;
+  const chosen = exactComboboxOption(visibleOptions, targetValue) ?? normalize?.(visibleOptions) ?? null;
+  if (!chosen) return null;
 
-  const escaped = exact.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = chosen.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const optionLocator = listboxId
     ? page.locator(`#${listboxId} [role="option"]`).filter({ hasText: new RegExp(`^${escaped}$`) }).first()
     : page.locator('[role="option"]').filter({ hasText: new RegExp(`^${escaped}$`) }).first();
   await optionLocator.click();
-  return exact;
+  return chosen;
 }
 
 async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { ok: false; reason: string }> {
@@ -127,7 +136,15 @@ async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { 
       return { ok: true };
     }
     if (plan.field.kind === "combobox") {
-      const selected = await selectComboboxOption(page, plan.field.selector, plan.value);
+      // For location_city, supply a normaliser so a bare city ("Dallas") or a compact form
+      // ("Dallas, TX") can resolve to the ATS canonical option ("Dallas, Texas, United States")
+      // when exact-match fails — without loosening any other combobox matching.
+      let normalize: ((opts: readonly string[]) => string | null) | undefined;
+      if (plan.canonicalKey === "location_city" && plan.locationContext) {
+        const profileLoc = plan.locationContext;
+        normalize = (opts) => findCanonicalLocation(profileLoc, opts);
+      }
+      const selected = await selectComboboxOption(page, plan.field.selector, plan.value, normalize);
       if (!selected) {
         return {
           ok: false,

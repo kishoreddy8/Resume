@@ -1,6 +1,7 @@
 import type { DiscoveredField, FieldPlan, AdapterContext } from "./types";
 import { matchQuestion } from "../questionMatching";
 import { resolveAnswer, mayFill, type StoredAnswer } from "../resolveAnswer";
+import { locationsCompatible } from "./locationNormalizer";
 import type { QuestionType } from "../questionTypes";
 
 /**
@@ -155,6 +156,61 @@ export function planFields(input: PlanInputs): FieldPlan[] {
     const match = hinted ?? matchQuestion(field.label!, input.knownVariants);
     if (!match) {
       plans.push({ action: "ask", field, question: field.label!, reason: "Career-Ops has no answer for this question.", questionType: null });
+      continue;
+    }
+
+    // --- location_city: negotiate vault canonical form against the verified profile city --------
+    // `contactValueFor` returns the bare city ("Dallas" from "Dallas, TX"), which cannot
+    // exactly match Greenhouse's canonical option ("Dallas, Texas, United States").
+    // We therefore check the vault first: if it holds a compatible canonical form, use it;
+    // if it conflicts, ask; if absent, fall back to the bare city with locationContext so the
+    // executor can normalise at click time.
+    if (match.canonicalKey === "location_city") {
+      const profileLocation = input.context.contact.location;
+      const stored = input.storedAnswers.get("location_city");
+      if (stored) {
+        const vaultRes = resolveAnswer(match.type, stored);
+        if (vaultRes.action === "fill" && mayFill(vaultRes.source)) {
+          if (locationsCompatible(profileLocation, vaultRes.value)) {
+            plans.push({
+              action: "fill",
+              field,
+              value: vaultRes.value,
+              source: vaultRes.source,
+              canonicalKey: "location_city",
+              locationContext: profileLocation,
+            });
+          } else {
+            plans.push({
+              action: "ask",
+              field,
+              question: field.label ?? "Location (City)",
+              reason: "The saved city doesn't match your verified profile location.",
+              questionType: match.type,
+            });
+          }
+          continue;
+        }
+      }
+      const profileCity = contactValueFor("location_city", input.context);
+      if (profileCity) {
+        plans.push({
+          action: "fill",
+          field,
+          value: profileCity,
+          source: "PROFILE",
+          canonicalKey: "location_city",
+          locationContext: profileLocation,
+        });
+        continue;
+      }
+      plans.push({
+        action: "ask",
+        field,
+        question: field.label ?? "Location (City)",
+        reason: "No saved answer for this question.",
+        questionType: match.type,
+      });
       continue;
     }
 

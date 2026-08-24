@@ -26,7 +26,19 @@ export interface DiscoveredField {
 
 /** What the agent decided to do with one field. Every fill carries its provenance. */
 export type FieldPlan =
-  | { action: "fill"; field: DiscoveredField; value: string; source: AnswerSource; canonicalKey: string | null }
+  | {
+      action: "fill";
+      field: DiscoveredField;
+      value: string;
+      source: AnswerSource;
+      canonicalKey: string | null;
+      /**
+       * Present only on `location_city` fills. The raw profile location string ("Dallas, TX")
+       * carried to the executor so the combobox normaliser can map a bare city to the canonical
+       * ATS option ("Dallas, Texas, United States") when exact-match fails.
+       */
+      locationContext?: string;
+    }
   | { action: "upload"; field: DiscoveredField; filePath: string; source: AnswerSource }
   | { action: "ask"; field: DiscoveredField; question: string; reason: string; questionType: QuestionType | null }
   | { action: "skip"; field: DiscoveredField; reason: string };
