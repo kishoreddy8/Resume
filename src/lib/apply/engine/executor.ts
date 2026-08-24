@@ -11,6 +11,8 @@ import { buildFinalReview, readSubmissionOutcome, type FinalReview } from "../fi
 import type { AdapterContext, FieldPlan, HumanQuestion, RunApprovedAnswer } from "../agent/types";
 import type { StoredAnswer } from "../resolveAnswer";
 import type { QuestionType } from "../questionTypes";
+import { getCandidateContact } from "@/db/queries/candidateSettings";
+import { derivePhoneCountryCode } from "../agent/phoneCountryNormalizer";
 import { ApplicationBrowserRuntime, type BrowserSession } from "./browserRuntime";
 
 /**
@@ -182,6 +184,31 @@ export async function discoverComboboxOptions(page: Page, selector: string): Pro
   }
 }
 
+/**
+ * Resolves the deterministic option normaliser for a combobox field, if any.
+ *
+ * Used by BOTH `executeRun()` during initial filling and `approveAndSubmit()` during refill.
+ * Exactly preserves:
+ * 1. `location_city` -> `findCanonicalLocation(locationContext, opts)`
+ * 2. `phone_country_code` -> `findCanonicalPhoneCountry(val, opts, countryContext)`
+ * 3. All other / generic comboboxes -> `undefined` (strict exact-match only)
+ */
+export function getComboboxNormalizer(
+  canonicalKey: string | null | undefined,
+  fieldValue: string,
+  context?: { locationContext?: string | null; phoneCountryContext?: string | null }
+): ((opts: readonly string[]) => string | null) | undefined {
+  if (canonicalKey === "location_city" && context?.locationContext) {
+    const loc = context.locationContext;
+    return (opts) => findCanonicalLocation(loc, opts);
+  }
+  if (canonicalKey === "phone_country_code") {
+    const country = context?.phoneCountryContext ?? null;
+    return (opts) => findCanonicalPhoneCountry(fieldValue, opts, country);
+  }
+  return undefined;
+}
+
 async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (plan.action === "fill") {
     if (plan.field.kind === "select") {
@@ -189,17 +216,12 @@ async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { 
       return { ok: true };
     }
     if (plan.field.kind === "combobox") {
-      // For location_city, supply a normaliser so a bare city ("Dallas") or a compact form
-      // ("Dallas, TX") can resolve to the ATS canonical option ("Dallas, Texas, United States")
-      // when exact-match fails — without loosening any other combobox matching.
-      let normalize: ((opts: readonly string[]) => string | null) | undefined;
-      if (plan.canonicalKey === "location_city" && plan.locationContext) {
-        const profileLoc = plan.locationContext;
-        normalize = (opts) => findCanonicalLocation(profileLoc, opts);
-      } else if (plan.canonicalKey === "phone_country_code") {
-        const countryContext = plan.phoneCountryContext ?? null;
-        normalize = (opts) => findCanonicalPhoneCountry(plan.value, opts, countryContext);
-      }
+      // For location_city and phone_country_code, supply normalisers so bare or compact values
+      // can resolve to the ATS canonical options without loosening any generic combobox matching.
+      const normalize = getComboboxNormalizer(plan.canonicalKey, plan.value, {
+        locationContext: plan.locationContext,
+        phoneCountryContext: plan.phoneCountryContext,
+      });
       const selected = await selectComboboxOption(page, plan.field.selector, plan.value, normalize);
       if (!selected) {
         return {
@@ -394,6 +416,12 @@ export async function approveAndSubmit(
      * nothing new is decided at submit time. */
     const checkpoint = run.checkpoint_json ? (JSON.parse(run.checkpoint_json) as ExecutionCheckpoint) : null;
     if (checkpoint?.review) {
+      const contact = getCandidateContact(run.candidate_id);
+      const locationContext = contact?.location ?? null;
+      const phoneCountryContext = contact?.phone
+        ? derivePhoneCountryCode(contact.phone, contact.location)?.countryName ?? null
+        : null;
+
       const controls = (await session.page.evaluate(COLLECT_CONTROLS_SCRIPT)) as RawControl[];
       const fields = discoverFields(controls);
       for (const completed of checkpoint.completed) {
@@ -411,10 +439,14 @@ export async function approveAndSubmit(
           if (field.kind === "select") {
             await session.page.selectOption(field.selector, { label: line.value });
           } else if (field.kind === "combobox") {
-            // Re-filling a previously approved combobox selection. A missing exact match here means
-            // the page diverged from what the user approved — fail closed via the outer catch rather
-            // than submit with something else selected.
-            const selected = await selectComboboxOption(session.page, field.selector, line.value);
+            // Re-filling a previously approved combobox selection using the shared normalizer resolver.
+            // A missing exact match or normalisation failure means the page diverged from what the
+            // user approved — fail closed via the outer catch rather than submit with something else selected.
+            const normalize = getComboboxNormalizer(completed.canonicalKey, line.value, {
+              locationContext,
+              phoneCountryContext,
+            });
+            const selected = await selectComboboxOption(session.page, field.selector, line.value, normalize);
             if (!selected) {
               throw new Error(`Approved combobox value "${line.value}" is no longer an exact option for ${field.label ?? field.selector}.`);
             }
