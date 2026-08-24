@@ -15,7 +15,7 @@ export const PROJECT_DESCRIPTION_MAX_TECHNOLOGIES = 4;
 export function renderWriterOutputQualitySection(): string {
   return `## WRITER OUTPUT QUALITY & BULLET STANDARDS
 
-**Summary standards.** Write 3-4 concise sentences. Do not stack template stems such as "Data Engineer specializing...", "Expertise spans...", or "Proven ability...".
+**Summary standards (Iteration 1 publication quality).** The Professional Summary must be publication-ready on the first pass. Write 3-4 concise sentences: (1) Verified Professional Identity & target domain, (2) Core architecture ownership, (3) Concrete delivery impact, (4) Defining supported tools (max 7 total). Do not stack template stems such as "Data Engineer specializing...", "Expertise spans...", or "Proven ability...". Reject generic marketing fluff ("results-driven", "highly motivated", "seasoned professional", "proven track record").
 
 **Bullet limits & caps.** Current role: max ${CURRENT_ROLE_BULLET_CAP}; second role: max ${SECOND_ROLE_BULLET_CAP}; older roles: max ${OLDER_ROLE_BULLET_CAP}; total experience: max ${TOTAL_EXPERIENCE_BULLET_CAP} bullets. These are ceilings, not targets: never pad to a cap.
 

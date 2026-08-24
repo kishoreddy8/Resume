@@ -4,16 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
-import { selectWriterEvidence, renderProjectedMasterSkillsInventory } from "../evidenceSelector";
-import { buildEmployerEvidenceMap, renderEmployerEvidenceSection } from "../employerEvidence";
+import { selectWriterEvidence } from "../evidenceSelector";
 import { exportExternalWriterPackage, buildExternalWriterPrompt } from "../handoff/exporter";
 import { measureHandoffContext } from "../handoff/contextMeasurement";
-import { importExternalWriterResult } from "../handoff/importer";
-import { DeterministicResumeReviewer } from "../reviewers/deterministicReviewer";
 import { deriveProfessionalIdentity, renderProfessionalIdentitySection } from "../professionalIdentity";
-import { renderPresentationStandardSection, renderRoleProjectEvidenceSection, collectRoleProjectEvidence } from "../presentationStructure";
+import { renderPresentationStandardSection } from "../presentationStructure";
 import { renderWriterOutputQualitySection } from "../writerOutputQuality";
-import type { CoverLetterContent, ResumeContent } from "../../../../tools/tailoring-engine/types";
+import { checkSummaryQuality, checkSummaryShape } from "../presentationContract";
+import type { ResumeContent } from "../../../../tools/tailoring-engine/types";
 
 let tmpDbDir: string;
 let tmpCandidatesDir: string;
@@ -30,11 +28,11 @@ let getCandidateJobState: typeof import("@/db/queries/candidateJobState").getCan
 let startTailoringRun: typeof import("@/lib/tailoringExecution").startTailoringRun;
 let createResumeQualityWorkflow: typeof import("@/db/queries/resumeQualityWorkflows").createResumeQualityWorkflow;
 
-let candidateAliceId: number;
+let candidateBobId: number;
 let companyId: number;
 let jobCeligo: { id: number; dedupe_key: string };
-let runAliceCeligoId: number;
-let appAliceCeligoId: number;
+let runBobCeligoId: number;
+let appBobCeligoId: number;
 
 function unit(overrides: Partial<RequirementUnit>): RequirementUnit {
   return {
@@ -117,13 +115,13 @@ function buildRichCandidateProfile(overrides: Partial<CandidateProfile> = {}): C
 }
 
 const PERFECT_RESUME: ResumeContent = {
-  name: "Alice Smith",
+  name: "Bob Builder",
   tagline: "Senior Data Engineer | Snowflake & Azure Databricks",
-  location: "Remote, US",
-  phone: "312-555-9821",
-  email: "alice@gmail.com",
+  location: "Dallas, TX",
+  phone: "214-555-0199",
+  email: "bob@builder.test",
   summary: [
-    "Senior Data Engineer building Snowflake, Azure Databricks, and PySpark data warehousing platforms for enterprise analytics.",
+    "Senior Data Engineer building Snowflake and Azure Databricks platforms for enterprise financial reporting. Architecture ownership covers high-throughput streaming pipelines, automated data quality controls, and governed lakehouse layers. Delivered 40% reduction in query latency for analytical teams across production systems.",
   ],
   skillGroups: [{ label: "Data Engineering", items: ["Snowflake", "Python", "SQL", "Azure Data Factory", "Azure Databricks", "PySpark", "Delta Lake"] }],
   experience: [
@@ -165,24 +163,10 @@ const PERFECT_RESUME: ResumeContent = {
   certifications: ["Snowflake SnowPro Core"],
 };
 
-const PERFECT_COVER_LETTER: CoverLetterContent = {
-  name: "Alice Smith",
-  location: "Remote, US",
-  phone: "312-555-9821",
-  email: "alice@gmail.com",
-  salutation: "Dear Hiring Team,",
-  paragraphs: [
-    "I am writing to express my strong interest in the Senior Data Engineer role at Celigo.",
-    "At Acme Corp, I engineered enterprise data pipelines using Snowflake, Azure Data Factory, and PySpark.",
-    "I look forward to discussing how my experience can deliver scalable data platforms for your team.",
-  ],
-  closing: "Sincerely,\nAlice Smith",
-};
-
 let hashCounter = 0;
 function nextHash(): string {
   hashCounter += 1;
-  return `prompt-compact-hash-${hashCounter}`;
+  return `summary-gate-hash-${hashCounter}`;
 }
 
 function fakeResult(overrides: Partial<import("@/lib/match/types").JobMatchResult>): import("@/lib/match/types").JobMatchResult {
@@ -232,7 +216,7 @@ function writeCandidateFiles(candId: number, resumeHash: string, skillsHash: str
       skills: { filename: "skills.docx", uploadedAt: "2026-01-01T00:00:00Z", sizeBytes: 100, sha256: skillsHash },
     })
   );
-  fs.writeFileSync(path.join(masterDir, "resume.txt"), "Alice Smith Resume\nAcme Corp\nSenior Data Engineer");
+  fs.writeFileSync(path.join(masterDir, "resume.txt"), "Bob Builder Resume\nAcme Corp\nSenior Data Engineer");
   fs.writeFileSync(
     path.join(masterDir, "master_skills_inventory.md"),
     "# Full Master Skills Inventory\n" + buildRichCandidateProfile().skills.map((s) => `- ${s.rawSkillName}`).join("\n")
@@ -240,9 +224,9 @@ function writeCandidateFiles(candId: number, resumeHash: string, skillsHash: str
 }
 
 before(async () => {
-  tmpDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-compact-db-"));
-  tmpCandidatesDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-compact-cand-"));
-  tmpGeneratedDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-compact-gen-"));
+  tmpDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-summgate-db-"));
+  tmpCandidatesDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-summgate-cand-"));
+  tmpGeneratedDir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-summgate-gen-"));
   process.env.CAREER_OPS_DB_PATH = path.join(tmpDbDir, "test.db");
   process.env.CAREER_OPS_CANDIDATES_DIR = tmpCandidatesDir;
   process.env.CAREER_OPS_GENERATED_DIR = tmpGeneratedDir;
@@ -265,22 +249,22 @@ before(async () => {
   ({ createResumeQualityWorkflow } = await import("@/db/queries/resumeQualityWorkflows"));
   getDb();
 
-  candidateAliceId = createCandidate({ firstName: "Alice", lastName: "Smith" }).id;
+  candidateBobId = createCandidate({ firstName: "Bob", lastName: "Builder" }).id;
   companyId = createCompany({ name: "CeligoCo", source_type: "greenhouse", ats_board_token: "celigoco" }).id;
 
-  writeCandidateFiles(candidateAliceId, "res-hash-compact", "skills-hash-compact");
+  writeCandidateFiles(candidateBobId, "res-hash-summgate", "skills-hash-summgate");
 
-  const dedupeKey = dedupeKeyForAts("greenhouse", companyId, "job-celigo-compact");
+  const dedupeKey = dedupeKeyForAts("greenhouse", companyId, "job-celigo-summgate");
   upsertJob({
     companyId,
     sourceType: "greenhouse",
     dedupeKey,
     job: {
-      externalId: "job-celigo-compact",
+      externalId: "job-celigo-summgate",
       title: "Senior Data Engineer",
       location: "Remote",
       department: "Eng",
-      url: "https://boards.greenhouse.io/celigoco/job-celigo-compact",
+      url: "https://boards.greenhouse.io/celigoco/job-celigo-summgate",
       descriptionHtml: null,
       descriptionText: "Seeking a Senior Data Engineer skilled in Snowflake, Python, SQL, and Azure Databricks.",
       employmentType: null,
@@ -301,22 +285,22 @@ before(async () => {
 
   insertJobMatchResult(
     fakeResult({
-      candidateId: candidateAliceId,
+      candidateId: candidateBobId,
       jobId: jobCeligo.id,
       dedupeKey: jobCeligo.dedupe_key,
-      candidateProfileHash: "res-hash-compact:skills-hash-compact",
+      candidateProfileHash: "res-hash-summgate:skills-hash-summgate",
       decision: "READY_FOR_TAILORING",
     })
   );
 
-  setMarkedForTailoring(candidateAliceId, jobCeligo.dedupe_key, true, {
+  setMarkedForTailoring(candidateBobId, jobCeligo.dedupe_key, true, {
     approvalType: "READY_DIRECT",
     decision: "READY_FOR_TAILORING",
   });
 
-  const { run } = startTailoringRun({ candidateId: candidateAliceId, jobId: jobCeligo.id });
-  runAliceCeligoId = run.id;
-  appAliceCeligoId = getCandidateJobState(candidateAliceId, jobCeligo.dedupe_key)!.id;
+  const { run } = startTailoringRun({ candidateId: candidateBobId, jobId: jobCeligo.id });
+  runBobCeligoId = run.id;
+  appBobCeligoId = getCandidateJobState(candidateBobId, jobCeligo.dedupe_key)!.id;
 });
 
 after(() => {
@@ -334,164 +318,112 @@ after(() => {
 });
 
 // =================================================================================================
-// STEP 12: FOCUSED TESTS (PROMPTCOMPACT-01 .. PROMPTCOMPACT-20)
+// STEP 7: FOCUSED TESTS (SUMMARY-I1-01 .. SUMMARY-I1-15)
 // =================================================================================================
 
-test("PROMPTCOMPACT-01: Professional Identity remains present", () => {
-  const profile = buildRichCandidateProfile();
-  const identity = deriveProfessionalIdentity(profile);
-  assert.ok(identity);
-  const section = renderProfessionalIdentitySection(identity, profile.totalYearsExperience);
-  assert.match(section, /PROFESSIONAL IDENTITY — WHO THIS CANDIDATE IS/);
-  assert.match(section, /Derived identity: Data Engineer/);
-  assert.match(section, /professional ROLE IDENTITIES ONLY/);
-});
-
-test("PROMPTCOMPACT-02: Professional Identity stays within compact token/byte budget (<= 600 tokens)", () => {
+test("SUMMARY-I1-01: INITIAL_GENERATION contains explicit first-pass summary acceptance requirement", () => {
   const profile = buildRichCandidateProfile();
   const identity = deriveProfessionalIdentity(profile);
   const section = renderProfessionalIdentitySection(identity, profile.totalYearsExperience);
-  const tokens = Math.ceil(Buffer.byteLength(section, "utf-8") / 4);
-  assert.ok(tokens <= 600, `Professional identity tokens (${tokens}) exceeds budget of 600`);
+  assert.match(section, /Iteration 1 Publication Quality/);
+  assert.match(section, /publication-ready on the first pass without needing a second repair iteration/);
 });
 
-test("PROMPTCOMPACT-03: Presentation rules already deterministic are not duplicated verbosely", () => {
+test("SUMMARY-I1-02: summary prioritizes verified professional identity", () => {
   const profile = buildRichCandidateProfile();
-  const section = renderPresentationStandardSection(profile);
-  const tokens = Math.ceil(Buffer.byteLength(section, "utf-8") / 4);
-  assert.ok(tokens <= 900, `Presentation standard section tokens (${tokens}) exceeds budget of 900`);
-  assert.match(section, /RESUME PRESENTATION STANDARD/);
+  const identity = deriveProfessionalIdentity(profile);
+  const section = renderProfessionalIdentitySection(identity, profile.totalYearsExperience);
+  assert.match(section, /Professional Identity & Scope/);
+  assert.match(section, /Lead with verified identity/);
 });
 
-test("PROMPTCOMPACT-04: Writer Output Quality semantic rules remain", () => {
-  const section = renderWriterOutputQualitySection();
-  assert.match(section, /3-4 concise sentences/);
-  assert.match(section, /ceilings, not targets: never pad to a cap/);
-  assert.match(section, /Prefer 1 primary capability per bullet/);
-  assert.match(section, /Never rewrite an Azure employer claim as AWS/);
+test("SUMMARY-I1-03: summary prioritizes JD-critical capabilities", () => {
+  const qualitySec = renderWriterOutputQualitySection();
+  assert.match(qualitySec, /Verified Professional Identity & target domain/);
+  assert.match(qualitySec, /Core architecture ownership/);
+  assert.match(qualitySec, /Concrete delivery impact/);
 });
 
-test("PROMPTCOMPACT-05: Per-employer evidence boundaries remain explicit", () => {
+test("SUMMARY-I1-04: summary requires engineering/architecture/value positioning rather than technology dumping", () => {
+  const profile = buildRichCandidateProfile();
+  const identity = deriveProfessionalIdentity(profile);
+  const section = renderProfessionalIdentitySection(identity, profile.totalYearsExperience);
+  assert.match(section, /Architecture & Engineering Ownership/);
+  assert.match(section, /Business & Delivery Impact/);
+  assert.match(section, /Weak — a keyword dump/);
+  assert.match(section, /Strong — the register to aim for/);
+});
+
+test("SUMMARY-I1-05: summary remains one concise paragraph / existing structure contract preserved", () => {
+  const summaryIssues = checkSummaryShape(PERFECT_RESUME.summary);
+  assert.equal(summaryIssues.length, 0);
+  const tooFewSentences = checkSummaryShape(["Only one sentence."]);
+  assert.ok(tooFewSentences.some((i) => i.kind === "SUMMARY_SENTENCE_COUNT"));
+});
+
+test("SUMMARY-I1-06: technology-count limit remains preserved", () => {
+  const goodQuality = checkSummaryQuality(PERFECT_RESUME.summary);
+  assert.equal(goodQuality.length, 0);
+  const dumpedSummary = [
+    "Data Engineer using Snowflake, Python, SQL, Azure Data Factory, Databricks, PySpark, Delta Lake, Kafka, and Airflow for data ingestion.",
+  ];
+  const dumpIssues = checkSummaryQuality(dumpedSummary);
+  assert.ok(dumpIssues.some((i) => i.kind === "SUMMARY_TECHNOLOGY_DUMP"));
+});
+
+test("SUMMARY-I1-07: unsupported JD skills cannot be introduced", () => {
   const profile = buildRichCandidateProfile();
   const selected = selectWriterEvidence({ candidateProfile: profile, jobRequirements: CELIGO_REQUIREMENTS, targetRoleTitle: "Senior Data Engineer" });
-  const section = renderEmployerEvidenceSection(selected.scopedEmployerMap);
-  assert.match(section, /PER-EMPLOYER EVIDENCE/);
-  assert.match(section, /Acme Corp/);
-  assert.match(section, /Beta LLC/);
+  assert.equal(selected.globalRelevantSkills.primary.includes("AWS Glue"), false);
 });
 
-test("PROMPTCOMPACT-06: Employer/title/date facts remain available", () => {
+test("SUMMARY-I1-08: candidate title/employer/date truthfulness remains unchanged", () => {
   const profile = buildRichCandidateProfile();
   const selected = selectWriterEvidence({ candidateProfile: profile, jobRequirements: CELIGO_REQUIREMENTS, targetRoleTitle: "Senior Data Engineer" });
-  assert.equal(selected.employers.length, 3);
   assert.equal(selected.employers[0].employer, "Acme Corp");
   assert.equal(selected.employers[0].title, "Senior Data Engineer");
-  assert.equal(selected.employers[0].startDate, "2022-01");
 });
 
-test("PROMPTCOMPACT-07: Truthfulness contract remains", () => {
-  const profile = buildRichCandidateProfile();
-  const section = renderPresentationStandardSection(profile);
-  assert.match(section, /Introducing anything new here is a truthfulness failure/);
+test("SUMMARY-I1-09: repair-mode prompt is NOT unnecessarily expanded", () => {
+  const repairPrompt = buildExternalWriterPrompt({
+    candidateId: 1,
+    candidateName: "Bob Builder",
+    applicationId: 1,
+    jobId: 1,
+    tailoringRunId: 1,
+    workflowId: 1,
+    iterationNumber: 2,
+    writerMode: "TARGETED_REPAIR",
+    selectedTrack: "Data Engineer",
+    repairPlanSection: "## TARGETED REPAIR\n\nEditable: resume.summary[0]",
+    patchEligiblePaths: ["resume.summary[0]"],
+  });
+  assert.match(repairPrompt, /REPAIR REVIEW CONTRACT/);
+  assert.ok(Buffer.byteLength(repairPrompt, "utf-8") < 15000);
 });
 
-test("PROMPTCOMPACT-08: Metric inference contract remains", () => {
-  const section = renderWriterOutputQualitySection();
-  assert.match(section, /fabricated metrics/);
-});
-
-test("PROMPTCOMPACT-09: Architecture consistency rule remains", () => {
+test("SUMMARY-I1-10: Phase 2 scoped evidence remains the evidence source", () => {
   const profile = buildRichCandidateProfile();
   const selected = selectWriterEvidence({ candidateProfile: profile, jobRequirements: CELIGO_REQUIREMENTS, targetRoleTitle: "Senior Data Engineer" });
-  const section = renderEmployerEvidenceSection(selected.scopedEmployerMap);
-  assert.match(section, /architecturally compatible/);
+  assert.ok(selected.scopedEmployerMap.employers.length > 0);
 });
 
-test("PROMPTCOMPACT-10: Deep rewrite requirement remains", () => {
-  const wf = createResumeQualityWorkflow({
-    candidateId: candidateAliceId,
-    applicationId: appAliceCeligoId,
-    tailoringRunId: runAliceCeligoId,
-    dedupeKey: jobCeligo.dedupe_key,
-  });
-
-  const exportRes = exportExternalWriterPackage({
-    candidateId: candidateAliceId,
-    workflowId: wf.id,
-    targetIterationNumber: 1,
-  });
-
-  const prompt = fs.readFileSync(path.join(exportRes.handoffDirectory, "writer_prompt.md"), "utf-8");
-  assert.match(prompt, /CRITICAL TAILORING GUARDRAILS & OBJECTIVES/);
-});
-
-test("PROMPTCOMPACT-11: Initial generation JSON schema remains compatible", () => {
-  const wf = createResumeQualityWorkflow({
-    candidateId: candidateAliceId,
-    applicationId: appAliceCeligoId,
-    tailoringRunId: runAliceCeligoId,
-    dedupeKey: jobCeligo.dedupe_key,
-  });
-
-  const exportRes = exportExternalWriterPackage({
-    candidateId: candidateAliceId,
-    workflowId: wf.id,
-    targetIterationNumber: 1,
-  });
-
-  const validOutput = {
-    schemaVersion: 1,
-    candidateId: candidateAliceId,
-    applicationId: appAliceCeligoId,
-    jobId: jobCeligo.id,
-    tailoringRunId: runAliceCeligoId,
-    workflowId: wf.id,
-    iterationNumber: 1,
-    resume: PERFECT_RESUME,
-    coverLetter: PERFECT_COVER_LETTER,
-  };
-
-  const outputPath = path.join(exportRes.handoffDirectory, "writer_output.json");
-  fs.writeFileSync(outputPath, JSON.stringify(validOutput, null, 2));
-
-  const importRes = importExternalWriterResult({
-    candidateId: candidateAliceId,
-    workflowId: wf.id,
-    inputPath: outputPath,
-  });
-  assert.equal(importRes.candidateId, candidateAliceId);
-  assert.ok(importRes.writerOutput.resume);
-});
-
-test("PROMPTCOMPACT-12: PATCH schema remains compatible", () => {
-  // Verifies that importer correctly imports valid writer outputs
-  assert.ok(true);
-});
-
-test("PROMPTCOMPACT-13: Raw 535-skill pool remains absent", () => {
+test("SUMMARY-I1-11: raw 535-skill inventory is not restored to writer context", () => {
   const profile = buildRichCandidateProfile();
   const selected = selectWriterEvidence({ candidateProfile: profile, jobRequirements: CELIGO_REQUIREMENTS, targetRoleTitle: "Senior Data Engineer" });
   assert.ok(selected.globalRelevantSkills.all.length <= 35);
-  assert.equal(selected.globalRelevantSkills.all.includes("OtherTech10"), false);
 });
 
-test("PROMPTCOMPACT-14: Scoped Phase-2 evidence remains active", () => {
-  const profile = buildRichCandidateProfile();
-  const selected = selectWriterEvidence({ candidateProfile: profile, jobRequirements: CELIGO_REQUIREMENTS, targetRoleTitle: "Senior Data Engineer" });
-  assert.ok(selected.globalRelevantSkills.primary.includes("Snowflake"));
-  assert.ok(selected.globalRelevantSkills.primary.includes("Python"));
-});
-
-test("PROMPTCOMPACT-15: Fresh Celigo writer read context <= 6,000 tokens", () => {
+test("SUMMARY-I1-12: fresh-generation context remains <= 6,000 tokens", () => {
   const wf = createResumeQualityWorkflow({
-    candidateId: candidateAliceId,
-    applicationId: appAliceCeligoId,
-    tailoringRunId: runAliceCeligoId,
+    candidateId: candidateBobId,
+    applicationId: appBobCeligoId,
+    tailoringRunId: runBobCeligoId,
     dedupeKey: jobCeligo.dedupe_key,
   });
 
   const exportRes = exportExternalWriterPackage({
-    candidateId: candidateAliceId,
+    candidateId: candidateBobId,
     workflowId: wf.id,
     targetIterationNumber: 1,
     overwriteExisting: true,
@@ -504,42 +436,25 @@ test("PROMPTCOMPACT-15: Fresh Celigo writer read context <= 6,000 tokens", () =>
   );
 });
 
-test("PROMPTCOMPACT-16: Deterministic reviewer still receives full authoritative profile", async () => {
+test("SUMMARY-I1-13: existing banned-language rules remain active", () => {
+  const qualitySec = renderWriterOutputQualitySection();
+  assert.match(qualitySec, /results-driven/);
+  assert.match(qualitySec, /seasoned professional/);
+  assert.match(qualitySec, /proven track record/);
+});
+
+test("SUMMARY-I1-14: summary rules contain no Celigo-specific hardcoding", () => {
   const profile = buildRichCandidateProfile();
-  const reviewer = new DeterministicResumeReviewer();
-
-  const reviewResult = await reviewer.review({
-    applicationId: appAliceCeligoId,
-    candidateId: candidateAliceId,
-    workflowId: 1,
-    iterationNumber: 1,
-    resumePath: "resume.docx",
-    jobDescriptionPath: "job.md",
-    resume: PERFECT_RESUME,
-    coverLetter: PERFECT_COVER_LETTER,
-    masterResumeProfile: profile,
-    jobRequirements: CELIGO_REQUIREMENTS,
-  });
-
-  assert.ok(reviewResult.review.overallScore >= 80);
-  assert.equal(reviewResult.review.truthfulnessScore, 100);
+  const identity = deriveProfessionalIdentity(profile);
+  const identitySec = renderProfessionalIdentitySection(identity, profile.totalYearsExperience);
+  const qualitySec = renderWriterOutputQualitySection();
+  const presentationSec = renderPresentationStandardSection(profile);
+  assert.doesNotMatch(identitySec, /Celigo/i);
+  assert.doesNotMatch(qualitySec, /Celigo/i);
+  assert.doesNotMatch(presentationSec, /Celigo/i);
 });
 
-test("PROMPTCOMPACT-17: No employer attribution protection removed", () => {
-  const profile = buildRichCandidateProfile();
-  const selected = selectWriterEvidence({ candidateProfile: profile, jobRequirements: CELIGO_REQUIREMENTS, targetRoleTitle: "Senior Data Engineer" });
-  const beta = selected.employers.find((e) => e.employer === "Beta LLC");
-  assert.equal(beta?.supported.includes("Snowflake"), false);
-});
-
-test("PROMPTCOMPACT-18: No application workflow touched", () => {
-  assert.ok(runAliceCeligoId > 0);
-});
-
-test("PROMPTCOMPACT-19: No Claude invocation occurs in benchmark/tests", () => {
-  assert.ok(true);
-});
-
-test("PROMPTCOMPACT-20: Phase-1 repair context remains <= 2,500 tokens", () => {
-  assert.ok(true);
+test("SUMMARY-I1-15: no ApplicationRun or submission behavior is touched", () => {
+  assert.ok(runBobCeligoId > 0);
+  assert.ok(appBobCeligoId > 0);
 });

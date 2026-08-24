@@ -221,11 +221,13 @@ export function renderProfessionalIdentitySection(
     "(e.g. `Senior Data Engineer | Analytics Engineer`). **Never put technologies in it.** " +
     "The job's title never replaces the candidate's own, and never invent seniority the evidence does not show.\n\n";
   out +=
-    "**Summary rule: POSITIONING, not inventory.** Write ONE continuous paragraph (3-4 sentences, ~650 chars). " +
-    "Lead with the candidate's professional identity and JD specialization. " +
-    "NEVER open with the identity followed immediately by \"with\" (e.g. \"Data Engineer with…\", \"Candidate with…\"). " +
-    "Name at most SEVEN technologies in the entire summary. Avoid stock capability stems (\"Expertise spans…\", \"Proven ability to…\"); " +
-    "lead with the work, its context, or a supported outcome.\n\n" +
+    "**Summary rule: POSITIONING, not inventory (Iteration 1 Publication Quality).** " +
+    "The Professional Summary must be publication-ready on the first pass without needing a second repair iteration. " +
+    "Write ONE continuous paragraph (3-4 sentences, ~500–680 chars) following this exact priority order:\n" +
+    `  1. **Professional Identity & Scope:** Lead with verified identity (${identity.identity}) and target platform scope. NEVER open with "${identity.identity} with…", "Candidate with…", or generic fluff ("Results-driven…", "Seasoned professional…").\n` +
+    "  2. **Architecture & Engineering Ownership:** Platform scale, pipeline reliability, data modeling, governance controls.\n" +
+    "  3. **Business & Delivery Impact:** Concrete operational value or delivery impact grounded in verified evidence.\n" +
+    "  4. **Defining Technologies (max SEVEN total):** Name at most SEVEN technologies across the summary (max 4 in one sentence). Avoid stock capability stems (\"Expertise spans…\", \"Proven ability to…\"); lead with the work, its context, or a supported outcome.\n\n" +
     "- **Weak — a keyword dump:** \"Data Engineer specializing in Spark, Python, SQL, Databricks, Delta Lake, Snowflake, CDC, SCD...\"\n" +
     "- **Strong — the register to aim for:** \"Data Engineer building governed cloud data platforms for banking and payments platforms, scaling pipeline execution while maintaining end-to-end data quality controls.\"\n\n" +
     "Write in confident implied first person without turning the summary into a product list or marketing pitch. " +

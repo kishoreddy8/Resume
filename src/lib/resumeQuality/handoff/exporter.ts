@@ -223,7 +223,8 @@ export function buildExternalWriterPrompt(input: {
 
   const rewriteRule =
     writerMode === "INITIAL_GENERATION"
-      ? `**Initial generation must be genuinely tailored — light keyword replacement is a failure mode**:
+      ? `**Initial generation must be publication-ready — light keyword replacement is a failure mode**:
+   - The Professional Summary must reach publication quality on Iteration 1: follow the 4-tier priority (Identity -> JD Domain -> Architecture Ownership -> Delivery Value) to eliminate the need for a summary repair pass.
    - Rewrite the summary, skills ordering, project descriptions, and experience bullets from the authoritative evidence so this first draft is specific to this JD and company.
    - Give each employer its own evidence-backed engineering identity. Do not make every role sound like the same project.
    - Bullet ceilings and summary/project-description requirements are stated in full above (WRITER OUTPUT QUALITY / RESUME PRESENTATION STANDARD) — this item exists only to state the deep-rewrite requirement itself, not to restate their numbers.`
