@@ -24,6 +24,29 @@ export interface DiscoveredField {
   options?: string[];
 }
 
+/**
+ * One human question collected for a batch pause.
+ *
+ * The executor collects ALL required unresolved questions into one batch rather than pausing on
+ * each individually. This object carries everything the UI needs to render a control and everything
+ * the answer route needs to validate, save, and resume.
+ *
+ * Stored in checkpoint.humanQuestions — must remain JSON-serialisable.
+ */
+export interface HumanQuestion {
+  /** Stable DOM identity: field.id → field.name → field.selector. Used to match submitted answers. */
+  id: string;
+  selector: string;
+  label: string;
+  canonicalKey: string | null;
+  questionType: QuestionType | null;
+  required: boolean;
+  kind: DiscoveredField["kind"];
+  /** Employer-provided options when reliably available (select / radio / small combobox). */
+  options: string[] | null;
+  reason: string;
+}
+
 /** What the agent decided to do with one field. Every fill carries its provenance. */
 export type FieldPlan =
   | {

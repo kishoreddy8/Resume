@@ -47,8 +47,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ candidateId
     /* The checkpoint holds the review the user must read before approving. Parsed here so the
      * client never has to know the checkpoint's internal shape. */
     let review: unknown = null;
+    let humanQuestions: unknown = null;
     try {
-      review = run.checkpoint_json ? (JSON.parse(run.checkpoint_json) as { review?: unknown }).review ?? null : null;
+      const cp = run.checkpoint_json ? (JSON.parse(run.checkpoint_json) as { review?: unknown; humanQuestions?: unknown }) : null;
+      review = cp?.review ?? null;
+      humanQuestions = cp?.humanQuestions ?? null;
     } catch {
       review = null;
     }
@@ -74,6 +77,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ candidateId
         updatedAt: run.updated_at,
       },
       review,
+      humanQuestions,
       /* Recorded events only. A run with no history shows none rather than an invented start. */
       events: listEvents(run.id),
     });
@@ -151,6 +155,18 @@ const AnswerBody = z.object({
   reuseForEquivalentQuestions: z.boolean().optional(),
 });
 
+const BatchAnswer = z.object({
+  id: z.string().min(1),
+  answer: z.string().trim().min(1).max(5000),
+  reuseForEquivalentQuestions: z.boolean().optional(),
+});
+
+const BatchAnswerBody = z.object({
+  runId: z.number().int().positive(),
+  /** Batch of answers keyed by humanQuestion.id. Must cover all required questions. */
+  answers: z.array(BatchAnswer).min(1),
+});
+
 export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateId: string }> }) {
   const { candidateId: raw } = await ctx.params;
   const candidateId = Number(raw);
@@ -161,7 +177,95 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
   const denial = requireCandidateAccess(req, candidateId);
   if (denial) return denial;
 
-  const parsed = AnswerBody.safeParse(await req.json().catch(() => null));
+  const rawBody = await req.json().catch(() => null);
+
+  /* ── batch answer path ───────────────────────────────────────────────────────────────────────
+   * Detected by the presence of an `answers` array in the body. Validates all submitted answers
+   * against the humanQuestions stored in the checkpoint, saves each to the vault, and advances
+   * the run to FILLING so the caller can resume execution.
+   *
+   * NEVER submits the application. The state machine transition is WAITING_FOR_ANSWER → FILLING,
+   * not FILLING → READY_FOR_REVIEW or beyond. */
+  if (rawBody && typeof rawBody === "object" && "answers" in rawBody) {
+    const batchParsed = BatchAnswerBody.safeParse(rawBody);
+    if (!batchParsed.success) {
+      return NextResponse.json({ error: "A runId and answers array are required." }, { status: 400 });
+    }
+    const { runId: batchRunId, answers } = batchParsed.data;
+    const batchRun = getRun(batchRunId);
+    if (!batchRun || batchRun.candidate_id !== candidateId) {
+      return NextResponse.json({ error: "Application run not found" }, { status: 404 });
+    }
+    if (batchRun.status !== "WAITING_FOR_ANSWER") {
+      return NextResponse.json({ error: "This run is not waiting for an answer." }, { status: 409 });
+    }
+
+    type StoredHumanQuestion = {
+      id: string; label: string; canonicalKey: string | null; questionType: string | null;
+      required: boolean; options: string[] | null;
+    };
+    let humanQuestions: StoredHumanQuestion[] = [];
+    try {
+      const cp = batchRun.checkpoint_json ? JSON.parse(batchRun.checkpoint_json) as { humanQuestions?: StoredHumanQuestion[] } : null;
+      humanQuestions = cp?.humanQuestions ?? [];
+    } catch { /* malformed checkpoint — treat as no humanQuestions */ }
+
+    /* Validate: every required question must have a submitted answer. */
+    const answerById = new Map(answers.map((a) => [a.id, a]));
+    const unanswered = humanQuestions.filter((q) => q.required && !answerById.has(q.id));
+    if (unanswered.length > 0) {
+      return NextResponse.json(
+        { error: "Missing answers for required questions.", missing: unanswered.map((q) => q.id) },
+        { status: 400 }
+      );
+    }
+
+    /* Validate: if a question has employer-provided options, the answer must be one of them. */
+    for (const submitted of answers) {
+      const question = humanQuestions.find((q) => q.id === submitted.id);
+      if (question?.options && !question.options.includes(submitted.answer)) {
+        return NextResponse.json(
+          { error: `"${submitted.answer}" is not a valid option for "${question.label}".` },
+          { status: 400 }
+        );
+      }
+    }
+
+    const knownVariants = loadKnownVariants();
+    for (const submitted of answers) {
+      const question = humanQuestions.find((q) => q.id === submitted.id);
+      if (!question) continue;
+
+      /* Re-match by label to get the freshest canonicalKey and type. Fall back to what the
+       * checkpoint carried if matching fails (e.g. a newly added variant not yet in this DB). */
+      const rematch = matchQuestion(question.label, knownVariants);
+      const canonicalKey = rematch?.canonicalKey ?? question.canonicalKey;
+      const questionType = (rematch?.type ?? question.questionType ?? "other") as import("@/lib/apply/questionTypes").QuestionType;
+      if (!canonicalKey) continue; // unrecognised question — saved nowhere, but run continues
+
+      const policy = DEFAULT_POLICY[questionType];
+      saveAnswer({
+        candidateId,
+        canonicalKey,
+        questionType,
+        observedText: question.label,
+        answerValue: submitted.answer,
+        answerSource: "USER_INTERVENTION",
+        approvedByUser: true,
+        /* auto_fill_allowed only when explicitly opted in AND the policy permits reuse.
+         * saveAnswer enforces this again internally — belt and braces. */
+        autoFillAllowed: Boolean(submitted.reuseForEquivalentQuestions) && policy.reusePolicy === "auto_after_approval",
+        sourceAts: batchRun.ats,
+      });
+    }
+
+    recordEvent(batchRun.id, "user_intervention_completed", `batch: answered ${answers.length} question(s)`);
+    const advanced = advanceRun(batchRun.id, "FILLING", { blockingReason: null, blockingQuestion: null });
+    return NextResponse.json({ status: "resumed", run: { id: advanced.id, status: advanced.status } });
+  }
+
+  /* ── single answer path (legacy / combobox runtime failure) ─────────────────────────────────── */
+  const parsed = AnswerBody.safeParse(rawBody);
   if (!parsed.success) return NextResponse.json({ error: "A runId and answer are required." }, { status: 400 });
 
   const run = getRun(parsed.data.runId);

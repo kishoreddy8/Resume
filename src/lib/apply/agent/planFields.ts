@@ -1,4 +1,4 @@
-import type { DiscoveredField, FieldPlan, AdapterContext } from "./types";
+import type { DiscoveredField, FieldPlan, AdapterContext, HumanQuestion } from "./types";
 import { matchQuestion } from "../questionMatching";
 import { resolveAnswer, mayFill, type StoredAnswer } from "../resolveAnswer";
 import { locationsCompatible } from "./locationNormalizer";
@@ -308,4 +308,32 @@ export function firstBlocker(plans: FieldPlan[]): Extract<FieldPlan, { action: "
 /** Required fields with no value planned — what the review screen must warn about. */
 export function unresolvedRequired(plans: FieldPlan[]): FieldPlan[] {
   return plans.filter((p) => p.field.required && (p.action === "ask" || p.action === "skip"));
+}
+
+/**
+ * Collect every required unanswered field into one batch for the user to answer at once.
+ *
+ * Replaces the old single-pause (firstBlocker) with a comprehensive batch so the user can supply
+ * all missing answers in one UI interaction rather than one per execution cycle.
+ */
+export function collectHumanQuestions(
+  plans: FieldPlan[],
+  knownVariants: Map<string, { canonicalKey: string; type: QuestionType }>
+): HumanQuestion[] {
+  return plans
+    .filter((p): p is Extract<FieldPlan, { action: "ask" }> => p.action === "ask" && p.field.required)
+    .map((p) => {
+      const match = matchQuestion(p.question, knownVariants);
+      return {
+        id: p.field.id ?? p.field.name ?? p.field.selector,
+        selector: p.field.selector,
+        label: p.question,
+        canonicalKey: match?.canonicalKey ?? null,
+        questionType: p.questionType ?? match?.type ?? null,
+        required: p.field.required,
+        kind: p.field.kind,
+        options: p.field.options && p.field.options.length > 0 ? p.field.options : null,
+        reason: p.reason,
+      };
+    });
 }

@@ -53,6 +53,18 @@ interface Review {
   canApprove: boolean;
 }
 
+interface HumanQuestion {
+  id: string;
+  selector: string;
+  label: string;
+  canonicalKey: string | null;
+  questionType: string | null;
+  required: boolean;
+  kind: string;
+  options: string[] | null;
+  reason: string;
+}
+
 interface RunEvent {
   id: number;
   event_type: string;
@@ -135,6 +147,9 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
   const [busy, setBusy] = useState<null | "answer" | "resume" | "submit">(null);
   const [answer, setAnswer] = useState("");
   const [reuse, setReuse] = useState(false);
+  const [humanQuestions, setHumanQuestions] = useState<HumanQuestion[] | null>(null);
+  const [batchAnswers, setBatchAnswers] = useState<Record<string, string>>({});
+  const [batchReuse, setBatchReuse] = useState<Record<string, boolean>>({});
   const answerRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -146,6 +161,9 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
       setRun(body.run);
       setReview(body.review ?? null);
       setEvents(body.events ?? []);
+      setHumanQuestions(body.humanQuestions ?? null);
+      setBatchAnswers({});
+      setBatchReuse({});
     } catch {
       setError("This application could not be loaded.");
     }
@@ -223,7 +241,55 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
           <section id="next-action" aria-labelledby="next-action-title" className={`rounded-[16px] border p-5 shadow-[var(--lift-1)] sm:p-6 ${presentation.needsUser ? "border-[color-mix(in_srgb,var(--warning)_30%,var(--border))] bg-[var(--z3-bg)]" : "border-[var(--border)] bg-[var(--z3-bg)]"}`}>
             <div className="flex flex-wrap items-center gap-2"><IconShield size={19} /><h2 id="next-action-title" className="text-[18px] font-bold text-primary">{presentation.needsUser ? "Needs your attention" : primaryActionLabel(run.status)}</h2><Pill tone={pillTone(presentation.marker, presentation.needsUser)}>{presentation.label}</Pill></div>
 
-            {run.status === "WAITING_FOR_ANSWER" && run.question ? (
+            {run.status === "WAITING_FOR_ANSWER" && humanQuestions && humanQuestions.length > 0 ? (
+              <BatchQuestionForm
+                run={run}
+                humanQuestions={humanQuestions}
+                batchAnswers={batchAnswers}
+                batchReuse={batchReuse}
+                busy={busy}
+                onAnswerChange={(id, value) => setBatchAnswers((prev) => ({ ...prev, [id]: value }))}
+                onReuseChange={(id, value) => setBatchReuse((prev) => ({ ...prev, [id]: value }))}
+                onSave={async () => {
+                  if (candidateId === null) return;
+                  const answers = humanQuestions.map((q) => ({
+                    id: q.id,
+                    answer: batchAnswers[q.id] ?? "",
+                    reuseForEquivalentQuestions: batchReuse[q.id] ?? false,
+                  }));
+                  setBusy("answer");
+                  setError(null);
+                  try {
+                    const saveRes = await fetch(`/api/candidates/${candidateId}/application-runs`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ runId: run.id, answers }),
+                    });
+                    if (!saveRes.ok) {
+                      const b = await saveRes.json().catch(() => ({}));
+                      setError((b as { error?: string }).error ?? "Could not save answers.");
+                      return;
+                    }
+                    /* Auto-resume: re-execute now that all answers are in the vault. */
+                    const resumeRes = await fetch(`/api/candidates/${candidateId}/application-runs/start`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action: "resume", runId: run.id }),
+                    });
+                    if (!resumeRes.ok) {
+                      const b = await resumeRes.json().catch(() => ({}));
+                      setError((b as { error?: string }).error ?? "Could not resume application.");
+                      return;
+                    }
+                    await load();
+                  } catch {
+                    setError("Could not save answers and resume.");
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              />
+            ) : run.status === "WAITING_FOR_ANSWER" && run.question ? (
               <div className="mt-4">
                 <p className="text-[15px] font-semibold leading-6 text-primary">{run.question}</p>
                 <label className="mt-3 block"><span className="text-[14px] font-medium text-secondary">Your answer</span><input ref={answerRef} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Enter your answer" className="mt-2 min-h-11 w-full rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-3 text-[16px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]" /></label>
@@ -284,6 +350,82 @@ function FinalReview({ run, review, busy, onSubmit }: { run: RunDetail; review: 
       {review.unresolved.length > 0 && <div className="mt-4 rounded-[11px] bg-[var(--pill-red-bg)] p-4"><h4 className="text-[14px] font-bold text-[var(--pill-red-fg)]">Still unanswered</h4><ul className="mt-2 grid gap-1 text-[13px] leading-5 text-secondary">{review.unresolved.map((item) => <li key={item.question}>{item.question} — {item.reason}</li>)}</ul></div>}
       <button type="button" onClick={onSubmit} disabled={busy !== null || !review.canApprove} className={`${BTN_PRIMARY} mt-5 min-h-11 text-[14px]`}>{busy === "submit" ? "Submitting…" : "Approve & Submit"}</button>
       {!review.canApprove && <p className="mt-2 text-[13px] leading-5 text-tertiary">Answer everything still unresolved before this application can be submitted.</p>}
+    </div>
+  );
+}
+
+function BatchQuestionForm({
+  run: _run,
+  humanQuestions,
+  batchAnswers,
+  batchReuse,
+  busy,
+  onAnswerChange,
+  onReuseChange,
+  onSave,
+}: {
+  run: RunDetail;
+  humanQuestions: HumanQuestion[];
+  batchAnswers: Record<string, string>;
+  batchReuse: Record<string, boolean>;
+  busy: null | "answer" | "resume" | "submit";
+  onAnswerChange: (id: string, value: string) => void;
+  onReuseChange: (id: string, value: boolean) => void;
+  onSave: () => void;
+}) {
+  const allAnswered = humanQuestions.every((q) => (batchAnswers[q.id]?.trim() ?? "").length > 0);
+  return (
+    <div className="mt-4">
+      <h3 className="text-[17px] font-bold text-primary">Questions from the employer</h3>
+      <p className="mt-1 text-[14px] leading-6 text-secondary">Answer all questions below, then JobHunt will continue filling your application automatically.</p>
+      <div className="mt-4 grid gap-5">
+        {humanQuestions.map((q) => (
+          <div key={q.id} className="rounded-[12px] border border-[var(--border)] bg-[var(--z0-bg)] p-4">
+            <label htmlFor={`batch-${q.id}`} className="block text-[14px] font-semibold text-primary">{q.label}{q.required && <span className="ml-1 text-[var(--error)]" aria-label="required">*</span>}</label>
+            {q.reason && <p className="mt-1 text-[12px] leading-5 text-tertiary">{q.reason}</p>}
+            {q.options && q.options.length > 0 ? (
+              <select
+                id={`batch-${q.id}`}
+                value={batchAnswers[q.id] ?? ""}
+                onChange={(e) => onAnswerChange(q.id, e.target.value)}
+                className="mt-2 min-h-11 w-full rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-3 text-[16px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+              >
+                <option value="">Choose an option…</option>
+                {q.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+              </select>
+            ) : (
+              <input
+                id={`batch-${q.id}`}
+                type="text"
+                value={batchAnswers[q.id] ?? ""}
+                onChange={(e) => onAnswerChange(q.id, e.target.value)}
+                placeholder="Your answer"
+                className="mt-2 min-h-11 w-full rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-3 text-[16px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+              />
+            )}
+            {q.questionType !== "voluntary_demographic" && (
+              <label className="mt-2 flex min-h-9 items-center gap-2 text-[13px] text-secondary">
+                <input
+                  type="checkbox"
+                  checked={batchReuse[q.id] ?? false}
+                  onChange={(e) => onReuseChange(q.id, e.target.checked)}
+                  className="h-4 w-4 accent-[var(--accent)]"
+                />
+                Remember this answer for equivalent questions
+              </label>
+            )}
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={busy !== null || !allAnswered}
+        className={`${BTN_PRIMARY} mt-5 min-h-11 text-[14px]`}
+      >
+        {busy === "answer" ? "Saving…" : "Save Answers & Continue"}
+      </button>
+      <p className="mt-2 text-[13px] leading-5 text-tertiary">Saving answers does not submit the application. JobHunt will continue filling the form and stop again if it needs more from you.</p>
     </div>
   );
 }

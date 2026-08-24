@@ -1,14 +1,14 @@
 import type { Page } from "playwright";
 import { advanceRun, getRun, recordEvent, updateCheckpoint, type ApplicationRun } from "@/db/queries/applicationRuns";
 import { discoverFields, COLLECT_CONTROLS_SCRIPT, type RawControl } from "../agent/fieldDiscovery";
-import { planFields, firstBlocker } from "../agent/planFields";
+import { planFields, collectHumanQuestions } from "../agent/planFields";
 import { exactComboboxOption } from "../agent/comboboxSelection";
 import { findCanonicalLocation } from "../agent/locationNormalizer";
 import { findCanonicalPhoneCountry } from "../agent/phoneCountryNormalizer";
 import { detectBlocking, BLOCKING_STATUS } from "../agent/detectBlocking";
 import { selectAdapter } from "../agent/selectAdapter";
 import { buildFinalReview, readSubmissionOutcome, type FinalReview } from "../finalReview";
-import type { AdapterContext, FieldPlan } from "../agent/types";
+import type { AdapterContext, FieldPlan, HumanQuestion } from "../agent/types";
 import type { StoredAnswer } from "../resolveAnswer";
 import type { QuestionType } from "../questionTypes";
 import { ApplicationBrowserRuntime, type BrowserSession } from "./browserRuntime";
@@ -45,6 +45,8 @@ export interface ExecutionCheckpoint {
   completed: { selector: string; canonicalKey: string | null; source: string; kind: "fill" | "upload" }[];
   /** The review shown to the user, once built. It IS what the approval covers. */
   review?: FinalReview;
+  /** Required unanswered questions collected for batch human input. Present only while WAITING_FOR_ANSWER. */
+  humanQuestions?: HumanQuestion[];
   lastAction: string;
 }
 
@@ -258,14 +260,16 @@ export async function executeRun(
       );
     }
 
-    /* The first unanswered question stops the run. The fields already filled are checkpointed, so
-     * answering it resumes from here rather than starting over. */
-    const blocker = firstBlocker(plans);
-    if (blocker) {
+    /* Collect all required unanswered fields at once. A single pause lets the user answer
+     * everything in one batch rather than one field per execution cycle. */
+    const humanQuestions = collectHumanQuestions(plans, deps.knownVariants);
+    if (humanQuestions.length > 0) {
+      checkpoint.humanQuestions = humanQuestions;
+      recordEvent(runId, "human_question_batch_created", String(humanQuestions.length));
       return advanceRun(runId, "WAITING_FOR_ANSWER", {
         checkpoint,
-        blockingQuestion: blocker.question,
-        blockingReason: blocker.reason,
+        blockingQuestion: humanQuestions[0]!.label,
+        blockingReason: humanQuestions[0]!.reason,
       });
     }
 
