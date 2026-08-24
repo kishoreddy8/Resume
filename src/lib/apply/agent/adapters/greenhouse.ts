@@ -26,6 +26,7 @@ export const greenhouseAdapter: AtsAdapter = {
       last_name: "#last_name",
       email: "#email",
       phone: "#phone",
+      phone_country_code: "#country",
       resume: "#resume",
       cover_letter: "#cover_letter",
     };

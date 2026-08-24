@@ -66,9 +66,15 @@ const RULES: Rule[] = [
   // the current-location value.
   { key: "location_city", type: "contact", all: ["location"], wordBoundary: "city", none: ["relocat"] },
   { key: "location_city", type: "contact", wordBoundary: "city", none: ["relocat"] },
-  // "Country code" is a phone dial-code control, not the residency/location question — excluded so
-  // it never gets the candidate's country typed into a phone-prefix field.
-  { key: "country", type: "contact", all: ["country"], none: ["code"] },
+  // "Country code" / "Phone country" is a phone dial-code control, not residency.
+  { key: "phone_country_code", type: "contact", all: ["phone", "country"] },
+  { key: "phone_country_code", type: "contact", all: ["dial", "code"] },
+  { key: "phone_country_code", type: "contact", all: ["dialing", "code"] },
+  { key: "phone_country_code", type: "contact", all: ["calling", "code"] },
+  { key: "phone_country_code", type: "contact", all: ["country", "code"] },
+  // Country of residence / residency is distinct from the phone dial-code control.
+  { key: "country_of_residence", type: "contact", all: ["country", "residence"] },
+  { key: "country", type: "contact", all: ["country"], none: ["code", "phone", "dial", "calling"] },
   { key: "linkedin_url", type: "contact", all: ["linkedin"] },
   { key: "github_url", type: "contact", all: ["github"] },
   { key: "portfolio_url", type: "contact", all: ["portfolio"] },

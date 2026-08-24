@@ -2,6 +2,7 @@ import type { DiscoveredField, FieldPlan, AdapterContext } from "./types";
 import { matchQuestion } from "../questionMatching";
 import { resolveAnswer, mayFill, type StoredAnswer } from "../resolveAnswer";
 import { locationsCompatible } from "./locationNormalizer";
+import { derivePhoneCountryCode } from "./phoneCountryNormalizer";
 import type { QuestionType } from "../questionTypes";
 
 /**
@@ -86,17 +87,31 @@ function contactValueFor(canonicalKey: string, ctx: AdapterContext): string | nu
  */
 function hintedKeyFor(
   field: { selector: string; id: string | null; name: string | null },
-  hints: Record<string, string> | undefined
+  hints: Record<string, string> | undefined,
+  allFields?: DiscoveredField[]
 ): { canonicalKey: string; type: QuestionType } | null {
   if (!hints) return null;
   for (const [canonicalKey, hint] of Object.entries(hints)) {
     const type = HINT_TYPES[canonicalKey];
     if (!type) continue;
 
-    if (hint === field.selector) return { canonicalKey, type };
-    const byName = hint.match(/^\[name="(.+)"\]$/);
-    if (byName && field.name === byName[1]) return { canonicalKey, type };
-    if (hint.startsWith("#") && field.id === hint.slice(1)) return { canonicalKey, type };
+    const matchesHint =
+      hint === field.selector ||
+      (field.name && hint === `[name="${field.name}"]`) ||
+      (hint.startsWith("#") && field.id === hint.slice(1));
+
+    if (matchesHint) {
+      // Special guard for phone_country_code: on Greenhouse, #country is the phone dialing prefix
+      // only when accompanied by a phone input on the form. Outside a phone context (e.g. a generic
+      // country combobox), #country remains the generic residence country.
+      if (canonicalKey === "phone_country_code" && allFields) {
+        const hasPhoneField = allFields.some(
+          (f) => f.selector === "#phone" || f.id === "phone" || f.kind === "tel" || f.name === "phone"
+        );
+        if (!hasPhoneField) continue;
+      }
+      return { canonicalKey, type };
+    }
   }
   return null;
 }
@@ -108,6 +123,7 @@ const HINT_TYPES: Record<string, QuestionType> = {
   last_name: "identity",
   email: "contact",
   phone: "contact",
+  phone_country_code: "contact",
   location_current: "contact",
   linkedin_url: "contact",
   github_url: "contact",
@@ -145,7 +161,7 @@ export function planFields(input: PlanInputs): FieldPlan[] {
 
     /* An adapter hint identifies a field the ATS names consistently but does not label. It maps a
      * SELECTOR to a canonical key, so it can only ever name a field, never supply its value. */
-    const hinted = hintedKeyFor(field, input.selectorHints);
+    const hinted = hintedKeyFor(field, input.selectorHints, input.fields);
 
     // --- a field with neither a label nor a hint ------------------------------------------------
     if (!field.label && !hinted) {
@@ -209,6 +225,45 @@ export function planFields(input: PlanInputs): FieldPlan[] {
         field,
         question: field.label ?? "Location (City)",
         reason: "No saved answer for this question.",
+        questionType: match.type,
+      });
+      continue;
+    }
+
+    // --- phone_country_code: negotiate vault or derive from verified contact phone + location --
+    if (match.canonicalKey === "phone_country_code") {
+      const stored = input.storedAnswers.get("phone_country_code");
+      if (stored) {
+        const vaultRes = resolveAnswer(match.type, stored);
+        if (vaultRes.action === "fill" && mayFill(vaultRes.source)) {
+          plans.push({
+            action: "fill",
+            field,
+            value: vaultRes.value,
+            source: vaultRes.source,
+            canonicalKey: "phone_country_code",
+            phoneCountryContext: vaultRes.value,
+          });
+          continue;
+        }
+      }
+      const derived = derivePhoneCountryCode(input.context.contact.phone, input.context.contact.location);
+      if (derived) {
+        plans.push({
+          action: "fill",
+          field,
+          value: derived.dialCode,
+          source: "PROFILE",
+          canonicalKey: "phone_country_code",
+          phoneCountryContext: derived.countryName,
+        });
+        continue;
+      }
+      plans.push({
+        action: "ask",
+        field,
+        question: field.label ?? "Phone country code",
+        reason: "Could not safely determine phone country dial code from verified contact details.",
         questionType: match.type,
       });
       continue;

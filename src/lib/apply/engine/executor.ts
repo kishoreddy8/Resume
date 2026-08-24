@@ -4,6 +4,7 @@ import { discoverFields, COLLECT_CONTROLS_SCRIPT, type RawControl } from "../age
 import { planFields, firstBlocker } from "../agent/planFields";
 import { exactComboboxOption } from "../agent/comboboxSelection";
 import { findCanonicalLocation } from "../agent/locationNormalizer";
+import { findCanonicalPhoneCountry } from "../agent/phoneCountryNormalizer";
 import { detectBlocking, BLOCKING_STATUS } from "../agent/detectBlocking";
 import { selectAdapter } from "../agent/selectAdapter";
 import { buildFinalReview, readSubmissionOutcome, type FinalReview } from "../finalReview";
@@ -143,6 +144,9 @@ async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { 
       if (plan.canonicalKey === "location_city" && plan.locationContext) {
         const profileLoc = plan.locationContext;
         normalize = (opts) => findCanonicalLocation(profileLoc, opts);
+      } else if (plan.canonicalKey === "phone_country_code") {
+        const countryContext = plan.phoneCountryContext ?? null;
+        normalize = (opts) => findCanonicalPhoneCountry(plan.value, opts, countryContext);
       }
       const selected = await selectComboboxOption(page, plan.field.selector, plan.value, normalize);
       if (!selected) {

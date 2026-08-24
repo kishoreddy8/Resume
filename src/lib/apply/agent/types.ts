@@ -38,6 +38,11 @@ export type FieldPlan =
        * ATS option ("Dallas, Texas, United States") when exact-match fails.
        */
       locationContext?: string;
+      /**
+       * Present only on `phone_country_code` fills. The candidate's country name context ("United States")
+       * carried to the executor so the combobox normaliser can disambiguate shared dialing prefixes (+1 for US vs Canada).
+       */
+      phoneCountryContext?: string;
     }
   | { action: "upload"; field: DiscoveredField; filePath: string; source: AnswerSource }
   | { action: "ask"; field: DiscoveredField; question: string; reason: string; questionType: QuestionType | null }
