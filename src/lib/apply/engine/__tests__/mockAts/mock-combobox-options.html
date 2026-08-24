@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mock ATS – Combobox Option Discovery</title>
+</head>
+<body>
+  <form id="application-form">
+    <!-- Unrelated persistent phone listbox to test global option pollution -->
+    <ul id="phone-country-listbox" role="listbox" aria-label="Phone country">
+      <li role="option">United States (+1)</li>
+      <li role="option">United Kingdom (+44)</li>
+      <li role="option">India (+91)</li>
+    </ul>
+
+    <!-- Question 1: DW Role (4 options) -->
+    <div>
+      <label for="dw-role">Primary Data Warehouse Role*</label>
+      <input id="dw-role" role="combobox" class="select__input" type="text" required autocomplete="off" aria-controls="dw-role-listbox">
+      <ul id="dw-role-listbox" role="listbox"></ul>
+    </div>
+
+    <!-- Question 2: DE Env (3 options) -->
+    <div>
+      <label for="de-env">Primary Data Engineering Environment*</label>
+      <input id="de-env" role="combobox" class="select__input" type="text" required autocomplete="off" aria-controls="de-env-listbox">
+      <ul id="de-env-listbox" role="listbox"></ul>
+    </div>
+
+    <!-- Question 3: Sanitization (duplicates, whitespace, empty) -->
+    <div>
+      <label for="sanitization-test">Sanitization Question*</label>
+      <input id="sanitization-test" role="combobox" class="select__input" type="text" required autocomplete="off" aria-controls="sanitization-listbox">
+      <ul id="sanitization-listbox" role="listbox"></ul>
+    </div>
+
+    <!-- Question 4: Optional Demographic (not required) -->
+    <div>
+      <label for="gender">Gender</label>
+      <input id="gender" role="combobox" class="select__input" type="text" autocomplete="off" aria-controls="gender-listbox">
+      <ul id="gender-listbox" role="listbox"></ul>
+    </div>
+
+    <!-- Question 5: Empty Async combobox (no default options) -->
+    <div>
+      <label for="empty-async">Empty Async Search*</label>
+      <input id="empty-async" role="combobox" class="select__input" type="text" required autocomplete="off" aria-controls="empty-listbox">
+      <ul id="empty-listbox" role="listbox"></ul>
+    </div>
+  </form>
+
+  <script>
+    function setupCombobox(inputId, listboxId, options) {
+      var input = document.getElementById(inputId);
+      var listbox = document.getElementById(listboxId);
+      if (!input || !listbox) return;
+
+      function render() {
+        listbox.innerHTML = "";
+        for (var i = 0; i < options.length; i++) {
+          var li = document.createElement("li");
+          li.setAttribute("role", "option");
+          li.textContent = options[i];
+          (function(val) {
+            li.addEventListener("click", function() {
+              input.value = val.trim();
+              listbox.innerHTML = "";
+            });
+          })(options[i]);
+          listbox.appendChild(li);
+        }
+      }
+
+      input.addEventListener("click", render);
+      input.addEventListener("focus", render);
+      input.addEventListener("keydown", function(e) {
+        if (e.key === "Escape") {
+          listbox.innerHTML = "";
+        }
+      });
+      input.addEventListener("blur", function() {
+        // give brief delay for click handler if any
+        setTimeout(function() {
+          listbox.innerHTML = "";
+        }, 100);
+      });
+    }
+
+    setupCombobox("dw-role", "dw-role-listbox", [
+      "Architect",
+      "Lead Developer",
+      "Senior Developer",
+      "Data Analyst"
+    ]);
+
+    setupCombobox("de-env", "de-env-listbox", [
+      "Snowflake",
+      "Databricks",
+      "AWS Redshift"
+    ]);
+
+    setupCombobox("sanitization-test", "sanitization-listbox", [
+      "  Snowflake  ",
+      "",
+      "Databricks",
+      "Snowflake",
+      "   "
+    ]);
+
+    setupCombobox("gender", "gender-listbox", [
+      "Male",
+      "Female",
+      "Non-binary",
+      "Decline to state"
+    ]);
+
+    setupCombobox("empty-async", "empty-listbox", []);
+  </script>
+</body>
+</html>

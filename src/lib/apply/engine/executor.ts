@@ -132,6 +132,54 @@ async function selectComboboxOption(
   return chosen;
 }
 
+/**
+ * Safely discovers available options from a scoped combobox without selecting any value.
+ *
+ * SCOPED TO OWNED LISTBOX. Opens the combobox, reads aria-controls to scope option reading
+ * strictly to its own listbox (preventing global option pollution, e.g. from phone iti widgets),
+ * captures the visible options, and then cleanly dismisses the dropdown (via Escape / blur).
+ *
+ * READ-ONLY GUARANTEE. Never clicks any option, never types into the input, never selects any value.
+ */
+export async function discoverComboboxOptions(page: Page, selector: string): Promise<string[] | null> {
+  try {
+    await page.click(selector);
+
+    // React Select sets aria-controls on the input to the id of its listbox once the menu opens.
+    // Scoping to that listbox keeps unrelated open menus out of our option reads.
+    const listboxId = await page.$eval(selector, (el) => el.getAttribute("aria-controls") ?? "").catch(() => "");
+    const optionSelector = listboxId ? `#${listboxId} [role="option"]` : '[role="option"]';
+
+    // Wait a bounded amount of time for options to render into the scoped listbox (sync or fast-loading)
+    await page
+      .waitForSelector(optionSelector, { timeout: 1500, state: "attached" })
+      .catch(() => null);
+
+    const rawOptions = await page
+      .$$eval(optionSelector, (els) => els.map((el) => (el.textContent ?? "").trim()))
+      .catch(() => []);
+
+    // Dismiss the dropdown without selecting anything
+    await page.keyboard.press("Escape").catch(() => null);
+    await page.$eval(selector, (el) => (el as HTMLElement).blur?.()).catch(() => null);
+
+    // Sanitize: trim, non-empty, deduplicate preserving order
+    const seen = new Set<string>();
+    const options: string[] = [];
+    for (const raw of rawOptions) {
+      const trimmed = raw.trim();
+      if (trimmed.length > 0 && !seen.has(trimmed)) {
+        seen.add(trimmed);
+        options.push(trimmed);
+      }
+    }
+
+    return options.length > 0 ? options : null;
+  } catch {
+    return null;
+  }
+}
+
 async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (plan.action === "fill") {
     if (plan.field.kind === "select") {
@@ -258,6 +306,22 @@ export async function executeRun(
         plan.action === "upload" ? "document_uploaded" : "field_filled",
         plan.field.label ?? plan.field.selector
       );
+    }
+
+    /* Discover options for any required combobox questions going into the batch, so the
+     * candidate UI can render multiple-choice dropdowns/pills instead of a plain text box. */
+    for (const plan of plans) {
+      if (
+        plan.action === "ask" &&
+        plan.field.required &&
+        plan.field.kind === "combobox" &&
+        (!plan.field.options || plan.field.options.length === 0)
+      ) {
+        const discovered = await discoverComboboxOptions(session.page, plan.field.selector);
+        if (discovered && discovered.length > 0) {
+          plan.field.options = discovered;
+        }
+      }
     }
 
     /* Collect all required unanswered fields at once. A single pause lets the user answer
