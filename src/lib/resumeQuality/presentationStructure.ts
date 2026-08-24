@@ -130,9 +130,8 @@ export function checkPresentationAttribution(
         field: "environment",
         offending: tech,
         message:
-          `Environment line for ${role.company} lists "${tech}", which this employer's evidence does not support ` +
-          `and which no bullet under this role attributes. A technology used at a different employer may not be ` +
-          `listed in this role's Environment line.`,
+          `Environment line for ${role.company} lists "${tech}", which is absent from candidate's Master Skills ` +
+          `Inventory and experience evidence.`,
       });
     }
 

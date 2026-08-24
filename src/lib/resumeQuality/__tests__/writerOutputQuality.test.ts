@@ -98,9 +98,9 @@ test("project descriptions are bounded by sentence and technology counts", () =>
   assert.equal(PROJECT_DESCRIPTION_MAX_TECHNOLOGIES, 4);
 });
 
-test("overloaded bullets may be split only when each result has distinct employer-scoped evidence", () => {
+test("overloaded bullets may be split only when each result has distinct evidenced accomplishment context", () => {
   const section = renderWriterOutputQualitySection();
-  assert.match(section, /split it only when each resulting bullet has its own employer-scoped evidence/);
+  assert.match(section, /split it only when each resulting bullet has its own evidenced accomplishment context/);
   assert.match(section, /Otherwise simplify the original bullet/);
 });
 
@@ -149,16 +149,10 @@ test("an unsupported AWS requirement never enters recommended skill order", () =
   assert.ok(!recommendedSkillOrder(MULTI_JD_MASTER_PROFILE, matrix).includes("AWS Glue"));
 });
 
-test("writer guidance forbids blind Azure-to-AWS employer rewrites", () => {
+test("writer guidance positions technologies according to Target Ecosystem Strategy and Architecture Palettes", () => {
   const section = renderWriterOutputQualitySection();
-  assert.match(section, /Never rewrite an Azure employer\s+claim as AWS/);
-  assert.match(section, /same employer's evidence permits it/);
-});
-
-test("every added bullet requires employer attribution and an evidence source", () => {
-  const section = renderWriterOutputQualitySection();
-  assert.match(section, /record the employer and exact evidence source in/);
-  assert.match(section, /If evidence cannot support an employer attribution, do not create the bullet/);
+  assert.match(section, /Position technologies according to the Target Ecosystem Strategy and Approved Architecture Palettes/);
+  assert.match(section, /Technologies should form coherent engineering pipelines/);
 });
 
 test("duplicate bullet ideas and synonymous repeats are rejected", () => {

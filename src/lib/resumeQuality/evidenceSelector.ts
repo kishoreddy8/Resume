@@ -280,7 +280,7 @@ export function selectWriterEvidence(input: SelectWriterEvidenceInput): Selected
 
     if (baseScore > 0) {
       let finalScore = baseScore;
-      if (entry.employerCount > 0) finalScore += 10;
+      if (entry.sources.size > 0) finalScore += 5;
       if (entry.isRecent) finalScore += 5;
 
       scoredSkills.push({
@@ -302,8 +302,8 @@ export function selectWriterEvidence(input: SelectWriterEvidenceInput): Selected
     boundedFallbackUsed = true;
     for (const [key, entry] of candidateSkillsMap.entries()) {
       if (!scoredSkills.some((s) => normalizeKey(s.canonical) === key)) {
-        // Prioritize actual employer-evidenced skills for fallback; inventory-only skills get minimal score
-        let fallbackScore = entry.employerCount > 0 ? 25 : 1;
+        // Global MSI and employer-evidenced skills are full candidate capability evidence
+        let fallbackScore = 20;
         if (entry.isRecent) fallbackScore += 5;
         scoredSkills.push({
           canonical: entry.canonical,

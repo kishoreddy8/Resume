@@ -56,6 +56,18 @@ import {
   mapJdPrioritiesToCandidateEvidence,
   renderJdEvidenceMappingSection,
 } from "../jobEvidenceMapping";
+import {
+  detectTargetEcosystem,
+  renderTargetEcosystemSection,
+} from "../targetEcosystem";
+import {
+  evaluateJdToolCoveragePlan,
+  renderJdToolCoverageSection,
+} from "../jdToolCoverage";
+import {
+  buildEmployerArchitecturePalettes,
+  renderArchitecturePaletteSection,
+} from "../architecturePalette";
 import type {
   ExternalHandoffExportResult,
   RequiredCorrection,
@@ -119,6 +131,12 @@ export function buildExternalWriterPrompt(input: {
   jobIntentSection?: string;
   /** Phase 5 — Deterministic mapping between target JD priorities and top candidate proof points. */
   jdEvidenceMappingSection?: string;
+  /** Phase 6 — Target Ecosystem Strategy (AWS, Azure, GCP, Multi-Cloud, Neutral). */
+  targetEcosystemSection?: string;
+  /** Phase 6 — JD Tool Coverage plan (Supported vs DO_NOT_CLAIM). */
+  jdToolCoverageSection?: string;
+  /** Phase 6 — Approved per-employer architecture palettes. */
+  architecturePaletteSection?: string;
   /** Stage 21 (Evidence-Grounded Resume Quality V2) — the computed JD Priority Matrix/positioning/
    *  skill-order/ATS-coverage data the writer should actually USE, not just prose guidance about it.
    *  All optional: absent only when neither jobRequirements nor a target role title were available
@@ -506,10 +524,7 @@ into a different value, or substitute a placeholder for any of them, and you
 must never invent one that is missing.
 
 Where each value goes:
-- **Full name, email, phone, location** — reproduce verbatim in the resume header.
-- **LinkedIn** — resume header, only when given above.
-
-${input.repairPlanSection ?? ""}${input.contextManifestSection ?? ""}${input.jobIntentSection ? input.jobIntentSection + "\n\n---\n\n" : ""}${input.accomplishmentEvidenceSection ? input.accomplishmentEvidenceSection + "\n\n---\n\n" : ""}${input.jdEvidenceMappingSection ? input.jdEvidenceMappingSection + "\n\n---\n\n" : ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
+${input.repairPlanSection ?? ""}${input.contextManifestSection ?? ""}${input.jobIntentSection ? input.jobIntentSection + "\n\n---\n\n" : ""}${input.targetEcosystemSection ? input.targetEcosystemSection + "\n\n---\n\n" : ""}${input.jdToolCoverageSection ? input.jdToolCoverageSection + "\n\n---\n\n" : ""}${input.architecturePaletteSection ? input.architecturePaletteSection + "\n\n---\n\n" : ""}${input.accomplishmentEvidenceSection ? input.accomplishmentEvidenceSection + "\n\n---\n\n" : ""}${input.jdEvidenceMappingSection ? input.jdEvidenceMappingSection + "\n\n---\n\n" : ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
 ${guardrailItems.map((item, i) => `${i + 1}. ${item}`).join("\n\n")}
 
@@ -951,6 +966,33 @@ export function exportExternalWriterPackage(
         })
       : undefined;
 
+  const exportTargetEcosystem =
+    !isTargetedRepair && writerInput.masterProfile
+      ? detectTargetEcosystem({
+          company: exportCompany?.name,
+          roleTitle: exportTargetRoleTitle,
+          jobDescriptionText: writerInput.jobDescriptionMarkdown,
+          jobRequirements: writerInput.jobRequirements,
+        })
+      : undefined;
+
+  const exportCoveragePlan =
+    !isTargetedRepair && writerInput.masterProfile
+      ? evaluateJdToolCoveragePlan({
+          candidateProfile: writerInput.masterProfile,
+          jobRequirements: writerInput.jobRequirements,
+        })
+      : undefined;
+
+  const exportArchitecturePalettes =
+    !isTargetedRepair && writerInput.masterProfile && exportTargetEcosystem && exportCoveragePlan
+      ? buildEmployerArchitecturePalettes({
+          candidateProfile: writerInput.masterProfile,
+          targetEcosystem: exportTargetEcosystem,
+          coveragePlan: exportCoveragePlan,
+        })
+      : undefined;
+
   // 2. writer_prompt.md
   const promptContent =
     isTargetedRepair && writerInput.repairPlan
@@ -1005,6 +1047,9 @@ export function exportExternalWriterPackage(
           accomplishmentEvidenceSection: exportAccomplishmentPackage ? renderAccomplishmentEvidenceSection(exportAccomplishmentPackage) : undefined,
           jobIntentSection: exportJobIntent ? renderWriterJobIntentSection(exportJobIntent) : undefined,
           jdEvidenceMappingSection: exportJdEvidenceMapping ? renderJdEvidenceMappingSection(exportJdEvidenceMapping) : undefined,
+          targetEcosystemSection: exportTargetEcosystem ? renderTargetEcosystemSection(exportTargetEcosystem) : undefined,
+          jdToolCoverageSection: exportCoveragePlan ? renderJdToolCoverageSection(exportCoveragePlan) : undefined,
+          architecturePaletteSection: exportArchitecturePalettes ? renderArchitecturePaletteSection(exportArchitecturePalettes) : undefined,
           employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
           repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
           resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,
@@ -1183,6 +1228,12 @@ export function exportExternalWriterPackage(
       blockingFailures: writerInput.blockingFailures,
       complianceCorrections: writerInput.complianceCorrections,
       candidateContact: writerInput.candidateContact,
+      accomplishmentEvidenceSection: exportAccomplishmentPackage ? renderAccomplishmentEvidenceSection(exportAccomplishmentPackage) : undefined,
+      jobIntentSection: exportJobIntent ? renderWriterJobIntentSection(exportJobIntent) : undefined,
+      jdEvidenceMappingSection: exportJdEvidenceMapping ? renderJdEvidenceMappingSection(exportJdEvidenceMapping) : undefined,
+      targetEcosystemSection: exportTargetEcosystem ? renderTargetEcosystemSection(exportTargetEcosystem) : undefined,
+      jdToolCoverageSection: exportCoveragePlan ? renderJdToolCoverageSection(exportCoveragePlan) : undefined,
+      architecturePaletteSection: exportArchitecturePalettes ? renderArchitecturePaletteSection(exportArchitecturePalettes) : undefined,
       employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
       repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
       resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,

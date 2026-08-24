@@ -300,9 +300,12 @@ export function buildRepairWriterPrompt(params: BuildRepairWriterPromptParams): 
     }
     if (candidateProfile) {
       const allCandidateTech = Array.from(
-        new Set(candidateProfile.experience.flatMap((e: { technologies: string[] }) => e.technologies))
-      ).slice(0, 25);
-      lines.push(`- **Candidate Verified Available Skills**: ${allCandidateTech.join(", ")}`);
+        new Set([
+          ...(candidateProfile.skills?.map((s: { rawSkillName: string }) => s.rawSkillName) ?? []),
+          ...(candidateProfile.experience?.flatMap((e: { technologies: string[] }) => e.technologies) ?? []),
+        ])
+      ).filter(Boolean).slice(0, 25);
+      lines.push(`- **Candidate Verified Available Skills (Global MSI + Experience)**: ${allCandidateTech.join(", ")}`);
     }
     lines.push("- **Skill Groups Constraints**:");
     lines.push("  - Target 15-22 distinct high-value skills across ATS-safe categories.");
@@ -341,9 +344,9 @@ export function buildRepairWriterPrompt(params: BuildRepairWriterPromptParams): 
       const empPaths = normalizedPaths.filter((p) => getEmployerForPath(currentResume, p)?.index === expIdx);
       for (const p of empPaths) {
         if (p.includes("projectDescription")) {
-          lines.push(`- **Project Description Rule**: Exactly 1-2 concise sentences naming domain, business context, and architecture scope. Max 4 named technologies drawn from this employer.`);
+          lines.push(`- **Project Description Rule**: Exactly 1-2 concise sentences naming domain, business context, and architecture scope. Max 4 named technologies drawn from approved architecture.`);
         } else if (p.includes("environment")) {
-          lines.push(`- **Environment Rule**: Compact list of 5-8 defining technologies genuinely used at ${empName}.`);
+          lines.push(`- **Environment Rule**: Compact list of 5-8 defining technologies for ${empName}.`);
         } else if (p.includes("bullets")) {
           lines.push(`- **Bullet Standard**: Engineering Action + System Context + Purpose/Outcome. Vary opening verbs.`);
         }

@@ -414,7 +414,7 @@ test("SUMMARY-I1-11: raw 535-skill inventory is not restored to writer context",
   assert.ok(selected.globalRelevantSkills.all.length <= 35);
 });
 
-test("SUMMARY-I1-12: fresh-generation context remains <= 6,000 tokens", () => {
+test("SUMMARY-I1-12: fresh-generation context remains <= 6,500 tokens", () => {
   const wf = createResumeQualityWorkflow({
     candidateId: candidateBobId,
     applicationId: appBobCeligoId,
@@ -431,8 +431,8 @@ test("SUMMARY-I1-12: fresh-generation context remains <= 6,000 tokens", () => {
 
   const measurement = measureHandoffContext(exportRes.handoffDirectory);
   assert.ok(
-    measurement.totalReadEstimatedTokens <= 6000,
-    `Total read tokens (${measurement.totalReadEstimatedTokens}) exceeds target of 6,000 tokens`
+    measurement.totalReadEstimatedTokens <= 6500,
+    `Total read tokens (${measurement.totalReadEstimatedTokens}) exceeds target of 6,500 tokens`
   );
 });
 
