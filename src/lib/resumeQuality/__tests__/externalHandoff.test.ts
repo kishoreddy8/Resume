@@ -1434,7 +1434,7 @@ test("42. TARGETED_REPAIR export with employer scope writes compact master_resum
   assert.equal("skills" in parsed, false, "skills array must be omitted during TARGETED_REPAIR");
 });
 
-test("43. TARGETED_REPAIR export touching summary falls back to full master_resume_reference.json", async () => {
+test("43. TARGETED_REPAIR export touching summary writes compact master_resume_reference.json (skills omitted)", async () => {
   const wf = createResumeQualityWorkflow({
     candidateId: candidateAliceId,
     applicationId: appAliceJobOneId,
@@ -1501,7 +1501,11 @@ test("43. TARGETED_REPAIR export touching summary falls back to full master_resu
   const masterRefPath = path.join(exportRes.handoffDirectory, "master_resume_reference.json");
   assert(fs.existsSync(masterRefPath));
   const parsed = JSON.parse(fs.readFileSync(masterRefPath, "utf-8"));
-  assert.equal(Array.isArray(parsed.skills), true, "global summary repair must fall back to full reference with skills");
+  assert.equal("skills" in parsed, false, "global summary repair must write compact reference without raw skills dump");
+  assert.equal(parsed.totalYearsExperience, 5);
+  assert.ok(Array.isArray(parsed.experience));
+  assert.ok(Array.isArray(parsed.education));
+  assert.ok(Array.isArray(parsed.certifications));
 });
 
 // --- PATCH-BASED TARGETED_REPAIR (2026-08-23) ------------------------------------------------------
@@ -2244,7 +2248,7 @@ test("59. the real Claude CLI driving prompt stays on the original, proven multi
   assert.doesNotMatch(DRIVING_PROMPT, /writer_handoff\.md/);
 });
 
-test("60. measureHandoffContext still counts writer_prompt.md + its referenced files as writer-read for INITIAL_GENERATION — writer_handoff.md exists on disk but is never actually read", async () => {
+test("60. measureHandoffContext counts writer_prompt.md + its referenced files as writer-read for INITIAL_GENERATION — writer_handoff.md and static instruction companion files exist on disk for audit but are not read by writer", async () => {
   const wf = createResumeQualityWorkflow({
     candidateId: candidateAliceId,
     applicationId: appAliceJobOneId,
@@ -2256,8 +2260,8 @@ test("60. measureHandoffContext still counts writer_prompt.md + its referenced f
   const readFiles = measurement.files.filter((f) => f.readByWriter).map((f) => f.filename).sort();
   assert.deepEqual(
     readFiles,
-    ["extracted_job_requirements.json", "master_resume_reference.json", "master_skills_inventory.md", "resume_tailoring_instructions.md", "writer_prompt.md"].sort(),
-    "the real writer-read set is unchanged from before this phase — writer_handoff.md is not among them"
+    ["extracted_job_requirements.json", "master_resume_reference.json", "master_skills_inventory.md", "writer_prompt.md"].sort(),
+    "the real writer-read set includes only the direct context files needed by the prompt"
   );
 
   const handoffFile = measurement.files.find((f) => f.filename === "writer_handoff.md");

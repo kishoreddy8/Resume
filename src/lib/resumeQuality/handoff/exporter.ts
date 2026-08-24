@@ -281,7 +281,7 @@ export function buildExternalWriterPrompt(input: {
   const masterResumeRef = singlePassMode ? "the MASTER RESUME FACTS section embedded above" : "`master_resume_reference.json` / `master_resume.txt`";
   const msiRef = singlePassMode ? "the MASTER SKILLS INVENTORY section embedded above" : "`master_skills_inventory.md`";
   const jdReqRef = singlePassMode ? "the JD REQUIREMENTS section embedded above" : "`extracted_job_requirements.json`";
-  const instructionsRef = singlePassMode ? "the CANONICAL TAILORING RULES section above" : "`resume_tailoring_instructions.md`";
+  const instructionsRef = singlePassMode ? "the CANONICAL TAILORING RULES section above" : "the Canonical Tailoring Contract below";
 
   const guardrailItems = [
     `**Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
@@ -483,10 +483,12 @@ Target Role Track: **${selectedTrack ?? "General Engineering Track"}**
 ## THE CANONICAL STANDARD IS MANDATORY
 
 ${
-    singlePassMode ? "The CANONICAL TAILORING RULES section below" : "`resume_tailoring_instructions.md` in this package"
-  } (instruction version **${INSTRUCTION_VERSION}**, full-standard hash \`${INSTRUCTION_HASH}\`) is drawn verbatim, word-for-word, from the authoritative Resume Tailoring System Instructions — never paraphrased or summarized. ${
-    input.instructionsScopeNote ?? "It is the complete document."
-  } You must follow every included section in its entirety, not just the highlights below. CareerOps will independently re-review your output against this exact same canonical text; nothing you self-report can substitute for actually satisfying it.
+    singlePassMode
+      ? "The CANONICAL TAILORING RULES section below"
+      : `The canonical tailoring rules below (instruction version **${INSTRUCTION_VERSION}**, full-standard hash \`${INSTRUCTION_HASH}\`)`
+  } define the authoritative standards for this iteration. ${
+    input.instructionsScopeNote ? `${input.instructionsScopeNote} ` : ""
+  }You must follow every rule in its entirety. CareerOps independently re-reviews your output against these exact requirements; self-reported compliance cannot substitute for satisfying them.
 
 ## CANDIDATE CONTACT DETAILS — VERIFIED HARD FACTS, REPRODUCE EXACTLY
 ${contactBlock}
@@ -1009,11 +1011,11 @@ export function exportExternalWriterPackage(
   // is written exactly as before — fail toward MORE context, not less.
   if (writerInput.masterProfile) {
     const useFullForRepair =
-      isTargetedRepair && (repairEmployerScope === null || shouldUseFullMasterReferenceForRepair(writerInput.repairPlan));
-    const masterReferenceContent = useFullForRepair
-      ? writerInput.masterProfile
-      : isTargetedRepair
-      ? buildRepairScopedMasterReference(writerInput.masterProfile, repairEmployerScope!)
+      isTargetedRepair && shouldUseFullMasterReferenceForRepair(writerInput.repairPlan);
+    const masterReferenceContent = isTargetedRepair
+      ? useFullForRepair
+        ? buildInitialGenerationMasterReference(writerInput.masterProfile)
+        : buildRepairScopedMasterReference(writerInput.masterProfile, repairEmployerScope ?? new Set())
       : buildInitialGenerationMasterReference(writerInput.masterProfile);
     writePackageFile("master_resume_reference.json", JSON.stringify(masterReferenceContent, null, 2));
   } else if (!copyPackageFile(wsPkg.masterResumePath, "master_resume.txt")) {

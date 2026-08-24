@@ -220,49 +220,49 @@ test("9. repairPlan with unattributed findings falls back to full master referen
   assert.equal(shouldUseFullMasterReferenceForRepair(p), true);
 });
 
-test("10. summary repair falls back to full master reference", () => {
+test("10. summary repair uses compact reference (does NOT fallback to raw profile)", () => {
   const p = plan({
     editablePaths: ["resume.summary[0]"],
   });
-  assert.equal(shouldUseFullMasterReferenceForRepair(p), true);
+  assert.equal(shouldUseFullMasterReferenceForRepair(p), false);
 
   const p2 = plan({
     editablePaths: ["resume.summary"],
   });
-  assert.equal(shouldUseFullMasterReferenceForRepair(p2), true);
+  assert.equal(shouldUseFullMasterReferenceForRepair(p2), false);
 });
 
-test("11. tagline / positioning repair falls back to full master reference", () => {
+test("11. tagline / positioning repair uses compact reference (does NOT fallback)", () => {
   const p = plan({
     editablePaths: ["resume.tagline"],
   });
-  assert.equal(shouldUseFullMasterReferenceForRepair(p), true);
+  assert.equal(shouldUseFullMasterReferenceForRepair(p), false);
 });
 
-test("12. skillGroups repair falls back to full master reference", () => {
+test("12. skillGroups repair uses compact reference (does NOT fallback)", () => {
   const p = plan({
     editablePaths: ["resume.skillGroups"],
   });
-  assert.equal(shouldUseFullMasterReferenceForRepair(p), true);
+  assert.equal(shouldUseFullMasterReferenceForRepair(p), false);
 
   const p2 = plan({
     editablePaths: ["resume.skillGroups[0].items[1]"],
   });
-  assert.equal(shouldUseFullMasterReferenceForRepair(p2), true);
+  assert.equal(shouldUseFullMasterReferenceForRepair(p2), false);
 });
 
-test("13. education repair falls back to full master reference", () => {
+test("13. education repair uses compact reference (does NOT fallback)", () => {
   const p = plan({
     editablePaths: ["resume.education[0]"],
   });
-  assert.equal(shouldUseFullMasterReferenceForRepair(p), true);
+  assert.equal(shouldUseFullMasterReferenceForRepair(p), false);
 });
 
-test("14. certifications repair falls back to full master reference", () => {
+test("14. certifications repair uses compact reference (does NOT fallback)", () => {
   const p = plan({
     editablePaths: ["resume.certifications[0]"],
   });
-  assert.equal(shouldUseFullMasterReferenceForRepair(p), true);
+  assert.equal(shouldUseFullMasterReferenceForRepair(p), false);
 });
 
 test("15. narrow employer experience bullet repair uses compact reference (does NOT fallback)", () => {

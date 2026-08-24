@@ -58,30 +58,18 @@ export type RepairScopedExperienceEntry =
       preservation: "UNCHANGED";
     };
 
-/** Editable-path prefixes that indicate the repair touches a global section — one whose evidence
- *  requirements cannot be determined from employer scope alone. When ANY editable path starts with
- *  one of these, the compact projection is unsafe and the full profile must be sent. */
-const GLOBAL_SECTION_PATH_PREFIXES = [
-  "resume.summary",
-  "resume.tagline",
-  "resume.skillGroups",
-  "resume.education",
-  "resume.certifications",
-];
-
 /**
- * Returns true when the repair plan touches a global section that may require the full skills array
- * or other broad profile context the compact projection omits. Conservative: any ambiguity returns
- * true (fail toward full context).
+ * Returns true when the repair plan is undefined, lacks editable paths, or contains unattributed
+ * findings that prevent determining a safe repair scope. Conservative: ambiguity fails toward broader context.
+ * Global sections (summary, tagline, skillGroups, education, certifications) are now safely handled by
+ * compact projections (omitting the giant raw skills array) rather than falling back to the 51KB raw profile.
  */
 export function shouldUseFullMasterReferenceForRepair(repairPlan: RepairPlan | undefined): boolean {
   if (!repairPlan) return true;
   if (!repairPlan.editablePaths || repairPlan.editablePaths.length === 0) return true;
   if (repairPlan.unattributedFindings && repairPlan.unattributedFindings.length > 0) return true;
 
-  return repairPlan.editablePaths.some((path) =>
-    GLOBAL_SECTION_PATH_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix + "[") || path.startsWith(prefix + "."))
-  );
+  return false;
 }
 
 /**
