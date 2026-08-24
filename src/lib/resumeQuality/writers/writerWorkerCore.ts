@@ -16,7 +16,7 @@ import {
 import { describeContactProblems, resolveCandidateContact } from "../candidateContact";
 import { evaluateTailoringAuthorization } from "../tailoringAuthorization";
 import { exportExternalWriterPackage } from "../handoff/exporter";
-import { importExternalWriterResult } from "../handoff/importer";
+import { importExternalWriterResult, loadPatchContextFromHandoff } from "../handoff/importer";
 import { executeResumeImprovementIteration, ResumeQualityOrchestrationError } from "../orchestrator";
 import { DeterministicResumeReviewer } from "../reviewers/deterministicReviewer";
 import type { ResumeWriterAgent, ResumeWriterOutput } from "../types";
@@ -375,11 +375,13 @@ export async function processOneWorkflow(workflow: ResumeQualityWorkflowRow, opt
     }
 
     const importStartedMs = Date.now();
+    const patchContext = loadPatchContextFromHandoff(handoffDir);
     const importResult = importExternalWriterResult({
       candidateId,
       workflowId,
       expectedIterationNumber: targetIteration,
       inputPath: path.join(handoffDir, "writer_output.json"),
+      patchContext,
     });
     const importMs = Date.now() - importStartedMs;
     const reviewStartedMs = Date.now();

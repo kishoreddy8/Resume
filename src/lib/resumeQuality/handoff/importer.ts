@@ -15,6 +15,12 @@ import type {
 } from "../types";
 import type { CoverLetterContent, ResumeContent } from "../../../../tools/tailoring-engine/types";
 
+export interface PatchContext {
+  baselineResume: ResumeContent;
+  baselineCoverLetter?: CoverLetterContent;
+  editablePaths: readonly string[];
+}
+
 export interface ImportExternalWriterResultInput {
   candidateId: number;
   workflowId: number;
@@ -27,11 +33,50 @@ export interface ImportExternalWriterResultInput {
    *  patch response; absent means a patch payload is refused outright (PATCH_CONTEXT_MISSING) rather
    *  than reconstructed against nothing. A legacy schemaVersion 1 full-document payload never needs
    *  this and ignores it entirely. */
-  patchContext?: {
-    baselineResume: ResumeContent;
-    baselineCoverLetter?: CoverLetterContent;
-    editablePaths: readonly string[];
+  patchContext?: PatchContext;
+}
+
+/**
+ * Constructs a valid PatchContext from a ResumeWriterInput or writer_input.json structure.
+ * Returns undefined if baseline resume or editable paths are missing.
+ */
+export function buildPatchContext(
+  input: {
+    currentResume?: ResumeContent | null;
+    currentCoverLetter?: CoverLetterContent | null;
+    repairPlan?: { editablePaths?: readonly string[] | string[] | null } | null;
+  } | null | undefined
+): PatchContext | undefined {
+  if (!input || !input.currentResume || !input.repairPlan?.editablePaths || input.repairPlan.editablePaths.length === 0) {
+    return undefined;
+  }
+  return {
+    baselineResume: input.currentResume,
+    baselineCoverLetter: input.currentCoverLetter ?? undefined,
+    editablePaths: input.repairPlan.editablePaths,
   };
+}
+
+/**
+ * Loads and constructs PatchContext directly from a handoff directory containing `writer_input.json`.
+ * Returns undefined if writer_input.json does not exist or does not contain valid patch baseline context.
+ */
+export function loadPatchContextFromHandoff(handoffDir: string): PatchContext | undefined {
+  const writerInputPath = path.join(handoffDir, "writer_input.json");
+  if (!fs.existsSync(writerInputPath)) {
+    return undefined;
+  }
+  try {
+    const raw = fs.readFileSync(writerInputPath, "utf-8");
+    const parsed = JSON.parse(raw) as {
+      currentResume?: ResumeContent;
+      currentCoverLetter?: CoverLetterContent;
+      repairPlan?: { editablePaths?: string[] };
+    };
+    return buildPatchContext(parsed);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

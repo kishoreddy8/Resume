@@ -3,7 +3,8 @@ import { requireCandidateAccess } from "@/lib/auth/guard";
 import { requireActiveCandidate } from "@/db/queries/candidates";
 import { getJob } from "@/db/queries/jobs";
 import { getLatestResumeQualityWorkflowForJob, getResumeQualityWorkflow } from "@/db/queries/resumeQualityWorkflows";
-import { importExternalWriterResult } from "@/lib/resumeQuality/handoff/importer";
+import { importExternalWriterResult, loadPatchContextFromHandoff } from "@/lib/resumeQuality/handoff/importer";
+import { getHandoffDirectory } from "@/lib/resumeQuality/workspace";
 import { executeResumeImprovementIteration, ResumeQualityOrchestrationError } from "@/lib/resumeQuality/orchestrator";
 import { DeterministicResumeReviewer } from "@/lib/resumeQuality/reviewers/deterministicReviewer";
 import type { ResumeWriterAgent, ResumeWriterOutput } from "@/lib/resumeQuality/types";
@@ -62,6 +63,11 @@ export async function POST(
   }
 
   const expectedIteration = workflow.current_iteration + 1;
+  const handoffDir = getHandoffDirectory(
+    { candidateId, dedupeKey: workflow.dedupe_key, runId: workflow.tailoring_run_id, workflowId: workflow.id },
+    expectedIteration
+  );
+  const patchContext = loadPatchContextFromHandoff(handoffDir);
 
   // 1. Stage 11 Strict Validation & Import
   let importResult;
@@ -71,6 +77,7 @@ export async function POST(
       workflowId: workflow.id,
       parsedOutput: payload,
       expectedIterationNumber: expectedIteration,
+      patchContext,
     });
   } catch (err: unknown) {
     if (err instanceof ResumeQualityOrchestrationError) {

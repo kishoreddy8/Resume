@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ResumeWriterAgent, ResumeWriterInput, ResumeWriterOutput } from "../types";
 import { getHandoffDirectory, type QualityWorkflowLocation } from "../workspace";
-import { importExternalWriterResult } from "../handoff/importer";
+import { buildPatchContext, importExternalWriterResult } from "../handoff/importer";
 import { ResumeQualityOrchestrationError } from "../orchestrator";
 
 export class ExternalWriterResultNotReadyError extends ResumeQualityOrchestrationError {
@@ -76,10 +76,7 @@ export class ExternalFileResumeWriter implements ResumeWriterAgent {
       // exporter built the handoff from, so `currentResume`/`currentCoverLetter`/`repairPlan` here
       // are the EXACT baseline and editable-path allowlist the writer was told about — never
       // re-derived independently.
-      patchContext:
-        input.currentResume && input.repairPlan?.editablePaths
-          ? { baselineResume: input.currentResume, baselineCoverLetter: input.currentCoverLetter, editablePaths: input.repairPlan.editablePaths }
-          : undefined,
+      patchContext: buildPatchContext(input),
     });
 
     return importRes.writerOutput;
