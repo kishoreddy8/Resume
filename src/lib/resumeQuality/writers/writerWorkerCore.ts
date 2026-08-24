@@ -621,12 +621,30 @@ export async function runWorkerPass(
   options: RunWorkerPassOptions = {}
 ): Promise<{ attempted: number; pending: number; outcomes: PassOutcome[] }> {
   const pending = listWorkflowsAwaitingWriter();
-  const batch = typeof options.maxWorkflows === "number" ? pending.slice(0, Math.max(0, options.maxWorkflows)) : pending;
+  const batch = pending;
+  const maxActiveWorkflows = typeof options.maxWorkflows === "number" ? Math.max(0, options.maxWorkflows) : undefined;
   const outcomes: PassOutcome[] = [];
+  let activeAttempts = 0;
   for (const workflow of batch) {
     outcomes.push(...(await driveWorkflowToCompletion(workflow, options)));
+    const last = outcomes[outcomes.length - 1];
+    if (
+      last &&
+      (last.outcome === "READY" ||
+        last.outcome === "IMPROVEMENT_RUNNING" ||
+        last.outcome === "FAILED" ||
+        last.outcome === "TECHNICAL_FAILURE")
+    ) {
+      activeAttempts += 1;
+    }
+    if (maxActiveWorkflows !== undefined && activeAttempts >= maxActiveWorkflows) {
+      break;
+    }
+    if (last && (last.outcome === "AUTH_REQUIRED" || last.outcome === "SUBSCRIPTION_LIMIT_REACHED")) {
+      break;
+    }
   }
-  return { attempted: batch.length, pending: pending.length, outcomes };
+  return { attempted: outcomes.length, pending: pending.length, outcomes };
 }
 
 export interface GuardedWriterPassResult {
