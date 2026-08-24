@@ -43,6 +43,7 @@ import {
   renderPresentationStandardSection,
   renderRoleProjectEvidenceSection,
 } from "../presentationStructure";
+import { buildRepairWriterPrompt } from "../repairContextCompiler";
 import {
   buildCandidateAccomplishmentPackageSync,
   renderAccomplishmentEvidenceSection,
@@ -951,52 +952,81 @@ export function exportExternalWriterPackage(
       : undefined;
 
   // 2. writer_prompt.md
-  const promptContent = buildExternalWriterPrompt({
-    candidateId,
-    candidateName,
-    applicationId: workflow.application_id,
-    jobId: tailoringRun.job_id,
-    tailoringRunId: workflow.tailoring_run_id,
-    workflowId: workflow.id,
-    iterationNumber: targetIterationNumber,
-    writerMode: writerInput.writerMode,
-    selectedTrack: wsPkg.selectedTrack,
-    latestReview: writerInput.latestReview,
-    requiredCorrections: writerInput.requiredCorrections,
-    blockingIssues: writerInput.blockingIssues,
-    blockingFailures: writerInput.blockingFailures,
-    complianceCorrections: writerInput.complianceCorrections,
-    candidateContact: writerInput.candidateContact,
-    accomplishmentEvidenceSection: exportAccomplishmentPackage ? renderAccomplishmentEvidenceSection(exportAccomplishmentPackage) : undefined,
-    jobIntentSection: exportJobIntent ? renderWriterJobIntentSection(exportJobIntent) : undefined,
-    jdEvidenceMappingSection: exportJdEvidenceMapping ? renderJdEvidenceMappingSection(exportJdEvidenceMapping) : undefined,
-    employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
-    repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
-    resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,
-    professionalIdentitySection: writerInput.masterProfile
-      ? renderProfessionalIdentitySection(
-          deriveProfessionalIdentity(writerInput.masterProfile),
-          writerInput.masterProfile.totalYearsExperience ?? null
-        )
-      : undefined,
-    // Bullet/skill ORDERING and DISTRIBUTED-EVIDENCE planning are both from-scratch positioning
-    // aids — irrelevant to a surgical repair, which is explicitly forbidden from reordering or
-    // re-tailoring content it wasn't asked to touch (see the repair rewrite rule below: "Do not
-    // rewrite, improve, reorder, re-tailor"). Sending them during a repair contradicts the repair's
-    // own instructions, not merely wastes context.
-    experienceEmphasisSection: isTargetedRepair ? undefined : exportExperienceEmphasis || undefined,
-    distributedEvidenceSection: isTargetedRepair ? undefined : exportDistributedEvidence || undefined,
-    presentationStandardSection: renderPresentationStandardSection(writerInput.masterProfile),
-    roleProjectEvidenceSection: exportAccomplishmentPackage ? undefined : renderRoleProjectEvidenceSection(scopedRoleEvidence),
-    jdPriorityMatrix: exportJdPriorityMatrix,
-    positioningRecommendation: exportPositioningRecommendation,
-    recommendedSkillOrder: exportSkillOrder,
-    atsCoverageReportText: exportAtsCoverageText,
-    patchEligiblePaths: exportPatchEligiblePaths,
-    coverLetterContextOmitted: exportOmitCoverLetter,
-    contextManifestSection: exportContextManifestSection || undefined,
-    instructionsScopeNote: exportInstructionsScopeNote,
-  });
+  const promptContent =
+    isTargetedRepair && writerInput.repairPlan
+      ? buildRepairWriterPrompt({
+          candidateId,
+          candidateName,
+          applicationId: workflow.application_id,
+          jobId: tailoringRun.job_id,
+          tailoringRunId: workflow.tailoring_run_id,
+          workflowId: workflow.id,
+          iterationNumber: targetIterationNumber,
+          targetRoleTitle: exportTargetRoleTitle ?? null,
+          companyName: exportCompany?.name ?? "Target Employer",
+          candidateContact: writerInput.candidateContact,
+          repairPlan: writerInput.repairPlan,
+          currentResume: writerInput.currentResume ?? null,
+          currentCoverLetter: writerInput.currentCoverLetter ?? null,
+          candidateProfile: writerInput.masterProfile,
+          jobRequirements: writerInput.jobRequirements,
+          jobIntent: exportJobIntent ?? (exportCompany && exportTargetRoleTitle ? extractWriterJobIntent({
+            company: exportCompany.name,
+            roleTitle: exportTargetRoleTitle,
+            jobDescriptionText: writerInput.jobDescriptionMarkdown,
+            jobRequirements: writerInput.jobRequirements,
+          }) : undefined),
+          accomplishmentPackage: exportAccomplishmentPackage ?? (writerInput.masterProfile ? buildCandidateAccomplishmentPackageSync({
+            candidateId,
+            candidateProfile: writerInput.masterProfile,
+          }) : undefined),
+          evidenceMapping: exportJdEvidenceMapping,
+          resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,
+          contextManifestSection: exportContextManifestSection || undefined,
+          instructionsScopeNote: exportInstructionsScopeNote,
+          coverLetterContextOmitted: exportOmitCoverLetter,
+        })
+      : buildExternalWriterPrompt({
+          candidateId,
+          candidateName,
+          applicationId: workflow.application_id,
+          jobId: tailoringRun.job_id,
+          tailoringRunId: workflow.tailoring_run_id,
+          workflowId: workflow.id,
+          iterationNumber: targetIterationNumber,
+          writerMode: writerInput.writerMode,
+          selectedTrack: wsPkg.selectedTrack,
+          latestReview: writerInput.latestReview,
+          requiredCorrections: writerInput.requiredCorrections,
+          blockingIssues: writerInput.blockingIssues,
+          blockingFailures: writerInput.blockingFailures,
+          complianceCorrections: writerInput.complianceCorrections,
+          candidateContact: writerInput.candidateContact,
+          accomplishmentEvidenceSection: exportAccomplishmentPackage ? renderAccomplishmentEvidenceSection(exportAccomplishmentPackage) : undefined,
+          jobIntentSection: exportJobIntent ? renderWriterJobIntentSection(exportJobIntent) : undefined,
+          jdEvidenceMappingSection: exportJdEvidenceMapping ? renderJdEvidenceMappingSection(exportJdEvidenceMapping) : undefined,
+          employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
+          repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
+          resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,
+          professionalIdentitySection: writerInput.masterProfile
+            ? renderProfessionalIdentitySection(
+                deriveProfessionalIdentity(writerInput.masterProfile),
+                writerInput.masterProfile.totalYearsExperience ?? null
+              )
+            : undefined,
+          experienceEmphasisSection: isTargetedRepair ? undefined : exportExperienceEmphasis || undefined,
+          distributedEvidenceSection: isTargetedRepair ? undefined : exportDistributedEvidence || undefined,
+          presentationStandardSection: renderPresentationStandardSection(writerInput.masterProfile),
+          roleProjectEvidenceSection: exportAccomplishmentPackage ? undefined : renderRoleProjectEvidenceSection(scopedRoleEvidence),
+          jdPriorityMatrix: exportJdPriorityMatrix,
+          positioningRecommendation: exportPositioningRecommendation,
+          recommendedSkillOrder: exportSkillOrder,
+          atsCoverageReportText: exportAtsCoverageText,
+          patchEligiblePaths: exportPatchEligiblePaths,
+          coverLetterContextOmitted: exportOmitCoverLetter,
+          contextManifestSection: exportContextManifestSection || undefined,
+          instructionsScopeNote: exportInstructionsScopeNote,
+        });
   writePackageFile("writer_prompt.md", promptContent);
 
   // 3. job_description.md
