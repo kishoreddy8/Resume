@@ -32,6 +32,7 @@ import {
   buildRepairScopedMasterReference,
   shouldUseFullMasterReferenceForRepair,
 } from "./masterReferenceProjection";
+import { selectWriterEvidence, renderProjectedMasterSkillsInventory } from "../evidenceSelector";
 import { isPatchEligibleRepairPlan } from "./patchRepair";
 import { buildUnifiedWriterHandoff } from "./unifiedHandoff";
 import { projectResumeContextForPatchRepair, renderContextManifestSection, shouldOmitCoverLetterContext } from "./patchContextProjection";
@@ -807,8 +808,33 @@ export function exportExternalWriterPackage(
   // employers".
   const repairEmployerScope: ReadonlySet<string> | null = isTargetedRepair ? employerScopeForRepair(writerInput.repairPlan) : null;
 
+  // PHASE 2 TOKEN OPTIMIZATION (2026-08-24) — DETERMINISTIC JD-SPECIFIC EVIDENCE SCOPING.
+  //
+  // INITIAL_GENERATION previously received the unprojected 535-skill candidate technology universe
+  // and full raw MSI file (~8.3KB). selectWriterEvidence deterministically ranks candidate evidence
+  // against the structured JD requirements, selecting a bounded high-value candidate evidence set
+  // (25-35 skills) and scoping per-employer evidence and negative constraints.
+  //
+  // SAFETY: This is a writer-facing VIEW only. The authoritative CandidateProfile, Master Resume,
+  // and MSI remain complete and untouched on disk, and the deterministic reviewer validates against
+  // the full profile directly.
+  const selectedEvidence =
+    writerInput.masterProfile && !isTargetedRepair
+      ? selectWriterEvidence({
+          candidateProfile: writerInput.masterProfile,
+          jobRequirements: writerInput.jobRequirements,
+          targetRoleTitle: exportTargetRoleTitle ?? null,
+        })
+      : undefined;
+
   const exportEmployerMap = writerInput.masterProfile ? buildEmployerEvidenceMap(writerInput.masterProfile) : undefined;
-  const scopedEmployerMap = exportEmployerMap ? filterEmployerEvidenceMap(exportEmployerMap, repairEmployerScope) : undefined;
+  const scopedEmployerMap = isTargetedRepair
+    ? exportEmployerMap
+      ? filterEmployerEvidenceMap(exportEmployerMap, repairEmployerScope)
+      : undefined
+    : selectedEvidence
+    ? selectedEvidence.scopedEmployerMap
+    : exportEmployerMap;
 
   const exportRoleEvidence = collectRoleProjectEvidence(writerInput.currentResume, writerInput.masterProfile);
   const scopedRoleEvidence = filterRoleProjectEvidence(exportRoleEvidence, repairEmployerScope);
@@ -1023,7 +1049,12 @@ export function exportExternalWriterPackage(
   }
 
   // 7. master_skills_inventory.md / master_skills.json
-  if (!copyPackageFile(wsPkg.masterSkillsInventoryPath, "master_skills_inventory.md")) {
+  // PHASE 2 TOKEN OPTIMIZATION (2026-08-24) — write compact, JD-relevant MSI projection
+  // instead of copying the unprojected 535-skill global inventory.
+  if (selectedEvidence) {
+    const projectedMsi = renderProjectedMasterSkillsInventory(selectedEvidence);
+    writePackageFile("master_skills_inventory.md", projectedMsi);
+  } else if (!copyPackageFile(wsPkg.masterSkillsInventoryPath, "master_skills_inventory.md")) {
     writePackageFile("master_skills_inventory.md", "# Master Skills Inventory\nNo explicit skills inventory available.");
   }
 
