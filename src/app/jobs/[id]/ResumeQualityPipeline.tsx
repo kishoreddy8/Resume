@@ -379,6 +379,9 @@ export function ResumeQualityPipeline({
    * Explicit user-initiated re-tailor from a READY workflow. Sends freshRewrite:true so
    * evaluateWorkflowRetry creates a new version alongside the existing READY one — never overwrites
    * it. The old READY artifacts remain eligible for applications until the new version passes review.
+   *
+   * Refreshes the candidate's tailoring approval against the CURRENT match decision before requesting
+   * freshRewrite, ensuring authorization is never blocked by a stale pre-re-evaluation decision.
    */
   async function handleReTailor() {
     const confirmed = window.confirm(
@@ -389,6 +392,33 @@ export function ResumeQualityPipeline({
     setActionBusy(true);
     setActionMessage(null);
     try {
+      const matchDecision = data?.authorization.matchDecision;
+      if (!matchDecision || (matchDecision !== "READY_FOR_TAILORING" && matchDecision !== "NEEDS_REVIEW")) {
+        throw new Error(
+          `Cannot re-tailor: current match decision is ${matchDecision ?? "unknown"}. Resolve profile gaps before tailoring.`
+        );
+      }
+      const approvalType: "READY_DIRECT" | "NEEDS_REVIEW_OVERRIDE" =
+        matchDecision === "NEEDS_REVIEW" ? "NEEDS_REVIEW_OVERRIDE" : "READY_DIRECT";
+
+      // Refresh approval context against the CURRENT match decision before requesting freshRewrite
+      const patchRes = await fetch(`/api/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidateId,
+          markedForTailoring: true,
+          approval: {
+            approvalType,
+            decision: matchDecision,
+          },
+        }),
+      });
+      if (!patchRes.ok) {
+        const patchBody = await patchRes.json().catch(() => ({}));
+        throw new Error(patchBody.error ?? "Failed to refresh tailoring approval");
+      }
+
       const res = await fetch(`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
