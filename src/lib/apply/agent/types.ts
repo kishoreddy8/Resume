@@ -1,5 +1,6 @@
 import type { SourceType } from "@/types";
 import type { AnswerSource, QuestionType } from "../questionTypes";
+import type { AdapterAuthConfig } from "../auth";
 
 /**
  * The agent contract, split so the decisions are testable without a browser.
@@ -14,7 +15,7 @@ import type { AnswerSource, QuestionType } from "../questionTypes";
 export interface DiscoveredField {
   /** A selector that will find this control again. Prefer #id; see fieldDiscovery for why. */
   selector: string;
-  kind: "text" | "email" | "tel" | "textarea" | "select" | "combobox" | "checkbox" | "radio" | "file" | "unknown";
+  kind: "text" | "email" | "tel" | "textarea" | "select" | "combobox" | "checkbox" | "radio" | "file" | "date" | "month" | "unknown";
   /** The visible label, or the accessible name. This is what gets matched against questions. */
   label: string | null;
   id: string | null;
@@ -119,12 +120,17 @@ export interface AdapterContext {
   contact: { name: string; email: string; phone: string; location: string; linkedin?: string; github?: string };
   resumePath: string | null;
   coverLetterPath: string | null;
-  /** PHASE 9 — employment history (chronological, newest first). CONTRACT-ONLY at present: no
-   *  production planner consumes this yet, and its runtime use is blocked until authoritative
-   *  candidate application-profile storage exists. Optional and additive — absent (or, today,
-   *  present) behaves exactly as before: history fields become questions, never guesses. */
+  /** PHASE 9D — employment history (chronological, newest first), sourced from
+   *  `src/db/queries/candidateApplicationProfile.ts`'s `listEmployment`, which starts empty and is
+   *  never auto-populated (see that module's own doc comment for why). Consumed NARROWLY by
+   *  `planFields.ts`'s `employmentValueFor` for flat single-field questions ("Current Employer",
+   *  "Current Job Title") only — a multi-entry, repeatable employment SECTION (Workday's own
+   *  per-entry sub-form) is adapter-specific UI structure this generic layer does not attempt to
+   *  solve. Optional and additive — absent behaves exactly as before: history fields become
+   *  questions, never guesses. */
   employment?: EmploymentEntry[];
-  /** PHASE 9 — education entries. Same contract-only status and additive contract as employment. */
+  /** PHASE 9D — education entries, same source/scope/additive contract as employment; see
+   *  `educationValueFor` in planFields.ts. */
   education?: EducationEntry[];
 }
 
@@ -167,6 +173,16 @@ export interface AtsAdapter {
    *  walk will be bounded by min(this, its own hard cap) so a redirect loop can never walk
    *  forever. */
   maxPages?(): number;
+
+  // --- PHASE 9C — optional authentication contract ------------------------------------------------
+  // Describes HOW this ATS's login/account UI works. It decides NOTHING about whether an account
+  // may be created, whether a password is acceptable, or whether a consent checkbox is safe — those
+  // are universal `ensureAuthenticated` decisions (see `../auth.ts` and `../engine/auth.ts`), made
+  // identically for every ATS. Omitted entirely, exactly like every other Phase 9 optional member,
+  // Greenhouse and Lever are unaffected: `resolveMultiPageConfig`'s login-wall handling already
+  // treats an adapter with no `auth` as having nothing more automatable, and continues to pause with
+  // the existing generic ACCOUNT_REQUIRED behavior.
+  auth?(): AdapterAuthConfig;
 }
 
 /** Detected blocking conditions. Each maps to a run status that stops and asks the user. */

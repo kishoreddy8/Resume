@@ -104,7 +104,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
       if (parsed.data.approvedRunId !== parsed.data.runId) {
         return NextResponse.json({ error: "The approval does not belong to this application." }, { status: 400 });
       }
-      const after = await approveAndSubmit(run.id, runtime, { runId: run.id });
+      /* PHASE 9D — `deps` lets approveAndSubmit re-validate the live form before submitting:
+       * re-authenticate if the ATS session expired, and abort back to WAITING_FOR_ANSWER (rather
+       * than submit) if the page now reveals a required question the user's approval never
+       * covered. Without `deps` this hardening is skipped — every other caller (tests) is
+       * unaffected — but the production path always supplies it. */
+      const after = await approveAndSubmit(run.id, runtime, { runId: run.id }, {
+        deps: {
+          context: {
+            candidateId,
+            contact: contact.contact,
+            resumePath: run.resume_file,
+            coverLetterPath: run.cover_letter_file,
+          },
+          knownVariants: loadKnownVariants() as Map<string, { canonicalKey: string; type: QuestionType }>,
+          storedAnswers: storedAnswerMap(candidateId),
+        },
+      });
       const job = getJob(after.job_id);
       notifyApplicationState(after, job?.title ?? "an application", job?.company_id ? getCompany(job.company_id)?.name ?? null : null);
       return NextResponse.json({ status: after.status, run: { id: after.id, confirmation: after.confirmation_text } });

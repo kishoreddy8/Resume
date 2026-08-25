@@ -87,6 +87,20 @@ const RULES: Rule[] = [
   { key: "start_date", type: "availability", all: ["start date"] },
   { key: "highest_education", type: "education", all: ["degree"] },
   { key: "security_clearance", type: "security_clearance", all: ["clearance"] },
+  // PHASE 9D — flat single-field employment/education questions only (see planFields.ts's
+  // employmentValueFor/educationValueFor). Full multi-entry repeatable sections are out of scope.
+  { key: "current_employer", type: "employment_history", all: ["current employer"] },
+  { key: "current_job_title", type: "employment_history", all: ["current job title"] },
+  { key: "field_of_study", type: "education", all: ["field of study"] },
+  { key: "institution_name", type: "education", all: ["school name"] },
+  { key: "institution_name", type: "education", all: ["university name"] },
+  // PHASE 9D — conservative, single-purpose patterns only. Both map to "other" (never auto-filled
+  // unattended; the user confirms each use) rather than a new QuestionType, since neither is a
+  // stable fact worth a dedicated reuse policy — "how did you hear about us" legitimately varies by
+  // posting, and "have you worked here before" is specific enough that a wrong guess would be a
+  // false statement about the candidate's own history.
+  { key: "referral_source", type: "other", all: ["how", "hear", "about"] },
+  { key: "previously_employed", type: "other", all: ["previously", "employ"] },
 
   { key: "why_interested", type: "open_ended", all: ["why", "interested"] },
   { key: "why_interested", type: "open_ended", all: ["why", "want", "work"] },

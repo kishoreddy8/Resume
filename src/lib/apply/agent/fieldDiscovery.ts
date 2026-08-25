@@ -66,6 +66,10 @@ function kindOf(raw: RawControl): DiscoveredField["kind"] {
       return "checkbox";
     case "radio":
       return "radio";
+    case "date":
+      return "date";
+    case "month":
+      return "month";
     case "text":
     case "search":
     case null:

@@ -47,6 +47,25 @@ export function detectBlocking(signals: PageSignals): BlockingCondition | null {
   return null;
 }
 
+/**
+ * PHASE 9D — the ATS itself reporting the application already exists. A DELIBERATELY SEPARATE
+ * check, not a `BlockingCondition` member: every existing condition above means "a human needs to
+ * do something and the run may then continue" — this one means the opposite, there is nothing left
+ * to do, ever, for this run. The caller maps a true result straight to the existing terminal
+ * `FAILED` status (matching how "no application URL" already fails a run before it starts) rather
+ * than a new waiting state the user would be asked to act on.
+ */
+const ALREADY_APPLIED_TEXT = [
+  "you have already applied",
+  "you have already submitted an application",
+  "an application already exists for this job",
+  "you've already applied",
+];
+
+export function detectAlreadyApplied(signals: PageSignals): boolean {
+  return hasAny(signals.text, ALREADY_APPLIED_TEXT);
+}
+
 /** The run status each condition maps to. Kept beside the detector so the two cannot drift. */
 export const BLOCKING_STATUS = {
   captcha: "WAITING_FOR_CAPTCHA",

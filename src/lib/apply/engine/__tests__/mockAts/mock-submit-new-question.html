@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- SUBMIT-04: the checkpoint's approved review covers first_name/last_name/email/phone only, but
+     THIS live page also has a required question never seen before — proving approveAndSubmit
+     detects it and aborts to WAITING_FOR_ANSWER rather than clicking Submit. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock New-Question-At-Submit ATS</title></head>
+<body>
+  <h1>Apply — Engineer at Mockcorp</h1>
+  <label for="first_name">First Name*</label><input id="first_name" type="text" required>
+  <label for="last_name">Last Name*</label><input id="last_name" type="text" required>
+  <label for="email">Email*</label><input id="email" type="email" required>
+  <label for="phone">Phone*</label><input id="phone" type="tel" required>
+  <label for="surprise_question">What is your favorite color?*</label>
+  <input id="surprise_question" type="text" required>
+  <button id="submit_application" type="button"
+    onclick="document.body.innerHTML='<h1>Application submitted</h1><p>Confirmation #NQ-2000.</p>'">
+    Submit Application
+  </button>
+</body>
+</html>

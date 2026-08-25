@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- AUTH-09: the session is ALREADY authenticated when the page loads — no login wall text at
+     all, an authenticated marker present immediately. ensureAuthenticated must never touch the
+     credential store here: there is nothing to look up. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Already-Authenticated ATS</title></head>
+<body>
+  <p>Welcome back, Jordan.</p>
+  <h1>Apply — Engineer at Mockcorp</h1>
+  <label for="first_name">First Name*</label><input id="first_name" type="text" required>
+  <label for="last_name">Last Name*</label><input id="last_name" type="text" required>
+  <label for="email">Email*</label><input id="email" type="email" required>
+  <label for="phone">Phone*</label><input id="phone" type="tel" required>
+</body>
+</html>

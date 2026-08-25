@@ -19,6 +19,15 @@ const run = promisify(execFile);
  * PLATFORM. Keychain is macOS-only, which is where this app runs. On any other platform
  * `isAvailable` returns false and account creation is refused rather than silently downgraded to a
  * weaker store — a credential system that quietly stops protecting things is worse than none.
+ *
+ * ISOLATION. Every entry this module touches lives under the `career-ops-ats:` service namespace
+ * (enforced by `serviceName`, which every exported function routes through) and every lookup is an
+ * EXACT `-s <service> -a <account>` pair — never a pattern, never a prefix scan. There is no
+ * function here that enumerates or dumps the Keychain (no `dump-keychain`, no `list-keychains`
+ * combined with reading entries); the only way to learn anything about an entry is to already know
+ * its exact site and account. Career-Ops therefore cannot see, and this module cannot expose,
+ * anything a caller did not name precisely — a credential belonging to some other application, or
+ * to a different ATS/tenant/email tuple, is simply never addressed.
  */
 
 const SERVICE_PREFIX = "career-ops-ats";
@@ -117,3 +126,83 @@ export interface StoredAccountReference {
 export function credentialReferenceFor(site: string, account: string): string {
   return `keychain:${serviceName(site)}:${account}`;
 }
+
+// ── PHASE 9C — tenant-scoped, multi-user-ready ATS account identity ────────────────────────────
+
+/**
+ * ONE account, scoped to exactly the levels that actually differ between accounts:
+ *
+ *   - `userId` — Career-Ops is single-user today, but the identity carries this dimension from the
+ *     start so a later multi-user Career-Ops needs no change to this type, `ensureAuthenticated`,
+ *     or any ATS adapter — only a real `userId` in place of the single-user default. Today's only
+ *     caller passes `String(candidateId)`, since candidate IS the user in the current product.
+ *   - `ats` + `tenant` — a candidate can legitimately hold a DIFFERENT Workday account per employer
+ *     tenant, even under the same email, so identity is never bare (ats, email). `tenant` is
+ *     normalized from the application URL's own hostname (see `deriveTenantKey` in `../auth`),
+ *     never invented.
+ *   - `email` — the authoritative candidate application email, never a personal alternate.
+ *
+ * This is IDENTITY SHAPE readiness for multi-user, not a multi-user implementation: no user
+ * management, no auth-of-Career-Ops-itself is added anywhere in this module.
+ */
+export interface AtsAccountIdentity {
+  userId: string;
+  ats: string;
+  tenant: string;
+  email: string;
+}
+
+function normalizeTenant(tenant: string): string {
+  return tenant.trim().toLowerCase();
+}
+
+/** The composite "site" this identity maps to. Same four values in, same Keychain entry out — a
+ *  different user, ATS, or tenant is a genuinely different site, and therefore a genuinely
+ *  different entry; nothing here can address an entry without providing exactly one of each. */
+function identitySite(identity: AtsAccountIdentity): string {
+  return `${identity.userId.trim().toLowerCase()}:${identity.ats.trim().toLowerCase()}:${normalizeTenant(identity.tenant)}`;
+}
+
+/** The database-safe reference for one identity. Not a secret; see `credentialReferenceFor`. */
+export function credentialReferenceForIdentity(identity: AtsAccountIdentity): string {
+  return credentialReferenceFor(identitySite(identity), identity.email);
+}
+
+/** Attribute-only existence check: `find-generic-password` WITHOUT `-w` prints the entry's
+ *  metadata, never the password, so an "does a credential exist" question never touches the
+ *  secret at all — not even to discard it. */
+async function keychainEntryExists(site: string, account: string): Promise<boolean> {
+  if (!(await isAvailable())) return false;
+  try {
+    await run("security", ["find-generic-password", "-s", serviceName(site), "-a", account], { timeout: 10_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The universal shape any credential store implements: get/save/delete/exists, keyed on an
+ * `AtsAccountIdentity` rather than a raw string, so a caller can never construct a lookup by hand
+ * that drifts from `identitySite`'s normalization.
+ */
+export interface CredentialStore {
+  getCredential(identity: AtsAccountIdentity): Promise<string | null>;
+  saveCredential(identity: AtsAccountIdentity, secret: string): Promise<void>;
+  deleteCredential(identity: AtsAccountIdentity): Promise<void>;
+  exists(identity: AtsAccountIdentity): Promise<boolean>;
+}
+
+/**
+ * The production store. A thin adapter over the functions above — NOT a second credential system.
+ * Every method routes through the same `serviceName`/`career-ops-ats:` namespace and the same
+ * exact-match `security` invocations; this object exists only to give `ensureAuthenticated` (in
+ * `../engine/auth`) one interface it can swap a `FakeCredentialStore` into for tests, so no test
+ * ever needs to touch a real Keychain.
+ */
+export const keychainCredentialStore: CredentialStore = {
+  getCredential: (identity) => getPassword(identitySite(identity), identity.email),
+  saveCredential: (identity, secret) => setPassword(identitySite(identity), identity.email, secret),
+  deleteCredential: (identity) => deletePassword(identitySite(identity), identity.email),
+  exists: (identity) => keychainEntryExists(identitySite(identity), identity.email),
+};

@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- SUBMIT-03/05: the ATS session expired between READY_FOR_REVIEW and approval — reopening the
+     application shows a login wall first. A correct credential logs back in and reveals the SAME
+     fields the approved checkpoint expects to refill, plus Submit. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Submit-Time Re-auth ATS</title></head>
+<body>
+  <div id="stage">
+    <h1>Sign in to apply</h1>
+    <label for="auth_email">Email</label><input id="auth_email" type="email">
+    <label for="auth_password">Password</label><input id="auth_password" type="password">
+    <button id="signin" type="button">Sign In</button>
+  </div>
+  <script>
+    document.getElementById("signin").addEventListener("click", () => {
+      const email = document.getElementById("auth_email").value;
+      const password = document.getElementById("auth_password").value;
+      const stage = document.getElementById("stage");
+      if (email === "jordan@example.test" && password === "StoredTestPass!2024XY") {
+        stage.innerHTML =
+          '<p>Welcome back, Jordan.</p><h1>Apply — Engineer at Mockcorp</h1>' +
+          '<label for="first_name">First Name*</label><input id="first_name" type="text" required>' +
+          '<label for="last_name">Last Name*</label><input id="last_name" type="text" required>' +
+          '<label for="email">Email*</label><input id="email" type="email" required>' +
+          '<label for="phone">Phone*</label><input id="phone" type="tel" required>' +
+          '<button id="submit_application" type="button" onclick="document.getElementById(\'stage\').innerHTML=' +
+          '\'<h1>Application submitted</h1><p>Confirmation #SR-1000.</p>\'">Submit Application</button>';
+      } else {
+        stage.innerHTML = '<h1>Sign in to apply</h1><p>Invalid email or password.</p>';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -17,6 +17,20 @@ import { chromium, type Browser, type Page } from "playwright";
  *
  * Playwright is already this repository's browser layer (the discovery connectors use it); no new
  * automation dependency is introduced.
+ *
+ * PHASE 9C — SESSION REUSE EXTENSION POINT (not implemented). `open()` always calls
+ * `browser.newContext()` with no persisted `storageState`, so every run — including one resuming
+ * after a CAPTCHA/MFA/email-verification pause — opens a fresh, cookie-less context and
+ * `ensureAuthenticated` runs again from scratch. That is deliberate for this phase: a huge
+ * browser-profile-manager was explicitly out of scope, and a stale, silently-reused session is a
+ * worse failure mode than one extra sign-in. The safe extension point, if this is ever built, is
+ * narrow: `open()` would accept an optional `storageStatePath`, written via
+ * `context.storageState({ path })` only after `ensureAuthenticated` returns `AUTHENTICATED` /
+ * `ACCOUNT_CREATED`, and read back on the next `open()` for the SAME `AtsAccountIdentity`. That
+ * file holds cookies/session tokens — not a password — so it would need the same treatment
+ * `credentials.ts` gives a secret: never in SQLite, never logged, never sent anywhere, and invalidated
+ * (deleted) the moment login is next attempted and fails. Nothing here builds that; this paragraph
+ * only names where it would go.
  */
 
 export function realApplicationAgentDisabled(): boolean {

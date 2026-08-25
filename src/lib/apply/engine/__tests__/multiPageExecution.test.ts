@@ -252,3 +252,16 @@ test("MULTIPAGE-16: Lever regression fence — production selection, unchanged b
   assert.ok(!("page" in checkpoint), "Lever checkpoints must stay pre-9B shaped");
   assert.ok(checkpoint.completed.length >= 4, "hint-driven fills still happen");
 });
+
+// ── PHASE 9D — already-applied detection ────────────────────────────────────────────────────────
+
+test("PHASE9D-DUPLICATE-01: the ATS reporting an existing application fails the run terminally, never retries", async () => {
+  const run = newRun(mockAtsUrl("mock-already-applied"), "greenhouse");
+  const after = await executeRun(run.id, runtime, deps());
+
+  assert.equal(after.status, "FAILED", `expected a terminal stop, got ${after.status}`);
+  assert.match(after.blocking_reason ?? "", /already exists/);
+  const events = runsDb.listEvents(run.id).map((e) => e.event_type);
+  assert.ok(events.includes("already_applied_detected"));
+  assert.equal(JSON.parse(after.checkpoint_json!).completed.length, 0, "nothing was filled — the run stopped before touching the page");
+});

@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- AUTH-03 / SECRET-01..05: an account-creation wall. "Create an account" is a generic
+     detectBlocking phrase, so the wall itself needs no adapter config to be DETECTED — the
+     adapter's ACCOUNT_CREATION_SUPPORTED mode is what lets Career-Ops act on it. Submitting with
+     matching password/confirm reveals the application form; the actual generated password is
+     asserted, by the test, to never appear anywhere in this page's OWN text either (a page that
+     echoed it back would itself be a leak). -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Account-Creation ATS</title></head>
+<body>
+  <div id="stage">
+    <h1>Create an account to apply</h1>
+    <label for="new_email">Email</label><input id="new_email" type="email">
+    <label for="new_password">Password</label><input id="new_password" type="password">
+    <label for="confirm_password">Confirm Password</label><input id="confirm_password" type="password">
+    <button id="create" type="button">Create Account</button>
+  </div>
+  <script>
+    document.getElementById("create").addEventListener("click", () => {
+      const email = document.getElementById("new_email").value;
+      const password = document.getElementById("new_password").value;
+      const confirm = document.getElementById("confirm_password").value;
+      const stage = document.getElementById("stage");
+      if (email.length > 0 && password.length >= 12 && password === confirm) {
+        stage.innerHTML =
+          '<p>Welcome back, Jordan.</p><h1>Apply — Engineer at Mockcorp</h1>' +
+          '<label for="first_name">First Name*</label><input id="first_name" type="text" required>' +
+          '<label for="last_name">Last Name*</label><input id="last_name" type="text" required>' +
+          '<label for="email">Email*</label><input id="email" type="email" required>' +
+          '<label for="phone">Phone*</label><input id="phone" type="tel" required>';
+      } else {
+        stage.innerHTML = '<h1>Create an account to apply</h1><p>Please complete the form.</p>';
+      }
+    });
+  </script>
+</body>
+</html>

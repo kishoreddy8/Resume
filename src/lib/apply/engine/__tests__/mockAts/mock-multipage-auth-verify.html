@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- MULTIPAGE-AUTH-03: page 2's login wall, but a SUCCESSFUL sign-in reveals an email-verification
+     requirement instead of the rest of the form — proving the pause preserves the page checkpoint
+     (page 2) rather than losing it or treating the pause as a page advance. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Multi-Page Verify-After-Login ATS</title></head>
+<body>
+  <div id="stage"></div>
+  <template id="page1">
+    <h2>Contact Information</h2>
+    <label for="first_name">First Name*</label><input id="first_name" type="text" required>
+    <label for="last_name">Last Name*</label><input id="last_name" type="text" required>
+    <label for="email">Email*</label><input id="email" type="email" required>
+    <label for="phone">Phone*</label><input id="phone" type="tel" required>
+    <button id="advance" type="button">Next</button>
+  </template>
+  <template id="page2wall">
+    <h2>Sign in to apply</h2>
+    <label for="auth_email">Email</label><input id="auth_email" type="email">
+    <label for="auth_password">Password</label><input id="auth_password" type="password">
+    <button id="signin" type="button">Sign In</button>
+  </template>
+  <script>
+    let page = 1;
+    function render() {
+      const stage = document.getElementById("stage");
+      if (page === 1) {
+        stage.replaceChildren(document.getElementById("page1").content.cloneNode(true));
+        stage.querySelector("#advance").addEventListener("click", () => { page = 2; render(); });
+      } else {
+        stage.replaceChildren(document.getElementById("page2wall").content.cloneNode(true));
+        stage.querySelector("#signin").addEventListener("click", () => {
+          stage.innerHTML = "<h2>Verify your email</h2><p>We sent a confirmation link — check your inbox to continue.</p>";
+        });
+      }
+    }
+    render();
+  </script>
+</body>
+</html>

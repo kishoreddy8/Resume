@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- CONSENT-01/02: an account-creation page with a REQUIRED "Terms of Service" checkbox the
+     adapter has NOT (by default) classified as safe, plus an OPTIONAL marketing checkbox that must
+     never be auto-checked regardless of classification. Submission only succeeds server-side (i.e.
+     in this fixture's own script) when the required checkbox is actually checked — proving the
+     engine's consent gate, not just its own bookkeeping, is what's under test. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Account-Creation-With-Consent ATS</title></head>
+<body>
+  <div id="stage">
+    <h1>Create an account to apply</h1>
+    <label for="new_email">Email</label><input id="new_email" type="email">
+    <label for="new_password">Password</label><input id="new_password" type="password">
+    <label for="confirm_password">Confirm Password</label><input id="confirm_password" type="password">
+    <label for="terms_consent">I agree to the Terms of Service*</label>
+    <input id="terms_consent" type="checkbox" required>
+    <label for="marketing_optin">Send me newsletters and promotions</label>
+    <input id="marketing_optin" type="checkbox">
+    <button id="create" type="button">Create Account</button>
+  </div>
+  <script>
+    document.getElementById("create").addEventListener("click", () => {
+      const email = document.getElementById("new_email").value;
+      const password = document.getElementById("new_password").value;
+      const confirm = document.getElementById("confirm_password").value;
+      const consent = document.getElementById("terms_consent").checked;
+      const stage = document.getElementById("stage");
+      if (email.length > 0 && password.length >= 12 && password === confirm && consent) {
+        stage.innerHTML =
+          '<p>Welcome back, Jordan.</p><h1>Apply — Engineer at Mockcorp</h1>' +
+          '<label for="first_name">First Name*</label><input id="first_name" type="text" required>' +
+          '<label for="last_name">Last Name*</label><input id="last_name" type="text" required>' +
+          '<label for="email">Email*</label><input id="email" type="email" required>' +
+          '<label for="phone">Phone*</label><input id="phone" type="tel" required>';
+      } else {
+        stage.innerHTML = '<h1>Create an account to apply</h1><p>You must agree to the Terms of Service to continue.</p>';
+      }
+    });
+  </script>
+</body>
+</html>

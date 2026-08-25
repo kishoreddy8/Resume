@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- MULTIPAGE-AUTH-01/02/03: a multi-page application whose SECOND page is a login wall. Page 1
+     fills normally; page 2 is the wall (same credential mechanics as mock-auth-login); once
+     signed in, the SAME page 2 reveals its own remaining fields and a Next control to page 3, the
+     review page. Proves ensureAuthenticated resumes the page walk rather than restarting it. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Multi-Page Login-Wall ATS</title></head>
+<body>
+  <div id="stage"></div>
+  <template id="page1">
+    <h2>Contact Information</h2>
+    <label for="first_name">First Name*</label><input id="first_name" type="text" required>
+    <label for="last_name">Last Name*</label><input id="last_name" type="text" required>
+    <label for="email">Email*</label><input id="email" type="email" required>
+    <label for="phone">Phone*</label><input id="phone" type="tel" required>
+    <button id="advance" type="button">Next</button>
+  </template>
+  <template id="page2wall">
+    <h2>Sign in to apply</h2>
+    <label for="auth_email">Email</label><input id="auth_email" type="email">
+    <label for="auth_password">Password</label><input id="auth_password" type="password">
+    <button id="signin" type="button">Sign In</button>
+  </template>
+  <template id="page2form">
+    <p>Signed in.</p>
+    <h2>Your Details</h2>
+    <label for="candidate_city">Location (City)*</label><input id="candidate_city" type="text" required>
+    <button id="advance" type="button">Continue</button>
+  </template>
+  <template id="page3">
+    <h2>Review your application</h2>
+    <button id="advance" type="button">Submit Application</button>
+  </template>
+  <script>
+    let page = 1;
+    function render() {
+      const stage = document.getElementById("stage");
+      if (page === 1) {
+        stage.replaceChildren(document.getElementById("page1").content.cloneNode(true));
+        stage.querySelector("#advance").addEventListener("click", () => { page = 2; render(); });
+      } else if (page === 2) {
+        stage.replaceChildren(document.getElementById("page2wall").content.cloneNode(true));
+        stage.querySelector("#signin").addEventListener("click", () => {
+          const email = document.getElementById("auth_email").value;
+          const password = document.getElementById("auth_password").value;
+          if (email === "jordan@example.test" && password === "StoredTestPass!2024XY") {
+            stage.replaceChildren(document.getElementById("page2form").content.cloneNode(true));
+            stage.querySelector("#advance").addEventListener("click", () => { page = 3; render(); });
+          } else {
+            stage.querySelector("h2").insertAdjacentHTML("afterend", "<p>Invalid email or password.</p>");
+          }
+        });
+      } else {
+        stage.replaceChildren(document.getElementById("page3").content.cloneNode(true));
+      }
+    }
+    render();
+  </script>
+</body>
+</html>

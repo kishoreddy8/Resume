@@ -63,3 +63,22 @@ test("regression: 'Race / Ethnicity' is NOT reclassified as a contact question b
   assert.ok(match);
   assert.equal(match!.type, "voluntary_demographic", "a protected demographic question must never resolve to 'contact'");
 });
+
+// ── PHASE 9D — conservative new question categories ──────────────────────────────────────────────
+
+test("'How did you hear about this position?' maps to referral_source (type other, ask each time)", () => {
+  const match = matchQuestion("How did you hear about this position?", new Map());
+  assert.equal(match?.canonicalKey, "referral_source");
+  assert.equal(match?.type, "other");
+});
+
+test("'Have you previously been employed by our company?' maps to previously_employed", () => {
+  const match = matchQuestion("Have you previously been employed by our company?", new Map());
+  assert.equal(match?.canonicalKey, "previously_employed");
+  assert.equal(match?.type, "other");
+});
+
+test("neither new pattern collides with work authorization or sponsorship", () => {
+  assert.notEqual(matchQuestion("Are you authorized to work in the United States?", new Map())?.canonicalKey, "referral_source");
+  assert.notEqual(matchQuestion("Will you require sponsorship?", new Map())?.canonicalKey, "previously_employed");
+});

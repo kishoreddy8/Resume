@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- AUTH-05: correct login succeeds at the credential level, but the NEXT page requires email
+     verification — "verify your email" is one of detectBlocking's own EMAIL_VERIFY_TEXT phrases. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Email-Verification ATS</title></head>
+<body>
+  <div id="stage">
+    <h1>Sign in to apply</h1>
+    <label for="auth_email">Email</label><input id="auth_email" type="email">
+    <label for="auth_password">Password</label><input id="auth_password" type="password">
+    <button id="signin" type="button">Sign In</button>
+  </div>
+  <script>
+    document.getElementById("signin").addEventListener("click", () => {
+      document.getElementById("stage").innerHTML =
+        '<h1>Verify your email</h1><p>We sent a confirmation link — check your inbox to continue.</p>';
+    });
+  </script>
+</body>
+</html>

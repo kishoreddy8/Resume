@@ -128,3 +128,22 @@ test("DISC-12: a stable id merely containing 'uid' is never treated as generated
   // "candidate-uid-display" is an ordinary stable id and must keep winning over an automation id.
   assert.equal(selectorFor(control({ id: "candidate-uid-display", automationId: "x" })), "#candidate-uid-display");
 });
+
+/* ── PHASE 9D — date/month control recognition ────────────────────────────────────────────────── */
+
+test("PHASE9D-DATE-01: a date input is recognized as kind \"date\", not lumped into \"unknown\"", () => {
+  const [field] = discoverFields([control({ id: "start_date", type: "date", labelText: "Start Date" })]);
+  assert.equal(field.kind, "date");
+});
+
+test("PHASE9D-DATE-02: a month input is recognized as kind \"month\"", () => {
+  const [field] = discoverFields([control({ id: "grad_month", type: "month", labelText: "Graduation" })]);
+  assert.equal(field.kind, "month");
+});
+
+test("PHASE9D-DATE-03: an UNLABELED date field is still discovered (previously silently dropped as unknown+no-label furniture)", () => {
+  // Before this kind existed, an unlabeled date input fell to kind "unknown", and discoverFields
+  // drops unknown+unlabeled controls as page furniture — silently losing a real question.
+  const fields = discoverFields([control({ id: "sd1", type: "date", labelText: null })]);
+  assert.equal(fields.length, 1, "a date control must never be silently dropped for lacking a label");
+});

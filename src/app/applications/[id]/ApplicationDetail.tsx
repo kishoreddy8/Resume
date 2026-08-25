@@ -354,6 +354,91 @@ function FinalReview({ run, review, busy, onSubmit }: { run: RunDetail; review: 
   );
 }
 
+const CONTROL_CLASS =
+  "mt-2 min-h-11 w-full rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-3 text-[16px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]";
+
+/**
+ * PHASE 9D — one control per DiscoveredField kind, matching what the ATS actually asked for
+ * (Career-Ops Phase 9 spec's "runtime form is authoritative for UI shape"): a radio question on the
+ * employer's site renders as a radio group here, not a dropdown; a checkbox stays a checkbox; a
+ * date/month field gets a date-compatible input; a textarea stays a textarea. Nothing here invents
+ * metadata the DOM didn't provide — `q.options`/`q.kind` are exactly what fieldDiscovery captured.
+ */
+function QuestionControl({
+  question: q,
+  value,
+  onChange,
+}: {
+  question: HumanQuestion;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  if (q.kind === "radio" && q.options && q.options.length > 0) {
+    return (
+      <fieldset className="mt-2 border-0 p-0">
+        <legend className="sr-only">{q.label}</legend>
+        <div className="grid gap-2">
+          {q.options.map((opt) => (
+            <label key={opt} className="flex min-h-9 items-center gap-2 text-[14px] text-primary">
+              <input
+                type="radio"
+                name={`batch-${q.id}`}
+                value={opt}
+                checked={value === opt}
+                onChange={() => onChange(opt)}
+                className="h-4 w-4 accent-[var(--accent)]"
+              />
+              {opt}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    );
+  }
+  if (q.kind === "checkbox" && (!q.options || q.options.length === 0)) {
+    return (
+      <label className="mt-2 flex min-h-9 items-center gap-2 text-[14px] text-primary">
+        <input
+          type="checkbox"
+          id={`batch-${q.id}`}
+          checked={value === "Yes"}
+          onChange={(e) => onChange(e.target.checked ? "Yes" : "No")}
+          className="h-5 w-5 accent-[var(--accent)]"
+        />
+        Yes
+      </label>
+    );
+  }
+  if (q.kind === "date" || q.kind === "month") {
+    return (
+      <input id={`batch-${q.id}`} type={q.kind} value={value} onChange={(e) => onChange(e.target.value)} className={CONTROL_CLASS} />
+    );
+  }
+  if (q.kind === "textarea") {
+    return (
+      <textarea
+        id={`batch-${q.id}`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={4}
+        placeholder="Your answer"
+        className={CONTROL_CLASS}
+      />
+    );
+  }
+  if (q.options && q.options.length > 0) {
+    return (
+      <select id={`batch-${q.id}`} value={value} onChange={(e) => onChange(e.target.value)} className={CONTROL_CLASS}>
+        <option value="">Choose an option…</option>
+        {q.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+      </select>
+    );
+  }
+  return (
+    <input id={`batch-${q.id}`} type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder="Your answer" className={CONTROL_CLASS} />
+  );
+}
+
 function BatchQuestionForm({
   run: _run,
   humanQuestions,
@@ -383,26 +468,7 @@ function BatchQuestionForm({
           <div key={q.id} className="rounded-[12px] border border-[var(--border)] bg-[var(--z0-bg)] p-4">
             <label htmlFor={`batch-${q.id}`} className="block text-[14px] font-semibold text-primary">{q.label}{q.required && <span className="ml-1 text-[var(--error)]" aria-label="required">*</span>}</label>
             {q.reason && <p className="mt-1 text-[12px] leading-5 text-tertiary">{q.reason}</p>}
-            {q.options && q.options.length > 0 ? (
-              <select
-                id={`batch-${q.id}`}
-                value={batchAnswers[q.id] ?? ""}
-                onChange={(e) => onAnswerChange(q.id, e.target.value)}
-                className="mt-2 min-h-11 w-full rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-3 text-[16px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
-              >
-                <option value="">Choose an option…</option>
-                {q.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
-            ) : (
-              <input
-                id={`batch-${q.id}`}
-                type="text"
-                value={batchAnswers[q.id] ?? ""}
-                onChange={(e) => onAnswerChange(q.id, e.target.value)}
-                placeholder="Your answer"
-                className="mt-2 min-h-11 w-full rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-3 text-[16px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
-              />
-            )}
+            <QuestionControl question={q} value={batchAnswers[q.id] ?? ""} onChange={(value) => onAnswerChange(q.id, value)} />
             {q.questionType !== "voluntary_demographic" && (
               <label className="mt-2 flex min-h-9 items-center gap-2 text-[13px] text-secondary">
                 <input

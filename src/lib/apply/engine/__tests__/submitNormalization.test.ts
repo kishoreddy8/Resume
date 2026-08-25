@@ -189,5 +189,10 @@ test("SUBMIT-NORM-08 & SUBMIT-NORM-09: Removed/changed employer option fails clo
   const events = runsDb.listEvents(run.id);
   const errorEvent = events.find((e: { event_type: string }) => e.event_type === "execution_error");
   assert.ok(errorEvent);
-  assert.ok(errorEvent?.detail?.includes("no longer an exact option"));
+  // PHASE 9D — the submit-time refill loop now routes every field through the SAME `applyPlan`
+  // the normal execution loop uses (so radio/checkbox refill gets the same treatment, not a second,
+  // partial implementation). The combobox failure reason therefore comes from applyPlan's own
+  // message, not a submit-specific one — the guarantee under test (a stale option fails closed,
+  // never submits) is unchanged; only the literal wording is.
+  assert.ok(errorEvent?.detail?.includes("Career-Ops never selects a close match"));
 });

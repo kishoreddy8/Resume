@@ -83,6 +83,50 @@ function contactValueFor(canonicalKey: string, ctx: AdapterContext): string | nu
 }
 
 /**
+ * PHASE 9D — single flat-field employment/education questions ("Current Employer", "Current Job
+ * Title", "Field of Study", "School Name"), answered from the candidate's MOST RECENT record when
+ * one has been supplied (`AdapterContext.employment`/`.education` are chronological, newest first —
+ * see their own doc comments in types.ts).
+ *
+ * DELIBERATELY NARROW. A multi-entry, repeatable employment/education SECTION (Workday's own
+ * per-entry sub-form, with its own "add another employer" control) is adapter-specific UI structure
+ * this generic layer does not attempt to solve — that requires an observed real form, exactly like
+ * any other adapter fact, and is out of scope here. Absent employment/education data, or a
+ * canonical key not listed below, falls through to the vault like any other question — asked once,
+ * never guessed. A value that doesn't exactly match a select/radio's current options is still
+ * caught by the existing exact-option guard at the end of `planFields`, so a stored degree string
+ * ("B.S.") that doesn't match a dropdown's option text ("Bachelor's Degree") becomes a question,
+ * never a silently wrong answer.
+ */
+function employmentValueFor(canonicalKey: string, ctx: AdapterContext): string | null {
+  const current = ctx.employment?.[0];
+  if (!current) return null;
+  switch (canonicalKey) {
+    case "current_employer":
+      return current.employer || null;
+    case "current_job_title":
+      return current.title || null;
+    default:
+      return null;
+  }
+}
+
+function educationValueFor(canonicalKey: string, ctx: AdapterContext): string | null {
+  const latest = ctx.education?.[0];
+  if (!latest) return null;
+  switch (canonicalKey) {
+    case "field_of_study":
+      return latest.field || null;
+    case "institution_name":
+      return latest.institution || null;
+    case "highest_education":
+      return latest.level || null;
+    default:
+      return null;
+  }
+}
+
+/**
  * Resolve a field to a canonical question via the adapter's hints. Naming only, never values.
  *
  * Matches on the selector OR the control's own id/name, because the two can legitimately disagree:
@@ -360,7 +404,10 @@ export function planFields(input: PlanInputs): FieldPlan[] {
     }
 
     // --- profile facts -------------------------------------------------------------------------
-    const fromProfile = contactValueFor(match.canonicalKey, input.context);
+    const fromProfile =
+      contactValueFor(match.canonicalKey, input.context) ??
+      employmentValueFor(match.canonicalKey, input.context) ??
+      educationValueFor(match.canonicalKey, input.context);
     if (fromProfile) {
       plans.push({ action: "fill", field, value: fromProfile, source: "PROFILE", canonicalKey: match.canonicalKey });
       continue;

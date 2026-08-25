@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- AUTH-06: correct login succeeds at the credential level, but the NEXT page asks for an MFA
+     code — "verification code" is one of detectBlocking's own MFA_TEXT phrases. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock MFA ATS</title></head>
+<body>
+  <div id="stage">
+    <h1>Sign in to apply</h1>
+    <label for="auth_email">Email</label><input id="auth_email" type="email">
+    <label for="auth_password">Password</label><input id="auth_password" type="password">
+    <button id="signin" type="button">Sign In</button>
+  </div>
+  <script>
+    document.getElementById("signin").addEventListener("click", () => {
+      document.getElementById("stage").innerHTML =
+        '<h1>Enter your verification code</h1><p>We texted a one-time code to your phone.</p>';
+    });
+  </script>
+</body>
+</html>

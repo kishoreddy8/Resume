@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- AUTH-02/04/08/10: a login wall. "Sign in to apply" is one of detectBlocking's own generic
+     account-wall phrases, so the INITIAL page is caught without any adapter config at all — the
+     adapter's auth config only changes what happens NEXT. Correct credentials (checked against a
+     fixed test value the test suite also seeds into the FAKE store) reveal the application form;
+     anything else reveals an invalid-credentials message. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Login-Wall ATS</title></head>
+<body>
+  <div id="stage">
+    <h1>Sign in to apply</h1>
+    <label for="auth_email">Email</label><input id="auth_email" type="email">
+    <label for="auth_password">Password</label><input id="auth_password" type="password">
+    <button id="signin" type="button">Sign In</button>
+  </div>
+  <script>
+    document.getElementById("signin").addEventListener("click", () => {
+      const email = document.getElementById("auth_email").value;
+      const password = document.getElementById("auth_password").value;
+      const stage = document.getElementById("stage");
+      if (email === "jordan@example.test" && password === "StoredTestPass!2024XY") {
+        stage.innerHTML =
+          '<p>Welcome back, Jordan.</p><h1>Apply — Engineer at Mockcorp</h1>' +
+          '<label for="first_name">First Name*</label><input id="first_name" type="text" required>' +
+          '<label for="last_name">Last Name*</label><input id="last_name" type="text" required>' +
+          '<label for="email">Email*</label><input id="email" type="email" required>' +
+          '<label for="phone">Phone*</label><input id="phone" type="tel" required>';
+      } else {
+        stage.innerHTML = '<h1>Sign in to apply</h1><p>Invalid email or password. Please try again.</p>';
+      }
+    });
+  </script>
+</body>
+</html>

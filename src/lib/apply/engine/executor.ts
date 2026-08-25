@@ -5,7 +5,13 @@ import { planFields, collectHumanQuestions } from "../agent/planFields";
 import { exactComboboxOption } from "../agent/comboboxSelection";
 import { findCanonicalLocation } from "../agent/locationNormalizer";
 import { findCanonicalPhoneCountry } from "../agent/phoneCountryNormalizer";
-import { detectBlocking, BLOCKING_STATUS } from "../agent/detectBlocking";
+import { detectBlocking, detectAlreadyApplied, BLOCKING_STATUS } from "../agent/detectBlocking";
+import { readPageSignals } from "./pageSignals";
+import { ensureAuthenticated } from "./auth";
+import { authOutcomeProceeds, authOutcomeToBlockingCondition, deriveTenantKey } from "../auth";
+import { keychainCredentialStore, type AtsAccountIdentity, type CredentialStore } from "../credentials";
+import type { BlockingCondition } from "../agent/types";
+import type { RunStatus } from "../runState";
 import { selectAdapter } from "../agent/selectAdapter";
 import { buildFinalReview, readSubmissionOutcome, type FinalReview } from "../finalReview";
 import type { AdapterContext, AtsAdapter, FieldPlan, HumanQuestion, RunApprovedAnswer } from "../agent/types";
@@ -66,19 +72,6 @@ export interface ExecutionCheckpoint {
 }
 
 const DEFAULT_SUBMIT = "#submit_application, button[type=submit]";
-
-/** Read the signals detectBlocking needs from the live page. */
-async function collectSignals(page: Page): Promise<{ url: string; text: string; markers: string[] }> {
-  const [text, markers] = await Promise.all([
-    page.evaluate(() => document.body?.innerText ?? ""),
-    page.evaluate(() =>
-      [...document.querySelectorAll("[class], iframe[src]")]
-        .slice(0, 400)
-        .map((el) => `${el.getAttribute("class") ?? ""} ${el.getAttribute("src") ?? ""}`)
-    ),
-  ]);
-  return { url: page.url(), text, markers };
-}
 
 // ── PHASE 9B — multi-page walk helpers (browser half; every DECISION lives in multiPage.ts) ──────
 
@@ -393,7 +386,7 @@ export async function executeRun(
   deps: ExecutorDeps,
   /* Same convention as approveAndSubmit's opts: the mock harness injects the adapter under test
    * here. Production callers omit it, and selection stays with the job record's own identity. */
-  opts: { adapter?: AtsAdapter } = {}
+  opts: { adapter?: AtsAdapter; credentialStore?: CredentialStore } = {}
 ): Promise<ApplicationRun> {
   let run = getRun(runId);
   if (!run) throw new Error(`No application run ${runId}`);
@@ -408,6 +401,31 @@ export async function executeRun(
   /* PHASE 9B — null for every adapter without nextPageSelector (Greenhouse, Lever), and null keeps
    * the walk below collapsed to the exact single-page flow that existed before this phase. */
   const multi = resolveMultiPageConfig(activeAdapter);
+  const credentialStore = opts.credentialStore ?? keychainCredentialStore;
+
+  /** PHASE 9C — a login wall is not automatically a stop. When the active adapter declares an
+   *  `auth` contract, `ensureAuthenticated` gets first say; only its non-proceeding outcomes turn
+   *  into a paused run. An adapter without `auth` (Greenhouse, Lever, every Phase 9B test fixture)
+   *  falls straight through to the ORIGINAL behavior — the condition, unchanged, blocks exactly as
+   *  it did before this phase. */
+  const resolveBlockingWithAuth = async (
+    page: Page,
+    condition: BlockingCondition | null
+  ): Promise<{ condition: BlockingCondition; detail: string } | null> => {
+    if (!condition) return null;
+    const config = condition === "account_required" ? activeAdapter?.auth?.() : undefined;
+    if (!config) return { condition, detail: condition };
+
+    const identity: AtsAccountIdentity = {
+      userId: String(deps.context.candidateId),
+      ats: activeAdapter!.sourceType,
+      tenant: deriveTenantKey(applyUrl),
+      email: deps.context.contact.email,
+    };
+    const result = await ensureAuthenticated({ runId, page, identity, config, store: credentialStore });
+    if (authOutcomeProceeds(result.outcome)) return null;
+    return { condition: authOutcomeToBlockingCondition(result.outcome) ?? "account_required", detail: result.detail };
+  };
 
   const previousCheckpoint = run.checkpoint_json ? (JSON.parse(run.checkpoint_json) as ExecutionCheckpoint) : null;
 
@@ -436,11 +454,23 @@ export async function executeRun(
 
     /* Blocking conditions before anything else: a CAPTCHA gates the whole page, and filling behind
      * one both fails and looks exactly like the automation the site is asking not to receive. */
-    const signals = await collectSignals(session.page);
-    const blocking = detectBlocking(signals);
+    const signals = await readPageSignals(session.page);
+
+    /* PHASE 9D — checked before any blocking condition: the ATS reporting an existing application
+     * is not something to wait out, and repeatedly retrying would be actively wrong. Terminal,
+     * exactly like a run with no application URL at all. */
+    if (detectAlreadyApplied(signals)) {
+      recordEvent(runId, "already_applied_detected", null);
+      return advanceRun(runId, "FAILED", {
+        checkpoint,
+        blockingReason: "This ATS reports an application already exists for this job. Nothing more will be attempted.",
+      });
+    }
+
+    const blocking = await resolveBlockingWithAuth(session.page, detectBlocking(signals));
     if (blocking) {
-      recordEvent(runId, "blocking_detected", blocking);
-      return advanceRun(runId, BLOCKING_STATUS[blocking], { checkpoint });
+      recordEvent(runId, "blocking_detected", blocking.detail);
+      return advanceRun(runId, BLOCKING_STATUS[blocking.condition], { checkpoint });
     }
 
     if (run.status !== "FILLING") run = advanceRun(runId, "FILLING", { checkpoint });
@@ -560,7 +590,7 @@ export async function executeRun(
       /* Single-page adapters exit here — the exact point the pre-9B flow fell through to review. */
       if (!multi) break;
 
-      const signals = await collectSignals(session.page);
+      const signals = await readPageSignals(session.page);
       if (matchesAnyMarker(signals.text, multi.reviewMarkers)) {
         /* The review page ends the walk. No further advance control is read, let alone clicked —
          * the engine never advances past review. */
@@ -655,15 +685,16 @@ export async function executeRun(
       /* Blocking detection ON THE NEW PAGE, before anything on it is touched. A safe previous page
        * says nothing about this one: a CAPTCHA, MFA gate or login wall can appear at any step, and
        * the adapter's own login markers are merged with the generic detector's signals. */
-      const nextSignals = await collectSignals(session.page);
-      const blockingNow =
+      const nextSignals = await readPageSignals(session.page);
+      const genericBlockingNow =
         detectBlocking(nextSignals) ??
         (matchesAnyMarker(`${nextSignals.text} ${nextSignals.markers.join(" ")}`, multi.loginMarkers)
           ? ("account_required" as const)
           : null);
+      const blockingNow = await resolveBlockingWithAuth(session.page, genericBlockingNow);
       if (blockingNow) {
-        recordEvent(runId, "blocking_detected", blockingNow);
-        return advanceRun(runId, BLOCKING_STATUS[blockingNow], { checkpoint });
+        recordEvent(runId, "blocking_detected", blockingNow.detail);
+        return advanceRun(runId, BLOCKING_STATUS[blockingNow.condition], { checkpoint });
       }
     }
 
@@ -695,28 +726,83 @@ export async function executeRun(
  * and treats the click as a claim to verify, not a result. Only the page's own confirmation text
  * marks the run SUBMITTED; anything else is SUBMISSION_UNCONFIRMED and the user is asked to check.
  */
+/**
+ * PHASE 9D — abort an in-flight submission attempt and return to a NORMAL waiting state, using
+ * only transitions runState.ts already allows: WAITING_FOR_SUBMIT_APPROVAL -> READY_FOR_REVIEW ->
+ * FILLING -> the target waiting state. No edge is added to the state machine — this walks the
+ * exact path a normal execution failure already takes, so one explicit approval never becomes
+ * permission to skip past a newly-discovered question or a re-authentication requirement.
+ */
+async function abortSubmissionTo(
+  runId: number,
+  targetStatus: RunStatus,
+  checkpoint: ExecutionCheckpoint | null,
+  extra: { blockingReason?: string; blockingQuestion?: string } = {}
+): Promise<ApplicationRun> {
+  const current = getRun(runId)!;
+  if (current.status === "WAITING_FOR_SUBMIT_APPROVAL") {
+    advanceRun(runId, "READY_FOR_REVIEW", { checkpoint: checkpoint ?? undefined });
+  }
+  advanceRun(runId, "FILLING", { checkpoint: checkpoint ?? undefined });
+  return advanceRun(runId, targetStatus, { checkpoint: checkpoint ?? undefined, ...extra });
+}
+
 export async function approveAndSubmit(
   runId: number,
   runtime: ApplicationBrowserRuntime,
   approval: { runId: number },
-  opts: { submitSelector?: string } = {}
+  opts: { submitSelector?: string; adapter?: AtsAdapter; deps?: ExecutorDeps; credentialStore?: CredentialStore } = {}
 ): Promise<ApplicationRun> {
-  let run = getRun(runId);
+  const run = getRun(runId);
   if (!run) throw new Error(`No application run ${runId}`);
   if (!run.apply_url) return advanceRun(runId, "FAILED", { blockingReason: "This run has no application URL." });
   const applyUrl = run.apply_url;
 
-  if (run.status === "READY_FOR_REVIEW") run = advanceRun(runId, "WAITING_FOR_SUBMIT_APPROVAL");
-  run = advanceRun(runId, "SUBMITTING", { submitApproval: approval });
+  /* Validated FIRST, outside any try/catch and before any state mutation or browser action — one
+   * job's approval must never be usable for another, and a mismatch must fail exactly this cleanly
+   * regardless of what pre-flight hardening happens below. Mirrors (and is redundantly re-checked
+   * by) advanceRun's own belt-and-braces guard when the SUBMITTING transition actually happens. */
+  if (!approval || approval.runId !== runId) {
+    throw new Error("Submission requires an explicit approval for this application run.");
+  }
+
+  const selection = selectAdapter({ source_type: (run.ats as never) ?? null, url: applyUrl });
+  const activeAdapter: AtsAdapter | null = opts.adapter ?? selection?.adapter ?? null;
+  const credentialStore = opts.credentialStore ?? keychainCredentialStore;
+  const checkpoint = run.checkpoint_json ? (JSON.parse(run.checkpoint_json) as ExecutionCheckpoint) : null;
 
   let session: BrowserSession | null = null;
   try {
     session = await runtime.open(applyUrl);
 
+    /* ── PHASE 9D — re-authenticate BEFORE anything is refilled or clicked ─────────────────────
+     * A session can expire between READY_FOR_REVIEW and the user's approval. Checked here, on the
+     * SAME page the refill is about to use, exactly like the executor's own login-wall handling —
+     * one policy chokepoint, not a second auth path. */
+    if (activeAdapter?.auth) {
+      const config = activeAdapter.auth();
+      const identity: AtsAccountIdentity = {
+        userId: String(opts.deps?.context.candidateId ?? run.candidate_id),
+        ats: activeAdapter.sourceType,
+        tenant: deriveTenantKey(applyUrl),
+        email: opts.deps?.context.contact.email ?? "",
+      };
+      const authResult = await ensureAuthenticated({ runId, page: session.page, identity, config, store: credentialStore });
+      if (!authOutcomeProceeds(authResult.outcome)) {
+        recordEvent(runId, "submit_preflight_auth_blocked", authResult.detail);
+        return abortSubmissionTo(
+          runId,
+          BLOCKING_STATUS[authOutcomeToBlockingCondition(authResult.outcome) ?? "account_required"],
+          checkpoint
+        );
+      }
+    }
+
     /* Refill from the approved review — a fresh page has empty fields, and the review the user
      * read IS the thing their approval covered. Only previously-completed selectors are touched;
-     * nothing new is decided at submit time. */
-    const checkpoint = run.checkpoint_json ? (JSON.parse(run.checkpoint_json) as ExecutionCheckpoint) : null;
+     * nothing new is decided at submit time. Routed through the SAME `applyPlan` the normal
+     * execution loop uses, so select/combobox/checkbox/radio/upload all get identical treatment —
+     * no second, partial implementation of field-filling semantics at submit time. */
     if (checkpoint?.review) {
       const contact = getCandidateContact(run.candidate_id);
       const locationContext = contact?.location ?? null;
@@ -731,33 +817,72 @@ export async function approveAndSubmit(
         if (!field) continue;
         if (completed.kind === "upload") {
           const doc = completed.selector.toLowerCase().includes("cover") ? run.cover_letter_file : run.resume_file;
-          if (doc) await session.page.setInputFiles(field.selector, doc);
+          if (doc) {
+            const result = await applyPlan(session.page, {
+              action: "upload",
+              field,
+              filePath: doc,
+              source: completed.source as Extract<FieldPlan, { action: "upload" }>["source"],
+            });
+            if (!result.ok) throw new Error(`Approved document could not be re-attached for ${field.label ?? field.selector}: ${result.reason}`);
+          }
           continue;
         }
         const line = checkpoint.review.answers.find(
           (a) => a.question === (field.label ?? completed.canonicalKey ?? "")
         );
-        if (line) {
-          if (field.kind === "select") {
-            await session.page.selectOption(field.selector, { label: line.value });
-          } else if (field.kind === "combobox") {
-            // Re-filling a previously approved combobox selection using the shared normalizer resolver.
-            // A missing exact match or normalisation failure means the page diverged from what the
-            // user approved — fail closed via the outer catch rather than submit with something else selected.
-            const normalize = getComboboxNormalizer(completed.canonicalKey, line.value, {
-              locationContext,
-              phoneCountryContext,
-            });
-            const selected = await selectComboboxOption(session.page, field.selector, line.value, normalize);
-            if (!selected) {
-              throw new Error(`Approved combobox value "${line.value}" is no longer an exact option for ${field.label ?? field.selector}.`);
-            }
-          } else {
-            await session.page.fill(field.selector, line.value);
-          }
+        if (!line) continue;
+
+        const plan: FieldPlan = {
+          action: "fill",
+          field,
+          value: line.value,
+          source: completed.source as Extract<FieldPlan, { action: "fill" }>["source"],
+          canonicalKey: completed.canonicalKey,
+          ...(completed.canonicalKey === "location_city" ? { locationContext: locationContext ?? undefined } : {}),
+          ...(completed.canonicalKey === "phone_country_code" ? { phoneCountryContext: phoneCountryContext ?? undefined } : {}),
+        };
+        const result = await applyPlan(session.page, plan);
+        if (!result.ok) {
+          throw new Error(`Approved value "${line.value}" is no longer valid for ${field.label ?? field.selector}: ${result.reason}`);
         }
       }
     }
+
+    /* ── PHASE 9D — new-question detection ──────────────────────────────────────────────────────
+     * One explicit approval covers exactly the review the user read. If the live form now reveals
+     * a required question that wasn't part of it, this is NOT authorization to answer it — leave
+     * submission mode entirely and land back on the normal WAITING_FOR_ANSWER batch path. Only
+     * runs when a caller supplies `deps` (the production route does); without it, this check is
+     * skipped and behavior is exactly what it was before this phase. */
+    if (opts.deps) {
+      const freshControls = (await session.page.evaluate(COLLECT_CONTROLS_SCRIPT)) as RawControl[];
+      const freshFields = discoverFields(freshControls);
+      const freshPlans = planFields({
+        fields: freshFields,
+        context: opts.deps.context,
+        knownVariants: opts.deps.knownVariants,
+        storedAnswers: opts.deps.storedAnswers,
+        runAnswers: checkpoint?.runAnswers,
+        selectorHints: activeAdapter?.fieldSelectorHints(),
+      });
+      const newQuestions = collectHumanQuestions(freshPlans, opts.deps.knownVariants);
+      if (newQuestions.length > 0) {
+        recordEvent(runId, "submit_preflight_new_question", String(newQuestions.length));
+        const nextCheckpoint: ExecutionCheckpoint = {
+          ...(checkpoint ?? { url: session.page.url(), ats: run.ats, completed: [], lastAction: "" }),
+          step: "filling",
+          humanQuestions: newQuestions,
+        };
+        return abortSubmissionTo(runId, "WAITING_FOR_ANSWER", nextCheckpoint, {
+          blockingQuestion: newQuestions[0]!.label,
+          blockingReason: newQuestions[0]!.reason,
+        });
+      }
+    }
+
+    if (run.status === "READY_FOR_REVIEW") advanceRun(runId, "WAITING_FOR_SUBMIT_APPROVAL");
+    advanceRun(runId, "SUBMITTING", { submitApproval: approval });
 
     await session.page.click(opts.submitSelector ?? DEFAULT_SUBMIT);
     await session.page.waitForTimeout(1500);

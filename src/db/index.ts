@@ -1058,6 +1058,54 @@ function runApplicationRunDuplicateGuardMigration(db: Database.Database) {
   `);
 }
 
+/**
+ * PHASE 9D — the smallest safe application-profile storage for employment/education facts.
+ *
+ * EMPTY BY DESIGN. No authoritative structured source for these facts exists yet — the Master
+ * Resume is a formatted .docx, not structured data, and parsing its prose into dated employment
+ * records would be inventing facts from text exactly like this system refuses to do everywhere
+ * else. These tables therefore start, and stay, empty until a human (or an explicit, reviewed
+ * future import step) populates them through `candidateEmployment.ts` / `candidateEducation.ts`'s
+ * own write functions. Nothing in this migration or anywhere else back-fills a row.
+ *
+ * CANDIDATE-SCOPED, MULTI-USER READY. `candidate_id` is required and cascades on delete, the same
+ * pattern as `application_answers` — a future multi-user Career-Ops needs no schema change here,
+ * only a real second candidate.
+ *
+ * Additive: two new tables, nothing existing altered.
+ */
+function runCandidateApplicationProfileMigrations(db: Database.Database) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS candidate_employment (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+      employer TEXT NOT NULL,
+      title TEXT NOT NULL,
+      start_date TEXT,
+      end_date TEXT,
+      location TEXT,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS candidate_education (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+      institution TEXT NOT NULL,
+      level TEXT NOT NULL,
+      field TEXT NOT NULL,
+      location TEXT,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_candidate_employment_candidate ON candidate_employment(candidate_id, display_order);
+    CREATE INDEX IF NOT EXISTS idx_candidate_education_candidate ON candidate_education(candidate_id, display_order);
+  `);
+}
+
 
 function ensureCandidateOne(db: Database.Database) {
   const existing = db.prepare("SELECT id FROM candidates WHERE id = 1").get();
@@ -1108,6 +1156,7 @@ function createConnection(): Database.Database {
   runApplicationVaultMigrations(db);
   runApplicationRunMigrations(db);
   runApplicationRunDuplicateGuardMigration(db);
+  runCandidateApplicationProfileMigrations(db);
   // 50K ATS/company registry: schema.sql creates the additive tables; this idempotent projection
   // runs only after every legacy company discovery/domain column is guaranteed to exist.
   runOrganizationRegistryBackfill(db);
