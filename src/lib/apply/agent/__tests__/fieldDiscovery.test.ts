@@ -82,3 +82,49 @@ test("sponsorship still pauses safely with no stored answer, unaffected by the c
   assert.notEqual((plans[0] as { value?: string }).value, "Yes");
   assert.notEqual((plans[0] as { value?: string }).value, "No");
 });
+
+/* ── PHASE 9A — Workday data-automation-id selector stabilisation ─────────────────────────────────
+ * Regression fence for the ONLY live behavior change of the interrupted Phase 9 session: selectorFor
+ * preferring a tenant-stable data-automation-id over a Workday-generated id. Pure, no browser. */
+
+test("DISC-07: a data-automation-id outranks a Workday-generated id", () => {
+  const selector = selectorFor(control({ id: "input--uid42", automationId: "legalNameSection_firstName" }));
+  assert.equal(selector, '[data-automation-id="legalNameSection_firstName"]');
+});
+
+test("DISC-08: a STABLE id still outranks an automation id — existing Greenhouse behavior is authoritative", () => {
+  assert.equal(selectorFor(control({ id: "first_name", automationId: "somethingElse" })), "#first_name");
+});
+
+test("DISC-09: a generated id with no automation id remains a usable last-resort selector, not null", () => {
+  // Deliberately NOT reload-stable — Workday regenerates these ids — but addressable-now beats
+  // refusing the field outright. The claim under test is only "not null and correctly formed".
+  assert.equal(selectorFor(control({ id: "input--uid42" })), "#input--uid42");
+});
+
+test("DISC-10: selector-breaking characters in an automation id are escaped, never interpolated raw", () => {
+  // An unescaped quote would terminate the attribute value early; a backslash could smuggle one in.
+  const selector = selectorFor(control({ id: "input--uid7", automationId: 'we"ird\\aid' }));
+  assert.equal(selector, '[data-automation-id="we\\"ird\\\\aid"]');
+});
+
+test("DISC-11: without a data-automation-id the DiscoveredField shape is identical to the pre-WIP shape", () => {
+  // Checkpoint serialisation compatibility: the property must be OMITTED entirely, never present
+  // as `automationId: undefined` — JSON round-trips and deep-equality both depend on that.
+  const [field] = discoverFields([control({ id: "first_name", labelText: "First Name" })]);
+  assert.ok(!("automationId" in field), "automationId must be absent, not undefined");
+  assert.deepEqual(field, {
+    selector: "#first_name",
+    kind: "text",
+    label: "First Name",
+    id: "first_name",
+    name: null,
+    required: false,
+  });
+});
+
+test("DISC-12: a stable id merely containing 'uid' is never treated as generated (classifier regression)", () => {
+  // The generated-id test is "--uid" or "input-<n>" ONLY. A single-dash id like
+  // "candidate-uid-display" is an ordinary stable id and must keep winning over an automation id.
+  assert.equal(selectorFor(control({ id: "candidate-uid-display", automationId: "x" })), "#candidate-uid-display");
+});

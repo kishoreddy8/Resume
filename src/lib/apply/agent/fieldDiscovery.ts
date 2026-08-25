@@ -24,6 +24,9 @@ export interface RawControl {
    *  ordinary `<input>` with `role="combobox"` rather than a native `<select>` — without this, that
    *  control is indistinguishable from a plain text field. */
   role?: string | null;
+  /** PHASE 9 — the `data-automation-id` attribute. Workday's only tenant-stable control identity;
+   *  its `id`s are generated per render. Null/absent everywhere the attribute isn't used. */
+  automationId?: string | null;
   /** The `class` attribute, as a generic secondary signal only — react-select's own default class
    *  names (e.g. "…select__input…") are a library convention used across many ATS boards, not a
    *  Celigo-specific hack. Never the primary signal; `role="combobox"` is checked first. */
@@ -95,7 +98,20 @@ function escapeAttributeValue(value: string): string {
  * avoiding, and there is always the option of asking the user.
  */
 export function selectorFor(raw: RawControl): string | null {
+  // PHASE 9 — a data-automation-id outranks a GENERATED id. Workday renders ids like
+  // "input--uid42" that change between page loads, while the automation id
+  // ("legalNameSection_firstName") is the tenant-stable contract, so a control carrying both is
+  // re-found by the automation id. Stable ids (Greenhouse's `first_name` etc.) still win because a
+  // control carrying BOTH is addressed identically by either, and #id is the cheaper query. The
+  // generated-id test is deliberately narrow — "--uid" (Workday's double-dash uid suffix) or an
+  // "input-<n>" prefix — so an ordinary stable id that merely contains "uid"
+  // (e.g. "candidate-uid-display") is never demoted.
+  if (raw.id && /^[A-Za-z][\w-]*$/.test(raw.id) && !/--uid|^input-\d/.test(raw.id)) return `#${raw.id}`;
+  if (raw.automationId) return `[data-automation-id="${escapeAttributeValue(raw.automationId)}"]`;
   if (raw.id) {
+    // A generated id with NO automation id lands here and still yields #input--uid42 — the last
+    // resort, because an addressable-now selector beats refusing the field. It is NOT
+    // reload-stable, and nothing here claims it is.
     if (/^[A-Za-z][\w-]*$/.test(raw.id)) return `#${raw.id}`;
     // A real id that doesn't parse as a bare CSS identifier — most commonly a numeric id like
     // Greenhouse's demographic controls ("16768"), which `#16768` cannot address at all without
@@ -128,6 +144,7 @@ export function discoverFields(controls: RawControl[]): DiscoveredField[] {
       label,
       id: raw.id,
       name: raw.name,
+      ...(raw.automationId ? { automationId: raw.automationId } : {}),
       required: raw.required,
       ...(raw.options && raw.options.length > 0 ? { options: raw.options } : {}),
     });
@@ -146,8 +163,9 @@ export const COLLECT_CONTROLS_SCRIPT = `
     ariaLabel: el.getAttribute("aria-label"),
     role: el.getAttribute("role"),
     className: el.getAttribute("class"),
+    automationId: el.getAttribute("data-automation-id"),
     labelText: (el.id && document.querySelector('label[for="' + el.id + '"]')?.textContent) || null,
-    ancestorText: (el.closest("li, .application-question, .application-field, fieldset")
+    ancestorText: (el.closest("li, .application-question, .application-field, fieldset, [data-automation-id=formField]")
       ?.querySelector(".application-label, legend, label, .text")?.textContent || null),
     required: el.hasAttribute("required") || el.getAttribute("aria-required") === "true",
     options: el.tagName.toLowerCase() === "select"

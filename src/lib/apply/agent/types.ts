@@ -19,6 +19,11 @@ export interface DiscoveredField {
   label: string | null;
   id: string | null;
   name: string | null;
+  /** PHASE 9 — the `data-automation-id` attribute, when present. Workday's ONLY stable control
+   *  identity: its `id`s are per-render generated ("input--uid42"), while automation ids
+   *  ("legalNameSection_firstName") are the tenant-stable contract its own test tooling uses.
+   *  Absent on ATS platforms that don't use the attribute — everything else is unchanged. */
+  automationId?: string | null;
   required: boolean;
   /** Options for a select/radio, so an answer can be checked against what the form allows. */
   options?: string[];
@@ -87,12 +92,40 @@ export type FieldPlan =
   | { action: "ask"; field: DiscoveredField; question: string; reason: string; questionType: QuestionType | null }
   | { action: "skip"; field: DiscoveredField; reason: string };
 
+/** PHASE 9 — one authoritative employment entry, verbatim from the candidate profile. Only the
+ *  facts the profile actually records: employer, title, dates. Location/manager/salary/reason-for-
+ *  leaving are NOT here because the profile does not record them — a form asking for one gets
+ *  NEEDS_USER_INPUT, never a fabricated value. */
+export interface EmploymentEntry {
+  employer: string;
+  title: string;
+  /** "YYYY-MM" as the profile stores it, or null. */
+  startDate: string | null;
+  /** null means current role. */
+  endDate: string | null;
+}
+
+/** PHASE 9 — one authoritative education entry. Graduation dates are deliberately absent: the
+ *  candidate profile does not record them, and this system never invents one. */
+export interface EducationEntry {
+  level: string;
+  field: string;
+  institution: string;
+}
+
 export interface AdapterContext {
   candidateId: number;
   /** Verbatim contact facts. Never derived, never guessed — see resolveCandidateContact. */
   contact: { name: string; email: string; phone: string; location: string; linkedin?: string; github?: string };
   resumePath: string | null;
   coverLetterPath: string | null;
+  /** PHASE 9 — employment history (chronological, newest first). CONTRACT-ONLY at present: no
+   *  production planner consumes this yet, and its runtime use is blocked until authoritative
+   *  candidate application-profile storage exists. Optional and additive — absent (or, today,
+   *  present) behaves exactly as before: history fields become questions, never guesses. */
+  employment?: EmploymentEntry[];
+  /** PHASE 9 — education entries. Same contract-only status and additive contract as employment. */
+  education?: EducationEntry[];
 }
 
 /**
@@ -109,6 +142,31 @@ export interface AtsAdapter {
   readonly sourceType: SourceType;
   /** Fields this ATS names consistently. A shortcut, never a form template — see each adapter. */
   fieldSelectorHints(): Record<string, string>;
+
+  // --- PHASE 9 — optional multi-page capabilities (CONTRACT ONLY — not yet consumed) --------------
+  // Every member below is an OPTIONAL contract field reserved for the FUTURE multi-page application
+  // engine. The current engine reads NONE of them: an adapter declaring them today changes nothing,
+  // and one that omits them (Greenhouse, Lever) runs exactly the single-page flow that existed
+  // before this phase. When the multi-page executor slice lands, it will gate every multi-page
+  // behavior on their presence and never branch on ATS-specific DOM selectors itself.
+
+  /** Selector for the control that advances to the next page of a multi-page application. The
+   *  future multi-page executor will click it ONLY after verifying the control's visible text is
+   *  not a submit action — that final-submit/advance guard ships with that slice, not here. Omit
+   *  for single-page ATS forms. */
+  nextPageSelector?(): string;
+  /** Lowercased page-text markers that identify the final review page. In the future multi-page
+   *  walk, reaching a page matching any of these will end the walk at READY_FOR_REVIEW — the walk
+   *  will never advance past review. */
+  reviewPageMarkers?(): string[];
+  /** Lowercased page-text/DOM markers of this ATS's login/account wall, to be merged into the
+   *  generic blocking detector's own signals by the future multi-page engine. Such a run will stop
+   *  with ACCOUNT_REQUIRED; nothing automates account creation or credentials. */
+  loginWallMarkers?(): string[];
+  /** Upper bound on pages this ATS's application flow can legitimately span. The future engine's
+   *  walk will be bounded by min(this, its own hard cap) so a redirect loop can never walk
+   *  forever. */
+  maxPages?(): number;
 }
 
 /** Detected blocking conditions. Each maps to a run status that stops and asks the user. */
