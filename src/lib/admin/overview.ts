@@ -1,5 +1,6 @@
 import { getDb } from "@/db";
 import { getScanningWindowSummary, getLatestScanActivity, type WindowKey, WINDOW_DAYS } from "@/db/queries/operations";
+import { getApplicationsWindowSummary, type ApplicationsWindowSummary } from "@/db/queries/applicationRuns";
 import { getAppSettings } from "@/db/queries/settings";
 import {
   evaluateRuntimeFreshness,
@@ -26,6 +27,21 @@ export function compareRuntimeVersions(
     return { state: "MISMATCH", detail: "The workflow producer and writer runtime do not match. Writer processing is fail-closed." };
   }
   return { state: "MATCH", detail: "Web and worker source revisions and contracts match." };
+}
+
+/**
+ * UI-0 DEFECT 7 — is the application engine healthy RIGHT NOW, within the selected window?
+ *
+ * Deliberately the same shape as `compareRuntimeVersions` above: a pure function of already-fetched
+ * data, so it is testable without a database. Replaces `(applications.FAILED ?? 0) > 0` — an
+ * unwindowed lifetime count that could never recover once a single run had ever failed. A failure
+ * ages out of DEGRADED exactly when it ages out of `summary`'s window; a later successful run
+ * within the same window does not, by itself, clear an UNRESOLVED failure that is also still
+ * within the window — the window itself is what the operator controls (24h/7d/30d) to decide how
+ * long a failure remains "recent" before it is spoken of only as history.
+ */
+export function applicationsHealth(summary: ApplicationsWindowSummary): "HEALTHY" | "DEGRADED" {
+  return summary.failedCount > 0 ? "DEGRADED" : "HEALTHY";
 }
 
 function groupedCounts(table: "resume_quality_workflows" | "application_runs"): Record<string, number> {
@@ -71,8 +87,11 @@ export function getAdminOverview(window: WindowKey) {
   // invisible here until a real workflow's stamped contract revealed it after the fact.
   const runtimeFreshness = evaluateRuntimeFreshness(webRuntime);
   const workflows = groupedCounts("resume_quality_workflows");
+  /* Lifetime breakdown by status — a separate, historical metric from the WINDOWED health verdict
+   * below, and still returned as-is for the existing applications-by-status display. */
   const applications = groupedCounts("application_runs");
   const scanning = getScanningWindowSummary(windowDays);
+  const applicationsWindow = getApplicationsWindowSummary(windowDays);
 
   return {
     generatedAt: new Date().toISOString(), window,
@@ -80,7 +99,7 @@ export function getAdminOverview(window: WindowKey) {
       system: runtimeCompatibility.state === "MISMATCH" ? "VERSION_MISMATCH" : worker.running ? "HEALTHY" : "DEGRADED",
       scanner: scanning.failedCount > 0 ? "DEGRADED" : settings.scheduler.scanEnabled ? "HEALTHY" : "DISABLED",
       writer: writer.state,
-      applications: (applications.FAILED ?? 0) > 0 ? "DEGRADED" : "HEALTHY",
+      applications: applicationsHealth(applicationsWindow),
       runtimeCompatibility,
       runtimeFreshness,
     },

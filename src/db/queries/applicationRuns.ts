@@ -213,3 +213,40 @@ export function listRuns(candidateId: number, limit = 50): ApplicationRun[] {
     .prepare("SELECT * FROM application_runs WHERE candidate_id = ? ORDER BY updated_at DESC LIMIT ?")
     .all(candidateId, limit) as ApplicationRun[];
 }
+
+export interface ApplicationsWindowSummary {
+  total: number;
+  failedCount: number;
+}
+
+/**
+ * UI-0 DEFECT 7 — recent, windowed application-run activity, across every candidate.
+ *
+ * WHY THIS EXISTS. Admin's own health line read `(applications.FAILED ?? 0) > 0`, where that count
+ * came from an unwindowed `GROUP BY status` over the entire lifetime of `application_runs` — one
+ * failure, ever, marked Applications DEGRADED forever, with no way for the system to ever report
+ * healthy again short of deleting the row. The scanner health line one line above it already solves
+ * exactly this problem correctly, with `getScanningWindowSummary(windowDays)`; this is the same
+ * pattern applied to applications, using the SAME `windowDays` the caller already computes.
+ *
+ * `updated_at` IS the right column to window on: `advanceRun` (above) sets it to `datetime('now')`
+ * on every transition, and FAILED is terminal, so a FAILED row's `updated_at` is exactly the moment
+ * it failed and never changes again. A failure ages out of DEGRADED exactly when it ages out of the
+ * window — never earlier, and never held open by an unrelated later failure elsewhere.
+ *
+ * Historical failures are NOT hidden by this — `recentFailures()` in `src/lib/admin/overview.ts`
+ * remains its own, separately-limited, unwindowed diagnostic list. This function answers "is this
+ * failing right now", not "has this ever failed"; that second question still has an honest answer.
+ */
+export function getApplicationsWindowSummary(windowDays: number): ApplicationsWindowSummary {
+  const row = getDb()
+    .prepare(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failedCount
+       FROM application_runs
+       WHERE julianday('now') - julianday(updated_at) <= @windowDays`
+    )
+    .get({ windowDays }) as { total: number; failedCount: number | null };
+  return { total: row.total, failedCount: row.failedCount ?? 0 };
+}
