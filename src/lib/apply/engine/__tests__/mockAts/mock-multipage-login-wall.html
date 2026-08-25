@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- Page 2 is a login wall whose wording deliberately matches NONE of the generic account-wall
+     phrases in detectBlocking — proving the ADAPTER's loginWallMarkers are consumed. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Login-Wall ATS</title></head>
+<body>
+  <h1>Apply — Engineer at Mockday</h1>
+  <div id="stage"></div>
+  <template id="page1">
+    <h2>Contact Information</h2>
+    <label for="first_name">First Name*</label><input id="first_name" type="text" required>
+    <label for="last_name">Last Name*</label><input id="last_name" type="text" required>
+    <label for="email">Email*</label><input id="email" type="email" required>
+    <label for="phone">Phone*</label><input id="phone" type="tel" required>
+    <button id="advance" type="button">Next</button>
+  </template>
+  <template id="page2">
+    <h2>Welcome back to Mockday</h2>
+    <p>Candidate account access is needed before your application can continue.</p>
+  </template>
+  <script>
+    let page = 1;
+    function render() {
+      const stage = document.getElementById("stage");
+      stage.replaceChildren(document.getElementById("page" + page).content.cloneNode(true));
+      stage.querySelector("#advance")?.addEventListener("click", () => { page++; render(); });
+    }
+    render();
+  </script>
+</body>
+</html>

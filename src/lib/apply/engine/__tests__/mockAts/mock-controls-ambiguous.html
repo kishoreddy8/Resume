@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- A radio group offering the SAME option label twice. An authoritative "Yes" cannot pick
+     between them; the engine must pause, never guess. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Ambiguous Radio ATS</title></head>
+<body>
+  <h1>Apply — Engineer at Mockcorp</h1>
+  <form>
+    <fieldset>
+      <legend>Do you now or in the future require visa sponsorship?*</legend>
+      <input type="radio" name="sponsorship" id="sp_a" value="Yes" required>
+      <input type="radio" name="sponsorship" id="sp_b" value="Yes">
+      <input type="radio" name="sponsorship" id="sp_c" value="No">
+    </fieldset>
+  </form>
+</body>
+</html>

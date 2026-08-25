@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- Mock multi-page ATS application (SPA style: templates mount/unmount, like real multi-page
+     ATS flows). Page 3 is the review page; its Submit Application control must receive ZERO
+     clicks from the engine — clicking it replaces the stage with a submitted-confirmation, which
+     no test must ever observe. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Multi-Page ATS — Platform Engineer</title></head>
+<body>
+  <h1>Apply — Platform Engineer at Mockcorp</h1>
+  <div id="stage"></div>
+
+  <template id="page1">
+    <h2>Contact Information</h2>
+    <label for="first_name">First Name*</label><input id="first_name" type="text" required>
+    <label for="last_name">Last Name*</label><input id="last_name" type="text" required>
+    <label for="email">Email*</label><input id="email" type="email" required>
+    <label for="phone">Phone*</label><input id="phone" type="tel" required>
+    <button id="advance" type="button">Next</button>
+  </template>
+
+  <template id="page2">
+    <h2>Your Details</h2>
+    <label for="candidate_city">Location (City)*</label><input id="candidate_city" type="text" required>
+    <label for="linkedin_profile">LinkedIn Profile</label><input id="linkedin_profile" type="text">
+    <button id="advance" type="button">Continue</button>
+  </template>
+
+  <template id="page3">
+    <h2>Review your application</h2>
+    <p>Please review your application before submitting.</p>
+    <button id="advance" type="button">Submit Application</button>
+  </template>
+
+  <script>
+    let page = 1;
+    function render() {
+      const stage = document.getElementById("stage");
+      stage.replaceChildren(document.getElementById("page" + page).content.cloneNode(true));
+      const btn = stage.querySelector("#advance");
+      if (page < 3) {
+        btn.addEventListener("click", () => { page++; render(); });
+      } else {
+        btn.addEventListener("click", () => {
+          stage.innerHTML = "<h2>Application submitted</h2><p>Confirmation #MP-9999.</p>";
+        });
+      }
+    }
+    render();
+  </script>
+</body>
+</html>

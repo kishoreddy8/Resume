@@ -67,11 +67,16 @@ const TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
     "CANCELLED",
   ],
   ACCOUNT_REQUIRED: ["NAVIGATING", "FILLING", "WAITING_FOR_MFA", "WAITING_FOR_EMAIL_VERIFICATION", "FAILED", "CANCELLED"],
+  /* ACCOUNT_REQUIRED is reachable while FILLING since the multi-page walk: a login wall can sit
+   * between two form pages, discovered only after a safe Next — the same reality that already put
+   * every verification wall on NAVIGATING's list. The submission boundary is untouched: FILLING
+   * still cannot reach SUBMITTING or WAITING_FOR_SUBMIT_APPROVAL (asserted by RUN-2). */
   FILLING: [
     "WAITING_FOR_ANSWER",
     "WAITING_FOR_CAPTCHA",
     "WAITING_FOR_MFA",
     "WAITING_FOR_EMAIL_VERIFICATION",
+    "ACCOUNT_REQUIRED",
     "READY_FOR_REVIEW",
     "FAILED",
     "CANCELLED",

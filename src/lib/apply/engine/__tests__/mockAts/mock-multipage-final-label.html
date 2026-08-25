@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- One fill page whose ONLY advance control carries a final-action label. The label comes from
+     the URL hash (default "Submit Application") so one fixture covers every dangerous wording.
+     If the engine ever clicks it, the page mutates to a submitted-confirmation. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Final-Label ATS</title></head>
+<body>
+  <h1>Apply — Analyst at Mockcorp</h1>
+  <div id="stage">
+    <h2>Contact Information</h2>
+    <label for="first_name">First Name*</label><input id="first_name" type="text" required>
+    <label for="last_name">Last Name*</label><input id="last_name" type="text" required>
+    <label for="email">Email*</label><input id="email" type="email" required>
+    <label for="phone">Phone*</label><input id="phone" type="tel" required>
+    <button id="advance" type="button"
+      onclick="document.getElementById('stage').innerHTML='<h2>Application submitted</h2>'">Submit Application</button>
+  </div>
+  <script>
+    const label = decodeURIComponent(location.hash.slice(1));
+    if (label) document.getElementById("advance").textContent = label;
+  </script>
+</body>
+</html>

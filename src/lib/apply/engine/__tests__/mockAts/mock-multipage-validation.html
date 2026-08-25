@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- Clicking Next does NOT navigate: it reveals a validation error and a newly-required question
+     on the SAME page (every original field stays). The engine must not count this as a page
+     transition, and must pause on the revealed required question. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Validation-Error ATS</title></head>
+<body>
+  <h1>Apply — Engineer at Mockcorp</h1>
+  <div id="stage">
+    <h2>Contact Information</h2>
+    <label for="first_name">First Name*</label><input id="first_name" type="text" required>
+    <label for="last_name">Last Name*</label><input id="last_name" type="text" required>
+    <label for="email">Email*</label><input id="email" type="email" required>
+    <label for="phone">Phone*</label><input id="phone" type="tel" required>
+    <div id="reveal"></div>
+    <button id="advance" type="button">Next</button>
+  </div>
+  <script>
+    document.getElementById("advance").addEventListener("click", () => {
+      const reveal = document.getElementById("reveal");
+      if (!reveal.querySelector("input")) {
+        reveal.innerHTML =
+          '<p class="error">Please complete all required questions.</p>' +
+          '<label for="q_workauth">Are you legally authorized to work in the United States?*</label>' +
+          '<input id="q_workauth" type="text" required>';
+      }
+    });
+  </script>
+</body>
+</html>

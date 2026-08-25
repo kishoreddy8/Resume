@@ -1,6 +1,6 @@
 import type { Page } from "playwright";
 import { advanceRun, getRun, recordEvent, updateCheckpoint, type ApplicationRun } from "@/db/queries/applicationRuns";
-import { discoverFields, COLLECT_CONTROLS_SCRIPT, type RawControl } from "../agent/fieldDiscovery";
+import { discoverFields, COLLECT_CONTROLS_SCRIPT, escapeAttributeValue, type RawControl } from "../agent/fieldDiscovery";
 import { planFields, collectHumanQuestions } from "../agent/planFields";
 import { exactComboboxOption } from "../agent/comboboxSelection";
 import { findCanonicalLocation } from "../agent/locationNormalizer";
@@ -8,7 +8,14 @@ import { findCanonicalPhoneCountry } from "../agent/phoneCountryNormalizer";
 import { detectBlocking, BLOCKING_STATUS } from "../agent/detectBlocking";
 import { selectAdapter } from "../agent/selectAdapter";
 import { buildFinalReview, readSubmissionOutcome, type FinalReview } from "../finalReview";
-import type { AdapterContext, FieldPlan, HumanQuestion, RunApprovedAnswer } from "../agent/types";
+import type { AdapterContext, AtsAdapter, FieldPlan, HumanQuestion, RunApprovedAnswer } from "../agent/types";
+import {
+  classifyAdvanceControl,
+  hasPageAdvanced,
+  matchesAnyMarker,
+  resolveMultiPageConfig,
+  type PageFingerprint,
+} from "./multiPage";
 import type { StoredAnswer } from "../resolveAnswer";
 import type { QuestionType } from "../questionTypes";
 import { getCandidateContact } from "@/db/queries/candidateSettings";
@@ -51,6 +58,10 @@ export interface ExecutionCheckpoint {
   review?: FinalReview;
   /** Required unanswered questions collected for batch human input. Present only while WAITING_FOR_ANSWER. */
   humanQuestions?: HumanQuestion[];
+  /** PHASE 9B — 1-based index of the page being processed. Present ONLY on multi-page adapters, so
+   *  a single-page checkpoint stays byte-identical to its pre-9B shape. Old checkpoints without it
+   *  remain readable: nothing reads this field back, it exists for audit and future safe resume. */
+  page?: number;
   lastAction: string;
 }
 
@@ -67,6 +78,69 @@ async function collectSignals(page: Page): Promise<{ url: string; text: string; 
     ),
   ]);
   return { url: page.url(), text, markers };
+}
+
+// ── PHASE 9B — multi-page walk helpers (browser half; every DECISION lives in multiPage.ts) ──────
+
+/** Read the current page's identity for transition detection. Fields and buttons only — cheap,
+ *  deterministic, and aligned with what discovery itself sees. */
+async function readPageFingerprint(page: Page): Promise<PageFingerprint> {
+  const read = await page
+    .evaluate(() => ({
+      fieldIds: [...document.querySelectorAll("input, select, textarea")]
+        .filter((el) => el.getAttribute("type") !== "hidden")
+        .map(
+          (el) =>
+            `${el.tagName.toLowerCase()}:${el.id || el.getAttribute("name") || el.getAttribute("data-automation-id") || ""}`
+        ),
+      buttonTexts: [...document.querySelectorAll("button, input[type=submit], input[type=button]")].map((el) =>
+        ((el as HTMLElement).innerText || el.getAttribute("value") || "").trim()
+      ),
+    }))
+    .catch(() => ({ fieldIds: [], buttonTexts: [] }));
+  return { url: page.url(), ...read };
+}
+
+/** Every text the page offers for the advance control, or null when the control is absent.
+ *  ALL of them go to the classifier — one dangerous reading outranks any number of safe ones. */
+async function readAdvanceControlTexts(page: Page, selector: string): Promise<string[] | null> {
+  const el = await page.$(selector).catch(() => null);
+  if (!el) return null;
+  /* No named function bindings inside evaluate callbacks — the bundler's name-preservation
+   * helper (__name) does not exist in the browser context. Same reason COLLECT_CONTROLS_SCRIPT
+   * is a string. */
+  return el.evaluate((node) =>
+    [
+      ((node as HTMLElement).innerText ?? "").trim(),
+      (node.getAttribute("aria-label") ?? "").trim(),
+      (node.getAttribute("value") ?? "").trim(),
+      (node.getAttribute("title") ?? "").trim(),
+    ].filter((v) => v.length > 0)
+  );
+}
+
+/**
+ * Bounded wait for deterministic evidence that a Next click moved the application forward.
+ * Polls the fingerprint rather than sleeping a fixed period — a fast SPA swap resolves in one
+ * poll, and the 3s ceiling matches the async-combobox settle convention. A read that throws
+ * mid-navigation is retried; it is evidence of change in flight, not of failure.
+ */
+async function waitForPageTransition(page: Page, before: PageFingerprint, timeoutMs = 3000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      if (hasPageAdvanced(before, await readPageFingerprint(page))) return true;
+    } catch {
+      /* navigation in flight — poll again */
+    }
+    if (Date.now() >= deadline) break;
+    await page.waitForTimeout(150).catch(() => null);
+  }
+  try {
+    return hasPageAdvanced(before, await readPageFingerprint(page));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -215,6 +289,73 @@ async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { 
       await page.selectOption(plan.field.selector, { label: plan.value });
       return { ok: true };
     }
+    if (plan.field.kind === "checkbox") {
+      /* PHASE 9B — a checkbox is never toggled blindly. The planned value must map to a state
+       * exactly; anything else is a question for the user, same as an unmatchable combobox. */
+      const v = plan.value.trim().toLowerCase();
+      if (v === "yes" || v === "true") {
+        await page.check(plan.field.selector);
+        return { ok: true };
+      }
+      if (v === "no" || v === "false") {
+        await page.uncheck(plan.field.selector);
+        return { ok: true };
+      }
+      return {
+        ok: false,
+        reason: `"${plan.value}" does not map unambiguously to a checkbox state — Career-Ops never toggles blindly.`,
+      };
+    }
+    if (plan.field.kind === "radio") {
+      /* PHASE 9B — the plan's field is ONE input of a radio group; the answer names an OPTION.
+       * Select the group member whose own label/value equals the answer exactly — comboboxSelection's
+       * exact-match discipline in radio shape. Zero matches or more than one both pause the run:
+       * a real group never needs a guess, and duplicate labels are a page telling us it is unsure. */
+      /* No named function bindings inside the evaluate callback — see readAdvanceControlTexts. */
+      const located = await page.evaluate(
+        (args) => {
+          const target = document.querySelector(args.selector) as HTMLInputElement | null;
+          if (!target) return { state: "missing" as const };
+          const group = target.name
+            ? [...document.querySelectorAll(`input[type="radio"][name="${CSS.escape(target.name)}"]`)]
+            : [target];
+          const wanted = args.value.trim();
+          const hits = group.filter((el) => {
+            const id = (el as HTMLInputElement).id;
+            const byFor = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`)?.textContent : null;
+            const wrapped = el.closest("label")?.textContent;
+            return [byFor, wrapped, el.getAttribute("value")].some((t) => (t ?? "").trim() === wanted && wanted.length > 0);
+          });
+          if (hits.length !== 1) return { state: hits.length === 0 ? ("no_option" as const) : ("ambiguous" as const) };
+          const hit = hits[0] as HTMLInputElement;
+          return { state: "found" as const, id: hit.id || null, index: group.indexOf(hit), name: target.name || null };
+        },
+        { selector: plan.field.selector, value: plan.value }
+      );
+      if (located.state === "missing") {
+        return { ok: false, reason: "The radio control could not be found on the page." };
+      }
+      if (located.state === "no_option") {
+        return {
+          ok: false,
+          reason: `No option in this radio group exactly matches "${plan.value}" — Career-Ops never selects a close match.`,
+        };
+      }
+      if (located.state === "ambiguous") {
+        return {
+          ok: false,
+          reason: `More than one option in this radio group matches "${plan.value}" — Career-Ops never guesses between them.`,
+        };
+      }
+      if (located.id) {
+        await page.check(`[id="${escapeAttributeValue(located.id)}"]`);
+      } else if (located.name) {
+        await page.locator(`input[type="radio"][name="${escapeAttributeValue(located.name)}"]`).nth(located.index).check();
+      } else {
+        await page.check(plan.field.selector);
+      }
+      return { ok: true };
+    }
     if (plan.field.kind === "combobox") {
       // For location_city and phone_country_code, supply normalisers so bare or compact values
       // can resolve to the ATS canonical options without loosening any generic combobox matching.
@@ -249,7 +390,10 @@ async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { 
 export async function executeRun(
   runId: number,
   runtime: ApplicationBrowserRuntime,
-  deps: ExecutorDeps
+  deps: ExecutorDeps,
+  /* Same convention as approveAndSubmit's opts: the mock harness injects the adapter under test
+   * here. Production callers omit it, and selection stays with the job record's own identity. */
+  opts: { adapter?: AtsAdapter } = {}
 ): Promise<ApplicationRun> {
   let run = getRun(runId);
   if (!run) throw new Error(`No application run ${runId}`);
@@ -259,7 +403,11 @@ export async function executeRun(
   /* Captured once: `run` is reassigned by every advanceRun below, which would lose the narrowing. */
   const applyUrl = run.apply_url;
 
-  const adapter = selectAdapter({ source_type: (run.ats as never) ?? null, url: applyUrl });
+  const selection = selectAdapter({ source_type: (run.ats as never) ?? null, url: applyUrl });
+  const activeAdapter: AtsAdapter | null = opts.adapter ?? selection?.adapter ?? null;
+  /* PHASE 9B — null for every adapter without nextPageSelector (Greenhouse, Lever), and null keeps
+   * the walk below collapsed to the exact single-page flow that existed before this phase. */
+  const multi = resolveMultiPageConfig(activeAdapter);
 
   const previousCheckpoint = run.checkpoint_json ? (JSON.parse(run.checkpoint_json) as ExecutionCheckpoint) : null;
 
@@ -271,6 +419,7 @@ export async function executeRun(
     runAnswers: previousCheckpoint?.runAnswers ?? {},
     lastAction: "run loaded",
   };
+  if (multi) checkpoint.page = 1;
 
   /* A resumed run re-enters from a waiting state; a fresh one from QUEUED. Both re-open the page —
    * the browser that was here before is gone, and pretending otherwise is how state diverges. */
@@ -297,72 +446,225 @@ export async function executeRun(
     if (run.status !== "FILLING") run = advanceRun(runId, "FILLING", { checkpoint });
     checkpoint.step = "filling";
 
-    const controls = (await session.page.evaluate(COLLECT_CONTROLS_SCRIPT)) as RawControl[];
-    const fields = discoverFields(controls);
-    const plans = planFields({
-      fields,
-      context: deps.context,
-      knownVariants: deps.knownVariants,
-      storedAnswers: deps.storedAnswers,
-      runAnswers: checkpoint.runAnswers,
-      selectorHints: adapter?.adapter.fieldSelectorHints(),
-    });
-
-    for (const plan of plans) {
-      if (plan.action !== "fill" && plan.action !== "upload") continue;
-      const result = await applyPlan(session.page, plan);
-      if (!result.ok) {
-        /* A combobox with no exact option for the approved value — discoverable only once the menu
-         * is actually open, so this is caught here rather than during planning. Falls back to the
-         * SAME pause-and-ask behavior as any other unanswerable field; nothing here guesses. */
-        return advanceRun(runId, "WAITING_FOR_ANSWER", {
-          checkpoint,
-          blockingQuestion: plan.field.label ?? plan.field.selector,
-          blockingReason: result.reason,
-        });
+    /* ── PHASE 9B — the page walk ────────────────────────────────────────────────────────────────
+     * One bounded loop of discover → plan → fill → checkpoint per page. A single-page adapter
+     * (multi === null) runs the body exactly once and breaks where the pre-9B code returned, so
+     * Greenhouse and Lever behavior is unchanged by construction. Everything the loop DECIDES —
+     * whether a control may be clicked, whether a page is review or a login wall, when to stop —
+     * is a pure function in multiPage.ts. */
+    const allPlans: FieldPlan[] = [];
+    const plannedSelectors = new Set<string>();
+    /* Review is built from the first plan seen for each selector; a remediation re-plan of the
+     * same field never duplicates its line. */
+    const rememberPlans = (plans: FieldPlan[]) => {
+      for (const plan of plans) {
+        if (plannedSelectors.has(plan.field.selector)) continue;
+        plannedSelectors.add(plan.field.selector);
+        allPlans.push(plan);
       }
-      checkpoint.completed.push({
-        selector: plan.field.selector,
-        canonicalKey: plan.action === "fill" ? plan.canonicalKey : null,
-        source: plan.source,
-        kind: plan.action,
-      });
-      checkpoint.lastAction = `${plan.action}: ${plan.field.label ?? plan.field.selector}`;
-      updateCheckpoint(runId, checkpoint);
-      recordEvent(
-        runId,
-        plan.action === "upload" ? "document_uploaded" : "field_filled",
-        plan.field.label ?? plan.field.selector
-      );
-    }
+    };
+    /* Selectors acted on in THIS execution (a re-opened page always starts empty, so nothing
+     * carries over from a previous checkpoint) plus radio groups already decided — one answer
+     * decides a whole group, and its remaining members must not re-fire. */
+    const completedSelectors = new Set<string>();
+    const filledRadioGroups = new Set<string>();
+    let pageNumber = 1;
 
-    /* Discover options for any required combobox questions going into the batch, so the
-     * candidate UI can render multiple-choice dropdowns/pills instead of a plain text box. */
-    for (const plan of plans) {
-      if (
-        plan.action === "ask" &&
-        plan.field.required &&
-        plan.field.kind === "combobox" &&
-        (!plan.field.options || plan.field.options.length === 0)
-      ) {
-        const discovered = await discoverComboboxOptions(session.page, plan.field.selector);
-        if (discovered && discovered.length > 0) {
-          plan.field.options = discovered;
+    /* Apply every fill/upload plan in order. Returns the paused run on the first unanswerable
+     * field (the pre-9B pause, verbatim), or null when the page is done. */
+    const fillFromPlans = async (plans: FieldPlan[]): Promise<ApplicationRun | null> => {
+      for (const plan of plans) {
+        if (plan.action !== "fill" && plan.action !== "upload") continue;
+        if (completedSelectors.has(plan.field.selector)) continue;
+        if (plan.action === "fill" && plan.field.kind === "radio") {
+          const groupKey = plan.field.name ?? plan.field.selector;
+          if (filledRadioGroups.has(groupKey)) continue;
+        }
+        const result = await applyPlan(session!.page, plan);
+        if (!result.ok) {
+          /* A combobox/radio/checkbox with no exact mapping for the approved value — discoverable
+           * only against the live control, so this is caught here rather than during planning.
+           * Falls back to the SAME pause-and-ask behavior as any other unanswerable field. */
+          return advanceRun(runId, "WAITING_FOR_ANSWER", {
+            checkpoint,
+            blockingQuestion: plan.field.label ?? plan.field.selector,
+            blockingReason: result.reason,
+          });
+        }
+        completedSelectors.add(plan.field.selector);
+        if (plan.action === "fill" && plan.field.kind === "radio") {
+          filledRadioGroups.add(plan.field.name ?? plan.field.selector);
+        }
+        checkpoint.completed.push({
+          selector: plan.field.selector,
+          canonicalKey: plan.action === "fill" ? plan.canonicalKey : null,
+          source: plan.source,
+          kind: plan.action,
+        });
+        checkpoint.lastAction = `${plan.action}: ${plan.field.label ?? plan.field.selector}`;
+        updateCheckpoint(runId, checkpoint);
+        recordEvent(
+          runId,
+          plan.action === "upload" ? "document_uploaded" : "field_filled",
+          plan.field.label ?? plan.field.selector
+        );
+      }
+      return null;
+    };
+
+    for (;;) {
+      const controls = (await session.page.evaluate(COLLECT_CONTROLS_SCRIPT)) as RawControl[];
+      const fields = discoverFields(controls);
+      const plans = planFields({
+        fields,
+        context: deps.context,
+        knownVariants: deps.knownVariants,
+        storedAnswers: deps.storedAnswers,
+        runAnswers: checkpoint.runAnswers,
+        selectorHints: activeAdapter?.fieldSelectorHints(),
+      });
+      rememberPlans(plans);
+
+      const paused = await fillFromPlans(plans);
+      if (paused) return paused;
+
+      /* Discover options for any required combobox questions going into the batch, so the
+       * candidate UI can render multiple-choice dropdowns/pills instead of a plain text box. */
+      for (const plan of plans) {
+        if (
+          plan.action === "ask" &&
+          plan.field.required &&
+          plan.field.kind === "combobox" &&
+          (!plan.field.options || plan.field.options.length === 0)
+        ) {
+          const discovered = await discoverComboboxOptions(session.page, plan.field.selector);
+          if (discovered && discovered.length > 0) {
+            plan.field.options = discovered;
+          }
         }
       }
-    }
 
-    /* Collect all required unanswered fields at once. A single pause lets the user answer
-     * everything in one batch rather than one field per execution cycle. */
-    const humanQuestions = collectHumanQuestions(plans, deps.knownVariants);
-    if (humanQuestions.length > 0) {
-      checkpoint.humanQuestions = humanQuestions;
-      recordEvent(runId, "human_question_batch_created", String(humanQuestions.length));
-      return advanceRun(runId, "WAITING_FOR_ANSWER", {
-        checkpoint,
-        blockingQuestion: humanQuestions[0]!.label,
-        blockingReason: humanQuestions[0]!.reason,
-      });
+      /* Collect all required unanswered fields at once. A single pause lets the user answer
+       * everything in one batch rather than one field per execution cycle. */
+      const humanQuestions = collectHumanQuestions(plans, deps.knownVariants);
+      if (humanQuestions.length > 0) {
+        checkpoint.humanQuestions = humanQuestions;
+        recordEvent(runId, "human_question_batch_created", String(humanQuestions.length));
+        return advanceRun(runId, "WAITING_FOR_ANSWER", {
+          checkpoint,
+          blockingQuestion: humanQuestions[0]!.label,
+          blockingReason: humanQuestions[0]!.reason,
+        });
+      }
+
+      /* Single-page adapters exit here — the exact point the pre-9B flow fell through to review. */
+      if (!multi) break;
+
+      const signals = await collectSignals(session.page);
+      if (matchesAnyMarker(signals.text, multi.reviewMarkers)) {
+        /* The review page ends the walk. No further advance control is read, let alone clicked —
+         * the engine never advances past review. */
+        recordEvent(runId, "review_page_detected", `page ${pageNumber}`);
+        break;
+      }
+      if (pageNumber >= multi.maxPages) {
+        recordEvent(runId, "multi_page_limit_reached", `page ${pageNumber} of at most ${multi.maxPages}`);
+        return advanceRun(runId, "FAILED", {
+          checkpoint,
+          blockingReason: "This application spans more pages than the safe limit; stopped before the review page.",
+        });
+      }
+
+      const advanceTexts = await readAdvanceControlTexts(session.page, multi.nextSelector);
+      if (advanceTexts === null) break; /* no advance control — this is the final page */
+      const classification = classifyAdvanceControl(advanceTexts);
+      if (classification !== "safe_advance") {
+        /* NEVER-SUBMIT GUARD. A final-action control ("Submit Application", "Finish", …) is the
+         * form's own submit — exactly what the single-page flow leaves for the user, so the walk
+         * ends the same way: review built, nothing clicked. An ambiguous control is treated
+         * identically because uncertain semantics are not a thing to click through; only the
+         * audit trail distinguishes the two. */
+        recordEvent(
+          runId,
+          classification === "final_action" ? "advance_control_blocked" : "advance_control_ambiguous",
+          advanceTexts.join(" | ").slice(0, 200)
+        );
+        break;
+      }
+
+      const before = await readPageFingerprint(session.page);
+      await session.page.click(multi.nextSelector);
+      let advanced = await waitForPageTransition(session.page, before);
+      if (!advanced) {
+        recordEvent(runId, "page_did_not_advance", `page ${pageNumber}`);
+        /* Bounded remediation, once: the click may have surfaced validation errors or revealed
+         * required fields. Re-discover; fill anything newly authoritative; pause on anything
+         * needing a human. Only a pass that actually filled something earns ONE more click —
+         * an unchanged page is never clicked at again. */
+        const retryControls = (await session.page.evaluate(COLLECT_CONTROLS_SCRIPT)) as RawControl[];
+        const retryPlans = planFields({
+          fields: discoverFields(retryControls),
+          context: deps.context,
+          knownVariants: deps.knownVariants,
+          storedAnswers: deps.storedAnswers,
+          runAnswers: checkpoint.runAnswers,
+          selectorHints: activeAdapter?.fieldSelectorHints(),
+        });
+        rememberPlans(retryPlans);
+        const newlyFillable = retryPlans.filter(
+          (plan) => (plan.action === "fill" || plan.action === "upload") && !completedSelectors.has(plan.field.selector)
+        );
+        const retryPaused = await fillFromPlans(retryPlans);
+        if (retryPaused) return retryPaused;
+        const retryQuestions = collectHumanQuestions(retryPlans, deps.knownVariants);
+        if (retryQuestions.length > 0) {
+          checkpoint.humanQuestions = retryQuestions;
+          recordEvent(runId, "human_question_batch_created", String(retryQuestions.length));
+          return advanceRun(runId, "WAITING_FOR_ANSWER", {
+            checkpoint,
+            blockingQuestion: retryQuestions[0]!.label,
+            blockingReason: retryQuestions[0]!.reason,
+          });
+        }
+        if (newlyFillable.length === 0) {
+          return advanceRun(runId, "FAILED", {
+            checkpoint,
+            blockingReason:
+              "The application page did not advance and nothing more could be safely filled; stopped rather than clicking again.",
+          });
+        }
+        const beforeRetry = await readPageFingerprint(session.page);
+        await session.page.click(multi.nextSelector);
+        advanced = await waitForPageTransition(session.page, beforeRetry);
+        if (!advanced) {
+          recordEvent(runId, "page_did_not_advance", `page ${pageNumber} (after retry)`);
+          return advanceRun(runId, "FAILED", {
+            checkpoint,
+            blockingReason: "The application page did not advance after a bounded retry; stopped rather than clicking repeatedly.",
+          });
+        }
+      }
+
+      pageNumber += 1;
+      checkpoint.page = pageNumber;
+      checkpoint.url = session.page.url();
+      checkpoint.lastAction = `advanced to page ${pageNumber}`;
+      updateCheckpoint(runId, checkpoint);
+      recordEvent(runId, "page_advanced", `page ${pageNumber} via ${multi.nextSelector}`);
+
+      /* Blocking detection ON THE NEW PAGE, before anything on it is touched. A safe previous page
+       * says nothing about this one: a CAPTCHA, MFA gate or login wall can appear at any step, and
+       * the adapter's own login markers are merged with the generic detector's signals. */
+      const nextSignals = await collectSignals(session.page);
+      const blockingNow =
+        detectBlocking(nextSignals) ??
+        (matchesAnyMarker(`${nextSignals.text} ${nextSignals.markers.join(" ")}`, multi.loginMarkers)
+          ? ("account_required" as const)
+          : null);
+      if (blockingNow) {
+        recordEvent(runId, "blocking_detected", blockingNow);
+        return advanceRun(runId, BLOCKING_STATUS[blockingNow], { checkpoint });
+      }
     }
 
     checkpoint.step = "review";
@@ -370,7 +672,7 @@ export async function executeRun(
       company: null,
       role: "",
       ats: run.ats,
-      plans,
+      plans: allPlans,
       resumeFile: run.resume_file,
       coverLetterFile: run.cover_letter_file,
     });

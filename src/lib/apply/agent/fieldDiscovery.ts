@@ -86,7 +86,7 @@ function cleanLabel(text: string | null): string | null {
  *  characters that could break out of the quotes — or be read as selector syntax — are the quote
  *  itself and the backslash; both are escaped, and nothing else is altered. Never interpolates a
  *  raw, unescaped value into a selector string. */
-function escapeAttributeValue(value: string): string {
+export function escapeAttributeValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 

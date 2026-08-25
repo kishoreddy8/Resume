@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- Form-control coverage: checkbox, radio group (fieldset/legend labelled), native select, and a
+     sensitive checkbox that must never be touched. Single page, no multi-page contract. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Controls ATS</title></head>
+<body>
+  <h1>Apply — Engineer at Mockcorp</h1>
+  <form>
+    <label for="q_relocate">Are you willing to relocate?*</label>
+    <input id="q_relocate" type="checkbox" required>
+
+    <fieldset>
+      <legend>Do you now or in the future require visa sponsorship?*</legend>
+      <input type="radio" name="sponsorship" id="sp_yes" value="Yes" required>
+      <input type="radio" name="sponsorship" id="sp_no" value="No">
+    </fieldset>
+
+    <label for="q_country">Country of residence*</label>
+    <select id="q_country" required>
+      <option>United States</option>
+      <option>Canada</option>
+    </select>
+
+    <label for="q_disability">Do you have a disability?*</label>
+    <input id="q_disability" type="checkbox" required>
+  </form>
+</body>
+</html>

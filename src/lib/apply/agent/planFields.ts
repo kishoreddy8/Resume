@@ -407,7 +407,24 @@ export function planFields(input: PlanInputs): FieldPlan[] {
     });
   }
 
-  return plans;
+  /* PHASE 9B — a select or radio may only be filled with a value the form actually offers.
+   * Exact-match discipline, same as comboboxes (see comboboxSelection.ts): when the discovered
+   * options are known and the planned value is not literally one of them, the safe outcome is to
+   * ask — never the first option, never a close match. Radio groups usually surface without a
+   * discovered options list; those are held to the same exact-match rule at execution time. */
+  return plans.map((plan) => {
+    if (plan.action !== "fill") return plan;
+    if (plan.field.kind !== "select" && plan.field.kind !== "radio") return plan;
+    const options = plan.field.options;
+    if (!options || options.length === 0 || options.includes(plan.value)) return plan;
+    return {
+      action: "ask" as const,
+      field: plan.field,
+      question: plan.field.label ?? plan.canonicalKey ?? plan.field.selector,
+      reason: `"${plan.value}" is not one of the options this form offers.`,
+      questionType: null,
+    };
+  });
 }
 
 /** The first thing the run must stop for, or null when every field is settled. */

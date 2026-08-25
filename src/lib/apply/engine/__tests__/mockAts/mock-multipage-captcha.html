@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- A CAPTCHA appears on page 2, AFTER a clean first page — the walk must re-run blocking
+     detection after every transition and pause, never click through. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Captcha-After-Advance ATS</title></head>
+<body>
+  <h1>Apply — Engineer at Mockcorp</h1>
+  <div id="stage"></div>
+  <template id="page1">
+    <h2>Contact Information</h2>
+    <label for="first_name">First Name*</label><input id="first_name" type="text" required>
+    <label for="last_name">Last Name*</label><input id="last_name" type="text" required>
+    <label for="email">Email*</label><input id="email" type="email" required>
+    <label for="phone">Phone*</label><input id="phone" type="tel" required>
+    <button id="advance" type="button">Next</button>
+  </template>
+  <template id="page2">
+    <h2>Security check</h2>
+    <div class="g-recaptcha">I'm not a robot</div>
+  </template>
+  <script>
+    let page = 1;
+    function render() {
+      const stage = document.getElementById("stage");
+      stage.replaceChildren(document.getElementById("page" + page).content.cloneNode(true));
+      stage.querySelector("#advance")?.addEventListener("click", () => { page++; render(); });
+    }
+    render();
+  </script>
+</body>
+</html>
