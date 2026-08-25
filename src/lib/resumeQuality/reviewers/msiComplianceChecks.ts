@@ -1,6 +1,7 @@
 import type { CandidateProfile } from "@/lib/match/types";
 import type { ResumeContent } from "../../../../tools/tailoring-engine/types";
 import { extractCanonicalSkillsFromText, resolveSkillForReview } from "./skillAliases";
+import { isCapabilityGroundedForCandidate } from "../jdRequirementReconciler";
 
 /**
  * MASTER SKILLS INVENTORY RULE compliance — the canonical instructions' explicit rule (see
@@ -52,7 +53,22 @@ export function evaluateMsiCompliance(resume: ResumeContent, masterResumeProfile
   const authoritative = candidateAuthoritativeSkillSet(masterResumeProfile);
   const claimed = resumeClaimedTechnologies(resume);
 
-  const ungroundedTechnologies = [...claimed].filter((skill) => !authoritative.has(skill)).sort();
+  // PHASE 6.4A — SHARED CANONICAL CAPABILITY-GROUNDING CONTRACT.
+  //
+  // A name Phase 2's own literal-identity taxonomy (candidateAuthoritativeSkillSet, built from
+  // skillAliases.ts's SKILL_TAXONOMY) does not find directly authoritative gets a second check
+  // against jdRequirementReconciler.ts's isCapabilityGroundedForCandidate before being reported
+  // ungrounded. This matters specifically for a canonical CAPABILITY/ARCHITECTURE name — e.g. "Data
+  // Governance" — that Phase 2's taxonomy correctly treats as distinct from its own evidence products
+  // (Microsoft Purview, RBAC are genuinely different things there, not aliases), but that Phase 6.2's
+  // JD reconciler already determined is grounded via those exact products' broader evidence
+  // relationship. Without this, the SAME candidate evidence could be "supported" for the JD
+  // reconciler/writer and "ungrounded" for this reviewer — the two disagreeing about one candidate's
+  // one piece of evidence. A name absent from BOTH taxonomies still correctly fails here.
+  const ungroundedTechnologies = [...claimed]
+    .filter((skill) => !authoritative.has(skill))
+    .filter((skill) => !isCapabilityGroundedForCandidate(skill, masterResumeProfile).supported)
+    .sort();
 
   return { ungroundedTechnologies, insufficientProfileData: false };
 }

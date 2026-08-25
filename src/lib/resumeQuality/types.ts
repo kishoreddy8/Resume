@@ -7,6 +7,11 @@ export type { CoverLetterContent, ResumeContent };
 import { JD_PRIORITY_TIERS, EVIDENCE_STRENGTHS, type JdPriorityMatrix } from "./jdPriorityMatrix";
 import type { RecruiterQualityAssessment } from "./recruiterQualityGate";
 import { ATS_COVERAGE_STATUSES, type AtsCoverageEntry } from "./atsCoverageReport";
+// PHASE 6.5 — type-only, same erased-at-compile-time reasoning as the imports above.
+import { CANONICAL_COVERAGE_STATUSES, type CanonicalCoverageEntry } from "./jdRequirementReconciler";
+import type { SummaryPolicyResult } from "./reviewers/summaryChecks";
+// PHASE 6.8 — type-only, same erased-at-compile-time reasoning as the imports above.
+import type { RepetitionCheckResult } from "./reviewers/repetitionChecks";
 // Type-only reuse of Phase 2's own JD-requirement and candidate-profile models — read-only import,
 // zero Phase 2 logic touched. This is exactly "reuse existing types, don't invent a duplicate
 // schema": RequirementUnit already IS the structured JD-side requirement model (criticality,
@@ -125,6 +130,25 @@ export interface StructuredResumeReview {
   /** Reporting only (Phase 15/NEXT 9) — never a gate condition on its own; see atsCoverageReport.ts's
    *  own "UNSUPPORTED must never become an inserted keyword" invariant. */
   atsCoverageReport?: AtsCoverageEntry[];
+
+  /** PHASE 6.5 — additive. The six recruiter-natural summary policy checks (identityOpening,
+   *  technologyBudget, keywordInventoryRisk, recruiterNaturalness, targetAlignment,
+   *  skillsDuplication) — see summaryChecks.ts's evaluateSummaryPolicy. Reporting only; never fails
+   *  the summary merely because a supported JD technology is absent. */
+  summaryPolicy?: SummaryPolicyResult;
+
+  /** PHASE 6.5 — additive. LISTED_ONLY / EVIDENCED / SUBSTITUTED / MISSING / DO_NOT_CLAIM per
+   *  canonical (23-item, not legacy 3-item) requirement — see jdRequirementReconciler.ts's
+   *  evaluateCanonicalCoverage. Present only when the reviewer had canonical reconciliation data
+   *  available (canonicalRequirements on the input); reporting only, never a gate condition, and
+   *  never license to invent a bullet — see the mission's own P1 MUST_SURFACE policy. */
+  canonicalCoverage?: CanonicalCoverageEntry[];
+
+  /** PHASE 6.8 — additive. Cross-employer / same-employer SEMANTIC bullet repetition (responsibility
+   *  category + architecture stage-shape + shared technologies) — see reviewers/repetitionChecks.ts's
+   *  evaluateCrossEmployerRepetition. Reporting only, PASS/REVIEW, never a hard block; a repeated
+   *  technology or stage alone never triggers a finding. */
+  crossEmployerRepetition?: RepetitionCheckResult;
 }
 
 // --- Typed blocking failures (additive — Stage 21 Evidence-Grounded Resume Quality V2) --------------
@@ -302,6 +326,9 @@ export interface MetricProvenanceResult {
   unsupportedCount: number;
 }
 
+// PHASE 6.5 — shared shape for each of the six summary-policy checks.
+const summaryPolicyCheckSchema = z.object({ pass: z.boolean(), message: z.string().optional() }).strict();
+
 export const structuredResumeReviewSchema = z
   .object({
     overallScore: scoreSchema,
@@ -402,6 +429,70 @@ export const structuredResumeReviewSchema = z
           status: z.enum(ATS_COVERAGE_STATUSES),
         })
       )
+      .optional(),
+    // PHASE 6.5 — additive, same optional-for-backward-compat treatment as every field above.
+    summaryPolicy: z
+      .object({
+        identityOpening: summaryPolicyCheckSchema,
+        technologyBudget: summaryPolicyCheckSchema.extend({
+          namedCount: z.number().int().min(0),
+          ceiling: z.number().int().min(0),
+        }),
+        keywordInventoryRisk: summaryPolicyCheckSchema,
+        recruiterNaturalness: summaryPolicyCheckSchema,
+        targetAlignment: summaryPolicyCheckSchema,
+        skillsDuplication: summaryPolicyCheckSchema,
+        // PHASE 6.8 — additive, same optional-for-backward-compat treatment.
+        applicationLanguage: summaryPolicyCheckSchema,
+      })
+      .strict()
+      .optional(),
+    canonicalCoverage: z
+      .array(
+        z
+          .object({
+            requirement: z.string(),
+            kind: z.enum(["TECHNOLOGY", "CAPABILITY", "ARCHITECTURE", "METHODOLOGY", "PLATFORM", "LANGUAGE", "DEVOPS"]),
+            priority: z.enum(["P1", "P2", "P3", "P4"]),
+            coverageExpectation: z.enum(["MUST_SURFACE", "SHOULD_SURFACE", "OPTIONAL"]),
+            status: z.enum(CANONICAL_COVERAGE_STATUSES),
+            substitutedBy: z.string().optional(),
+          })
+          .strict()
+      )
+      .optional(),
+    // PHASE 6.8 — additive, reporting-only (see reviewers/repetitionChecks.ts).
+    crossEmployerRepetition: z
+      .object({
+        status: z.enum(["PASS", "REVIEW"]),
+        findings: z.array(
+          z
+            .object({
+              scope: z.enum(["SAME_EMPLOYER", "CROSS_EMPLOYER"]),
+              employerA: z.string(),
+              bulletIndexA: z.number().int().min(0),
+              textA: z.string(),
+              employerB: z.string(),
+              bulletIndexB: z.number().int().min(0),
+              textB: z.string(),
+              sharedCategory: z.enum([
+                "architecture",
+                "etl_pipeline",
+                "data_modeling",
+                "data_quality",
+                "governance_security",
+                "devops_cicd",
+                "analytics_reporting",
+                "general",
+              ]),
+              sharedTechnologies: z.array(z.string()),
+              sharedStages: z.array(z.string()),
+              reason: z.string(),
+            })
+            .strict()
+        ),
+      })
+      .strict()
       .optional(),
   })
   .strict();
@@ -699,6 +790,15 @@ export interface ResumeReviewerInput {
    *  the resume (the resume is what's being validated, not the source of truth for the target role).
    *  Absent -> positioning/recruiter-quality checks return REVIEW, never a guessed role. */
   targetRoleTitle?: string;
+
+  /** PHASE 6.5 — additive. The canonical, JD-reconciled requirement inventory (Phase 6.2's
+   *  reconcileJdRequirements output — 23 items for Celigo Job 7362, not the legacy 3-item
+   *  jobRequirements list) this review should score the summary technology budget and post-writer
+   *  coverage (evaluateCanonicalCoverage) against. Populated by DeterministicResumeReviewer.review()
+   *  when jobDescriptionPath + masterResumeProfile are both available; absent falls back to the
+   *  legacy fixed-ceiling/legacy-coverage behavior entirely — no existing caller/test that never sets
+   *  this is affected. */
+  canonicalRequirements?: import("./jdRequirementReconciler").CanonicalJdRequirement[];
 }
 
 export interface ResumeReviewerOutput {

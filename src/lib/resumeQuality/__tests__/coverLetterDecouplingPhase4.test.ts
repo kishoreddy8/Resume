@@ -572,8 +572,13 @@ test("COVERDECOUPLE-16: Phase-2 evidence scoping remains active", () => {
 });
 
 test("COVERDECOUPLE-17: Iteration-1 summary quality contract remains active", () => {
+  // PHASE 6.6 — the "(Iteration 1 publication quality)" 4-point structure + hardcoded "max 7" ceiling
+  // was a stale duplicate of professionalIdentity.ts's own (Phase 6.5-corrected) summary rule; this
+  // section now points at that single authoritative rule instead of restating a superseded version of
+  // it. The contract itself (publication-ready on the first pass) is unchanged.
   const qualitySec = renderWriterOutputQualitySection();
-  assert.match(qualitySec, /Summary standards \(Iteration 1 publication quality\)/);
+  assert.match(qualitySec, /Summary standards/);
+  assert.match(qualitySec, /Publication-ready on the first pass/);
 });
 
 test("COVERDECOUPLE-18: no ApplicationRun created", () => {

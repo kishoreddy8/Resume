@@ -4,6 +4,7 @@ import { extractCanonicalSkillsFromText } from "./reviewers/skillAliases";
 import { findAliasDuplicates } from "./technologyClassification";
 import { buildCandidateGlobalCapabilitySet } from "./jdToolCoverage";
 import { type TargetEcosystemResult } from "./targetEcosystem";
+import { isCapabilityGroundedForCandidate } from "./jdRequirementReconciler";
 
 export interface ArchitectureContradictionFinding {
   severity: "BLOCKING" | "WARNING";
@@ -220,7 +221,13 @@ export function evaluateTechnologyCompatibility(
     const claimed = extractCanonicalSkillsFromText(fullText);
     for (const skill of claimed) {
       const key = skill.toLowerCase();
-      if (!canonicalSet.has(key)) {
+      // PHASE 6.4A — SHARED CANONICAL CAPABILITY-GROUNDING CONTRACT: a name not directly in
+      // canonicalSet gets a second check via jdRequirementReconciler.ts's
+      // isCapabilityGroundedForCandidate before being reported unsupported — see
+      // msiComplianceChecks.ts's matching fix for why (a capability name like "Data Governance" can
+      // be genuinely evidenced via broader synonyms — Microsoft Purview, RBAC — that this module's
+      // own literal canonicalSet lookup does not know about). A name absent from both still fails.
+      if (!canonicalSet.has(key) && !isCapabilityGroundedForCandidate(skill, masterResumeProfile).supported) {
         const desc = `Technology "${skill}" has no backing in candidate's Master Skills Inventory or experience record.`;
         findings.push({
           severity: "BLOCKING",

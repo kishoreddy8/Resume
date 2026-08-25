@@ -99,8 +99,22 @@ export function mapJdPrioritiesToCandidateEvidence(params: {
   };
 }
 
+/** The trailing 0-based index accomplishmentEvidence.ts's `id` generator embeds (`{employerSlug}_acc_
+ *  {index}` or the fallback `..._acc_fallback_0`) — the EXACT same index renderAccomplishmentEvidenceSection
+ *  numbers that employer's own proof-point list by (`idx + 1`), since both walk the same
+ *  `verifiedAccomplishments` array in the same order. Parsing it back out lets this section point at
+ *  "employer #N" instead of re-quoting the accomplishment's full text a second time. */
+function accomplishmentDisplayNumber(candidateEvidenceId: string): number | null {
+  const m = candidateEvidenceId.match(/_(\d+)$/);
+  return m ? Number(m[1]) + 1 : null;
+}
+
 /**
- * Formats the JD-to-candidate evidence mapping into a concise markdown section for the writer.
+ * PHASE 6.6 — formats the JD-to-candidate evidence mapping as a compact POINTER into the
+ * VERIFIED EMPLOYER ACCOMPLISHMENT EVIDENCE section's own numbered proof points, instead of
+ * re-quoting each accomplishment's full text a second time (previously ~100% duplicate content
+ * between the two sections for every mapping — the two sections are always rendered together in the
+ * same prompt, so the referenced text is never more than a few hundred bytes away).
  */
 export function renderJdEvidenceMappingSection(result: JdEvidenceMappingResult): string {
   if (!result.mappings || result.mappings.length === 0) return "";
@@ -108,10 +122,14 @@ export function renderJdEvidenceMappingSection(result: JdEvidenceMappingResult):
   const lines: string[] = [
     "## JD-TO-CANDIDATE EVIDENCE MAPPING — PRIORITIZED PROOF POINTS",
     "",
+    "Each line points at that employer's own numbered proof point above (VERIFIED EMPLOYER ACCOMPLISHMENT EVIDENCE) — the exact evidence to draw on for that JD priority, not new content.",
+    "",
   ];
 
   for (const map of result.mappings) {
-    lines.push(`- **${map.jdPriority}** [${map.requirementCriticality}] → **${map.employer}**: ${map.candidateEvidenceText} [${map.matchStrength}]`);
+    const num = accomplishmentDisplayNumber(map.candidateEvidenceId);
+    const pointer = num !== null ? `proof point #${num}` : map.candidateEvidenceText;
+    lines.push(`- **${map.jdPriority}** [${map.requirementCriticality}] → **${map.employer}** ${pointer} [${map.matchStrength}]`);
   }
 
   return lines.join("\n");

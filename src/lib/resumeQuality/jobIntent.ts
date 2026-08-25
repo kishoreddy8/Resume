@@ -140,25 +140,15 @@ export function renderWriterJobIntentSection(intent: WriterJobIntent): string {
     "",
     `**Target Role**: ${intent.roleTitle} at **${intent.company}** (${intent.seniority})`,
     `**Primary Hiring Mission**: ${intent.primaryMission}`,
-    "",
-    "### Core Capabilities Demanded by Employer:",
   ];
 
-  if (intent.criticalCapabilities.length > 0) {
-    // PHASE 6.3A — the [Explicit]/[Derived] tag is dropped here: with canonical reconciliation wired
-    // (see handoff/exporter.ts), every capability's evidenceSnippets is populated, so this tag was
-    // always rendering "[Explicit]" — zero information, pure token cost. The dedicated "## TARGET JOB
-    // REQUIREMENTS" canonical section (jdRequirementReconciler.ts) is the authoritative place for
-    // per-requirement provenance detail; this section stays a compact hiring-priorities summary.
-    lines.push("- **Critical (P1)**: " + intent.criticalCapabilities.map((c) => c.name).join(", "));
-  }
-  if (intent.requiredCapabilities.length > 0) {
-    lines.push("- **Required (P2)**: " + intent.requiredCapabilities.map((c) => c.name).join(", "));
-  }
-  if (intent.preferredCapabilities.length > 0) {
-    lines.push("- **Preferred (P3)**: " + intent.preferredCapabilities.slice(0, 8).map((c) => `${c.name}`).join(", "));
-  }
-
+  // PHASE 6.6 — the per-priority named-capability list previously rendered here ("Critical (P1): ...",
+  // "Required (P2): ...", "Preferred (P3): ...") duplicated the SAME 23 canonical requirement names
+  // that ALSO appear in full, twice more, in the JD PRIORITY MATRIX section (evidence-strength
+  // annotated) AND the canonical TARGET JOB REQUIREMENTS section (coverage-expectation + kind
+  // annotated) — three independent renderings of one fact. Removed here; this section now stays
+  // strictly to what only IT provides (the hiring mission and the architectural/delivery expectations
+  // prose below), never the requirement inventory itself.
   lines.push("");
   lines.push("### Architectural & Delivery Expectations:");
   for (const exp of intent.architectureExpectations) {

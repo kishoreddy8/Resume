@@ -567,9 +567,25 @@ export function renderTargetEcosystemSection(result: TargetEcosystemResult): str
   if (supportingCloud) out += `- **Supporting Cloud:** **${supportingCloud}**\n`;
 
   if (employerCloudAssignments.length > 0) {
-    out += `\n**Employer Cloud Allocations:**\n`;
+    // PHASE 6.6 -- grouped by identical (cloud, reason) pairs instead of one line per employer: the
+    // common case (every employer gets the same default supporting cloud for the same reason) is
+    // most of what this JD produced and previously repeated the same boilerplate reason sentence
+    // once per employer. A genuinely distinct reason (multi-cloud, secondary ecosystem) still gets
+    // its own line -- nothing about WHICH employer got WHICH cloud, or WHY, is lost. The reason string
+    // itself bakes in the employer's own name even for an otherwise identical default reason, which
+    // would defeat grouping -- normalized out here for the GROUPING KEY only; original wording shown.
+    const groups = new Map();
     for (const alloc of employerCloudAssignments) {
-      out += `- **${alloc.employer}:** **${alloc.cloud}** (${alloc.reason})\n`;
+      const normalizedReason = alloc.reason.split(alloc.employer).join("{employer}");
+      const key = alloc.cloud + " " + normalizedReason;
+      const g = groups.get(key);
+      if (g) g.employers.push(alloc.employer);
+      else groups.set(key, { cloud: alloc.cloud, reason: normalizedReason, employers: [alloc.employer] });
+    }
+    out += `\n**Employer Cloud Allocations:**\n`;
+    for (const g of groups.values()) {
+      const reasonText = g.employers.length > 1 ? g.reason.replace(/\{employer\}/g, "these employers") : g.reason.replace(/\{employer\}/g, g.employers[0]);
+      out += `- **${g.employers.join(", ")}:** **${g.cloud}** (${reasonText})\n`;
     }
   }
 

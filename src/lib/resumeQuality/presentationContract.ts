@@ -1,7 +1,14 @@
 import type { CandidateProfile, RequirementUnit } from "@/lib/match/types";
 import { extractCanonicalSkillsFromText } from "./reviewers/skillAliases";
 import { normalizeRoleTitle } from "./professionalIdentity";
+import { SUMMARY_MAX_TECHNOLOGIES, dynamicSummaryTechnologyCeiling } from "./summaryTechnologyBudget";
 import type { CoverLetterContent, ResumeContent } from "../../../tools/tailoring-engine/types";
+
+// PHASE 6.5 — re-exported for backward compatibility: both were originally defined here, and moved
+// to summaryTechnologyBudget.ts to break a circular import with professionalIdentity.ts (which also
+// needs the dynamic ceiling, and this file already imports normalizeRoleTitle FROM
+// professionalIdentity.ts). Every existing importer of these two names from this file is unaffected.
+export { SUMMARY_MAX_TECHNOLOGIES, dynamicSummaryTechnologyCeiling };
 
 /**
  * Stage 31.1 — the resume presentation contract.
@@ -318,8 +325,6 @@ const CAPABILITY_STEMS = [
  *  a richly-written 650-700 character summary is a good summary, and the real length problem was a
  *  795-character technology list, not prose. */
 export const SUMMARY_MAX_CHARS = 720;
-/** Distinct named technologies across the whole summary. Beyond this it reads as a keyword dump. */
-export const SUMMARY_MAX_TECHNOLOGIES = 7;
 /** ...and within any single sentence. */
 export const SUMMARY_MAX_TECHNOLOGIES_PER_SENTENCE = 4;
 /** Sentences that may open with a capability stem before the paragraph reads as a template. */
@@ -332,7 +337,12 @@ export function splitSentences(text: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-export function checkSummaryQuality(summaryParagraphs: string[]): ContractIssue[] {
+/**
+ * @param technologyCeiling PHASE 6.5 — the dynamic ceiling (see dynamicSummaryTechnologyCeiling)
+ *   when the caller has canonical-reconciliation data available. Defaults to the fixed
+ *   SUMMARY_MAX_TECHNOLOGIES for any caller that doesn't pass one — fully backward compatible.
+ */
+export function checkSummaryQuality(summaryParagraphs: string[], technologyCeiling: number = SUMMARY_MAX_TECHNOLOGIES): ContractIssue[] {
   const joined = summaryParagraphs.map((s) => s.trim()).filter((s) => s.length > 0).join(" ");
   if (joined.length === 0) return [];
   const issues: ContractIssue[] = [];
@@ -350,13 +360,13 @@ export function checkSummaryQuality(summaryParagraphs: string[]): ContractIssue[
   }
 
   const total = extractCanonicalSkillsFromText(joined);
-  if (total.size > SUMMARY_MAX_TECHNOLOGIES) {
+  if (total.size > technologyCeiling) {
     issues.push({
       kind: "SUMMARY_TECHNOLOGY_DUMP",
       severity: "HIGH",
       message:
         `The summary names ${total.size} distinct technologies (${[...total].slice(0, 10).join(", ")}…). A professional ` +
-        `summary is POSITIONING, not inventory: name at most ${SUMMARY_MAX_TECHNOLOGIES} that genuinely define the ` +
+        `summary is POSITIONING, not inventory: name at most ${technologyCeiling} that genuinely define the ` +
         `candidate, and let Technical Skills and the Environment lines carry the rest. Say what the candidate builds, ` +
         `at what scale, in what domain, and what it achieved.`,
     });
@@ -396,11 +406,20 @@ export function evaluatePresentationContract(input: {
   coverLetter?: CoverLetterContent;
   masterResumeProfile?: CandidateProfile;
   jobRequirements?: RequirementUnit[];
+  /** PHASE 6.5 — count of significant SUPPORTED canonical requirements (technologies AND
+   *  capabilities) after Phase 6.2 reconciliation, when the caller has it. Drives
+   *  dynamicSummaryTechnologyCeiling instead of the fixed SUMMARY_MAX_TECHNOLOGIES. Omitted
+   *  (undefined) falls back to the fixed ceiling exactly as before — no existing caller is affected. */
+  significantSupportedTechnologyCount?: number;
 }): ContractIssue[] {
+  const technologyCeiling =
+    input.significantSupportedTechnologyCount === undefined
+      ? SUMMARY_MAX_TECHNOLOGIES
+      : dynamicSummaryTechnologyCeiling(input.significantSupportedTechnologyCount);
   return [
     ...checkHeadline(input.resume.tagline, input.masterResumeProfile),
     ...checkSummaryShape(input.resume.summary),
-    ...checkSummaryQuality(input.resume.summary),
+    ...checkSummaryQuality(input.resume.summary, technologyCeiling),
     ...findAiDashPunctuation(input.resume, input.coverLetter),
     ...checkSkillsBreadth(input.resume, input.jobRequirements),
   ];

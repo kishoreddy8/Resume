@@ -1,6 +1,7 @@
 import type { RequirementUnit } from "@/lib/match/types";
 import { findBannedLanguage } from "./bannedLanguage";
 import { extractCanonicalSkillsFromText, extractCanonicalSkillsWithCategoryFromText } from "./skillAliases";
+import { dynamicSummaryTechnologyCeiling } from "../summaryTechnologyBudget";
 
 const CLOUD_PROVIDERS = ["AWS", "Azure", "GCP"] as const;
 type CloudProvider = (typeof CLOUD_PROVIDERS)[number];
@@ -238,4 +239,220 @@ export function evaluateSummaryAlignment(
   }
 
   return { summaryIssues, insufficientRequirementData: false, bannedLanguageFound, styleIssuesFound };
+}
+
+// =====================================================================================================
+// PHASE 6.5 — RECRUITER-NATURAL SUMMARY POLICY (six checks, evaluated separately per the mission spec)
+// =====================================================================================================
+
+export interface SummaryPolicyCheckDetail {
+  pass: boolean;
+  message?: string;
+}
+
+export interface SummaryPolicyResult {
+  /** Summary clearly establishes role and years of experience. */
+  identityOpening: SummaryPolicyCheckDetail;
+  /** Named technologies <= the dynamic ceiling (see presentationContract.ts's
+   *  dynamicSummaryTechnologyCeiling) — a CEILING, never a required count. */
+  technologyBudget: SummaryPolicyCheckDetail & { namedCount: number; ceiling: number };
+  /** Detects obvious product/tool enumeration — comma-separated technology inventories, stacked
+   *  parenthetical lists — independent of the raw count check above. */
+  keywordInventoryRisk: SummaryPolicyCheckDetail;
+  /** Reads as engineering identity/prose rather than a keyword list (abstract framing, list-shaped
+   *  sentences). */
+  recruiterNaturalness: SummaryPolicyCheckDetail;
+  /** Still reflects the dominant target platform/ecosystem — never REQUIRES every P1/P2 keyword. */
+  targetAlignment: SummaryPolicyCheckDetail;
+  /** Summary does not substantially reproduce the Technical Skills section. */
+  skillsDuplication: SummaryPolicyCheckDetail;
+  /** PHASE 6.8 — summary never addresses the employer directly or writes in cover-letter/job-
+   *  application voice (see detectApplicationLanguage below). */
+  applicationLanguage: SummaryPolicyCheckDetail;
+}
+
+/**
+ * PHASE 6.8 — cover-letter / job-application voice detector.
+ *
+ * A resume summary describes the CANDIDATE's own positioning; it must never speak TO the employer
+ * or refer to the posting itself the way a cover letter does ("That experience lines up closely
+ * with this role's emphasis on..."). Three narrow, semantically distinct pattern families catch
+ * this class of language without depending on one exhaustive literal phrase list:
+ *   1. Second-person address to the employer/reader ("your organization/team/requirements/company").
+ *   2. Deictic reference to the specific posting ("this role/position/opportunity/job").
+ *   3. First-person application voice ("I'm excited...", "I would bring...", "seeking this
+ *      opportunity", "ideal candidate").
+ * Deliberately narrow: legitimate engineering nouns ("this platform/system/data/pipeline") and JD-
+ * derived domain words (company names, "banking", "payments") never match — only address to the
+ * reader or the application itself trips this, which is exactly the SUMMARY-APPLICATION-LANGUAGE-04
+ * false-positive protection (company/domain terminology alone must never trigger).
+ */
+const APPLICATION_LANGUAGE_PATTERNS: RegExp[] = [
+  /\byour\s+(organization|company|team|requirements|needs|mission)\b/gi,
+  /\bthis\s+(role|position|opportunity|job)('s)?\b/gi,
+  /\bi\s*(?:'m|am)\s+(excited|eager|thrilled)\b/gi,
+  /\bi\s+would\s+(bring|love to)\b/gi,
+  /\bseeking\s+this\s+opportunity\b/gi,
+  /\bideal\s+(candidate|fit)\b/gi,
+  /\b(align|aligns|aligned|match|matches|matched)\s+(closely\s+)?(with\s+)?(this|your)\b/gi,
+];
+
+/** Every distinct application-language phrase matched, in the order found. */
+export function detectApplicationLanguage(text: string): string[] {
+  const found: string[] = [];
+  for (const pattern of APPLICATION_LANGUAGE_PATTERNS) {
+    const matches = text.matchAll(pattern);
+    for (const m of matches) found.push(m[0]);
+  }
+  return [...new Set(found)];
+}
+
+/** Shared writer-facing prose for the same rule, quoted verbatim by both the first-pass identity
+ *  section (professionalIdentity.ts) and the targeted summary-repair guidance
+ *  (repairContextCompiler.ts) so this policy exists in exactly one place, per Phase 6.8. */
+export const SUMMARY_APPLICATION_LANGUAGE_GUARDRAIL_TEXT =
+  'never address the employer directly or write as if this were a cover letter — no "your team/requirements", ' +
+  '"this role/position/opportunity", "I\'m excited to...", or "ideal candidate"; describe the candidate\'s own ' +
+  "positioning directly instead";
+
+/** A sentence whose primary semantic content is a list of tools — 3+ comma/slash-separated
+ *  capitalized-ish tokens strung together, the shape a raw technology inventory takes regardless of
+ *  the surrounding verb. Distinct from detectKeywordStuffing's whole-summary density ratio: this
+ *  catches a single list-shaped sentence even inside an otherwise-reasonable summary. */
+const TOOL_ENUMERATION_PATTERN = /\b(?:[A-Z][\w.+#/-]*\s*,\s*){2,}(?:and\s+)?[A-Z][\w.+#/-]*/;
+
+function detectToolEnumerationSentence(summaryText: string): string | null {
+  for (const sentence of summaryText.split(/(?<=[.!?])\s+/)) {
+    if (TOOL_ENUMERATION_PATTERN.test(sentence)) return sentence.trim();
+  }
+  return null;
+}
+
+/** "[Role words] with X+ years of experience..." or an equivalent clear identity opening — either an
+ *  explicit years-of-experience mention, or a sentence that opens with a title-like phrase followed by
+ *  an identity verb ("with", "specializing in", "who", "building"). Deliberately permissive: this is
+ *  checking for the PRESENCE of a clear opening, not grading prose quality. */
+function checkIdentityOpening(firstSentence: string): SummaryPolicyCheckDetail {
+  const trimmed = firstSentence.trim();
+  if (trimmed.length === 0) {
+    return { pass: false, message: "Summary has no content to establish identity." };
+  }
+  const hasYearsPattern = /\b\d{1,2}\+?\s*years?\b/i.test(trimmed);
+  const opensWithRoleLikePhrase = /^[A-Z][\w/&-]*(?:\s+[A-Z][\w/&-]*){0,4}\s+(with|specializing in|who|building|focused on)\b/.test(trimmed);
+  if (hasYearsPattern || opensWithRoleLikePhrase) {
+    return { pass: true };
+  }
+  return {
+    pass: false,
+    message:
+      `Summary's opening sentence does not clearly establish role/experience identity (e.g. "[Role] with X+ years of ` +
+      `experience..."). Recruiters should be able to place the candidate from the first sentence alone.`,
+  };
+}
+
+/**
+ * PHASE 6.5 — the six recruiter-natural summary checks, evaluated separately (never merged into one
+ * pass/fail) so a caller can see exactly which dimension a summary fails, if any. Complements (never
+ * replaces) evaluateSummaryAlignment above — that function's banned-language/length/role-clarity/
+ * cloud-contradiction checks still run independently. A summary is NEVER failed here merely because a
+ * supported JD technology is absent — detailed JD coverage belongs to evaluateCanonicalCoverage
+ * (jdRequirementReconciler.ts), not this function.
+ */
+export function evaluateSummaryPolicy(params: {
+  summary: string[];
+  resumeSkillGroups: Array<{ label: string; items: string[] }>;
+  /** Count of significant SUPPORTED canonical requirements after Phase 6.2 reconciliation — drives
+   *  the dynamic technology ceiling. 0/undefined falls back to the most conservative ceiling (2). */
+  significantSupportedTechnologyCount?: number;
+  targetRoleTitle?: string | null;
+}): SummaryPolicyResult {
+  const summaryText = params.summary.join(" ").trim();
+  const firstSentence = summaryText.split(/(?<=[.!?])\s+/)[0] ?? "";
+  const ceiling = dynamicSummaryTechnologyCeiling(params.significantSupportedTechnologyCount ?? 0);
+
+  const summarySkills = extractCanonicalSkillsFromText(summaryText);
+  const namedCount = summarySkills.size;
+
+  const identityOpening = checkIdentityOpening(firstSentence);
+
+  const technologyBudget: SummaryPolicyResult["technologyBudget"] =
+    namedCount <= ceiling
+      ? { pass: true, namedCount, ceiling }
+      : {
+          pass: false,
+          namedCount,
+          ceiling,
+          message: `Summary names ${namedCount} technologies, above the dynamic ceiling of ${ceiling} for this JD's ${
+            (params.significantSupportedTechnologyCount ?? 0) || "unknown"
+          } significant supported requirements. This is a ceiling, not a target — fewer is fine.`,
+        };
+
+  const enumerationSentence = detectToolEnumerationSentence(summaryText);
+  const keywordInventoryRisk: SummaryPolicyCheckDetail = enumerationSentence
+    ? {
+        pass: false,
+        message: `A sentence reads as a technology enumeration rather than positioning prose: "${enumerationSentence}".`,
+      }
+    : { pass: true };
+
+  const abstractFraming = detectAbstractFraming(summaryText);
+  const naturalnessIssues = [...abstractFraming, ...(enumerationSentence ? [enumerationSentence] : [])];
+  const recruiterNaturalness: SummaryPolicyCheckDetail =
+    naturalnessIssues.length === 0
+      ? { pass: true }
+      : {
+          pass: false,
+          message: `Summary reads as a keyword/framing list rather than engineering identity in at least one place: ${[
+            ...new Set(naturalnessIssues),
+          ].join("; ")}.`,
+        };
+
+  let targetAlignment: SummaryPolicyCheckDetail = { pass: true };
+  if (params.targetRoleTitle) {
+    const roleWords = significantRoleTitleWords(params.targetRoleTitle);
+    if (roleWords.length > 0) {
+      const normalizedSummary = summaryText.toLowerCase();
+      const anyRoleMatch = roleWords.some((w) => new RegExp(`(?<![a-z0-9])${w}(?![a-z0-9])`, "i").test(normalizedSummary));
+      if (!anyRoleMatch) {
+        targetAlignment = {
+          pass: false,
+          message: `Summary never names or clearly aligns with the target role ("${params.targetRoleTitle}").`,
+        };
+      }
+    }
+  }
+
+  const skillGroupSkills = extractCanonicalSkillsFromText(
+    params.resumeSkillGroups.flatMap((g) => g.items).join("\n")
+  );
+  const overlap = [...summarySkills].filter((s) => skillGroupSkills.has(s));
+  // A summary naming 1-2 of the same technologies as Technical Skills is normal and expected overlap
+  // (both are honestly describing the same real candidate) — only heavy, near-total duplication of
+  // the Skills section reads as the summary functioning as a second Skills list.
+  const skillsDuplication: SummaryPolicyCheckDetail =
+    overlap.length >= 3 && namedCount > 0 && overlap.length / namedCount >= 0.7
+      ? {
+          pass: false,
+          message: `Summary substantially reproduces the Technical Skills section (${overlap.length}/${namedCount} named technologies also appear there verbatim: ${overlap.slice(0, 6).join(", ")}).`,
+        }
+      : { pass: true };
+
+  const applicationLanguageMatches = detectApplicationLanguage(summaryText);
+  const applicationLanguage: SummaryPolicyCheckDetail =
+    applicationLanguageMatches.length === 0
+      ? { pass: true }
+      : {
+          pass: false,
+          message: `Summary uses cover-letter/job-application language instead of direct candidate positioning: ${applicationLanguageMatches.join(", ")}.`,
+        };
+
+  return {
+    identityOpening,
+    technologyBudget,
+    keywordInventoryRisk,
+    recruiterNaturalness,
+    targetAlignment,
+    skillsDuplication,
+    applicationLanguage,
+  };
 }

@@ -6,7 +6,6 @@ import type { RepairPlan } from "../repairScope";
 import {
   reconcileJdRequirements,
   canonicalRequirementsToRequirementUnits,
-  renderCanonicalRequirementSection,
   getReconciledUnsupportedNames,
 } from "../jdRequirementReconciler";
 import { detectTargetEcosystem, renderTargetEcosystemSection } from "../targetEcosystem";
@@ -195,6 +194,21 @@ function buildLiveStylePackage(candidateProfile: CandidateProfile, useCanonical:
   });
   const priorityMatrix = buildJdPriorityMatrix(units, "Senior Data Engineer", candidateProfile);
 
+  // PHASE 6.6 — mirrors handoff/exporter.ts's own real wiring exactly: whenever canonical
+  // reconciliation ran, the requirement inventory is carried by JD PRIORITY MATRIX alone
+  // (requirementKindByName/doNotClaimNames folded into it) rather than a separate, fully-duplicative
+  // "TARGET JOB REQUIREMENTS" section — jdToolCoverageSection is the legacy-only fallback now.
+  const requirementKindByName: Record<string, "ARCHITECTURE" | "CAPABILITY" | "METHODOLOGY"> = {};
+  const doNotClaimNames: string[] = [];
+  if (useCanonical) {
+    for (const r of reconciliation.canonicalRequirements) {
+      if (r.kind === "ARCHITECTURE" || r.kind === "CAPABILITY" || r.kind === "METHODOLOGY") {
+        requirementKindByName[r.canonicalName] = r.kind;
+      }
+      if (r.writerAction === "DO_NOT_CLAIM") doNotClaimNames.push(r.canonicalName);
+    }
+  }
+
   const promptMd = buildExternalWriterPrompt({
     candidateId: 1,
     candidateName: "Saikishore Reddy",
@@ -207,9 +221,11 @@ function buildLiveStylePackage(candidateProfile: CandidateProfile, useCanonical:
     selectedTrack: "Senior Data Engineer",
     jobIntentSection: renderWriterJobIntentSection(jobIntent),
     targetEcosystemSection: renderTargetEcosystemSection(ecosystem),
-    jdToolCoverageSection: useCanonical ? renderCanonicalRequirementSection(reconciliation) : undefined,
+    jdToolCoverageSection: undefined,
     architecturePaletteSection: renderArchitecturePaletteSection(palettes),
     jdPriorityMatrix: priorityMatrix,
+    requirementKindByName,
+    doNotClaimNames,
   });
 
   return { reconciliation, units, ecosystem, coverage, palettes, jobIntent, priorityMatrix, promptMd };
@@ -312,8 +328,11 @@ describe("Phase 6.3A: Canonical JD Intelligence Wired Into Live Writer Path (JDW
   });
 
   it("JDWRITER-18: Canonical requirements do not create duplicate prompt sections", () => {
-    const canonicalHeadingCount = (after.promptMd.match(/## TARGET JOB REQUIREMENTS/g) || []).length;
-    assert.equal(canonicalHeadingCount, 1);
+    // PHASE 6.6 — the standalone "## TARGET JOB REQUIREMENTS" section (a third rendering of the same
+    // 23 canonical names already stated in "Core Capabilities" and JD PRIORITY MATRIX) is gone
+    // entirely now that reconciliation ran; JD PRIORITY MATRIX is the ONE canonical requirement table.
+    assert.equal((after.promptMd.match(/## TARGET JOB REQUIREMENTS/g) || []).length, 0);
+    assert.equal((after.promptMd.match(/## JD PRIORITY MATRIX/g) || []).length, 1);
     assert.equal((after.promptMd.match(/## JD TOOL COVERAGE GUIDANCE/g) || []).length, 0);
   });
 

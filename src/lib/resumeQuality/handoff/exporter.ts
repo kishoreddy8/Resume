@@ -48,6 +48,15 @@ import {
   buildCandidateAccomplishmentPackageSync,
   renderAccomplishmentEvidenceSection,
 } from "../accomplishmentEvidence";
+// PHASE 6.6B — renderCompactAccomplishmentEvidenceSection is used ONLY for the real writer_prompt.md
+// call below (the file the CLI actually reads — see claudeCliInvoker.ts's DRIVING_PROMPT). The
+// writer_handoff.md singlePassMode call further down deliberately stays on the full-prose
+// renderAccomplishmentEvidenceSection: it is currently dormant (never read, kept on disk for a
+// future single-pass mode — see that call site's own doc comment on the truthfulness regression a
+// prior single-pass experiment found), and this phase does not touch a code path known to need
+// fuller context for quality. preWriterDecisionPackage.ts's operator audit report also stays on the
+// full-prose renderer, unchanged, for human readability.
+import { renderCompactAccomplishmentEvidenceSection } from "../compactEvidence";
 import {
   extractWriterJobIntent,
   renderWriterJobIntentSection,
@@ -71,7 +80,6 @@ import {
 import {
   reconcileJdRequirements,
   canonicalRequirementsToRequirementUnits,
-  renderCanonicalRequirementSection,
   getReconciledUnsupportedNames,
 } from "../jdRequirementReconciler";
 import type {
@@ -140,11 +148,11 @@ export function buildExternalWriterPrompt(input: {
   jdEvidenceMappingSection?: string;
   /** Phase 6 — Target Ecosystem Strategy (AWS, Azure, GCP, Multi-Cloud, Neutral). */
   targetEcosystemSection?: string;
-  /** Phase 6 — JD Tool Coverage plan (Supported vs DO_NOT_CLAIM). Phase 6.3A: whenever raw-JD
-   *  reconciliation ran (INITIAL_GENERATION with a master profile loaded), this is instead the
-   *  single canonical MUST_SURFACE/SHOULD_SURFACE/OPTIONAL/DO_NOT_CLAIM requirement rendering — see
-   *  renderCanonicalRequirementSection — covering technologies AND capabilities/architectures, not
-   *  the narrower legacy tool-only view. */
+  /** Phase 6 — legacy JD Tool Coverage plan (Supported vs DO_NOT_CLAIM), used ONLY as a fallback when
+   *  canonical reconciliation did not run (no master profile loaded yet). PHASE 6.6: whenever
+   *  reconciliation DID run, this stays undefined — the requirement inventory it would have shown is
+   *  now folded into the JD PRIORITY MATRIX section via requirementKindByName/doNotClaimNames below,
+   *  the single authoritative rendering of the canonical set (previously three). */
   jdToolCoverageSection?: string;
   /** Phase 6 — Approved per-employer architecture palettes. */
   architecturePaletteSection?: string;
@@ -161,6 +169,16 @@ export function buildExternalWriterPrompt(input: {
   jdPriorityMatrix?: JdPriorityMatrix;
   positioningRecommendation?: string;
   recommendedSkillOrder?: string[];
+  /** PHASE 6.6 — kind ("architecture"/"capability"/"methodology") for each canonical requirement
+   *  name in jdPriorityMatrix, so the JD PRIORITY MATRIX section alone can carry the one piece of
+   *  information jdToolCoverageSection previously existed solely to add — a plain technology name
+   *  needs no qualifier, but a capability/architecture must never read as a literal tool to bolt in
+   *  verbatim. Requirement names with no entry here (or no kind object at all) render unqualified. */
+  requirementKindByName?: Record<string, "ARCHITECTURE" | "CAPABILITY" | "METHODOLOGY">;
+  /** PHASE 6.6 — canonical names the reconciler gated DO_NOT_CLAIM (zero MSI/experience evidence),
+   *  the other piece jdToolCoverageSection used to carry. Rendered as one compact, unmissable line in
+   *  JD PRIORITY MATRIX; omitted entirely when empty rather than spending tokens stating "none". */
+  doNotClaimNames?: string[];
   atsCoverageReportText?: string;
   /** PATCH-BASED TARGETED_REPAIR (2026-08-23) — the FULL ("resume."/"coverLetter."-prefixed)
    *  editable paths this repair authorizes, offered to the writer ONLY when
@@ -272,11 +290,13 @@ export function buildExternalWriterPrompt(input: {
 
   const rewriteRule =
     writerMode === "INITIAL_GENERATION"
-      ? `**Initial generation must be publication-ready — light keyword replacement is a failure mode**:
-   - The Professional Summary must reach publication quality on Iteration 1: follow the 4-tier priority (Identity -> JD Domain -> Architecture Ownership -> Delivery Value) to eliminate the need for a summary repair pass.
-   - Rewrite the summary, skills ordering, project descriptions, and experience bullets from the authoritative evidence so this first draft is specific to this JD and company.
-   - Give each employer its own evidence-backed engineering identity. Do not make every role sound like the same project.
-   - Bullet ceilings and summary/project-description requirements are stated in full above (WRITER OUTPUT QUALITY / RESUME PRESENTATION STANDARD) — this item exists only to state the deep-rewrite requirement itself, not to restate their numbers.`
+      ? // PHASE 6.6 — the "4-tier priority (Identity -> JD Domain -> Architecture Ownership ->
+        // Delivery Value)" phrase was a THIRD stale restatement of the summary structure now stated
+        // once, correctly, in PROFESSIONAL IDENTITY (see writerOutputQuality.ts's own Phase 6.6 fix
+        // for the first two). Removed here rather than left to drift out of sync a third time.
+        `**Initial generation must be publication-ready — light keyword replacement is a failure mode**:
+   - Rewrite the summary, skills ordering, project descriptions, and experience bullets from the authoritative evidence so this first draft is specific to this JD and company; follow the summary rule stated once in PROFESSIONAL IDENTITY above.
+   - Give each employer its own evidence-backed engineering identity. Do not make every role sound like the same project.`
       : isPatchMode
       ? `**Surgical repair, PATCH mode — return ONLY the changed values, never the full document**:
    - You will output PATCH OPERATIONS (see the schema below), not a full resume/cover letter.
@@ -334,26 +354,28 @@ export function buildExternalWriterPrompt(input: {
   const jdReqRef = singlePassMode ? "the JD REQUIREMENTS section embedded above" : "`extracted_job_requirements.json`";
   const instructionsRef = singlePassMode ? "the CANONICAL TAILORING RULES section above" : "the Canonical Tailoring Contract below";
 
+  // PHASE 6.6 — same six rules, tightened wording only: no rule dropped, no rule weakened, nothing
+  // renamed that a test/other section points at by name (Truthfulness & Factual Grounding,
+  // Architecture integrity takes priority over raw keyword coverage, JD Keyword Coverage). Redundant
+  // restatements of facts already stated elsewhere in this exact prompt (contact-detail hard facts
+  // at the top, one-primary-technology-per-bullet in WRITER OUTPUT QUALITY) are pointed at instead of
+  // repeated.
   const guardrailItems = [
     `**Truthfulness & Factual Grounding (Absolute Rule — hard facts are immutable)**:
-   - The Master Resume (${masterResumeRef}) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution. These facts may never be changed, invented, or altered to fit the JD.
-   - You must NEVER fabricate an employer, title, degree, certification, or client.
-   - The Master Skills Inventory (${msiRef}) constrains what you may claim: only technologies genuinely present there (or in the Master Resume's own experience entries) may appear anywhere in the resume — never introduce a technology solely because the JD mentions it.`,
+   - The Master Resume (${masterResumeRef}) is the **sole authoritative record** for employers, job titles, employment dates, education, certifications, and project attribution — never changed, invented, or altered to fit the JD. Never fabricate an employer, title, degree, certification, or client.
+   - The Master Skills Inventory (${msiRef}) constrains what you may claim: only technologies genuinely present there (or in the Master Resume's own experience entries) may appear anywhere — never introduce one solely because the JD mentions it.`,
     rewriteRule,
     `**Architecture integrity takes priority over raw keyword coverage**:
-   - Maintain a coherent, believable technology architecture within each employer/project. Do not combine competing tools (e.g. Azure Data Factory + AWS Glue, or Databricks + EMR) in the same bullet or the same project unless explicitly and legitimately framed as a migration.
-   - Prefer one primary technology per responsibility rather than listing every adjacent tool as a laundry list.`,
+   - Maintain a coherent, believable technology architecture within each employer/project. Do not combine competing tools (e.g. Azure Data Factory + AWS Glue, or Databricks + EMR) in the same bullet or project unless legitimately framed as a migration. One primary technology per responsibility — see WRITER OUTPUT QUALITY above.`,
     writerMode === "INITIAL_GENERATION"
       ? `**JD Keyword Coverage**:
-   - Ensure all dominant required job keywords from ${jdReqRef} appear prominently in Technical Skills and are evidenced in relevant experience bullets — but never at the cost of guardrail 1-3 above.`
+   - Ensure dominant required job keywords from ${jdReqRef} appear prominently in Technical Skills and are evidenced in relevant experience bullets — but never at the cost of guardrails 1-3 above.`
       : `**JD Keyword Coverage (reference only)**:
-   - ${jdReqRef} is the same structured JD requirement data the JD PRIORITY MATRIX above was built from. It is background only: it does not license reordering Technical Skills or adding a technology outside your listed editable paths.`,
+   - ${jdReqRef} is background only: it does not license reordering Technical Skills or adding a technology outside your listed editable paths.`,
     `**Writing Style & Formatting — every bullet must be interview-defensible**:
-   - Begin bullets with strong, varied action verbs (e.g. "Architected", "Engineered", "Optimized", "Spearheaded"), past tense for past roles.
-   - NEVER use generic openers like "Responsible for" or "Worked on".
-   - Avoid AI clichés (e.g., "testament to", "delve", "leverage synergy", "spearheaded revolution").
-   - Every major achievement bullet should include quantifiable, realistic impact you could defend and elaborate on if asked about it in an interview — never an invented or exaggerated metric.`,
-    `**Self-check before returning**: before writing \`writer_output.json\`, re-verify your draft end to end against every guardrail in ${instructionsRef} (hard facts, MSI, architecture integrity, technology grouping, no contradicting technologies, metric inference policy, banned language, duplicate bullets, years/education honesty, bullet caps, verb tense). Report your own findings in the optional \`writerValidation\` field below — but note that this is diagnostic only and does not substitute for CareerOps's own independent review.`,
+   - Begin bullets with strong, varied action verbs, past tense for past roles. NEVER use generic openers ("Responsible for", "Worked on") or AI clichés ("testament to", "delve", "leverage synergy").
+   - Every major achievement bullet should include quantifiable, realistic impact you could defend in an interview — never an invented or exaggerated metric.`,
+    `**Self-check before returning**: before writing \`writer_output.json\`, re-verify your draft end to end against every guardrail in ${instructionsRef}. Report your own findings in the optional \`writerValidation\` field below — diagnostic only, never a substitute for CareerOps's own independent review.`,
   ];
 
   // INITIAL_GENERATION TOKEN OPTIMIZATION (2026-08-23) — PRIOR QUALITY REVIEW FEEDBACK is omitted
@@ -447,41 +469,32 @@ One \`operations\` entry per path you are actually changing — never one for a 
   "iterationNumber": ${iterationNumber},
   "resume": {
     "name": "${candidateName}",
-    "tagline": "<candidate's professional identity> | <JD-relevant specialization> | <key technologies>",
+    "tagline": "<professional identity> | <JD-relevant specialization> | <key technologies>",
     "location": "City, State or Remote",
     "phone": "Phone",
     "email": "Email",
     "summary": [
-      "Opens by naming the candidate's professional identity and the specialization this JD needs — never 'Engineer with...', 'Professional with...' or any other generic opener, and never a years-of-experience figure CareerOps has not verified..."
+      "Follow the summary rule in PROFESSIONAL IDENTITY above exactly -- identity opening, 3 sentences, technology ceiling."
     ],
     "skillGroups": [
-      {
-        "label": "Category Name (e.g. Cloud & Data Platforms)",
-        "items": ["Skill 1", "Skill 2", "Skill 3"]
-      }
+      { "label": "Category Name (e.g. Cloud & Data Platforms)", "items": ["Skill 1", "Skill 2", "Skill 3"] }
     ],
     "experience": [
       {
         "title": "Title (must match Master Resume)",
         "company": "Company (must match Master Resume)",
-        "location": "City, ST — OMIT this field entirely unless the Master Resume states it",
+        "location": "City, ST -- OMIT entirely unless the Master Resume states it",
         "dates": "Dates (must match Master Resume)",
-        "projectDescription": "One sentence naming what this role's work was — restating ONLY scope this same role's bullets already establish. Never a new system, client, domain or metric.",
-        "bullets": [
-          "Action-oriented bullet with measurable impact and relevant technologies..."
-        ],
-        "environment": ["Only technologies THIS employer's evidence supports", "..."]
+        "projectDescription": "1 sentence, scope THIS role own bullets already establish -- never a new system/client/domain/metric.",
+        "bullets": ["Action-oriented bullet with measurable impact and relevant technologies..."],
+        "environment": ["Only technologies THIS employer evidence supports", "..."]
       }
     ],
     "keyProjects": [
       { "name": "Project name", "description": "What it does", "technologies": ["..."], "url": "https://... (only if the Master Resume records one)" }
     ],
-    "education": [
-      "Degree, Institution - Dates"
-    ],
-    "certifications": [
-      "Certification Name"
-    ]
+    "education": ["Degree, Institution - Dates"],
+    "certifications": ["Certification Name"]
   },
   "agentMetadata": {
     "provider": "claude-code | codex | antigravity | local | other",
@@ -535,7 +548,7 @@ into a different value, or substitute a placeholder for any of them, and you
 must never invent one that is missing.
 
 Where each value goes:
-${input.repairPlanSection ?? ""}${input.contextManifestSection ?? ""}${input.jobIntentSection ? input.jobIntentSection + "\n\n---\n\n" : ""}${input.targetEcosystemSection ? input.targetEcosystemSection + "\n\n---\n\n" : ""}${input.jdToolCoverageSection ? input.jdToolCoverageSection + "\n\n---\n\n" : ""}${input.architecturePaletteSection ? input.architecturePaletteSection + "\n\n---\n\n" : ""}${input.accomplishmentEvidenceSection ? input.accomplishmentEvidenceSection + "\n\n---\n\n" : ""}${input.jdEvidenceMappingSection ? input.jdEvidenceMappingSection + "\n\n---\n\n" : ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
+${input.repairPlanSection ?? ""}${input.contextManifestSection ?? ""}${input.jobIntentSection ? input.jobIntentSection + "\n\n---\n\n" : ""}${input.targetEcosystemSection ? input.targetEcosystemSection + "\n\n---\n\n" : ""}${input.architecturePaletteSection ? input.architecturePaletteSection + "\n\n---\n\n" : ""}${input.accomplishmentEvidenceSection ? input.accomplishmentEvidenceSection + "\n\n---\n\n" : ""}${input.jdEvidenceMappingSection ? input.jdEvidenceMappingSection + "\n\n---\n\n" : ""}${input.professionalIdentitySection ?? ""}${input.presentationStandardSection ?? ""}${input.employerEvidenceSection ?? ""}${input.roleProjectEvidenceSection ?? ""}${input.experienceEmphasisSection ?? ""}${input.distributedEvidenceSection ?? ""}## CRITICAL TAILORING GUARDRAILS & OBJECTIVES
 
 ${guardrailItems.map((item, i) => `${i + 1}. ${item}`).join("\n\n")}
 
@@ -545,14 +558,30 @@ ${guardrailItems.map((item, i) => `${i + 1}. ${item}`).join("\n\n")}
 ${
   input.jdPriorityMatrix
     ? `Target role (P0): **${input.jdPriorityMatrix.targetRoleTitle ?? "not specified"}**
+P1 = MUST SURFACE (critical, supported) · P2 = SHOULD SURFACE (required, supported) · P3/P4 = OPTIONAL (preferred/bonus, supported).
 
 ${input.jdPriorityMatrix.requirements
   .slice()
   .sort((a, b) => a.priority.localeCompare(b.priority))
-  .map((r) => `- [${r.priority}] ${r.requirement} (${r.requiredOrPreferred}, candidate evidence: ${r.evidenceStrength})`)
+  .map((r) => {
+    // PHASE 6.6 — this is now the ONE canonical requirement table in the writer prompt (previously a
+    // separate "TARGET JOB REQUIREMENTS" section restated the same 23 names with a coverage-
+    // expectation label and a kind qualifier; that section is gone, its two distinguishing pieces of
+    // information folded directly into this line instead).
+    const kind = input.requirementKindByName?.[r.requirement];
+    const kindTag = kind ? ` (${kind.toLowerCase()})` : "";
+    // PHASE 6.6 — "(REQUIRED, candidate evidence: STRONG)" compacted to "(REQUIRED/STRONG)"; same two
+    // independent facts (requirementLevel and evidence strength), ~20 fewer bytes per line.
+    return `- [${r.priority}] ${r.requirement}${kindTag} (${r.requiredOrPreferred}/${r.evidenceStrength})`;
+  })
   .join("\n")}
+${
+  input.doNotClaimNames && input.doNotClaimNames.length > 0
+    ? `\n**DO NOT CLAIM (JD-requested, zero MSI/experience evidence — never write these in):** ${input.doNotClaimNames.join(", ")}`
+    : ""
+}
 
-P0/P1 are core role identity/must-have requirements — these MUST dominate the headline and summary. P3/P4 (preferred/secondary) technologies may appear as supporting capabilities further down, but must NEVER headline the resume or crowd out P0/P1 content, even if they seem to have more JD mentions. An UNSUPPORTED requirement (candidate evidence: NONE above) must NEVER be added to the resume — report it as a gap, do not fabricate it.`
+P0/P1 must dominate the headline and summary. P3/P4 may appear as supporting capabilities further down, never headlining or crowding out P0/P1 even with more JD mentions. An UNSUPPORTED requirement (.../NONE above) must NEVER be added to the resume — report it as a gap, do not fabricate it.`
     : "Not available for this iteration (no structured job requirements or target role title were supplied)."
 }
 
@@ -825,6 +854,28 @@ export function exportExternalWriterPackage(
   const exportRequirementUnits: RequirementUnit[] = exportReconciliation
     ? canonicalRequirementsToRequirementUnits(exportReconciliation.canonicalRequirements)
     : writerInput.jobRequirements ?? [];
+  // PHASE 6.5 — drives the writer-facing dynamic named-technology summary ceiling (see
+  // professionalIdentity.ts's renderProfessionalIdentitySection); undefined when reconciliation did
+  // not run, which that function treats as "use the fixed legacy ceiling" — unchanged behavior.
+  const exportSignificantSupportedTechnologyCount = exportReconciliation
+    ? exportReconciliation.canonicalRequirements.filter((r) => r.supportedByCandidate).length
+    : undefined;
+  // PHASE 6.6 — the two pieces of information the (now-removed-from-the-writer-prompt) canonical
+  // "TARGET JOB REQUIREMENTS" section used to carry, folded directly into the JD PRIORITY MATRIX line
+  // instead of a separate, fully-duplicative section. See renderCanonicalRequirementSection's own
+  // `fmt`/DO_NOT_CLAIM logic — same rule, computed once here.
+  const exportRequirementKindByName: Record<string, "ARCHITECTURE" | "CAPABILITY" | "METHODOLOGY"> = {};
+  const exportDoNotClaimNames: string[] = [];
+  if (exportReconciliation) {
+    for (const r of exportReconciliation.canonicalRequirements) {
+      if (r.kind === "ARCHITECTURE" || r.kind === "CAPABILITY" || r.kind === "METHODOLOGY") {
+        exportRequirementKindByName[r.canonicalName] = r.kind;
+      }
+      if (r.writerAction === "DO_NOT_CLAIM") {
+        exportDoNotClaimNames.push(r.canonicalName);
+      }
+    }
+  }
 
   const exportJdPriorityMatrix = buildJdPriorityMatrix(
     exportRequirementUnits,
@@ -1082,6 +1133,7 @@ export function exportExternalWriterPackage(
           contextManifestSection: exportContextManifestSection || undefined,
           instructionsScopeNote: exportInstructionsScopeNote,
           coverLetterContextOmitted: exportOmitCoverLetter,
+          significantSupportedTechnologyCount: exportSignificantSupportedTechnologyCount,
         })
       : buildExternalWriterPrompt({
           candidateId,
@@ -1099,23 +1151,22 @@ export function exportExternalWriterPackage(
           blockingFailures: writerInput.blockingFailures,
           complianceCorrections: writerInput.complianceCorrections,
           candidateContact: writerInput.candidateContact,
-          accomplishmentEvidenceSection: exportAccomplishmentPackage ? renderAccomplishmentEvidenceSection(exportAccomplishmentPackage) : undefined,
+          accomplishmentEvidenceSection: exportAccomplishmentPackage ? renderCompactAccomplishmentEvidenceSection(exportAccomplishmentPackage) : undefined,
           jobIntentSection: exportJobIntent ? renderWriterJobIntentSection(exportJobIntent) : undefined,
           jdEvidenceMappingSection: exportJdEvidenceMapping ? renderJdEvidenceMappingSection(exportJdEvidenceMapping) : undefined,
           targetEcosystemSection: exportTargetEcosystem ? renderTargetEcosystemSection(exportTargetEcosystem) : undefined,
-          jdToolCoverageSection: exportReconciliation
-            ? renderCanonicalRequirementSection(exportReconciliation)
-            : exportCoveragePlan
-            ? renderJdToolCoverageSection(exportCoveragePlan)
-            : undefined,
+          jdToolCoverageSection: !exportReconciliation && exportCoveragePlan ? renderJdToolCoverageSection(exportCoveragePlan) : undefined,
+          requirementKindByName: exportRequirementKindByName,
+          doNotClaimNames: exportDoNotClaimNames,
           architecturePaletteSection: exportArchitecturePalettes ? renderArchitecturePaletteSection(exportArchitecturePalettes) : undefined,
-          employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
+          employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap, selectedEvidence?.globalRelevantSkills.all) : undefined,
           repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
           resolvedFindingKeys: writerInput.retryLineage?.resolvedFindingKeys,
           professionalIdentitySection: writerInput.masterProfile
             ? renderProfessionalIdentitySection(
                 deriveProfessionalIdentity(writerInput.masterProfile),
-                writerInput.masterProfile.totalYearsExperience ?? null
+                writerInput.masterProfile.totalYearsExperience ?? null,
+                exportSignificantSupportedTechnologyCount
               )
             : undefined,
           experienceEmphasisSection: isTargetedRepair ? undefined : exportExperienceEmphasis || undefined,
@@ -1291,11 +1342,9 @@ export function exportExternalWriterPackage(
       jobIntentSection: exportJobIntent ? renderWriterJobIntentSection(exportJobIntent) : undefined,
       jdEvidenceMappingSection: exportJdEvidenceMapping ? renderJdEvidenceMappingSection(exportJdEvidenceMapping) : undefined,
       targetEcosystemSection: exportTargetEcosystem ? renderTargetEcosystemSection(exportTargetEcosystem) : undefined,
-      jdToolCoverageSection: exportReconciliation
-        ? renderCanonicalRequirementSection(exportReconciliation)
-        : exportCoveragePlan
-        ? renderJdToolCoverageSection(exportCoveragePlan)
-        : undefined,
+      jdToolCoverageSection: !exportReconciliation && exportCoveragePlan ? renderJdToolCoverageSection(exportCoveragePlan) : undefined,
+      requirementKindByName: exportRequirementKindByName,
+      doNotClaimNames: exportDoNotClaimNames,
       architecturePaletteSection: exportArchitecturePalettes ? renderArchitecturePaletteSection(exportArchitecturePalettes) : undefined,
       employerEvidenceSection: scopedEmployerMap ? renderEmployerEvidenceSection(scopedEmployerMap) : undefined,
       repairPlanSection: writerInput.repairPlan ? renderRepairPlanSection(writerInput.repairPlan) : undefined,
@@ -1303,7 +1352,8 @@ export function exportExternalWriterPackage(
       professionalIdentitySection: writerInput.masterProfile
         ? renderProfessionalIdentitySection(
             deriveProfessionalIdentity(writerInput.masterProfile),
-            writerInput.masterProfile.totalYearsExperience ?? null
+            writerInput.masterProfile.totalYearsExperience ?? null,
+            exportSignificantSupportedTechnologyCount
           )
         : undefined,
       experienceEmphasisSection: isTargetedRepair ? undefined : exportExperienceEmphasis || undefined,

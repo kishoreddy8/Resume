@@ -44,6 +44,14 @@ const REVIEW_SUPPLEMENTARY_ALIASES: SupplementaryAliasEntry[] = [
   // "Azure Databricks" is the Azure-branded product name for the same underlying Databricks
   // technology — the shared taxonomy's "Databricks" entry only has the bare "databricks" alias.
   { canonical: "Databricks", category: "Warehousing", aliases: ["azure databricks"] },
+  // PHASE 6.5B — "Observability" is one of jdRequirementReconciler.ts's canonical CAPABILITY-kind
+  // requirements (TECHNICAL_TAXONOMY), but capability-level phrases like this were never in
+  // SKILL_TAXONOMY (a real-technology taxonomy shared with Phase 2 JD matching). Without an entry
+  // here, evaluateCanonicalCoverage() could never report Observability as EVIDENCED no matter what a
+  // resume bullet actually said — extractCanonicalSkillsFromText simply wouldn't recognize the words.
+  // Added narrowly (only the one capability this repair's canonical coverage report depends on), not
+  // as a general capability-matching rewrite.
+  { canonical: "Observability", category: "Monitoring", aliases: ["observability", "pipeline monitoring", "pipeline alerting", "data observability"] },
 ];
 
 interface CombinedAliasEntry {

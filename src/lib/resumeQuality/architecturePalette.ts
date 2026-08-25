@@ -224,6 +224,13 @@ export function buildEmployerArchitecturePalettes(params: {
 export function renderArchitecturePaletteSection(palettes: EmployerArchitecturePalette[]): string {
   let out = `## APPROVED EMPLOYER ARCHITECTURE PALETTES (Target-Aligned + MSI-Backed)\n\n`;
 
+  // PHASE 6.6 — every employer keeps its OWN clearly-labeled subsection (never merged into one global
+  // technology dump — per-employer architecture coherence is preserved exactly as before); only the
+  // BODY is deduplicated when it is genuinely byte-identical to an earlier employer's (the common case
+  // when every employer shares the same cloud assignment under the same target ecosystem). A pointer
+  // ("Same approved palette as X above") replaces the repeated list — nothing about which employer is
+  // approved for which technology, or why, is lost or merged across employers.
+  const seenBodies = new Map<string, string>(); // body text -> first employer that showed it
   for (const pal of palettes) {
     out += `### ${pal.employer} (${pal.title}) [Cloud: ${pal.employerCloud}]\n`;
     if (pal.orchestration.length === 0 && pal.processing.length === 0 && pal.warehouses.length === 0) {
@@ -231,16 +238,25 @@ export function renderArchitecturePaletteSection(palettes: EmployerArchitectureP
       continue;
     }
 
-    out += `- **Approved Sources:** ${pal.sources.join(", ") || "(none)"}\n`;
-    out += `- **Approved Ingestion/Orchestration:** ${pal.orchestration.join(", ") || "(none)"}\n`;
-    out += `- **Approved Storage:** ${pal.storage.join(", ") || "(none)"}\n`;
-    out += `- **Approved Processing/Transform:** ${pal.processing.join(", ") || "(none)"}\n`;
-    out += `- **Approved Warehouses/Analytics:** ${pal.warehouses.join(", ") || "(none)"}\n`;
-    out += `- **Approved Languages & DevOps:** ${[...pal.languages, ...pal.devops].join(", ") || "(none)"}\n`;
+    let body = "";
+    body += `- **Approved Sources:** ${pal.sources.join(", ") || "(none)"}\n`;
+    body += `- **Approved Ingestion/Orchestration:** ${pal.orchestration.join(", ") || "(none)"}\n`;
+    body += `- **Approved Storage:** ${pal.storage.join(", ") || "(none)"}\n`;
+    body += `- **Approved Processing/Transform:** ${pal.processing.join(", ") || "(none)"}\n`;
+    body += `- **Approved Warehouses/Analytics:** ${pal.warehouses.join(", ") || "(none)"}\n`;
+    body += `- **Approved Languages & DevOps:** ${[...pal.languages, ...pal.devops].join(", ") || "(none)"}\n`;
     if (pal.prohibitedCombinations.length > 0) {
-      out += `- **Prohibited Stacks:** ${pal.prohibitedCombinations.join("; ")}\n`;
+      body += `- **Prohibited Stacks:** ${pal.prohibitedCombinations.join("; ")}\n`;
     }
-    out += "\n";
+
+    const priorEmployer = seenBodies.get(body);
+    if (priorEmployer) {
+      out += `- Same approved palette as ${priorEmployer} above.\n\n`;
+    } else {
+      seenBodies.set(body, pal.employer);
+      out += body;
+      out += "\n";
+    }
   }
 
   return out;

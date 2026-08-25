@@ -325,31 +325,50 @@ test("SUMMARY-I1-01: INITIAL_GENERATION contains explicit first-pass summary acc
   const profile = buildRichCandidateProfile();
   const identity = deriveProfessionalIdentity(profile);
   const section = renderProfessionalIdentitySection(identity, profile.totalYearsExperience);
-  assert.match(section, /Iteration 1 Publication Quality/);
-  assert.match(section, /publication-ready on the first pass without needing a second repair iteration/);
+  // PHASE 6.5 — "Iteration 1 Publication Quality" was trimmed from this section to fit the 600-token
+  // compact-prompt budget (see writerPromptCompactionPhase3.test.ts's PROMPTCOMPACT-02); the fuller
+  // "publication-ready on iteration 1, no assumed repair pass" instruction is stated once, at the
+  // top-level INITIAL_GENERATION guardrails (handoff/exporter.ts's own rewriteRule), not duplicated
+  // here. This section still explicitly frames the summary rule as Publication Quality.
+  assert.match(section, /Publication Quality/);
 });
 
 test("SUMMARY-I1-02: summary prioritizes verified professional identity", () => {
   const profile = buildRichCandidateProfile();
   const identity = deriveProfessionalIdentity(profile);
   const section = renderProfessionalIdentitySection(identity, profile.totalYearsExperience);
-  assert.match(section, /Professional Identity & Scope/);
-  assert.match(section, /Lead with verified identity/);
+  // PHASE 6.5 — recruiter-natural policy: the identity-first structure is now expressed as sentence
+  // (1) "identity opening" (role + years + broad specialization) rather than the old 4-point
+  // "Professional Identity & Scope" label — see professionalIdentity.ts's own summary rule text.
+  assert.match(section, /identity opening/);
+  assert.match(section, /with \[years\]\+ years of experience/);
 });
 
 test("SUMMARY-I1-03: summary prioritizes JD-critical capabilities", () => {
-  const qualitySec = renderWriterOutputQualitySection();
-  assert.match(qualitySec, /Verified Professional Identity & target domain/);
-  assert.match(qualitySec, /Core architecture ownership/);
-  assert.match(qualitySec, /Concrete delivery impact/);
+  // PHASE 6.6 — the 4-point "Verified Professional Identity & target domain / Core architecture
+  // ownership / Concrete delivery impact / Defining supported tools" structure was a STALE,
+  // pre-Phase-6.5 duplicate living in writerOutputQuality.ts; professionalIdentity.ts's own summary
+  // rule (already Phase 6.5-corrected) is now the single place this structure is stated, as sentences
+  // (1) identity opening, (2) engineering depth, (3) how that experience maps to the JD's themes — see
+  // SUMMARY-I1-04's own comment just below for the same substance-preserved rewording.
+  const profile = buildRichCandidateProfile();
+  const identity = deriveProfessionalIdentity(profile);
+  const qualitySec = renderProfessionalIdentitySection(identity, profile.totalYearsExperience);
+  assert.match(qualitySec, /identity opening/);
+  assert.match(qualitySec, /engineering depth/);
+  assert.match(qualitySec, /how that experience maps to this JD/);
 });
 
 test("SUMMARY-I1-04: summary requires engineering/architecture/value positioning rather than technology dumping", () => {
   const profile = buildRichCandidateProfile();
   const identity = deriveProfessionalIdentity(profile);
   const section = renderProfessionalIdentitySection(identity, profile.totalYearsExperience);
-  assert.match(section, /Architecture & Engineering Ownership/);
-  assert.match(section, /Business & Delivery Impact/);
+  // PHASE 6.5 — "Architecture & Engineering Ownership" / "Business & Delivery Impact" (sentences 2/3
+  // of the old 4-point structure) are now sentence (2) "engineering depth" and sentence (3) "maps to
+  // this JD's most important themes" — the same positioning-over-inventory substance, 3 sentences
+  // instead of 4 points (see task Phase 6.5's own recruiter-natural summary policy).
+  assert.match(section, /engineering depth/);
+  assert.match(section, /maps to this JD's most important themes/);
   assert.match(section, /Weak — a keyword dump/);
   assert.match(section, /Strong — the register to aim for/);
 });

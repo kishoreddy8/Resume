@@ -83,7 +83,11 @@ test("writer guidance requires varied summary construction instead of repeated c
 });
 
 test("writer guidance and validation keep the summary at 3-4 sentences", () => {
-  assert.match(renderWriterOutputQualitySection(), /3-4 concise sentences/);
+  // PHASE 6.6 — the "3-4 concise sentences" restatement in writerOutputQuality.ts was a stale
+  // duplicate of professionalIdentity.ts's own (Phase 6.5-corrected) "3 concise sentences, no 4th
+  // bolted on" structure; this section now points at that single rule instead of restating a slightly
+  // different sentence count. checkSummaryShape's own structural contract is unchanged.
+  assert.match(renderWriterOutputQualitySection(), /3-sentence structure/);
   assert.deepEqual(checkSummaryShape(resume().summary), []);
   assert.ok(checkSummaryShape(["Only one sentence."]).some((issue) => issue.kind === "SUMMARY_SENTENCE_COUNT"));
 });

@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { buildAtsCoverageReport } from "../atsCoverageReport";
 import { buildJdPriorityMatrix } from "../jdPriorityMatrix";
 import { evaluateInstructionCompliance, hardGateFailureCorrections } from "../instructionCompliance";
@@ -19,7 +20,9 @@ import { evaluateSkillsOrdering } from "./skillsOrderingChecks";
 import { evaluateStructuralChecks } from "./structuralChecks";
 import { evaluatePresentationContract } from "../presentationContract";
 import { findThirdPersonNarration } from "../professionalIdentity";
-import { evaluateSummaryAlignment } from "./summaryChecks";
+import { evaluateSummaryAlignment, evaluateSummaryPolicy } from "./summaryChecks";
+import { evaluateCanonicalCoverage, reconcileJdRequirements } from "../jdRequirementReconciler";
+import { evaluateCrossEmployerRepetition } from "./repetitionChecks";
 import { findTechnologyContradictions } from "./technologyGroups";
 import { evaluateTechnologyGrouping } from "./technologyGroupingCheck";
 import { checkMetricRealism, evaluateTruthfulness } from "./truthfulnessChecks";
@@ -90,10 +93,20 @@ export function reviewResumeDeterministically(
     | "docxValidation"
     | "targetRoleTitle"
     | "rewriteExpectation"
+    | "canonicalRequirements"
   >
 ): StructuredResumeReview {
-  const { resume, jobRequirements, masterResumeProfile, coverLetter, priorResume, docxValidation, targetRoleTitle, rewriteExpectation } =
-    input;
+  const {
+    resume,
+    jobRequirements,
+    masterResumeProfile,
+    coverLetter,
+    priorResume,
+    docxValidation,
+    targetRoleTitle,
+    rewriteExpectation,
+    canonicalRequirements,
+  } = input;
 
   const ats = evaluateAtsAlignment(resume, jobRequirements);
   const structural = evaluateStructuralChecks(resume, masterResumeProfile);
@@ -111,7 +124,20 @@ export function reviewResumeDeterministically(
   // voice, no em/en dash prose punctuation, Technical Skills that are an ecosystem rather than a
   // transcription of the posting. Writing rules, so they reach the writer as corrections and cost
   // formatting score below; none of them is a truthfulness finding and none changes gate semantics.
-  const contract = evaluatePresentationContract({ resume, coverLetter, masterResumeProfile, jobRequirements });
+  // PHASE 6.5 — count of significant SUPPORTED canonical requirements (technologies AND
+  // capabilities) after Phase 6.2 reconciliation, when the wrapper supplied it — drives the dynamic
+  // summary technology ceiling instead of the fixed SUMMARY_MAX_TECHNOLOGIES=7. Undefined (no
+  // canonical data available) falls back to the fixed ceiling exactly as before.
+  const significantSupportedTechnologyCount = canonicalRequirements
+    ? canonicalRequirements.filter((r) => r.supportedByCandidate).length
+    : undefined;
+  const contract = evaluatePresentationContract({
+    resume,
+    coverLetter,
+    masterResumeProfile,
+    jobRequirements,
+    significantSupportedTechnologyCount,
+  });
 
   // Stage 31.1 correction — these two defects need TEETH, not just a deduction.
   //
@@ -288,6 +314,17 @@ export function reviewResumeDeterministically(
   });
   const atsCoverageReportResult = buildAtsCoverageReport(resume, jdPriorityMatrixResult);
 
+  // --- PHASE 6.5: recruiter-natural summary policy + canonical (23-item) coverage -----------------
+  const summaryPolicyResult = evaluateSummaryPolicy({
+    summary: resume.summary,
+    resumeSkillGroups: resume.skillGroups,
+    significantSupportedTechnologyCount,
+    targetRoleTitle,
+  });
+  const canonicalCoverageResult = canonicalRequirements ? evaluateCanonicalCoverage(resume, canonicalRequirements) : undefined;
+  // PHASE 6.8 — cross-employer/same-employer semantic bullet repetition, reporting only.
+  const crossEmployerRepetitionResult = evaluateCrossEmployerRepetition(resume);
+
   return {
     overallScore,
     atsScore: clamp(ats.atsScore),
@@ -312,13 +349,44 @@ export function reviewResumeDeterministically(
     jdPriorityMatrix: jdPriorityMatrixResult,
     recruiterQualityAssessment,
     atsCoverageReport: atsCoverageReportResult,
+    summaryPolicy: summaryPolicyResult,
+    // Key omitted entirely (not present-with-value-undefined) when no canonical reconciliation ran —
+    // matches every other optional field on this object round-tripping identically through a
+    // JSON.stringify/parse persistence cycle (which drops undefined-valued keys), so a fresh review
+    // and one reloaded from a stored review.json are structurally identical either way.
+    ...(canonicalCoverageResult ? { canonicalCoverage: canonicalCoverageResult } : {}),
+    crossEmployerRepetition: crossEmployerRepetitionResult,
   };
 }
 
 /** ResumeReviewerAgent implementation. No network, no AI provider — see this file's module doc. */
 export class DeterministicResumeReviewer implements ResumeReviewerAgent {
   async review(input: ResumeReviewerInput): Promise<ResumeReviewerOutput> {
-    const review = reviewResumeDeterministically(input);
+    // PHASE 6.5 — when both the raw JD text (jobDescriptionPath, already part of every
+    // ResumeReviewerInput) and masterResumeProfile are available, run the SAME canonical
+    // reconciliation the live writer path uses (see jdRequirementReconciler.ts /
+    // handoff/exporter.ts's Phase 6.3A wiring) so the review scores the summary technology budget
+    // and post-writer coverage against the real, full requirement set — not the legacy 3-item list.
+    // Fails toward the exact prior behavior (canonicalRequirements left undefined) on any I/O or
+    // reconciliation error: the reviewer must never crash or degrade because of this additive step.
+    let canonicalRequirements: ResumeReviewerInput["canonicalRequirements"];
+    if (input.masterResumeProfile && input.jobDescriptionPath) {
+      try {
+        if (fs.existsSync(input.jobDescriptionPath)) {
+          const rawJd = fs.readFileSync(input.jobDescriptionPath, "utf-8");
+          canonicalRequirements = reconcileJdRequirements({
+            rawJd,
+            structuredRequirements: input.jobRequirements ?? [],
+            candidateProfile: input.masterResumeProfile,
+            roleTitle: input.targetRoleTitle,
+          }).canonicalRequirements;
+        }
+      } catch {
+        // Fail toward legacy behavior — see comment above.
+      }
+    }
+
+    const review = reviewResumeDeterministically({ ...input, canonicalRequirements });
     return { review };
   }
 }

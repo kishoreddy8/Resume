@@ -1,4 +1,6 @@
 import type { CandidateProfile } from "@/lib/match/types";
+import { SUMMARY_MAX_TECHNOLOGIES, dynamicSummaryTechnologyCeiling } from "./summaryTechnologyBudget";
+import { SUMMARY_APPLICATION_LANGUAGE_GUARDRAIL_TEXT } from "./reviewers/summaryChecks";
 
 /**
  * Stage 30 — the candidate's own professional identity, derived from their evidence.
@@ -148,9 +150,19 @@ export interface SummaryOpeningIssue {
  * that is the opening this candidate's own master resume uses. A rule that rejects the source
  * document's own wording is over-broad, so the carve-out is narrow and conditional: the figure must
  * already be verified, which is exactly what statedYearsOfExperience being non-null means.
+ *
+ * Phase 6.5B — found live: a repaired summary opened "Data Engineer with six years…" (spelled-out
+ * word, not "6") and was rejected by this carve-out even though it names the exact same verified
+ * figure as "6 years" would. The digits-only pattern was an accidental gap, not an intentional
+ * distinction — nothing about "six" vs "6" makes the figure any less verified — so the word forms
+ * for the realistic years-of-experience range are accepted here too.
  */
+const YEARS_NUMBER_WORDS =
+  "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|" +
+  "sixteen|seventeen|eighteen|nineteen|twenty|twenty-five|thirty|thirty-five|forty";
 const IDENTITY_WITH_VERIFIED_YEARS = new RegExp(
-  `^[^.]{0,60}?\\b(?:${IDENTITY_NOUNS})s?\\s+with\\s+(?:over|more than|nearly|almost|about|around|roughly|approximately)?\\s*\\d+\\+?\\s*years?\\b`,
+  `^[^.]{0,60}?\\b(?:${IDENTITY_NOUNS})s?\\s+with\\s+(?:over|more than|nearly|almost|about|around|roughly|approximately)?\\s*` +
+    `(?:\\d+\\+?|(?:${YEARS_NUMBER_WORDS}))\\s*years?\\b`,
   "i"
 );
 
@@ -207,12 +219,23 @@ export function headlinePreservesIdentity(headline: string, identity: string): b
   return a === b || a.includes(b) || b.includes(a);
 }
 
-/** The writer-facing section. States the identity as a constraint and the specialization as freedom. */
+/** The writer-facing section. States the identity as a constraint and the specialization as freedom.
+ *
+ *  @param significantSupportedTechnologyCount PHASE 6.5 — count of significant SUPPORTED canonical
+ *    requirements (technologies AND capabilities) after Phase 6.2 reconciliation, when the caller has
+ *    it (see handoff/exporter.ts's own canonical-reconciliation wiring). Drives the dynamic named-
+ *    technology ceiling instead of the fixed 7; omitted falls back to the fixed ceiling exactly as
+ *    before — fully backward compatible. */
 export function renderProfessionalIdentitySection(
   identity: ProfessionalIdentity | null,
-  statedYearsOfExperience: number | null
+  statedYearsOfExperience: number | null,
+  significantSupportedTechnologyCount?: number
 ): string {
   if (!identity) return "";
+  const technologyCeiling =
+    significantSupportedTechnologyCount === undefined
+      ? SUMMARY_MAX_TECHNOLOGIES
+      : dynamicSummaryTechnologyCeiling(significantSupportedTechnologyCount);
   let out = "## PROFESSIONAL IDENTITY — WHO THIS CANDIDATE IS\n\n";
   out += `**Derived identity: ${identity.identity}.** Taken from the roles actually held: ${identity.evidenceTitles.join("; ")}.\n\n`;
   out +=
@@ -221,17 +244,27 @@ export function renderProfessionalIdentitySection(
     "(e.g. `Senior Data Engineer | Analytics Engineer`). **Never put technologies in it.** " +
     "The job's title never replaces the candidate's own, and never invent seniority the evidence does not show.\n\n";
   out +=
-    "**Summary rule: POSITIONING, not inventory (Iteration 1 Publication Quality).** " +
-    "The Professional Summary must be publication-ready on the first pass without needing a second repair iteration. " +
-    "Write ONE continuous paragraph (3-4 sentences, ~500–680 chars) following this exact priority order:\n" +
-    `  1. **Professional Identity & Scope:** Lead with verified identity (${identity.identity}) and target platform scope. NEVER open with "${identity.identity} with…", "Candidate with…", or generic fluff ("Results-driven…", "Seasoned professional…").\n` +
-    "  2. **Architecture & Engineering Ownership:** Platform scale, pipeline reliability, data modeling, governance controls.\n" +
-    "  3. **Business & Delivery Impact:** Concrete operational value or delivery impact grounded in verified evidence.\n" +
-    "  4. **Defining Technologies (max SEVEN total):** Name at most SEVEN technologies across the summary (max 4 in one sentence). Avoid stock capability stems (\"Expertise spans…\", \"Proven ability to…\"); lead with the work, its context, or a supported outcome.\n\n" +
-    "- **Weak — a keyword dump:** \"Data Engineer specializing in Spark, Python, SQL, Databricks, Delta Lake, Snowflake, CDC, SCD...\"\n" +
-    "- **Strong — the register to aim for:** \"Data Engineer building governed cloud data platforms for banking and payments platforms, scaling pipeline execution while maintaining end-to-end data quality controls.\"\n\n" +
-    "Write in confident implied first person without turning the summary into a product list or marketing pitch. " +
-    "Never narrate in third person (\"Owns...\", \"Builds...\"). Do not use em or en dashes.\n\n";
+    "**Summary rule: POSITIONING, not inventory (Publication Quality, recruiter-natural).** " +
+    "Write ONE paragraph, 3 concise sentences, no 4th sentence bolted on: " +
+    `(1) identity opening — "${identity.identity} with [years]+ years of experience building/modernizing [broad ` +
+    `specialization]..."; (2) engineering depth — systems/problems worked on, described as work, not a parts list; ` +
+    "(3) how that experience maps to this JD's most important themes. Any technology name belongs INSIDE one of " +
+    "these three sentences, in service of what it says — never in an extra closing sentence whose only job is " +
+    "listing tools.\n\n" +
+    `**Named-technology ceiling — a CEILING, never a target: ${technologyCeiling}.** Prefer fewer: 2-4 is often ` +
+    "strongest. Never force a P1/P2 keyword in just to raise coverage; Technical Skills/Experience carry the " +
+    "detailed inventory, not the summary.\n\n" +
+    // PHASE 6.6 — "Avoid stock capability stems (...examples...)" duplicated WRITER OUTPUT QUALITY's
+    // own "Do not stack template stems" (same two examples, plus a third); consolidated there.
+    "Avoid: comma-separated technology inventories; repeating Technical Skills in prose; stacking competing clouds; " +
+    "a metric that doesn't fit naturally (**metrics here are OPTIONAL, never stacked mechanically**); stock " +
+    "capability stems (see WRITER OUTPUT QUALITY).\n\n" +
+    `**Never write like a cover letter:** ${SUMMARY_APPLICATION_LANGUAGE_GUARDRAIL_TEXT}.\n\n` +
+    `- **Weak — a keyword dump:** "Data Engineer specializing in Spark, Python, SQL, Databricks, Delta Lake, Snowflake, CDC, SCD..."\n` +
+    `- **Strong — the register to aim for:** "${identity.identity} with ${statedYearsOfExperience ?? "[N]"}+ years of experience ` +
+    "modernizing enterprise data platforms, with strong data quality and access controls.\"\n\n" +
+    "Write in confident implied first person, never third-person narration (\"Owns...\"), and without turning the " +
+    "summary into a product list or marketing pitch. No em/en dashes.\n\n";
   out +=
     statedYearsOfExperience === null
       ? "**Years of experience.** CareerOps computed no verified total for this candidate, so do NOT state one. " +

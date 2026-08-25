@@ -461,9 +461,20 @@ test("S311C-46 the writer is told to position rather than list, and not to stack
   const { renderProfessionalIdentitySection, deriveProfessionalIdentity } = await import("../professionalIdentity");
   const section = renderProfessionalIdentitySection(deriveProfessionalIdentity(PROFILE), null);
   assert.match(section, /POSITIONING, not inventory/);
-  assert.match(section, /at most SEVEN technologies/);
-  assert.match(section, /Avoid stock capability stems/);
-  assert.match(section, /lead with the work, its context, or a supported outcome/);
+  // PHASE 6.5 — the fixed "at most SEVEN technologies" ceiling is now dynamic (see
+  // dynamicSummaryTechnologyCeiling); with no significantSupportedTechnologyCount argument (as
+  // called here), it falls back to the legacy fixed value, so the number 7 still appears.
+  assert.match(section, /Named-technology ceiling.*never a target.*: 7\./);
+  // PHASE 6.6 — the two example phrases ("Expertise spans…", "Proven ability to…") moved to a single
+  // pointer at WRITER OUTPUT QUALITY (which already states them, plus a third), removing a duplicate
+  // restatement here; the prohibition itself ("stock capability stems") is unchanged.
+  assert.match(section, /stock capability stems/);
+  // PHASE 6.6 — "lead with the work instead" was folded into the "stock capability stems" pointer
+  // above when that duplicate example list moved to WRITER OUTPUT QUALITY (see the PHASE 6.6 comment
+  // just above) — the instruction not to open with a stock stem remains, just without its own
+  // trailing clause restating what to do instead (the worked Weak/Strong contrast below still shows
+  // it directly).
+
   // It must show a worked contrast, not just a prohibition.
   assert.match(section, /Weak \u2014 a keyword dump|Weak — a keyword dump/);
   assert.match(section, /Strong \u2014 the register to aim for|Strong — the register to aim for/);

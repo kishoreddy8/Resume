@@ -11,6 +11,8 @@ import type { JdEvidenceMappingResult } from "./jobEvidenceMapping";
 import { deriveProfessionalIdentity } from "./professionalIdentity";
 import type { TargetEcosystemResult } from "./targetEcosystem";
 import type { EmployerArchitecturePalette } from "./architecturePalette";
+import { SUMMARY_MAX_TECHNOLOGIES, dynamicSummaryTechnologyCeiling } from "./summaryTechnologyBudget";
+import { SUMMARY_APPLICATION_LANGUAGE_GUARDRAIL_TEXT } from "./reviewers/summaryChecks";
 
 export interface BuildRepairWriterPromptParams {
   candidateId: number;
@@ -37,6 +39,10 @@ export interface BuildRepairWriterPromptParams {
   contextManifestSection?: string;
   instructionsScopeNote?: string;
   coverLetterContextOmitted?: boolean;
+  /** PHASE 6.5C — same dynamic-ceiling input renderProfessionalIdentitySection uses for a fresh
+   *  first-pass write. Without this, a summary REPAIR fell back to a stale hardcoded 7 (see the
+   *  summary[0] guidance block below) instead of this JD's real dynamic ceiling. */
+  significantSupportedTechnologyCount?: number;
 }
 
 /**
@@ -125,7 +131,13 @@ export function buildRepairWriterPrompt(params: BuildRepairWriterPromptParams): 
     contextManifestSection,
     instructionsScopeNote,
     coverLetterContextOmitted,
+    significantSupportedTechnologyCount,
   } = params;
+
+  const summaryTechnologyCeiling =
+    significantSupportedTechnologyCount === undefined
+      ? SUMMARY_MAX_TECHNOLOGIES
+      : dynamicSummaryTechnologyCeiling(significantSupportedTechnologyCount);
 
   const rawEditablePaths = repairPlan.editablePaths && repairPlan.editablePaths.length > 0
     ? repairPlan.editablePaths
@@ -176,6 +188,8 @@ export function buildRepairWriterPrompt(params: BuildRepairWriterPromptParams): 
   lines.push("");
   lines.push("**Surgical repair, PATCH mode — return ONLY the changed values, never the full document**:");
   lines.push("- You are performing a targeted, surgical PATCH repair of specific authorized paths. You must output **PATCH operations only** modifying the exact paths listed below. All other sections of the resume are frozen.");
+  lines.push("");
+  lines.push("> **Modify ONLY the explicitly authorized JSON paths. Do not modify any other path. If a requested correction cannot be completed within those paths, leave it unresolved rather than editing another path.**");
   lines.push("");
   lines.push("### Authorized Editable Paths & Current Content to Fix:");
 
@@ -270,9 +284,17 @@ export function buildRepairWriterPrompt(params: BuildRepairWriterPromptParams): 
       }
     }
     lines.push("- **Summary Register & Structure Constraints**:");
-    lines.push("  - Exactly 3-4 concise sentences: (1) Verified Identity & target domain, (2) Core architecture ownership, (3) Concrete delivery impact, (4) Defining supported tools.");
-    lines.push("  - Max 7 total named technologies; max 4 named technologies per sentence.");
+    // PHASE 6.5C — this block previously hardcoded "ceiling 7" and an explicit 4th "Defining
+    // supported tools" sentence, independently of professionalIdentity.ts's dynamic-ceiling,
+    // no-bolted-on-tech-list policy used for a fresh first-pass write. That drift is the confirmed
+    // root cause of a live repair naming 7 technologies (this JD's real ceiling is 6) with a closing
+    // sentence whose only job was listing tools — the writer followed exactly what it was told, and
+    // what it was told was stale. Now computed the SAME way, from the SAME dynamic ceiling input.
+    lines.push(`  - ONE paragraph, 3 concise sentences: (1) identity + years + broad specialization, (2) architecture/problem depth, (3) target positioning/value. No 4th sentence.`);
+    lines.push(`  - Named-technology ceiling — a CEILING, never a target: ${summaryTechnologyCeiling}. Prefer fewer: 2-4 is often strongest.`);
+    lines.push("  - Any technology name belongs INSIDE one of the three sentences, in service of what it says — never in an extra closing sentence whose only job is listing tools.");
     lines.push("  - Write in polished executive resume register (complete sentences, no fragments, no marketing fluff).");
+    lines.push(`  - Never write like a cover letter: ${SUMMARY_APPLICATION_LANGUAGE_GUARDRAIL_TEXT}.`);
     lines.push("");
   }
 

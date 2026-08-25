@@ -377,10 +377,15 @@ describe("Phase 6: Target Ecosystem Transformation & Technology Compatibility (E
     assert.ok(text.includes("TARGET ECOSYSTEM STRATEGY: GCP"));
   });
 
-  it("ECOSYSTEM-24: Summary obeys <= 7 total technologies standard", () => {
+  it("ECOSYSTEM-24: Summary obeys a technology ceiling standard", () => {
+    // PHASE 6.6 — the static "max 7 total, max 4 per sentence" text this test pinned was a stale
+    // duplicate of the (Phase 6.5-corrected) DYNAMIC ceiling professionalIdentity.ts now owns
+    // exclusively (see dynamicSummaryTechnologyCeiling / SUMMARY-REPAIR-02/03 in
+    // repairAuthAndSummaryPhase6_5B.test.ts for the ceiling's own coverage) — this section now points
+    // at that single rule rather than restating a fixed number.
     const guidance = renderWriterOutputQualitySection();
-    assert.ok(guidance.includes("max 7 total"));
-    assert.ok(guidance.includes("max 4 per sentence"));
+    assert.ok(guidance.includes("dynamic named-technology ceiling"));
+    assert.ok(guidance.includes("PROFESSIONAL IDENTITY"));
   });
 
   // ECOSYSTEM-25..28: Visible Skills, Environment & Project Descriptions
@@ -407,9 +412,15 @@ describe("Phase 6: Target Ecosystem Transformation & Technology Compatibility (E
     assert.equal(comerica?.orchestration.includes("Azure Data Factory"), false);
   });
 
-  it("ECOSYSTEM-27: Project description is architecture-oriented rather than keyword inventory", () => {
-    const guidance = renderWriterOutputQualitySection();
-    assert.ok(guidance.includes("Exactly 1-2 concise sentences naming domain, business context, and architectural scope"));
+  it("ECOSYSTEM-27: Project description is architecture-oriented rather than keyword inventory", async () => {
+    // PHASE 6.6 — this exact rule (1-2 sentences, domain/context/architectural scope, max 4 techs)
+    // was stated in BOTH writerOutputQuality.ts and presentationStructure.ts's own `projectDescription`
+    // rule (the latter also carries the truthfulness constraint on top) -- consolidated to the one
+    // place that already had the fuller rule; writerOutputQuality.ts no longer restates it.
+    const { renderPresentationStandardSection } = await import("../presentationStructure");
+    const guidance = renderPresentationStandardSection(undefined);
+    assert.ok(guidance.includes("projectDescription"));
+    assert.ok(/short sentences.*4 max tech/i.test(guidance));
   });
 
   it("ECOSYSTEM-28: Environment remains coherent (5-8 defining technologies)", () => {

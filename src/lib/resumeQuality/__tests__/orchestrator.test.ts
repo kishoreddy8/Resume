@@ -1528,3 +1528,143 @@ test("37. startAndExecuteResumeQualityWorkflow convenience helper creates and ex
 test("38. runDeterministicQualityReview alias points to executeResumeQualityIteration", () => {
   assert.equal(runDeterministicQualityReview, executeResumeQualityIteration);
 });
+
+// =================================================================================================
+// PHASE 6.5B — COVER-LETTER LIFECYCLE HARDENING (COVERLETTER-LIFECYCLE-01..05)
+//
+// executeResumeQualityIteration always renders Resume.docx (and, incidentally, CoverLetter.docx —
+// generateTailoringOutputs's own input type requires both) for the CURRENT iteration, even before a
+// real deterministic cover letter exists (Phase 4/5 decoupled cover-letter generation from the
+// writer entirely — see coverLetterGenerator.ts). Previously the placeholder synthesized here
+// ("I am excited to apply for this position.") was left on disk as iterCoverDocx even though
+// outputFiles correctly never listed it as a real deliverable — and the artifacts API route
+// (.../artifacts/[artifactType]/route.ts) and the availableArtifacts.hasIterationCoverLetter flag
+// both check FILE EXISTENCE, not outputFiles, so a non-READY iteration's placeholder was reachable
+// as if it were a real, final cover letter. Phase 6.5B deletes the placeholder file immediately after
+// use for a non-READY iteration; the READY branch (untouched) still independently regenerates and
+// overwrites the exact same path with a genuine deterministic cover letter.
+// =================================================================================================
+
+test("COVERLETTER-LIFECYCLE-01: a non-READY iteration does not leave the one-sentence placeholder as a servable CoverLetter.docx", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+    maxIterations: 3,
+  });
+
+  const res = await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: FLAWED_RESUME_BLOCKING,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+  assert.equal(res.status, "IMPROVEMENT_RUNNING", "precondition: this iteration must NOT be READY");
+
+  const location: QualityWorkflowLocation = { candidateId: candidateAliceId, dedupeKey: jobOne.dedupe_key, runId: runAliceJobOneId, workflowId: wf.id };
+  const iterCoverDocx = path.join(getIterationDirectory(location, 1), "CoverLetter.docx");
+  assert.equal(fs.existsSync(iterCoverDocx), false, "the placeholder CoverLetter.docx must not persist for a non-READY iteration");
+});
+
+test("COVERLETTER-LIFECYCLE-02: a READY iteration uses generateDeterministicCoverLetter for the final artifact", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+    maxIterations: 3,
+  });
+
+  const res = await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: PERFECT_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+  assert.equal(res.status, "READY");
+
+  const location: QualityWorkflowLocation = { candidateId: candidateAliceId, dedupeKey: jobOne.dedupe_key, runId: runAliceJobOneId, workflowId: wf.id };
+  const finalCoverJson = path.join(getFinalDirectory(location), "cover_letter_content.json");
+  assert.ok(fs.existsSync(finalCoverJson), "READY must produce a real final cover_letter_content.json");
+  const content = JSON.parse(fs.readFileSync(finalCoverJson, "utf-8")) as CoverLetterContent;
+  assert.equal(content.paragraphs.length, 3, "generateDeterministicCoverLetter always produces 3 paragraphs");
+  assert.ok(!content.paragraphs.join(" ").includes("I am excited to apply for this position."), "must not be the placeholder text");
+});
+
+test("COVERLETTER-LIFECYCLE-03: no extra Claude/LLM invocation is required for cover-letter generation", async () => {
+  // generateDeterministicCoverLetter (coverLetterGenerator.ts) is a pure, synchronous, zero-network
+  // function — executeResumeQualityIteration never awaits an external provider for it. Timed as an
+  // operational proxy: a real network/LLM round trip could not complete in well under a second.
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+    maxIterations: 3,
+  });
+  const t0 = Date.now();
+  const res = await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: PERFECT_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+  const elapsedMs = Date.now() - t0;
+  assert.equal(res.status, "READY");
+  assert.ok(elapsedMs < 5000, `expected a fast, local, deterministic pass (no LLM round trip); took ${elapsedMs}ms`);
+});
+
+test("COVERLETTER-LIFECYCLE-04: the final cover-letter artifact is generated only from deterministic grounded content", async () => {
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateAliceId,
+    applicationId: appAliceJobOneId,
+    tailoringRunId: runAliceJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+    maxIterations: 3,
+  });
+
+  await executeResumeQualityIteration({
+    candidateId: candidateAliceId,
+    workflowId: wf.id,
+    resume: PERFECT_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+
+  const location: QualityWorkflowLocation = { candidateId: candidateAliceId, dedupeKey: jobOne.dedupe_key, runId: runAliceJobOneId, workflowId: wf.id };
+  const finalCoverJson = path.join(getFinalDirectory(location), "cover_letter_content.json");
+  const content = JSON.parse(fs.readFileSync(finalCoverJson, "utf-8")) as CoverLetterContent;
+  const text = content.paragraphs.join(" ");
+  // Every named employer must trace back to the real, approved resume — never invented.
+  const realEmployers = PERFECT_RESUME.experience.map((e) => e.company);
+  assert.ok(realEmployers.some((employer) => text.includes(employer)), "final cover letter must reference a real employer from the approved resume");
+});
+
+test("COVERLETTER-LIFECYCLE-05: an already-READY/published workflow's final artifacts remain compatible with this fix", async () => {
+  // Confirms the READY branch (untouched by Phase 6.5B) still works exactly as before, end to end —
+  // the fix only changed the non-READY iteration-level rendering path.
+  const wf = createResumeQualityWorkflow({
+    candidateId: candidateBobId,
+    applicationId: appBobJobOneId,
+    tailoringRunId: runBobJobOneId,
+    dedupeKey: jobOne.dedupe_key,
+    maxIterations: 3,
+  });
+  const res = await executeResumeQualityIteration({
+    candidateId: candidateBobId,
+    workflowId: wf.id,
+    resume: PERFECT_RESUME,
+    jobRequirements: STRONG_REQUIREMENTS,
+    masterResumeProfile: masterProfile(),
+  });
+  assert.equal(res.status, "READY");
+
+  const location: QualityWorkflowLocation = { candidateId: candidateBobId, dedupeKey: jobOne.dedupe_key, runId: runBobJobOneId, workflowId: wf.id };
+  const finalDir = getFinalDirectory(location);
+  assert.ok(fs.existsSync(path.join(finalDir, "Saikishore_Resume.docx")) || fs.existsSync(path.join(finalDir, "resume_content.json")) || fs.readdirSync(finalDir).some((f) => f.endsWith("Resume.docx")), "final Resume artifact must exist");
+  assert.ok(fs.readdirSync(finalDir).some((f) => f.endsWith("CoverLetter.docx")), "final CoverLetter.docx must exist and be real");
+});

@@ -200,8 +200,28 @@ export interface PresentationStructureIssue {
    * capped (see PRESENTATION_STRUCTURE_DEDUCTION_CAP) and instead carry HIGH priority corrections,
    * which is the lever that actually changes what the writer produces on the next iteration.
    */
-  kind: "TRUNCATED_BULLET" | "MISSING_ANNOTATION" | "ENVIRONMENT_DUMP" | "PROJECT_DESCRIPTION_DENSE";
+  kind: "TRUNCATED_BULLET" | "MISSING_ANNOTATION" | "ENVIRONMENT_DUMP" | "PROJECT_DESCRIPTION_DENSE" | "PROJECT_DESCRIPTION_ARCHITECTURE_CHAIN";
   message: string;
+}
+
+/**
+ * PHASE 6.8 — a narrow, reliable signal for a Project line that reads as a restated technology
+ * flow-chain ("Built ADF pipelines into ADLS, processed with Databricks and Delta Lake, then loaded
+ * Snowflake...") rather than business/project context. Deliberately requires BOTH a real technology
+ * count (>= 3, already the DENSE check's own threshold) AND at least two flow-chain connector words
+ * — a single "into"/"feeding" in an otherwise business-framed sentence ("ingestion into a governed
+ * medallion architecture") must never trip this alone, which is exactly why one signal in isolation
+ * is not enough. Not a semantic prose grader: every word here is a literal, curated connector,
+ * calibrated against both the synthetic example and the real Phase 6.7 Comerica/Fiserv descriptions
+ * ("Pipelines run on ADF and Databricks, with Delta Lake curation feeding Snowflake..."; "...spanning
+ * source-to-warehouse pipelines... Work combined ADF and Databricks ingestion with Delta Lake...") —
+ * both clear this two-connector threshold ("run on" + "feeding"; "spanning" + "combined").
+ */
+const ARCHITECTURE_CHAIN_CONNECTORS =
+  /\b(?:into|feeding|then loaded|then processed|then moved|processed with|combined(?:\s+with)?|moved into|loaded into|run on|spanning)\b/gi;
+
+function countArchitectureChainConnectors(text: string): number {
+  return (text.match(ARCHITECTURE_CHAIN_CONNECTORS) ?? []).length;
 }
 
 /** Total formatting score the missing-annotation/dump findings may cost, however many roles. */
@@ -275,6 +295,19 @@ export function evaluatePresentationStructure(
             `${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} defining technologies; move detail into bullets or Environment.`,
         });
       }
+
+      const chainConnectorCount = countArchitectureChainConnectors(project);
+      if (technologies.size >= 3 && chainConnectorCount >= 2) {
+        issues.push({
+          severity: "LOW",
+          kind: "PROJECT_DESCRIPTION_ARCHITECTURE_CHAIN",
+          message:
+            `Project line for ${role.company} reads as a restated technology flow-chain (${technologies.size} named ` +
+            `technologies linked by flow language such as "into"/"feeding"/"processed with") rather than business ` +
+            `context. Bullets and Environment already carry the pipeline chain — lead with the business/data ` +
+            `problem, platform type, and consumer instead.`,
+        });
+      }
     }
 
     if (!hasProject) {
@@ -333,7 +366,10 @@ export function renderPresentationStandardSection(profile: CandidateProfile | un
   out += "**Certifications.** Master Resume certifications verbatim. Omit if none.\n\n";
 
   out += "**Professional Experience.** Two labelled lines around bullets:\n" +
-    `  - \`projectDescription\` — 1 to ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences (${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} max tech), built from role bullets. Introducing anything new here is a truthfulness failure.\n` +
+    `  - \`projectDescription\` — 1 to ${PROJECT_DESCRIPTION_MAX_SENTENCES} short sentences (${PROJECT_DESCRIPTION_MAX_TECHNOLOGIES} max tech), built from role bullets. Introducing anything new here is a truthfulness failure. ` +
+    "State the business/data problem, what kind of platform was built or modernized, and who/what consumed it — NOT a restated technology chain " +
+    '("Built ADF pipelines into ADLS, processed with Databricks, then loaded Snowflake..."). Bullets and `environment` already carry the pipeline; ' +
+    "name a technology only when naturally necessary to the business context, not to re-trace the architecture.\n" +
     "  - `environment` — technology stack of THIS role. Every entry must be Available here under the MSI rule or already written for this employer, checked automatically, per employer, per item.\n\n" +
     "Write every bullet as a complete sentence without trailing '...'.\n\n";
 

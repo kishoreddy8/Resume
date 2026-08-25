@@ -443,6 +443,17 @@ export async function executeResumeQualityIteration(
 
     // If docx files were not copied from previous run or input path, generate them directly
     if (!fs.existsSync(iterResumeDocx)) {
+      // PHASE 6.5B — COVER-LETTER LIFECYCLE FIX. generateTailoringOutputs requires a coverLetter
+      // argument (Resume.docx and CoverLetter.docx are rendered together), but this iteration has no
+      // real one yet: the writer/repair never produces a cover letter (Phase 4/5 decoupled that —
+      // see coverLetterGenerator.ts), and the real deterministic generator only runs once the
+      // workflow actually reaches READY, below. Previously the placeholder synthesized here
+      // ("I am excited to apply for this position.") was left on disk as iterCoverDocx even though
+      // outputFiles correctly never listed it — a caller that reads the FILE directly (rather than
+      // outputFiles) could still surface it as if it were a real, final cover letter. Rendering it is
+      // still necessary (Resume.docx needs the same call), but the placeholder file itself must not
+      // persist as a misleading non-READY artifact — deleted immediately below when it was used.
+      const usingPlaceholderCoverLetter = !input.coverLetter;
       try {
         const job = getJobByDedupeKey(workflow.dedupe_key);
         const company = job ? getCompany(job.company_id) : undefined;
@@ -469,6 +480,13 @@ export async function executeResumeQualityIteration(
         }
         if (input.coverLetter && fs.existsSync(iterCoverDocx) && !outputFiles.includes("CoverLetter.docx")) {
           outputFiles.push("CoverLetter.docx");
+        }
+        // Placeholder was only ever needed to satisfy generateTailoringOutputs's rendering call for
+        // Resume.docx — never leave it as a file a caller could mistake for a real cover letter. The
+        // READY branch below independently regenerates+overwrites this exact path once a genuine
+        // deterministic cover letter exists, so deleting it here loses nothing real.
+        if (usingPlaceholderCoverLetter && fs.existsSync(iterCoverDocx)) {
+          fs.unlinkSync(iterCoverDocx);
         }
       } catch {
         // Fall back gracefully if docx generation is not possible

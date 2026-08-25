@@ -179,7 +179,16 @@ function computeTechnologyPool(employers: readonly EmployerEvidence[]): string[]
  * supported/availableViaMsi/prohibitedHere buckets buildEmployerEvidenceMap computed — this only
  * changes how they are PRINTED, never which employer they apply to.
  */
-export function renderEmployerEvidenceSection(map: EmployerEvidenceMap): string {
+/**
+ * PHASE 6.6B — `alreadyProjectedElsewhere` names technologies the writer already sees in
+ * master_skills_inventory.md (the projected, JD-relevant MSI companion file). This is a genuinely
+ * DIFFERENT, narrower set than the full domain-eligible pool below (the pool is every technology
+ * this employer's role-domain may draw on under the MSI rule, not just the JD-relevant subset) — so
+ * the two are NOT simply the same list twice. Only the technologies present in BOTH are elided here
+ * (with a pointer to where they already are), never technologies unique to this pool: nothing about
+ * which technologies are available narrows or changes, only where the writer has to look for one.
+ */
+export function renderEmployerEvidenceSection(map: EmployerEvidenceMap, alreadyProjectedElsewhere?: readonly string[]): string {
   if (map.employers.length === 0) return "";
 
   let out = "## PER-EMPLOYER EVIDENCE — WHAT IS ALREADY WRITTEN, WHAT MAY BE BROUGHT IN, WHAT MAY NOT\n\n";
@@ -191,10 +200,20 @@ export function renderEmployerEvidenceSection(map: EmployerEvidenceMap): string 
 
   const pool = computeTechnologyPool(map.employers);
   if (pool.length > 0) {
-    out +=
-      `**Candidate's full technology pool (${pool.length}) — available at ANY employer below whose role is in the ` +
-      "inventory's domain, EXCEPT a technology explicitly marked prohibited for that specific employer:** " +
-      `${pool.join(", ")}\n\n`;
+    const elsewhereSet = new Set((alreadyProjectedElsewhere ?? []).map((t) => t.toLowerCase()));
+    const delta = pool.filter((t) => !elsewhereSet.has(t.toLowerCase()));
+    if (elsewhereSet.size > 0 && delta.length < pool.length) {
+      out +=
+        `**Candidate's full technology pool (${pool.length}) — available at ANY employer below whose role is in the ` +
+        "inventory's domain, EXCEPT a technology explicitly marked prohibited for that specific employer.** " +
+        `${pool.length - delta.length} of these already appear in master_skills_inventory.md above; the rest: ` +
+        `${delta.length > 0 ? delta.join(", ") : "(none — the full pool is already listed there)"}\n\n`;
+    } else {
+      out +=
+        `**Candidate's full technology pool (${pool.length}) — available at ANY employer below whose role is in the ` +
+        "inventory's domain, EXCEPT a technology explicitly marked prohibited for that specific employer:** " +
+        `${pool.join(", ")}\n\n`;
+    }
   }
 
   for (const employer of map.employers) {
@@ -218,18 +237,21 @@ export function renderEmployerEvidenceSection(map: EmployerEvidenceMap): string 
     out += "\n";
   }
 
+  // PHASE 6.6 — same six rules, tightened: rule 4 previously restated "one primary technology per
+  // bullet" a third time (also stated in the guardrails and in WRITER OUTPUT QUALITY) — now points at
+  // it instead. Every named-check phrase other sections/tests match on (EXPLICITLY SCOPED TO OTHER
+  // CLIENTS) is unchanged.
   out += "**Rules that follow from the above — all are enforced by CareerOps' own review:**\n";
   out +=
     "1. A bullet under an employer may claim anything listed as Already written OR Available under the MSI rule for " +
-    "THAT employer, subject to the MASTER SKILLS INVENTORY RULE above: architecturally compatible with that " +
-    "project's real stack, not contradicting a more specific Master Resume fact, not stacking competing tools for " +
-    "the same responsibility, realistic for that project's objective, and defensible in an interview.\n" +
+    "THAT employer: architecturally compatible with that project's real stack, not contradicting a more specific " +
+    "Master Resume fact, realistic for that project's objective, and defensible in an interview.\n" +
     "2. A technology listed as EXPLICITLY SCOPED TO OTHER CLIENTS may never be attributed here. An explicit " +
     "restriction is a statement about limits; a resume's silence is not.\n" +
     "3. Nothing outside both the Master Resume and the Master Skills Inventory may be claimed anywhere, at any " +
     "employer, under any circumstances. That remains a fabrication and is rejected as such.\n" +
     "4. Bringing a technology in does not license keyword stuffing. One PRIMARY technology or capability per bullet " +
-    "still applies; supporting technologies appear only where the architecture genuinely requires them.\n" +
+    "still applies (see WRITER OUTPUT QUALITY above).\n" +
     "5. The cover letter is held to a STRICTER rule than this map: every technology it attributes to an employer must " +
     "also appear in the bullets you write for that same employer in THIS resume. Available-but-unused is not enough — " +
     "if you did not put it in that employer's bullets, do not attribute it to them in the cover letter.\n" +

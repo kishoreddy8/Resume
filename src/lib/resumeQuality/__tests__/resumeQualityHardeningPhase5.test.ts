@@ -282,8 +282,12 @@ describe("Phase 5: Evidence-Rich Resume + Cover Letter Quality Hardening", () =>
 
   // QUALITY5-12: Iteration-1 summary publication gate remains active.
   it("QUALITY5-12: Iteration-1 summary publication gate remains active", () => {
+    // PHASE 6.6 — the "(Iteration 1 publication quality)" label was part of the stale duplicate
+    // summary-structure text removed from this section; "Publication-ready on the first pass" is the
+    // same substance, still stated here.
     const instructions = renderWriterOutputQualitySection();
-    assert.ok(instructions.includes("Summary standards (Iteration 1 publication quality)"));
+    assert.ok(instructions.includes("Summary standards"));
+    assert.ok(instructions.includes("Publication-ready on the first pass"));
   });
 
   // QUALITY5-13: Summary contract requires natural grammatical prose.
@@ -295,8 +299,11 @@ describe("Phase 5: Evidence-Rich Resume + Cover Letter Quality Hardening", () =>
 
   // QUALITY5-14: Summary technology density remains controlled.
   it("QUALITY5-14: Summary technology density remains controlled", () => {
+    // PHASE 6.6 — "max 7 total, max 4 per sentence" was a stale STATIC restatement of what is now a
+    // DYNAMIC ceiling (see professionalIdentity.ts's dynamicSummaryTechnologyCeiling, Phase 6.5); this
+    // section points at that single rule instead of a fixed, sometimes-wrong number.
     const instructions = renderWriterOutputQualitySection();
-    assert.ok(instructions.includes("max 7 total, max 4 per sentence"));
+    assert.ok(instructions.includes("dynamic named-technology ceiling"));
   });
 
   // QUALITY5-15: Visible skill set is narrower than writer evidence pool.
@@ -318,9 +325,13 @@ describe("Phase 5: Evidence-Rich Resume + Cover Letter Quality Hardening", () =>
   });
 
   // QUALITY5-18: Project descriptions remain concise.
-  it("QUALITY5-18: Project descriptions remain concise", () => {
-    const instructions = renderWriterOutputQualitySection();
-    assert.ok(instructions.includes("Exactly 1-2 concise sentences"));
+  it("QUALITY5-18: Project descriptions remain concise", async () => {
+    // PHASE 6.6 — the "1-2 concise sentences" project-description rule was stated in BOTH
+    // writerOutputQuality.ts and presentationStructure.ts's `projectDescription` rule (the latter
+    // also carries the truthfulness constraint); consolidated to the fuller one.
+    const { renderPresentationStandardSection } = await import("../presentationStructure");
+    const instructions = renderPresentationStandardSection(undefined);
+    assert.ok(/1 to 2 short sentences/.test(instructions));
   });
 
   // QUALITY5-19: Repeated bullet openings are detected.

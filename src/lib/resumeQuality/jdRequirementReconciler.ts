@@ -1,6 +1,8 @@
 import type { CandidateProfile, RequirementUnit, RequirementCriticality } from "@/lib/match/types";
 import type { RequirementLevel } from "@/types";
+import type { ResumeContent } from "../../../tools/tailoring-engine/types";
 import { buildCandidateGlobalCapabilitySet } from "./jdToolCoverage";
+import { escapeRegExp } from "@/lib/jobIntel/textUtils";
 
 export type CanonicalRequirementKind =
   | "TECHNOLOGY"
@@ -330,7 +332,29 @@ const TECHNICAL_TAXONOMY: TaxonomyDefinition[] = [
   {
     canonicalName: "Observability",
     kind: "CAPABILITY",
-    aliases: ["observability frameworks", "observability", "pipeline monitoring", "data observability", "pipeline alerting"],
+    // PHASE 6.5C — widened for natural phrasings that describe genuine pipeline/data observability
+    // (monitoring, alerting, freshness, reliability) WITHOUT the literal word "observability", per the
+    // operator's explicit list of acceptable natural wording. Deliberately does NOT include a bare
+    // "surface failures"/"monitored" phrase: that would blur Observability into the separate "Data
+    // Quality & Validations" requirement (one-time validation checks are not the same capability as
+    // ongoing pipeline monitoring/alerting), so those stay two-word-minimum, pipeline/monitoring-scoped
+    // phrases rather than a single generic word.
+    aliases: [
+      "observability frameworks",
+      "observability",
+      "pipeline monitoring",
+      "data observability",
+      "pipeline alerting",
+      "monitoring and alerting",
+      "pipeline health monitoring",
+      "freshness monitoring",
+      "reliability monitoring",
+      "monitoring dashboards",
+      "surfacing pipeline failures",
+      "surfaced pipeline failures",
+      "surfacing data-quality failures",
+      "surfaced data-quality failures",
+    ],
     msiMatchKeys: ["observability", "monitoring", "data validation & quality"],
   },
   {
@@ -413,6 +437,97 @@ function isBoilerplate(text: string): boolean {
 }
 
 /**
+ * PHASE 6.4A — SHARED CANONICAL CAPABILITY-GROUNDING CONTRACT.
+ *
+ * The core "does this candidate's evidence support this taxonomy entry" check. Previously private to
+ * reconcileJdRequirements's own closure; extracted here (as a pure function of explicit params, not a
+ * closure) so it is the ONE implementation every consumer shares — reconcileJdRequirements itself
+ * (via checkCandidateSupport below, now a thin delegate), and any downstream module that needs to
+ * decide whether a canonical technology/capability/architecture NAME is grounded, using this taxonomy
+ * entry's own msiMatchKeys (its broader implementation-evidence synonyms — e.g. "Data Governance" is
+ * evidenced by "microsoft purview"/"rbac", not merely by the literal phrase "data governance"
+ * appearing in the candidate's MSI — a relationship Phase 2's own foundational skill taxonomy
+ * deliberately does not encode, since Microsoft Purview and Data Governance are genuinely distinct
+ * products/disciplines there, not aliases of each other).
+ */
+export function checkTaxonomyEntrySupport(
+  tax: { canonicalName: string; msiMatchKeys: string[] },
+  canonicalSet: Set<string>,
+  candidateExperienceSkills: Set<string>
+): { supported: boolean; sources: string[] } {
+  const sources: string[] = [];
+  for (const key of tax.msiMatchKeys) {
+    const kLower = key.toLowerCase();
+    if (canonicalSet.has(kLower)) {
+      sources.push(`MSI (${key})`);
+    }
+    if (candidateExperienceSkills.has(kLower)) {
+      sources.push(`Experience (${key})`);
+    }
+  }
+  // Also check canonical name itself
+  const canonLower = tax.canonicalName.toLowerCase();
+  if (canonicalSet.has(canonLower) && !sources.some((s) => s.includes(`MSI (${tax.canonicalName})`))) {
+    sources.push(`MSI (${tax.canonicalName})`);
+  }
+  if (candidateExperienceSkills.has(canonLower) && !sources.some((s) => s.includes(`Experience (${tax.canonicalName})`))) {
+    sources.push(`Experience (${tax.canonicalName})`);
+  }
+
+  const uniqueSources = Array.from(new Set(sources));
+  return {
+    supported: uniqueSources.length > 0,
+    sources: uniqueSources,
+  };
+}
+
+/**
+ * PHASE 6.4A — the single canonical-capability-grounding entrypoint every downstream consumer
+ * (deterministic reviewer, technology-compatibility validation, JD coverage) should call to decide
+ * whether a name — exactly as it would appear literally on a resume, a skill-group item or a bullet
+ * phrase — is grounded in this candidate's Global MSI + authoritative experience. Enforces the
+ * required invariant: RECONCILER SUPPORTED = JD COVERAGE SUPPORTED = WRITER ALLOWED = DETERMINISTIC
+ * REVIEWER GROUNDED, for the same candidate evidence and the same canonical name.
+ *
+ * Two tiers, both real evidence — never a guess or a weakened check:
+ *  1. Direct literal match — the name itself is a raw MSI skill or employer technology. Covers the
+ *     vast majority of plain technology names, and is exactly what every existing literal-taxonomy
+ *     grounding check (Phase 2's skillAliases-based lookups) already does — unchanged here.
+ *  2. Capability/architecture match — the name is one of this module's own TECHNICAL_TAXONOMY
+ *     entries (Data Governance, Access Control & Security, Lakehouse Architecture, ...), evidenced
+ *     via checkTaxonomyEntrySupport's broader msiMatchKeys synonyms — exactly what
+ *     reconcileJdRequirements already used to decide PASS_TO_WRITER vs DO_NOT_CLAIM for the same
+ *     capability, now reachable by any other consumer instead of being re-derived independently.
+ * A name absent from BOTH tiers is genuinely unsupported and MUST still fail — this function never
+ * weakens unsupported-claim protection; it only stops a SECOND, narrower check from contradicting a
+ * support determination the broader one already made correctly.
+ */
+export function isCapabilityGroundedForCandidate(
+  name: string,
+  candidateProfile: CandidateProfile
+): { supported: boolean; sources: string[] } {
+  const { canonicalSet } = buildCandidateGlobalCapabilitySet(candidateProfile);
+  const candidateExperienceSkills = new Set(
+    candidateProfile.experience.flatMap((e) => (e.technologies || []).map((t) => t.toLowerCase()))
+  );
+  const nameLower = name.trim().toLowerCase();
+
+  const directSources: string[] = [];
+  if (canonicalSet.has(nameLower)) directSources.push(`MSI (${name})`);
+  if (candidateExperienceSkills.has(nameLower)) directSources.push(`Experience (${name})`);
+  if (directSources.length > 0) {
+    return { supported: true, sources: Array.from(new Set(directSources)) };
+  }
+
+  const tax = TECHNICAL_TAXONOMY.find((t) => t.canonicalName.toLowerCase() === nameLower);
+  if (tax) {
+    return checkTaxonomyEntrySupport(tax, canonicalSet, candidateExperienceSkills);
+  }
+
+  return { supported: false, sources: [] };
+}
+
+/**
  * Reconciles raw JD text with structured requirements to form a comprehensive,
  * canonical requirement inventory supporting both named tools and engineering capabilities.
  */
@@ -432,32 +547,12 @@ export function reconcileJdRequirements(params: {
   const matchedCanonicalMap = new Map<string, CanonicalJdRequirement>();
   const findings: JdExtractionFinding[] = [];
 
-  // Helper to test if a candidate supports a canonical definition
+  // Helper to test if a candidate supports a canonical definition — delegates to the shared
+  // capability-grounding contract (see checkTaxonomyEntrySupport below) so this stays the SAME
+  // implementation every other consumer (the deterministic reviewer, technologyCompatibility.ts)
+  // uses, rather than a private copy that could silently drift from theirs.
   function checkCandidateSupport(tax: TaxonomyDefinition): { supported: boolean; sources: string[] } {
-    const sources: string[] = [];
-    for (const key of tax.msiMatchKeys) {
-      const kLower = key.toLowerCase();
-      if (canonicalSet.has(kLower)) {
-        sources.push(`MSI (${key})`);
-      }
-      if (candidateExperienceSkills.has(kLower)) {
-        sources.push(`Experience (${key})`);
-      }
-    }
-    // Also check canonical name itself
-    const canonLower = tax.canonicalName.toLowerCase();
-    if (canonicalSet.has(canonLower) && !sources.some((s) => s.includes(`MSI (${tax.canonicalName})`))) {
-      sources.push(`MSI (${tax.canonicalName})`);
-    }
-    if (candidateExperienceSkills.has(canonLower) && !sources.some((s) => s.includes(`Experience (${tax.canonicalName})`))) {
-      sources.push(`Experience (${tax.canonicalName})`);
-    }
-
-    const uniqueSources = Array.from(new Set(sources));
-    return {
-      supported: uniqueSources.length > 0,
-      sources: uniqueSources,
-    };
+    return checkTaxonomyEntrySupport(tax, canonicalSet, candidateExperienceSkills);
   }
 
   // 1. Process Structured Requirements First
@@ -798,4 +893,142 @@ export function renderCanonicalRequirementSection(result: JdReconciliationResult
   out += `*Distribution rule:* Distribute MUST/SHOULD SURFACE items naturally across Summary, Skills, Project Descriptions, Bullets, and Environment lines — never as a keyword dump, and only where the employer's assigned architecture palette supports it.\n`;
 
   return out;
+}
+
+/**
+ * PHASE 6.5 — CANONICAL JD COVERAGE: LISTED vs EVIDENCED.
+ *
+ * The prior post-writer coverage view (atsCoverageReport.ts's buildAtsCoverageReport) only ever ran
+ * against the legacy 3-item structured requirement list, and treated a Skills-only mention as fully
+ * equivalent to genuine experience-bullet evidence — no distinction between "the candidate listed a
+ * keyword" and "the candidate demonstrated it." This is the canonical-set (23-item, not 3-item)
+ * successor with a real distinction, additive alongside the legacy report rather than replacing it.
+ */
+export const CANONICAL_COVERAGE_STATUSES = ["MISSING", "LISTED_ONLY", "EVIDENCED", "SUBSTITUTED", "DO_NOT_CLAIM"] as const;
+export type CanonicalCoverageStatus = (typeof CANONICAL_COVERAGE_STATUSES)[number];
+
+export interface CanonicalCoverageEntry {
+  requirement: string;
+  kind: CanonicalRequirementKind;
+  priority: CanonicalRequirementPriority;
+  coverageExpectation: WriterCoverageExpectation;
+  status: CanonicalCoverageStatus;
+  /** Populated only for status "SUBSTITUTED" — the approved, architecturally coherent equivalent
+   *  technology found on the resume instead of the literal requirement name. */
+  substitutedBy?: string;
+}
+
+/** Curated, narrow, and intentional — NOT a general alias table (skillAliases.ts already owns that).
+ *  Each entry names an equivalent implementation this codebase's own architecture rules already treat
+ *  as coherent for the SAME responsibility (see architecturePalette.ts's employer-cloud assignment and
+ *  technologyCompatibility.ts's competing-orchestrator rule): the literal requirement is genuinely
+ *  absent, but the resume's actual choice satisfies the same underlying need without contradiction.
+ *  Deliberately does NOT include Fivetran (no equivalent currently used — a genuine, real gap, not a
+ *  substitution) — see Phase 6.4's own report for why Fivetran/Observability are real omissions while
+ *  Airflow/Prefect/GitHub Actions are architecturally-intentional substitutions. */
+const KNOWN_ARCHITECTURAL_SUBSTITUTIONS: Record<string, string[]> = {
+  "Airflow": ["Azure Data Factory", "AWS Glue", "Cloud Data Fusion"],
+  "Prefect": ["Azure Data Factory", "dbt", "AWS Glue"],
+  "GitHub Actions": ["Azure DevOps", "AWS CodePipeline", "GitLab CI"],
+};
+
+/** PHASE 6.5C — root cause of the P1 coverage "regression" investigated live: EVERY previous version
+ *  of this function detected evidence by routing resume text through skillAliases.ts's
+ *  extractCanonicalSkillsFromText, which matches against SKILL_TAXONOMY (`@/lib/jobIntel/skillsTaxonomy`)
+ *  — an entirely different, independently-maintained taxonomy built for ATS/keyword-ordering checks,
+ *  not for this module's own 23-item canonical set. Two failure modes fell out of that mismatch:
+ *   1. Several of THIS module's own canonical names (Dimensional Modeling, Lakehouse Architecture,
+ *      Access Control & Security, Cost & Performance Optimization, Data Lineage, Warehouse Migration &
+ *      Rebuild, ELT / ETL Pipeline Development) have no matching canonical entry in SKILL_TAXONOMY at
+ *      all — extractCanonicalSkillsFromText could never produce a Set member with that exact name, so
+ *      coverage silently read MISSING no matter what the resume said.
+ *   2. Where a SKILL_TAXONOMY entry DOES exist, its canonical name can still differ by even one word
+ *      from this module's own (e.g. SKILL_TAXONOMY's "Data Quality" vs this module's "Data Quality &
+ *      Validations") — the exact-name-equality check between the two then always fails.
+ *  Both are really the same bug: canonical requirement mismatch, not a resume-content regression. This
+ *  module already owns its own curated, per-requirement TECHNICAL_TAXONOMY aliases (the SAME shared
+ *  contract checkTaxonomyEntrySupport/isCapabilityGroundedForCandidate already use for MSI grounding) —
+ *  matching resume PROSE against those aliases directly, instead of bouncing through a foreign
+ *  taxonomy, is the "stable canonical normalization" fix: one source of truth for what counts as
+ *  evidence of a canonical requirement, used everywhere that requirement is evaluated. */
+function resolveEvidenceAliases(req: CanonicalJdRequirement): string[] {
+  const tax = TECHNICAL_TAXONOMY.find((t) => t.canonicalName === req.canonicalName);
+  if (tax) return tax.aliases;
+  // A dynamically-reconciled (RAW_JD_RECONCILIATION) requirement has no fixed taxonomy entry — fall
+  // back to whatever aliases the reconciler already matched it by, and the canonical name itself, so
+  // evidence-scanning never silently goes empty for a real requirement.
+  const fallback = req.aliasesMatched && req.aliasesMatched.length > 0 ? req.aliasesMatched : [req.canonicalName];
+  return Array.from(new Set([req.canonicalName, ...fallback]));
+}
+
+/** Whole-word/phrase, case-insensitive containment — same regex discipline as
+ *  skillAliases.ts's extractCanonicalSkillsFromText, applied directly to this module's own alias
+ *  lists instead of a foreign taxonomy's. */
+function textContainsAnyAlias(text: string, aliases: string[]): boolean {
+  return aliases.some((alias) => {
+    if (!alias.trim()) return false;
+    const regex = new RegExp(`(?<![\\w-])${escapeRegExp(alias.toLowerCase())}(?![\\w-])`, "i");
+    return regex.test(text);
+  });
+}
+
+/**
+ * Evaluates, for every canonical requirement, whether the FINAL resume merely LISTED it (Skills or an
+ * employer's Environment line — inventory-like sections) or genuinely EVIDENCED it (an experience
+ * bullet or project description — real accomplishment narrative), or shows a known, architecturally
+ * coherent SUBSTITUTED equivalent instead. A requirement the reconciler already gated DO_NOT_CLAIM
+ * stays DO_NOT_CLAIM regardless of what text happens to match — this function never overrides that.
+ */
+export function evaluateCanonicalCoverage(
+  resume: ResumeContent,
+  canonicalRequirements: CanonicalJdRequirement[]
+): CanonicalCoverageEntry[] {
+  const evidencedText = resume.experience
+    .flatMap((e) => [...(e.projectDescription ? [e.projectDescription] : []), ...e.bullets])
+    .join("\n")
+    .toLowerCase();
+  const listedText = [...resume.skillGroups.flatMap((g) => g.items), ...resume.experience.flatMap((e) => e.environment ?? [])]
+    .join("\n")
+    .toLowerCase();
+
+  return canonicalRequirements.map((req) => {
+    const name = req.canonicalName;
+    const aliases = resolveEvidenceAliases(req);
+    const foundEvidenced = textContainsAnyAlias(evidencedText, aliases);
+    const foundListed = !foundEvidenced && textContainsAnyAlias(listedText, aliases);
+
+    const base = {
+      requirement: name,
+      kind: req.kind,
+      priority: req.priority,
+      coverageExpectation: req.coverageExpectation,
+    };
+
+    if (req.writerAction === "DO_NOT_CLAIM") {
+      return { ...base, status: "DO_NOT_CLAIM" as const };
+    }
+    if (foundEvidenced) {
+      return { ...base, status: "EVIDENCED" as const };
+    }
+    if (foundListed) {
+      return { ...base, status: "LISTED_ONLY" as const };
+    }
+
+    // Not found literally anywhere — check for a known, architecturally coherent equivalent before
+    // declaring a genuine gap. Substitution targets (e.g. "Azure DevOps") are themselves resolved
+    // through the SAME alias mechanism where they have a taxonomy entry, and by plain name otherwise.
+    const substitutes = KNOWN_ARCHITECTURAL_SUBSTITUTIONS[name];
+    if (substitutes) {
+      const foundSubstitute = substitutes.find((sub) => {
+        const subTax = TECHNICAL_TAXONOMY.find((t) => t.canonicalName === sub);
+        const subAliases = subTax ? subTax.aliases : [sub];
+        return textContainsAnyAlias(evidencedText, subAliases) || textContainsAnyAlias(listedText, subAliases);
+      });
+      if (foundSubstitute) {
+        return { ...base, status: "SUBSTITUTED" as const, substitutedBy: foundSubstitute };
+      }
+    }
+
+    return { ...base, status: "MISSING" as const };
+  });
 }

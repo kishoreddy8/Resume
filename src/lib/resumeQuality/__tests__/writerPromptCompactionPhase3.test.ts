@@ -347,12 +347,18 @@ test("PROMPTCOMPACT-01: Professional Identity remains present", () => {
   assert.match(section, /professional ROLE IDENTITIES ONLY/);
 });
 
-test("PROMPTCOMPACT-02: Professional Identity stays within compact token/byte budget (<= 600 tokens)", () => {
+test("PROMPTCOMPACT-02: Professional Identity stays within compact token/byte budget (<= 700 tokens)", () => {
+  // PHASE 6.8 — budget raised from 600 to 700 (narrow correction, not a reopening of Phase 6.6's
+  // token-optimization work): the section now also carries the cover-letter/application-language
+  // guardrail (SUMMARY_APPLICATION_LANGUAGE_GUARDRAIL_TEXT), a genuine new safety rule, which pushed
+  // the prior 586-token rendering to 646. The contract this test enforces — "stay compact, don't let
+  // this section balloon" — is preserved; only the numeric ceiling moved to fit one intentional
+  // addition, per Phase 6.8's "any token difference caused by better/safer wording is fine" scoping.
   const profile = buildRichCandidateProfile();
   const identity = deriveProfessionalIdentity(profile);
   const section = renderProfessionalIdentitySection(identity, profile.totalYearsExperience);
   const tokens = Math.ceil(Buffer.byteLength(section, "utf-8") / 4);
-  assert.ok(tokens <= 600, `Professional identity tokens (${tokens}) exceeds budget of 600`);
+  assert.ok(tokens <= 700, `Professional identity tokens (${tokens}) exceeds budget of 700`);
 });
 
 test("PROMPTCOMPACT-03: Presentation rules already deterministic are not duplicated verbosely", () => {
@@ -364,8 +370,11 @@ test("PROMPTCOMPACT-03: Presentation rules already deterministic are not duplica
 });
 
 test("PROMPTCOMPACT-04: Writer Output Quality semantic rules remain", () => {
+  // PHASE 6.6 — "3-4 concise sentences" was part of the stale duplicate summary-structure paragraph
+  // removed from this section (professionalIdentity.ts's PROFESSIONAL IDENTITY section is now the
+  // single place the summary structure is stated); this section still points to it explicitly.
   const section = renderWriterOutputQualitySection();
-  assert.match(section, /3-4 concise sentences/);
+  assert.match(section, /Publication-ready on the first pass/);
   assert.match(section, /ceilings, not targets: never pad to a cap/);
   assert.match(section, /Prefer 1 primary capability per bullet/);
   assert.match(section, /Position technologies according to the Target Ecosystem Strategy/);
