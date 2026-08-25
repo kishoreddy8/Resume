@@ -227,7 +227,7 @@ export default function ApplicationsPage() {
 
 function SummaryTile({ icon, group, label, value, hint, onClick }: { icon: ReactNode; group: ApplicationGroupId; label: string; value: number; hint: string; onClick: () => void }) {
   const tone = {
-    "needs-action": "bg-[var(--tile-orange-bg)] text-[var(--tile-orange-fg)]",
+    "needs-action": "bg-[var(--tile-amber-bg)] text-[var(--tile-amber-fg)]",
     "in-progress": "bg-[var(--tile-lav-bg)] text-[var(--tile-lav-fg)]",
     submitted: "bg-[var(--tile-blue-bg)] text-[var(--tile-blue-fg)]",
     completed: "bg-[var(--tile-green-bg)] text-[var(--tile-green-fg)]",

@@ -1,4 +1,4 @@
-import type { RunStatus } from "@/lib/apply/runState";
+import { isTerminal, isWaiting, type RunStatus } from "@/lib/apply/runState";
 
 /**
  * How each run state is presented.
@@ -68,4 +68,23 @@ export function presentStatus(status: string): StatusPresentation {
       needsUser: false,
     }
   );
+}
+
+/**
+ * UI-0 DEFECT 5 — should the application detail page poll for updates right now?
+ *
+ * DERIVED FROM THE ENGINE'S OWN STATE MACHINE, NOT A NEW LIST. A run is worth polling exactly when
+ * it is neither WAITING (paused for the user, or for something the user resolves outside this page
+ * and returns to click "Continue" for — either way, THIS page only learns of a change when the user
+ * next acts here, which already triggers a reload) nor TERMINAL (nothing more will ever happen).
+ * What remains — QUEUED, STARTING, NAVIGATING, FILLING, SUBMITTING — is exactly the set where a
+ * background browser session is actively doing something that can change the run without any
+ * click on this page at all, which is the one situation a fetch-once page cannot ever reflect.
+ *
+ * Reusing `isWaiting`/`isTerminal` rather than hand-listing states means this can never drift from
+ * `WAITING_STATES`/`TERMINAL_STATES` — a status added to either list is automatically excluded from
+ * polling here without this function ever being touched again.
+ */
+export function shouldPollRunStatus(status: RunStatus): boolean {
+  return !isWaiting(status) && !isTerminal(status);
 }

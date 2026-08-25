@@ -95,3 +95,14 @@ export function summarizeResumeStage(input: {
  * "Improvement" without truncating it to "IMPROVEME…". The detailed pipeline below keeps the full
  * word; this is a display abbreviation, not a different vocabulary. */
 export const RESUME_STEPS = ["Created", "Writer", "Review", "Improve", "Ready"] as const;
+
+/**
+ * UI-0 DEFECT 1 — the READY success banner rendered `workflow.latest_overall_score ?? 96`: a
+ * hard-coded 96 whenever the real score was null, printed in bold inside a success panel
+ * immediately before the resume can be attached to a real application. Career-Ops never fabricates
+ * an answer it cannot evidence; a quality score is no exception. When no authoritative score
+ * exists, say so honestly rather than substitute any number — 96, 100, or otherwise.
+ */
+export function formatQualityScore(score: number | null): string {
+  return typeof score === "number" ? `${score}/100` : "Quality check unavailable";
+}

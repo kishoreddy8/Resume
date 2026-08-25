@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { summarizeResumeStage, type ResumeStageSummary } from "./resumeStage";
+import { formatQualityScore, summarizeResumeStage, type ResumeStageSummary } from "./resumeStage";
 import Link from "next/link";
 import { presentDisposition } from "@/lib/resumeQuality/dispositionPresentation";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
@@ -856,7 +856,7 @@ export function ResumeQualityPipeline({
                 ✓ Resume Ready for Application
               </h3>
               <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
-                Quality score: <strong>{workflow.latest_overall_score ?? 96}/100</strong>. Approved at Iteration{" "}
+                Quality score: <strong>{formatQualityScore(workflow.latest_overall_score)}</strong>. Approved at Iteration{" "}
                 {workflow.final_approved_iteration ?? workflow.current_iteration}.
               </p>
             </div>

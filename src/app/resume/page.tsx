@@ -296,7 +296,7 @@ function SummaryTile({
     green: "bg-[var(--tile-green-bg)] text-[var(--tile-green-fg)]",
     lavender: "bg-[var(--tile-lav-bg)] text-[var(--tile-lav-fg)]",
     blue: "bg-[var(--tile-blue-bg)] text-[var(--tile-blue-fg)]",
-    amber: "bg-[var(--tile-orange-bg)] text-[var(--tile-orange-fg)]",
+    amber: "bg-[var(--tile-amber-bg)] text-[var(--tile-amber-fg)]",
   };
   const actionClass = "inline-flex min-h-11 items-center gap-1.5 text-[14px] font-semibold text-[var(--accent)] transition-colors hover:text-[var(--accent-hover)]";
   return (

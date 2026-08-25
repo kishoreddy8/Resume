@@ -93,7 +93,7 @@ function SectionHeading({ title, href, linkLabel }: { title: string; href?: stri
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-[92px] items-center gap-3 rounded-[14px] border border-dashed border-[var(--border)] bg-[var(--surface-subtle)] px-4 py-4">
+    <div className="flex min-h-[92px] items-center gap-3 rounded-[14px] border border-dashed border-[var(--border)] bg-[var(--surface-muted)] px-4 py-4">
       <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[var(--tile-green-bg)] text-[var(--tile-green-fg)]"><IconCheckCircle size={19} /></span>
       <p className="text-[14px] leading-relaxed text-secondary">{children}</p>
     </div>
@@ -194,7 +194,7 @@ export default function HomePage() {
       <section aria-label="Your job search overview" className="mt-7">
         <SectionHeading title="Your job search overview" />
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {tiles.map((tile) => <Link key={tile.label} href={tile.href} className={`${CARD} min-h-[150px] p-4 transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-lift-1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 sm:p-5`}><span className={`grid h-10 w-10 place-items-center rounded-xl ${tile.tone}`}>{tile.icon}</span><strong className="mt-4 block text-[28px] font-bold tabular-nums tracking-[-0.03em] text-primary">{tile.value}</strong><span className="mt-1 block text-[14px] font-semibold leading-snug text-primary">{tile.label}</span><span className="mt-1 block text-[13px] leading-snug text-tertiary">{tile.detail}</span></Link>)}
+          {tiles.map((tile) => <Link key={tile.label} href={tile.href} className={`${CARD} min-h-[150px] p-4 transition hover:-translate-y-0.5 hover:shadow-[var(--lift-1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 sm:p-5`}><span className={`grid h-10 w-10 place-items-center rounded-xl ${tile.tone}`}>{tile.icon}</span><strong className="mt-4 block text-[28px] font-bold tabular-nums tracking-[-0.03em] text-primary">{tile.value}</strong><span className="mt-1 block text-[14px] font-semibold leading-snug text-primary">{tile.label}</span><span className="mt-1 block text-[13px] leading-snug text-tertiary">{tile.detail}</span></Link>)}
         </div>
       </section>
 

@@ -14,9 +14,12 @@ import {
 } from "@/components/ui";
 import { IconArrowUpRight, IconCheckCircle, IconDocument, IconShield } from "@/components/icons";
 import { sourceLabel } from "@/app/jobs/sourceLabel";
-import { presentStatus, STATUS_PRESENTATION } from "../runStatus";
-import { applicationContext, detailPhase, primaryActionLabel, type DetailPhase } from "../grouping";
+import { presentStatus, shouldPollRunStatus } from "../runStatus";
 import type { RunStatus } from "@/lib/apply/runState";
+import { applicationContext, detailPhase, primaryActionLabel, type DetailPhase } from "../grouping";
+import { eventLabel } from "../eventLabels";
+import { Disclosure } from "@/app/jobs/[id]/Disclosure";
+import { buildAnswerSubmission, requiredQuestionsSatisfied } from "./questionBatch";
 
 interface RunDetail {
   id: number;
@@ -75,10 +78,6 @@ interface RunEvent {
 const PROGRESS_STAGES = ["Preparing", "Filling", "Verification", "Final review", "Submitting", "Submitted"] as const;
 
 const fileName = (path: string | null) => (path ? path.split("/").pop() ?? path : null);
-
-function eventLabel(eventType: string): string {
-  return STATUS_PRESENTATION[eventType as RunStatus]?.label ?? "Application updated";
-}
 
 function initials(name: string | null): string {
   if (!name) return "?";
@@ -174,6 +173,20 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
     load();
   }, [load]);
 
+  /* UI-0 DEFECT 5 — this is the one screen watching a live, unattended browser automation, and it
+   * used to fetch once and stop; a run could finish filling, hit a login wall, or need answers
+   * with nothing on screen reflecting it until a manual reload. Polls only while the run is in an
+   * actively-executing state (see shouldPollRunStatus) — a paused or finished run makes no further
+   * requests, matching the same visibility-guarded interval convention already used in Admin. */
+  const runStatus = run?.status as RunStatus | undefined;
+  useEffect(() => {
+    if (!runStatus || !shouldPollRunStatus(runStatus)) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [runStatus, load]);
+
   useEffect(() => {
     if (run?.status === "WAITING_FOR_ANSWER") answerRef.current?.focus();
   }, [run?.status]);
@@ -252,11 +265,9 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
                 onReuseChange={(id, value) => setBatchReuse((prev) => ({ ...prev, [id]: value }))}
                 onSave={async () => {
                   if (candidateId === null) return;
-                  const answers = humanQuestions.map((q) => ({
-                    id: q.id,
-                    answer: batchAnswers[q.id] ?? "",
-                    reuseForEquivalentQuestions: batchReuse[q.id] ?? false,
-                  }));
+                  /* UI-0 DEFECT 4 — only questions the user actually answered are sent. A skipped
+                   * optional question is omitted entirely, never sent as a blank string. */
+                  const answers = buildAnswerSubmission(humanQuestions, batchAnswers, batchReuse);
                   setBusy("answer");
                   setError(null);
                   try {
@@ -307,6 +318,36 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
               <div className="mt-4"><div className="flex items-center gap-2 text-[var(--success)]"><IconCheckCircle size={20} /><h3 className="text-[17px] font-bold">Submitted</h3></div><p className="mt-2 text-[15px] leading-6 text-secondary">The employer site confirmed this application.</p>{run.confirmationText && <p className="mt-2 rounded-[10px] bg-[var(--pill-success-bg)] p-3 text-[14px] leading-6 text-[var(--pill-success-fg)]">“{run.confirmationText}”</p>}</div>
             ) : run.status === "SUBMISSION_UNCONFIRMED" ? (
               <div className="mt-4"><h3 className="text-[17px] font-bold text-[var(--warning)]">Submission unconfirmed</h3><p className="mt-2 text-[15px] leading-6 text-secondary">JobHunt attempted submission but could not confirm the employer site accepted it.</p>{run.applyUrl && <a href={run.applyUrl} target="_blank" rel="noopener noreferrer" className={`${BTN_PRIMARY} mt-4 min-h-11 text-[14px]`}>Review status<IconArrowUpRight size={14} /></a>}</div>
+            ) : run.status === "FAILED" || run.status === "CANCELLED" ? (
+              /* UI-0 DEFECT 3 — blockingReason was already fetched by `load()` and sent by the API
+               * on every run of every status; it was simply never rendered here. This is what the
+               * engine actually wrote at the moment it stopped (see ENTRY_OUTCOME_REASON and every
+               * `advanceRun(runId, "FAILED", { blockingReason: ... })` call site in executor.ts) —
+               * never a paraphrase, never invented. */
+              <div className="mt-4">
+                <h3 className="text-[17px] font-bold text-primary">{run.status === "CANCELLED" ? "This application was cancelled" : "This application stopped"}</h3>
+                <p className="mt-2 text-[15px] leading-6 text-secondary">
+                  {run.blockingReason ?? "Career-Ops stopped this application and did not record a specific reason."}
+                </p>
+                <p className="mt-3 text-[13px] leading-5 text-tertiary">
+                  Nothing further happens automatically from here, and anything you already answered is saved.
+                </p>
+                {run.applyUrl && (
+                  <a href={run.applyUrl} target="_blank" rel="noopener noreferrer" className={`${BTN_SECONDARY} mt-4 min-h-11 text-[14px]`}>
+                    View the employer posting<IconArrowUpRight size={14} />
+                  </a>
+                )}
+                <div className="mt-4">
+                  <Disclosure title="Technical details">
+                    <p className="text-[13px] leading-5 text-secondary">
+                      Status: <span className="font-mono">{run.status}</span>
+                    </p>
+                    <p className="mt-1 text-[13px] leading-5 text-tertiary">
+                      See the timeline below for everything Career-Ops did before stopping.
+                    </p>
+                  </Disclosure>
+                </div>
+              </div>
             ) : (
               <p className="mt-4 text-[15px] leading-6 text-secondary">{applicationContext(run.status, run.prompt)}</p>
             )}
@@ -327,7 +368,7 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
         <aside className="grid gap-5">
           <section id="history" aria-labelledby="application-history-title" className="rounded-[16px] border border-[var(--border)] bg-[var(--z3-bg)] p-5 shadow-[var(--lift-1)]">
             <h2 id="application-history-title" className="text-[17px] font-bold text-primary">Timeline</h2>
-            {events.length === 0 ? <p className="mt-3 text-[14px] leading-6 text-tertiary">No events have been recorded for this run yet.</p> : <ol className="mt-4 grid gap-4">{events.map((event) => <li key={event.id} className="relative border-l-2 border-[var(--separator)] pl-4"><span aria-hidden="true" className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-[var(--accent)]" /><p className="text-[14px] font-semibold text-primary">{eventLabel(event.event_type)}</p><p className="mt-1 text-[13px] text-tertiary">{formatDate(event.created_at)}</p>{event.detail && <p className="mt-1 text-[13px] leading-5 text-secondary">{event.detail}</p>}</li>)}</ol>}
+            {events.length === 0 ? <p className="mt-3 text-[14px] leading-6 text-tertiary">No events have been recorded for this run yet.</p> : <ol className="mt-4 grid gap-4">{events.map((event) => <li key={event.id} className="relative border-l-2 border-[var(--separator)] pl-4"><span aria-hidden="true" className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-[var(--accent)]" /><p className="text-[14px] font-semibold text-primary">{eventLabel(event.event_type, event.detail)}</p><p className="mt-1 text-[13px] text-tertiary">{formatDate(event.created_at)}</p>{event.detail && <p className="mt-1 text-[13px] leading-5 text-secondary">{event.detail}</p>}</li>)}</ol>}
           </section>
           {run.applyUrl && <a href={run.applyUrl} target="_blank" rel="noopener noreferrer" className={`${BTN_SECONDARY} min-h-11 w-full text-[14px]`}>View employer posting<IconArrowUpRight size={14} /></a>}
         </aside>
@@ -458,11 +499,13 @@ function BatchQuestionForm({
   onReuseChange: (id: string, value: boolean) => void;
   onSave: () => void;
 }) {
-  const allAnswered = humanQuestions.every((q) => (batchAnswers[q.id]?.trim() ?? "").length > 0);
+  /* UI-0 DEFECT 4 — gates on REQUIRED questions only. An unanswered optional question (Address
+   * Line 2, County, Phone Extension on the real Workday run this fixes) must never block saving. */
+  const canSave = requiredQuestionsSatisfied(humanQuestions, batchAnswers);
   return (
     <div className="mt-4">
       <h3 className="text-[17px] font-bold text-primary">Questions from the employer</h3>
-      <p className="mt-1 text-[14px] leading-6 text-secondary">Answer all questions below, then JobHunt will continue filling your application automatically.</p>
+      <p className="mt-1 text-[14px] leading-6 text-secondary">Answer the required questions below — anything marked optional can be left blank. JobHunt will then continue filling your application automatically.</p>
       <div className="mt-4 grid gap-5">
         {humanQuestions.map((q) => (
           <div key={q.id} className="rounded-[12px] border border-[var(--border)] bg-[var(--z0-bg)] p-4">
@@ -486,7 +529,7 @@ function BatchQuestionForm({
       <button
         type="button"
         onClick={onSave}
-        disabled={busy !== null || !allAnswered}
+        disabled={busy !== null || !canSave}
         className={`${BTN_PRIMARY} mt-5 min-h-11 text-[14px]`}
       >
         {busy === "answer" ? "Saving…" : "Save Answers & Continue"}
