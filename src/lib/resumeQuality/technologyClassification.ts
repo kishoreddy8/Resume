@@ -159,7 +159,9 @@ export const CLASSIFIED_TECHNOLOGY_REGISTRY: TechnologyClassificationEntry[] = [
 
   // Azure
   { canonical: "Azure Data Factory", category: "ORCHESTRATION", cloud: "AZURE", family: "ETL_ORCHESTRATION", aliases: ["adf", "azure data factory", "data factory"] },
-  { canonical: "ADLS Gen2", category: "STORAGE", cloud: "AZURE", family: "OBJECT_STORAGE", aliases: ["adls", "adls gen2", "azure data lake storage", "azure data lake storage gen2"] },
+  // PHASE 8.2 — "azure data lake" (no "Storage") added: the live Phase 8.1 repair wrote exactly
+  // "a single governed Azure Data Lake" and no alias matched it, so the summary drift went unseen.
+  { canonical: "ADLS Gen2", category: "STORAGE", cloud: "AZURE", family: "OBJECT_STORAGE", aliases: ["adls", "adls gen2", "azure data lake", "azure data lake storage", "azure data lake storage gen2"] },
   { canonical: "Azure Synapse Analytics", category: "WAREHOUSE", cloud: "AZURE", family: "ANALYTIC_WAREHOUSE", aliases: ["synapse", "azure synapse", "azure synapse analytics", "synapse analytics"] },
   { canonical: "Azure Databricks", category: "PROCESSING_ENGINE", cloud: "AZURE", family: "DISTRIBUTED_PROCESSING", aliases: ["azure databricks"] },
   { canonical: "Azure Functions", category: "SERVERLESS", cloud: "AZURE", family: "SERVERLESS_COMPUTE", aliases: ["azure functions", "azure function"] },

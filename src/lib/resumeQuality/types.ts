@@ -799,6 +799,15 @@ export interface ResumeReviewerInput {
    *  legacy fixed-ceiling/legacy-coverage behavior entirely — no existing caller/test that never sets
    *  this is affected. */
   canonicalRequirements?: import("./jdRequirementReconciler").CanonicalJdRequirement[];
+
+  /** PHASE 8.2 — additive. The authoritative target-ecosystem decision this review should check the
+   *  summary's cloud positioning against (see summaryChecks.ts's detectSummaryEcosystemDrift — the
+   *  live Phase 8.1 repair wrote "Azure Data Lake" into an AWS-targeted summary and no check fired,
+   *  because the only cloud-contradiction logic inferred providers from canonical requirement names).
+   *  Populated by DeterministicResumeReviewer.review() from the raw JD when jobDescriptionPath +
+   *  masterResumeProfile are available — the SAME detectTargetEcosystem the writer path uses; a
+   *  caller-supplied value wins. Absent -> the drift check simply does not run (prior behavior). */
+  targetEcosystem?: import("./targetEcosystem").TargetEcosystemResult;
 }
 
 export interface ResumeReviewerOutput {

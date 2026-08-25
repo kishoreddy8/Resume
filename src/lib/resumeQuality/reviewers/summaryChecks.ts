@@ -2,6 +2,8 @@ import type { RequirementUnit } from "@/lib/match/types";
 import { findBannedLanguage } from "./bannedLanguage";
 import { extractCanonicalSkillsFromText, extractCanonicalSkillsWithCategoryFromText } from "./skillAliases";
 import { dynamicSummaryTechnologyCeiling } from "../summaryTechnologyBudget";
+import { CLASSIFIED_TECHNOLOGY_REGISTRY } from "../technologyClassification";
+import type { TargetEcosystemResult } from "../targetEcosystem";
 
 const CLOUD_PROVIDERS = ["AWS", "Azure", "GCP"] as const;
 type CloudProvider = (typeof CLOUD_PROVIDERS)[number];
@@ -55,6 +57,79 @@ function significantRoleTitleWords(targetRoleTitle: string): string[] {
  *  provider-level check must look at prefixes, not just exact provider-name membership. */
 function impliedCloudProviders(canonicalSkills: ReadonlySet<string>): CloudProvider[] {
   return CLOUD_PROVIDERS.filter((provider) => [...canonicalSkills].some((skill) => skill === provider || skill.startsWith(`${provider} `)));
+}
+
+/**
+ * PHASE 8.2 — SUMMARY ECOSYSTEM DRIFT (root cause 2 of the live Phase 8.1 failure).
+ *
+ * The Phase 8.1 targeted summary repair wrote "a single governed Azure Data Lake" into an
+ * AWS-targeted resume and the reviewer passed it, because the only cloud-contradiction check
+ * inferred the target provider from canonical requirement NAMES — and this JD's AWS-ness lives in
+ * raw-JD signals (TargetEcosystemResult), not in any "AWS *" canonical requirement name.
+ *
+ * This detector checks the summary against the AUTHORITATIVE TargetEcosystemResult instead.
+ * Affiliation comes from the single shared CLASSIFIED_TECHNOLOGY_REGISTRY — never a second,
+ * summary-specific cloud taxonomy. Only entries with a concrete provider cloud (AWS/AZURE/GCP)
+ * can ever be drift; CLOUD_NEUTRAL/MULTI_CLOUD technologies (Python, SQL, Spark, PySpark,
+ * Databricks, Snowflake, Delta Lake, dbt, Kafka, Airflow, Terraform, Docker, Git, CI/CD) are never
+ * contradictions by construction.
+ */
+
+/** Registry aliases that are also ordinary English words — matching these bare tokens in prose
+ *  ("the glue between teams") would be a false positive, so the DRIFT detector alone skips them.
+ *  This narrows matching only; it never adds affiliation knowledge outside the shared registry. */
+const AMBIGUOUS_DRIFT_ALIASES = new Set(["glue", "lambda", "iam", "aurora", "athena", "fabric"]);
+
+export interface SummaryEcosystemDriftFinding {
+  /** The canonical registry name of the offending technology. */
+  canonical: string;
+  /** The exact alias text that matched in the summary. */
+  matchedAlias: string;
+  /** The provider the technology belongs to. */
+  cloud: "AWS" | "AZURE" | "GCP";
+}
+
+/** The provider clouds a summary may legitimately position on for this target decision: every
+ *  cloud the deterministic engine itself assigned to an employer, plus the supporting cloud.
+ *  Derived from the SAME TargetEcosystemResult that drives the writer package — SINGLE targets
+ *  allow exactly their one cloud, NONE/ALTERNATIVE allow the deterministic fallback, platform-
+ *  centered targets allow their supporting cloud, and TRUE_TWO/MULTI_CLOUD allow every cloud the
+ *  employer allocation actually uses. Nothing is hardcoded per provider. */
+function allowedProviderClouds(target: TargetEcosystemResult): Set<"AWS" | "AZURE" | "GCP"> {
+  const allowed = new Set<"AWS" | "AZURE" | "GCP">();
+  for (const assignment of target.employerCloudAssignments) allowed.add(assignment.cloud);
+  if (target.supportingCloud === "AWS" || target.supportingCloud === "AZURE" || target.supportingCloud === "GCP") {
+    allowed.add(target.supportingCloud);
+  }
+  return allowed;
+}
+
+/** Every provider-affiliated technology named in the summary whose cloud is NOT allowed by the
+ *  target decision. Word-boundary alias matching over the shared registry, case-insensitive. */
+export function detectSummaryEcosystemDrift(
+  summaryText: string,
+  targetEcosystem: TargetEcosystemResult
+): SummaryEcosystemDriftFinding[] {
+  const allowed = allowedProviderClouds(targetEcosystem);
+  const findings: SummaryEcosystemDriftFinding[] = [];
+  const seenCanonical = new Set<string>();
+
+  for (const entry of CLASSIFIED_TECHNOLOGY_REGISTRY) {
+    if (entry.cloud !== "AWS" && entry.cloud !== "AZURE" && entry.cloud !== "GCP") continue;
+    if (allowed.has(entry.cloud)) continue;
+    if (seenCanonical.has(entry.canonical)) continue;
+    for (const alias of entry.aliases) {
+      if (AMBIGUOUS_DRIFT_ALIASES.has(alias.toLowerCase())) continue;
+      const pattern = new RegExp(`(?<![\\w-])${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`, "i");
+      const match = summaryText.match(pattern);
+      if (match) {
+        findings.push({ canonical: entry.canonical, matchedAlias: match[0], cloud: entry.cloud });
+        seenCanonical.add(entry.canonical);
+        break;
+      }
+    }
+  }
+  return findings;
 }
 
 export interface SummaryCheckResult {
@@ -129,11 +204,33 @@ function detectKeywordStuffing(summaryText: string, summarySkills: ReadonlySet<s
 export function evaluateSummaryAlignment(
   summary: string[],
   jobRequirements: RequirementUnit[] | undefined,
-  targetRoleTitle?: string | null
+  targetRoleTitle?: string | null,
+  /** PHASE 8.2 — the authoritative target decision, when the caller has it (deterministicReviewer
+   *  computes it from the raw JD the same way the writer path does). Optional and additive: absent
+   *  means the ecosystem-drift check simply does not run — exactly the prior behavior. */
+  targetEcosystem?: TargetEcosystemResult | null
 ): SummaryCheckResult {
   const summaryText = summary.join(" ");
   const summaryIssues: string[] = [];
   const styleIssuesFound: string[] = [];
+
+  // PHASE 8.2 — summary checked against the AUTHORITATIVE TargetEcosystemResult, not just
+  // canonical-requirement-name-implied providers. A real quality defect (an off-target cloud
+  // presented as current positioning), so it is promoted into styleIssuesFound and gates via the
+  // existing soft-gate severity architecture — same treatment as abstract framing/keyword stuffing.
+  if (targetEcosystem) {
+    const drift = detectSummaryEcosystemDrift(summaryText, targetEcosystem);
+    if (drift.length > 0) {
+      const named = drift.map((d) => `"${d.matchedAlias}" (${d.canonical}, ${d.cloud})`).join(", ");
+      const msg =
+        `Summary names ${named} but the target ecosystem for this posting is ${targetEcosystem.targetEcosystem}` +
+        ` (supporting cloud ${targetEcosystem.supportingCloud}, mode ${targetEcosystem.cloudRequirementMode}) — ` +
+        `an incompatible provider's service must not appear as the summary's current positioning. Historical ` +
+        `evidence may name it, but summary prose must follow the target architecture.`;
+      summaryIssues.push(msg);
+      styleIssuesFound.push(msg);
+    }
+  }
   const bannedLanguageFound = findBannedLanguage(summaryText);
   if (bannedLanguageFound.length > 0) {
     summaryIssues.push(`Banned AI-sounding language in Professional Summary: ${bannedLanguageFound.join(", ")}`);

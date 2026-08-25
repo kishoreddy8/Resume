@@ -184,10 +184,31 @@ export function buildRepairWriterPrompt(params: BuildRepairWriterPromptParams): 
     lines.push(contextManifestSection);
   }
 
+  // PHASE 8.2 — compact repair-facing ecosystem contract (root cause 1 of the live Phase 8.1
+  // failure: the minimized summary-repair package carried raw historical source-cloud evidence but
+  // NOT the target-ecosystem decision, so the writer faithfully reintroduced the source cloud into
+  // the summary of a differently-targeted resume). Deliberately a few lines, never the full
+  // FIRST_PASS ecosystem section, and fully generic across every ecosystem/cloud mode — nothing
+  // provider-specific is hardcoded here; every value comes from the same TargetEcosystemResult the
+  // first pass was written against.
+  if (params.targetEcosystem) {
+    const eco = params.targetEcosystem;
+    const platform = eco.primaryPlatform ?? "—";
+    lines.push(
+      `**Target Ecosystem (PRESERVE): ${eco.targetEcosystem} · platform: ${platform} · ` +
+        `supporting cloud: ${eco.supportingCloud} · mode: ${eco.cloudRequirementMode}.** ` +
+        `Historical evidence may name source-cloud technologies; never reintroduce services incompatible ` +
+        `with this target into repaired resume prose unless the current architecture explicitly permits them.`
+    );
+    lines.push("");
+  }
+
   lines.push("## 1. SURGICAL REPAIR MANDATE & AUTHORIZED PATHS");
   lines.push("");
   lines.push("**Surgical repair, PATCH mode — return ONLY the changed values, never the full document**:");
-  lines.push("- You are performing a targeted, surgical PATCH repair of specific authorized paths. You must output **PATCH operations only** modifying the exact paths listed below. All other sections of the resume are frozen.");
+  // PHASE 8.2 — "Collateral edits ... fail" folded in from the former Section-3 "Surgical Scope"
+  // line, which restated this mandate a third time (Part 7 duplication removal, token budget).
+  lines.push("- You are performing a targeted, surgical PATCH repair of specific authorized paths. You must output **PATCH operations only** modifying the exact paths listed below. All other sections of the resume are frozen; collateral edits to any other path cause the repair to fail.");
   lines.push("");
   lines.push("> **Modify ONLY the explicitly authorized JSON paths. Do not modify any other path. If a requested correction cannot be completed within those paths, leave it unresolved rather than editing another path.**");
   lines.push("");
@@ -380,7 +401,8 @@ export function buildRepairWriterPrompt(params: BuildRepairWriterPromptParams): 
   // 3. Compact Truthfulness & Metric Policy Contract
   lines.push("## 3. TRUTHFULNESS & REPAIR CONTRACT");
   lines.push("");
-  lines.push("- **Surgical Scope**: Return modifications for ONLY the authorized editable paths above. Collateral edits to other paths will cause the repair to fail.");
+  // PHASE 8.2 — the former "Surgical Scope" line here was the third statement of the Section-1
+  // mandate; its one unique clause now lives on that mandate line instead (see above).
   lines.push("- **Factual Grounding**: Hard career facts (employers, titles, dates, degrees) are immutable.");
   lines.push("- **Employer Attribution**: Maintain strict technology boundaries. Never claim an Azure employer responsibility as AWS (or vice-versa) unless evidenced for that employer.");
   lines.push("- **Metric Policy**: Faithful to explicit metrics where present. You MAY generate a conservative, defensible metric when existing CareerOps policy permits it, context supports it, and it strengthens the accomplishment. Never invent extreme scale or artificial precision.");

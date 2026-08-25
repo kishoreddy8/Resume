@@ -23,6 +23,7 @@ import { findThirdPersonNarration } from "../professionalIdentity";
 import { evaluateSummaryAlignment, evaluateSummaryPolicy } from "./summaryChecks";
 import { evaluateCanonicalCoverage, reconcileJdRequirements } from "../jdRequirementReconciler";
 import { evaluateCrossEmployerRepetition } from "./repetitionChecks";
+import { detectTargetEcosystem } from "../targetEcosystem";
 import { findTechnologyContradictions } from "./technologyGroups";
 import { evaluateTechnologyGrouping } from "./technologyGroupingCheck";
 import { checkMetricRealism, evaluateTruthfulness } from "./truthfulnessChecks";
@@ -94,6 +95,7 @@ export function reviewResumeDeterministically(
     | "targetRoleTitle"
     | "rewriteExpectation"
     | "canonicalRequirements"
+    | "targetEcosystem"
   >
 ): StructuredResumeReview {
   const {
@@ -106,6 +108,7 @@ export function reviewResumeDeterministically(
     targetRoleTitle,
     rewriteExpectation,
     canonicalRequirements,
+    targetEcosystem,
   } = input;
 
   const ats = evaluateAtsAlignment(resume, jobRequirements);
@@ -113,7 +116,8 @@ export function reviewResumeDeterministically(
   const bullets = evaluateBulletChecks(resume.experience);
   const truthfulness = evaluateTruthfulness(resume, masterResumeProfile);
   const architecture = evaluateArchitectureConsistency(resume.experience);
-  const summary = evaluateSummaryAlignment(resume.summary, jobRequirements, targetRoleTitle);
+  // PHASE 8.2 — targetEcosystem (when available) enables the summary ecosystem-drift check.
+  const summary = evaluateSummaryAlignment(resume.summary, jobRequirements, targetRoleTitle, targetEcosystem);
   const skillsOrdering = evaluateSkillsOrdering(resume.skillGroups, jobRequirements);
 
   const recruiterReadabilityScore = clamp(100 - bullets.readabilityDeductions);
@@ -370,6 +374,11 @@ export class DeterministicResumeReviewer implements ResumeReviewerAgent {
     // Fails toward the exact prior behavior (canonicalRequirements left undefined) on any I/O or
     // reconciliation error: the reviewer must never crash or degrade because of this additive step.
     let canonicalRequirements: ResumeReviewerInput["canonicalRequirements"];
+    // PHASE 8.2 — same additive pattern for the authoritative target-ecosystem decision: computed
+    // from the SAME raw JD with the SAME detectTargetEcosystem the writer path uses, so the summary
+    // ecosystem-drift check judges against the decision the resume was actually written for. A
+    // caller-supplied input.targetEcosystem wins; any failure falls back to undefined (check skipped).
+    let targetEcosystem: ResumeReviewerInput["targetEcosystem"] = input.targetEcosystem;
     if (input.masterResumeProfile && input.jobDescriptionPath) {
       try {
         if (fs.existsSync(input.jobDescriptionPath)) {
@@ -380,13 +389,21 @@ export class DeterministicResumeReviewer implements ResumeReviewerAgent {
             candidateProfile: input.masterResumeProfile,
             roleTitle: input.targetRoleTitle,
           }).canonicalRequirements;
+          if (!targetEcosystem) {
+            targetEcosystem = detectTargetEcosystem({
+              roleTitle: input.targetRoleTitle,
+              jobDescriptionText: rawJd,
+              jobRequirements: input.jobRequirements ?? [],
+              candidateProfile: input.masterResumeProfile,
+            });
+          }
         }
       } catch {
         // Fail toward legacy behavior — see comment above.
       }
     }
 
-    const review = reviewResumeDeterministically({ ...input, canonicalRequirements });
+    const review = reviewResumeDeterministically({ ...input, canonicalRequirements, targetEcosystem });
     return { review };
   }
 }

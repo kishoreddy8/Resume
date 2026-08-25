@@ -857,9 +857,23 @@ export function exportExternalWriterPackage(
   // PHASE 6.5 — drives the writer-facing dynamic named-technology summary ceiling (see
   // professionalIdentity.ts's renderProfessionalIdentitySection); undefined when reconciliation did
   // not run, which that function treats as "use the fixed legacy ceiling" — unchanged behavior.
+  //
+  // PHASE 8.2 — root cause 3 of the live Phase 8.1 finding: exportReconciliation is (correctly)
+  // gated to INITIAL_GENERATION, so a TARGETED_REPAIR fell through to undefined here and the repair
+  // prompt rendered the legacy fallback ceiling (7) instead of this JD's real dynamic ceiling (6 for
+  // WF52). The repair path now derives the count from the SAME reconciliation source of truth —
+  // computed here just for the count, without changing which requirement units, DO_NOT_CLAIM names,
+  // or palette inputs a repair exports (those deliberately keep their existing repair behavior).
   const exportSignificantSupportedTechnologyCount = exportReconciliation
     ? exportReconciliation.canonicalRequirements.filter((r) => r.supportedByCandidate).length
-    : undefined;
+    : !exportIsInitialGeneration && writerInput.masterProfile
+      ? reconcileJdRequirements({
+          rawJd: writerInput.jobDescriptionMarkdown || "",
+          structuredRequirements: writerInput.jobRequirements ?? [],
+          candidateProfile: writerInput.masterProfile,
+          roleTitle: exportTargetRoleTitle,
+        }).canonicalRequirements.filter((r) => r.supportedByCandidate).length
+      : undefined;
   // PHASE 6.6 — the two pieces of information the (now-removed-from-the-writer-prompt) canonical
   // "TARGET JOB REQUIREMENTS" section used to carry, folded directly into the JD PRIORITY MATRIX line
   // instead of a separate, fully-duplicative section. See renderCanonicalRequirementSection's own
