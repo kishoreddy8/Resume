@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { JobRow } from "./JobRow";
+import { JobDeck } from "./JobDeck";
+import { BottomSheet } from "@/components/ui";
 import { JobListSkeleton, LoadingRegion } from "./Skeletons";
 import { EmptyState } from "./EmptyState";
 import { useSetupNotice } from "@/lib/useSetupNotice";
@@ -73,6 +75,7 @@ export function ForYouList({
   const [includeStale, setIncludeStale] = useState(false);
   const [minScore, setMinScore] = useState("");
   const [roleScope, setRoleScope] = useState<"matched" | "all">("matched");
+  const [forYouFiltersOpen, setForYouFiltersOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -152,37 +155,67 @@ export function ForYouList({
     }
   }
 
+  const forYouFilterCount = (minScore ? 1 : 0) + (roleScope === "all" ? 1 : 0) + (includeStale ? 1 : 0);
+  const forYouControls = (
+    <>
+      <select
+        value={minScore}
+        onChange={(event) => setMinScore(event.target.value)}
+        aria-label="Minimum match score"
+        className="h-11 rounded-[11px] border border-[var(--border)] bg-surface px-3 text-[13.5px] text-primary"
+      >
+        <option value="">Any match score</option>
+        <option value="90">90+ match</option>
+        <option value="85">85+ match</option>
+        <option value="80">80+ match</option>
+        <option value="70">70+ match</option>
+      </select>
+      <select
+        value={roleScope}
+        onChange={(event) => setRoleScope(event.target.value as "matched" | "all")}
+        aria-label="Role scope"
+        className="h-11 rounded-[11px] border border-[var(--border)] bg-surface px-3 text-[13.5px] text-primary"
+      >
+        <option value="matched">My target roles</option>
+        <option value="all">All roles</option>
+      </select>
+      <label className="flex min-h-11 items-center gap-2 px-1 text-[13.5px] text-secondary">
+        <input type="checkbox" checked={includeStale} onChange={(event) => setIncludeStale(event.target.checked)} className="h-[18px] w-[18px] accent-[var(--accent)]" />
+        Include older jobs
+      </label>
+    </>
+  );
+
   return (
     <section className="rounded-[22px] border border-[var(--border)] bg-[color-mix(in_oklab,var(--surface)_88%,transparent)] p-3 shadow-[var(--lift-1)] md:p-5">
       {mode === "forYou" ? (
-        <div className="mb-5 flex flex-wrap items-center gap-3 border-b border-[var(--separator)] pb-4">
-          <select
-            value={minScore}
-            onChange={(event) => setMinScore(event.target.value)}
-            aria-label="Minimum match score"
-            className="h-11 rounded-[11px] border border-[var(--border)] bg-surface px-3 text-[13.5px] text-primary"
-          >
-            <option value="">Any match score</option>
-            <option value="90">90+ match</option>
-            <option value="85">85+ match</option>
-            <option value="80">80+ match</option>
-            <option value="70">70+ match</option>
-          </select>
-          <select
-            value={roleScope}
-            onChange={(event) => setRoleScope(event.target.value as "matched" | "all")}
-            aria-label="Role scope"
-            className="h-11 rounded-[11px] border border-[var(--border)] bg-surface px-3 text-[13.5px] text-primary"
-          >
-            <option value="matched">My target roles</option>
-            <option value="all">All roles</option>
-          </select>
-          <label className="flex min-h-11 items-center gap-2 px-1 text-[13.5px] text-secondary">
-            <input type="checkbox" checked={includeStale} onChange={(event) => setIncludeStale(event.target.checked)} className="h-[18px] w-[18px] accent-[var(--accent)]" />
-            Include older jobs
-          </label>
-          <span className="ml-auto text-[13px] text-tertiary"><strong className="text-primary">{entries.length}</strong> recommended</span>
-        </div>
+        <>
+          {/* Desktop/laptop — the existing inline row, unchanged. */}
+          <div className="mb-5 hidden flex-wrap items-center gap-3 border-b border-[var(--separator)] pb-4 lg:flex">
+            {forYouControls}
+            <span className="ml-auto text-[13px] text-tertiary"><strong className="text-primary">{entries.length}</strong> recommended</span>
+          </div>
+
+          {/* Mobile/tablet — the same controls, tucked into the shared BottomSheet primitive. */}
+          <div className="mb-5 flex items-center justify-between border-b border-[var(--separator)] pb-4 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setForYouFiltersOpen(true)}
+              className="flex h-11 items-center gap-2 rounded-[11px] border border-[var(--border)] bg-surface px-3.5 text-[13.5px] font-medium text-primary"
+            >
+              Filters
+              {forYouFilterCount > 0 && (
+                <span className="grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--accent)] px-1.5 text-[11.5px] font-semibold tabular-nums text-[var(--accent-fg)]">
+                  {forYouFilterCount}
+                </span>
+              )}
+            </button>
+            <span className="text-[13px] text-tertiary"><strong className="text-primary">{entries.length}</strong> recommended</span>
+          </div>
+          <BottomSheet open={forYouFiltersOpen} onClose={() => setForYouFiltersOpen(false)} title="Filters">
+            <div className="flex flex-col gap-3">{forYouControls}</div>
+          </BottomSheet>
+        </>
       ) : (
         <div className="mb-5 flex items-center justify-between border-b border-[var(--separator)] pb-4">
           <div>
@@ -214,30 +247,44 @@ export function ForYouList({
           }
         />
       ) : (
-        <div
-          ref={listRef}
-          role="listbox"
-          aria-label={mode === "saved" ? "Saved jobs" : "Recommended jobs"}
-          aria-activedescendant={selectedJobId !== null ? `candidate-job-${selectedJobId}` : undefined}
-          tabIndex={0}
-          onKeyDown={handleKeyDown}
-          className="space-y-3"
-        >
-          {entries.map(({ job, ranking }) => (
-            <JobRow
-              key={job.id}
-              job={job}
+        <>
+          {/* Desktop/laptop — the dense stacked list, unchanged. */}
+          <div
+            ref={listRef}
+            role="listbox"
+            aria-label={mode === "saved" ? "Saved jobs" : "Recommended jobs"}
+            aria-activedescendant={selectedJobId !== null ? `candidate-job-${selectedJobId}` : undefined}
+            tabIndex={0}
+            onKeyDown={handleKeyDown}
+            className="hidden space-y-3 lg:block"
+          >
+            {entries.map(({ job, ranking }) => (
+              <JobRow
+                key={job.id}
+                job={job}
+                candidateId={candidateId}
+                thresholds={thresholds}
+                summary={toSummary(ranking)}
+                selected={job.id === selectedJobId}
+                onOpen={openJob}
+                onSavedChange={updateSaved}
+                optionId={`candidate-job-${job.id}`}
+                meta={<RecommendationMeta ranking={ranking} />}
+              />
+            ))}
+          </div>
+
+          {/* Mobile/tablet — the focused triage deck. */}
+          <div className="lg:hidden">
+            <JobDeck
+              items={entries.map(({ job, ranking }) => ({ job, summary: toSummary(ranking) }))}
               candidateId={candidateId}
               thresholds={thresholds}
-              summary={toSummary(ranking)}
-              selected={job.id === selectedJobId}
               onOpen={openJob}
               onSavedChange={updateSaved}
-              optionId={`candidate-job-${job.id}`}
-              meta={<RecommendationMeta ranking={ranking} />}
             />
-          ))}
-        </div>
+          </div>
+        </>
       )}
     </section>
   );

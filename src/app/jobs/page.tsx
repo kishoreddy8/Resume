@@ -12,6 +12,7 @@ import { WorkflowJobsList } from "./WorkflowJobsList";
 import { JobListSkeleton, LoadingRegion } from "./Skeletons";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AppToolbarActions, AppToolbarSlot } from "@/components/AppToolbarSlot";
+import { BottomSheet } from "@/components/ui";
 import { useLifecycleThresholds } from "./useLifecycleThresholds";
 
 type JobsView = "forYou" | "all" | "saved" | "tailoring" | "needsReview";
@@ -77,6 +78,9 @@ export default function JobsPage() {
   // The filter surface is now a popover, so it starts closed. Discoverability lives in the command
   // bar instead: the trigger is always visible and carries a live count of what is active.
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Same filters, same state — only the surface differs: a BottomSheet below `lg` instead of the
+  // toolbar-anchored dropdown, which does not read as intentional at phone widths.
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   /**
    * Search moved out of the collapsible filter panel and into the toolbar, so it stays reachable
    * when filters are closed. It is also debounced now: it previously committed on every keystroke,
@@ -156,7 +160,10 @@ export default function JobsPage() {
    * fetched once. Nothing about the filter's behaviour changes; it is the same data, later. */
   const companiesRequested = useRef(false);
   useEffect(() => {
-    if (!filtersOpen || companiesRequested.current) return;
+    // Either surface (the desktop dropdown or the mobile BottomSheet) can be the first to open —
+    // both render the same JobFilterSidebar, so both need this fetched exactly once, on whichever
+    // opens first.
+    if ((!filtersOpen && !mobileFiltersOpen) || companiesRequested.current) return;
     companiesRequested.current = true;
     /* Only id and name are rendered in this dropdown. The full row set is 4.8 MB across ~4,000
      * companies; this projection is ~2% of it. */
@@ -167,7 +174,7 @@ export default function JobsPage() {
         // Leave the dropdown empty rather than blocking the filter panel; the rest still works.
         companiesRequested.current = false;
       });
-  }, [filtersOpen]);
+  }, [filtersOpen, mobileFiltersOpen]);
 
   useEffect(() => {
     // Only the "All Jobs" view needs the unranked/filtered listJobs fetch — For You loads its own
@@ -195,7 +202,7 @@ export default function JobsPage() {
 
       <AppToolbarActions>
         {view === "all" && (
-          <div ref={filterAnchorRef} className="relative">
+          <div ref={filterAnchorRef} className="relative hidden lg:block">
             <button
               type="button"
               onClick={() => setFiltersOpen((o) => !o)}
@@ -214,7 +221,9 @@ export default function JobsPage() {
               )}
             </button>
 
-            {/* Z5 — emerges from its trigger, not from the viewport. */}
+            {/* Z5 — emerges from its trigger, not from the viewport. Desktop/laptop only — the
+             *  narrow-viewport equivalent is the BottomSheet below, since a viewport-anchored
+             *  dropdown of this width does not read as intentional on a phone. */}
             <AnimatePresence>
               {filtersOpen && (
                 <motion.div
@@ -236,7 +245,8 @@ export default function JobsPage() {
         )}
       </AppToolbarActions>
 
-      <section className="relative overflow-hidden rounded-[24px] border border-[color-mix(in_oklab,var(--accent)_16%,var(--border))] bg-[linear-gradient(125deg,color-mix(in_oklab,var(--accent-soft)_72%,var(--surface)),var(--surface)_58%,color-mix(in_oklab,var(--accent-soft)_35%,var(--surface)))] px-5 py-7 shadow-[var(--lift-1)] md:px-8">
+      {/* Desktop/laptop — the existing decorative hero, unchanged. */}
+      <section className="relative hidden overflow-hidden rounded-[24px] border border-[color-mix(in_oklab,var(--accent)_16%,var(--border))] bg-[linear-gradient(125deg,color-mix(in_oklab,var(--accent-soft)_72%,var(--surface)),var(--surface)_58%,color-mix(in_oklab,var(--accent-soft)_35%,var(--surface)))] px-5 py-7 shadow-[var(--lift-1)] md:px-8 lg:block">
         <div aria-hidden="true" className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[var(--accent-soft)] blur-3xl" />
         <div aria-hidden="true" className="absolute right-8 top-1/2 hidden h-24 w-44 -translate-y-1/2 md:block">
           <span className="absolute inset-x-0 top-1/2 h-px bg-[linear-gradient(90deg,transparent,color-mix(in_oklab,var(--accent)_26%,transparent),transparent)]" />
@@ -250,12 +260,22 @@ export default function JobsPage() {
         </div>
       </section>
 
+      {/* Mobile/tablet — a clean, compact header instead of the decorative hero. Title, one line of
+       *  truthful supporting copy, then straight into the view tabs/search below. No claim of an
+       *  AI-search capability that does not exist — the field beneath this narrows the same way it
+       *  always has. */}
+      <div className="lg:hidden">
+        <h1 className="text-[26px] font-bold tracking-[-0.02em] text-primary">Jobs</h1>
+        <p className="mt-1 text-[13.5px] text-secondary">Matched to your profile.</p>
+      </div>
+
       {/* The page's own control row, aligned to the page container rather than to the toolbar.
        *  The view switch and the feed's search live here because they filter what is directly
        *  below them — and because the toolbar already holds a search that means something else:
        *  the global one navigates, this one narrows the list you are looking at. */}
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-        <div role="tablist" aria-label="Job views" className="flex min-w-0 overflow-x-auto rounded-[14px] bg-[var(--z0-bg)] p-1 shadow-[inset_0_1px_2px_var(--edge-lo)]">
+        <div className="flex min-w-0 items-center gap-2">
+          <div role="tablist" aria-label="Job views" className="flex min-w-0 overflow-x-auto rounded-[14px] bg-[var(--z0-bg)] p-1 shadow-[inset_0_1px_2px_var(--edge-lo)]">
           {JOB_VIEWS.map(({ id, label }) => (
             <button
               key={id}
@@ -275,6 +295,23 @@ export default function JobsPage() {
               {label}
             </button>
           ))}
+          </div>
+
+          {view === "all" && (
+            <button
+              type="button"
+              onClick={() => setMobileFiltersOpen(true)}
+              aria-haspopup="dialog"
+              className="flex h-11 shrink-0 items-center gap-1.5 rounded-[11px] border border-[var(--border)] bg-surface px-3 text-[13.5px] font-medium text-primary lg:hidden"
+            >
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[var(--accent)] px-1 text-[11px] font-semibold tabular-nums text-[var(--accent-fg)]">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         {/* A recessed well, not a bordered box. The field measured 1.08:1 against the command bar
@@ -300,6 +337,12 @@ export default function JobsPage() {
         </label>
 
       </div>
+
+      {view === "all" && (
+        <BottomSheet open={mobileFiltersOpen} onClose={() => setMobileFiltersOpen(false)} title="Filters">
+          <JobFilterSidebar filters={filters} onChange={setFilters} companies={companies} />
+        </BottomSheet>
+      )}
 
       {view === "forYou" || view === "saved" ? (
         !thresholdsLoaded ? (

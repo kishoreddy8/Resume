@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { QueueItem } from "./queue";
 import { useRouter } from "next/navigation";
 import { JobRow } from "./JobRow";
+import { JobDeck } from "./JobDeck";
 import Link from "next/link";
 import { EmptyState } from "./EmptyState";
 import { useSetupNotice } from "@/lib/useSetupNotice";
@@ -251,40 +252,62 @@ export function JobList({
           }
         />
       ) : (
-        <div
-          ref={listRef}
-          role="listbox"
-          aria-label="Jobs"
-          tabIndex={0}
-          onKeyDown={handleKeyDown}
-          onPointerDown={() => setSharedLayout(true)}
-          // scroll-padding keeps a keyboard-focused row clear of the sticky filter bar
-          // (WCAG 2.2 "Focus Not Obscured").
-          className="min-h-0 flex-1 space-y-3 [scroll-padding-block:3rem]"
-        >
-          {renderedJobs.map((job) => (
-            <JobRow
-              key={job.id}
-              job={job}
+        <>
+          {/* Desktop/laptop — the dense stacked list, unchanged. */}
+          <div
+            ref={listRef}
+            role="listbox"
+            aria-label="Jobs"
+            tabIndex={0}
+            onKeyDown={handleKeyDown}
+            onPointerDown={() => setSharedLayout(true)}
+            // scroll-padding keeps a keyboard-focused row clear of the sticky filter bar
+            // (WCAG 2.2 "Focus Not Obscured").
+            className="hidden min-h-0 flex-1 space-y-3 [scroll-padding-block:3rem] lg:block"
+          >
+            {renderedJobs.map((job) => (
+              <JobRow
+                key={job.id}
+                job={job}
+                candidateId={candidateId}
+                thresholds={thresholds}
+                summary={decisions[job.dedupe_key]}
+                selected={job.id === selectedJobId}
+                onOpen={openJob}
+                sharedLayout={sharedLayout}
+              />
+            ))}
+
+            {hiddenCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setRenderState((prev) => ({ key: resetKey, limit: prev.limit + RENDER_LIMIT_STEP }))}
+                className="w-full px-4 py-3 text-[13px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)]"
+              >
+                Show {Math.min(RENDER_LIMIT_STEP, hiddenCount).toLocaleString()} more ({hiddenCount.toLocaleString()} remaining)
+              </button>
+            )}
+          </div>
+
+          {/* Mobile/tablet — the focused triage deck. */}
+          <div className="lg:hidden">
+            <JobDeck
+              items={renderedJobs.map((job) => ({ job, summary: decisions[job.dedupe_key] }))}
               candidateId={candidateId}
               thresholds={thresholds}
-              summary={decisions[job.dedupe_key]}
-              selected={job.id === selectedJobId}
               onOpen={openJob}
-              sharedLayout={sharedLayout}
             />
-          ))}
-
-          {hiddenCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setRenderState((prev) => ({ key: resetKey, limit: prev.limit + RENDER_LIMIT_STEP }))}
-              className="w-full px-4 py-3 text-[13px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)]"
-            >
-              Show {Math.min(RENDER_LIMIT_STEP, hiddenCount).toLocaleString()} more ({hiddenCount.toLocaleString()} remaining)
-            </button>
-          )}
-        </div>
+            {hiddenCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setRenderState((prev) => ({ key: resetKey, limit: prev.limit + RENDER_LIMIT_STEP }))}
+                className="mt-3 w-full rounded-[12px] px-4 py-3 text-[13px] text-secondary transition-colors duration-150 ease-out hover:bg-[var(--surface-hover)] active:bg-[var(--surface-active)]"
+              >
+                Load {Math.min(RENDER_LIMIT_STEP, hiddenCount).toLocaleString()} more ({hiddenCount.toLocaleString()} remaining)
+              </button>
+            )}
+          </div>
+        </>
       )}
     </section>
   );

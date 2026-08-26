@@ -1,73 +1,29 @@
 "use client";
 
 import { memo, type ReactNode } from "react";
-import { H1bBadge } from "@/components/H1bBadge";
-import { getJobAgeBand, getJobAgeDays, type LifecycleThresholds } from "@/lib/jobLifecycle";
+import type { LifecycleThresholds } from "@/lib/jobLifecycle";
 import type { ListMatchSummary } from "@/lib/rank/jobsList";
-import type { JobWithCompany, JobWithCompanySummary } from "@/types";
-import { candidateStatus } from "@/lib/candidateStatus";
+import type { JobWithCompanySummary } from "@/types";
 import { SaveJobButton } from "./SaveJobButton";
+import {
+  AgeLabel,
+  companyMonogram,
+  factChips,
+  formatSalary,
+  MatchFit,
+  SponsorshipRow,
+  type CardJob,
+} from "./JobCardPresentation";
 
 export type { JobWithCompanySummary };
-export type RowJob = Pick<
-  JobWithCompany,
-  | "id"
-  | "dedupe_key"
-  | "title"
-  | "company_name"
-  | "location"
-  | "is_active"
-  | "h1b_combined_confidence"
-  | "posted_at"
-  | "first_seen_at"
-  | "marked_for_tailoring"
-  | "pipeline_status"
-  | "pinned"
->;
+export type RowJob = CardJob;
 
-function companyMonogram(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return "JB";
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return `${words[0][0]}${words[1][0]}`.toUpperCase();
-}
-
-function MatchFit({ summary }: { summary: ListMatchSummary | undefined }) {
-  if (!summary) return <span className="text-[13px] font-medium text-tertiary">Not evaluated</span>;
-  if (summary.insufficientJdSignal) {
-    return (
-      <span className="rounded-full bg-[var(--pill-amber-bg)] px-2.5 py-1 text-[13px] font-semibold text-[var(--pill-amber-fg)]">
-        Insufficient data
-      </span>
-    );
-  }
-  const tone =
-    summary.decision === "READY_FOR_TAILORING"
-      ? "bg-[var(--pill-success-bg)] text-[var(--pill-success-fg)]"
-      : summary.decision === "NEEDS_REVIEW"
-        ? "bg-[var(--pill-amber-bg)] text-[var(--pill-amber-fg)]"
-        : "bg-[var(--pill-red-bg)] text-[var(--pill-red-fg)]";
-  const label =
-    summary.decision === "READY_FOR_TAILORING"
-      ? candidateStatus("readyToTailor").label
-      : summary.decision === "NEEDS_REVIEW"
-        ? candidateStatus("needsReview").label
-        : candidateStatus("blocked").label;
-  return (
-    <span className="flex items-center gap-2.5 whitespace-nowrap">
-      <span className={`rounded-full px-2.5 py-1 text-[13px] font-semibold ${tone}`}>{label}</span>
-      <span className="text-[18px] font-bold tabular-nums text-primary">{Math.round(summary.overallScore)}</span>
-    </span>
-  );
-}
-
-function AgeLabel({ job, thresholds }: { job: RowJob; thresholds: LifecycleThresholds }) {
-  const days = getJobAgeDays({ posted_at: job.posted_at, first_seen_at: job.first_seen_at });
-  const fresh = getJobAgeBand(days, thresholds) === "fresh";
-  const label = days === 0 ? "Today" : days === 1 ? "1 day ago" : `${days} days ago`;
-  return <span className={fresh ? "font-semibold text-[var(--accent)]" : "text-tertiary"}>{label}</span>;
-}
-
+/** Desktop/list row — compact and information-dense, unchanged in spirit from before UI-J. The one
+ *  addition is a single line of real, already-fetched structured facts (seniority, employment type,
+ *  workplace type, salary) that this same API response already carries — no new request. Sponsorship
+ *  now sits in its own tinted row rather than one pill lost among others, since it is decision-
+ *  critical, not incidental metadata. The richer mobile presentation (match ring, evidence link,
+ *  swipe) lives in JobSwipeCard/JobDeck — this component stays the dense desktop row it always was. */
 export const JobRow = memo(function JobRow({
   job,
   candidateId,
@@ -90,6 +46,9 @@ export const JobRow = memo(function JobRow({
   meta?: ReactNode;
   optionId?: string;
 }) {
+  const salary = formatSalary(job);
+  const chips = factChips(job);
+
   return (
     <div
       id={optionId}
@@ -129,8 +88,25 @@ export const JobRow = memo(function JobRow({
             <MatchFit summary={summary} />
           </div>
 
+          {(chips.length > 0 || salary) && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-tertiary">
+              {chips.map((c, i) => (
+                <span key={c}>
+                  {i > 0 && <span aria-hidden="true" className="mr-2">·</span>}
+                  {c}
+                </span>
+              ))}
+              {salary && (
+                <span className="font-semibold text-secondary">
+                  {chips.length > 0 && <span aria-hidden="true" className="mr-2">·</span>}
+                  {salary}
+                </span>
+              )}
+            </p>
+          )}
+
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[14px]">
-            <H1bBadge confidence={job.h1b_combined_confidence} />
+            <SponsorshipRow confidence={job.h1b_combined_confidence} />
             {job.marked_for_tailoring === 1 ? (
               <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-1 font-semibold text-[var(--accent)]">Tailoring approved</span>
             ) : null}
