@@ -258,6 +258,20 @@ export function getTotalNotificationsEverCreated(): number {
   return row.n;
 }
 
+/**
+ * ADMIN-OPS-2 — notifications created across all candidates inside the displayed window.
+ *
+ * The lifetime count above can only ever answer "has this pipeline EVER produced output", which is
+ * true forever after the first row and therefore useless as a current-health signal. This is the
+ * windowed equivalent, so a health verdict can be based on recent evidence instead.
+ */
+export function getNotificationsCreatedInWindow(windowDays: number): number {
+  const row = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM notifications WHERE julianday('now') - julianday(created_at) <= @windowDays`)
+    .get({ windowDays }) as { n: number };
+  return row.n;
+}
+
 /** Small, bounded recent-notifications list. `title` already embeds "{job title} at {company}"
  *  (see generateNotifications.ts's notificationTitle) — no join against jobs/companies needed. */
 export function listRecentNotifications(candidateId: number, limit: number): RecentNotification[] {

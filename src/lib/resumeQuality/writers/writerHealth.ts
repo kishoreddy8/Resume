@@ -90,6 +90,17 @@ export interface ResumeWriterHealth {
   lastTickAt: string | null;
   lastPassStartedAt: string | null;
   lastPassCompletedAt: string | null;
+  /**
+   * ADMIN-OPS-2.1 — when the writer last actually PRODUCED a resume.
+   *
+   * lastPassCompletedAt above is stamped whether the pass succeeded or failed, and each pass
+   * overwrites it, so it cannot answer "when did tailoring last work" — a single failing pass erases
+   * the only trace. This is the affirmative counterpart: only ever set, never cleared.
+   *
+   * "Produced", not "published". A resume the quality gate sent to human review still proves the
+   * writer worked; see writerState.recordResumeWriterPassCompleted for the exact outcome set.
+   */
+  lastSuccessAt: string | null;
   lastPassDurationMs: number | null;
   lastPassOutcome: string | null;
   lastPassError: string | null;
@@ -164,6 +175,7 @@ export function getResumeWriterHealth(now: Date = new Date(), workflowId?: numbe
     lastTickAt: runtime.lastTickAt,
     lastPassStartedAt: runtime.lastStartedAt,
     lastPassCompletedAt: runtime.lastCompletedAt,
+    lastSuccessAt: runtime.lastSuccessAt,
     lastPassDurationMs: runtime.lastDurationMs,
     lastPassOutcome: runtime.lastOutcome,
     lastPassError: runtime.lastError,

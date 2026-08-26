@@ -27,7 +27,7 @@ function scheduler(overrides: Partial<SchedulerSettings> = {}): SchedulerSetting
 }
 
 function runtime(overrides: Partial<SchedulerRuntimeState> = {}): SchedulerRuntimeState {
-  return { lastEvaluatedAt: null, lastStartedAt: null, lastCompletedAt: null, lastSuccessfulAt: null, lastFailedAt: null, lastError: null, ...overrides };
+  return { lastEvaluatedAt: null, lastStartedAt: null, lastCompletedAt: null, lastSuccessfulAt: null, lastScanSucceededAt: null, lastFailedAt: null, lastError: null, ...overrides };
 }
 
 // --- Scheduler ------------------------------------------------------------------------------
@@ -146,11 +146,11 @@ test("matching: runs with zero errors -> HEALTHY", () => {
 // --- Notifications ---------------------------------------------------------------------------
 
 test("notifications: zero ever created -> NO_DATA", () => {
-  assert.equal(classifyNotificationsHealth(0), "NO_DATA");
+  assert.equal(classifyNotificationsHealth({ createdInWindow: 0, everCreated: 0 }), "NO_DATA");
 });
 
 test("notifications: at least one ever created -> HEALTHY", () => {
-  assert.equal(classifyNotificationsHealth(9), "HEALTHY");
+  assert.equal(classifyNotificationsHealth({ createdInWindow: 9, everCreated: 9 }), "HEALTHY");
 });
 
 // --- Resume pipeline --------------------------------------------------------------------------

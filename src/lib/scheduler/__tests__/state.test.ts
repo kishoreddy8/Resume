@@ -8,6 +8,7 @@ let tmpDir: string;
 let getDb: typeof import("@/db").getDb;
 let getSchedulerRuntimeState: typeof import("../state").getSchedulerRuntimeState;
 let recordSchedulerTickEvaluated: typeof import("../state").recordSchedulerTickEvaluated;
+let recordScanSucceeded: typeof import("../state").recordScanSucceeded;
 let recordSchedulerTickStarted: typeof import("../state").recordSchedulerTickStarted;
 let recordSchedulerTickSucceeded: typeof import("../state").recordSchedulerTickSucceeded;
 let recordSchedulerTickFailed: typeof import("../state").recordSchedulerTickFailed;
@@ -18,7 +19,7 @@ before(async () => {
   process.env.CAREER_OPS_DB_PATH = path.join(tmpDir, "test.db");
 
   ({ getDb } = await import("@/db"));
-  ({ getSchedulerRuntimeState, recordSchedulerTickEvaluated, recordSchedulerTickStarted, recordSchedulerTickSucceeded, recordSchedulerTickFailed, resetSchedulerRuntimeStateForTests } =
+  ({ getSchedulerRuntimeState, recordScanSucceeded, recordSchedulerTickEvaluated, recordSchedulerTickStarted, recordSchedulerTickSucceeded, recordSchedulerTickFailed, resetSchedulerRuntimeStateForTests } =
     await import("../state"));
 
   getDb();
@@ -41,6 +42,7 @@ test("29. getSchedulerRuntimeState returns all-null on a fresh/never-run databas
     lastStartedAt: null,
     lastCompletedAt: null,
     lastSuccessfulAt: null,
+    lastScanSucceededAt: null,
     lastFailedAt: null,
     lastError: null,
   });
@@ -89,6 +91,7 @@ test("33. resetSchedulerRuntimeStateForTests clears every field back to null", (
     lastStartedAt: null,
     lastCompletedAt: null,
     lastSuccessfulAt: null,
+    lastScanSucceededAt: null,
     lastFailedAt: null,
     lastError: null,
   });
@@ -116,4 +119,15 @@ test("OPS1-SCHED-02b: evaluation and scan-attempt bookkeeping are independent", 
   assert.equal(state.lastEvaluatedAt, "2026-08-26T12:00:00.000Z");
   assert.equal(state.lastStartedAt, "2026-08-26T12:00:01.000Z");
   assert.equal(state.lastSuccessfulAt, "2026-08-26T12:00:09.000Z");
+});
+
+test("OPS2-SCAN-01c: recordScanSucceeded records scan work without implying a tick outcome", () => {
+  /* The two are written by different call sites for different reasons — see scheduler/state.ts. */
+  const when = new Date("2026-08-26T09:30:00.000Z");
+  recordScanSucceeded(when);
+
+  const state = getSchedulerRuntimeState();
+  assert.equal(state.lastScanSucceededAt, when.toISOString());
+  assert.equal(state.lastSuccessfulAt, null, "scan success does not imply tick bookkeeping");
+  assert.equal(state.lastCompletedAt, null);
 });

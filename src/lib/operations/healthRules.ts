@@ -192,16 +192,33 @@ export function classifyMatchingHealth(window: MatchingWindowCounts): HealthStat
 // --- Notifications ----------------------------------------------------------------------------
 
 /**
- * IMPORTANT LIMITATION: notification-generation failures are caught and returned in-memory only
- * (see src/lib/notifications/generateNotifications.ts / rematchCandidate.ts's try/catch) — nothing
- * about a failed generation attempt is ever persisted. There is therefore no stored signal this
- * function could use to detect a degraded notification pipeline; it can only tell whether the
- * pipeline has ever produced output at all.
- *   - zero notifications ever exist (system-wide) -> NO_DATA
- *   - otherwise                                    -> HEALTHY
+ * ADMIN-OPS-2 — what "notification health" can and cannot mean here.
+ *
+ * TWO SEPARATE LIMITS, and neither is fixable from this function. First, Career-Ops does not DELIVER
+ * notifications — it writes rows to a local table that the UI reads — so there is no delivery
+ * outcome to be healthy or unhealthy about. Second, generation failures are caught in-memory and
+ * never persisted (generateNotifications.ts collects them into a result object the tick discards;
+ * resumePipelineNotifications.ts's safeCreate swallows them and every call site drops the boolean).
+ * So no failure evidence for this pipeline exists anywhere in the database.
+ *
+ * That means this verdict has exactly one honest input: whether the pipeline has recently produced
+ * output. It therefore never returns WARNING or ERROR — claiming a fault would require failure
+ * evidence that does not exist, and inventing one is worse than admitting the gap.
+ *
+ * WHAT CHANGED. This previously took a LIFETIME count and returned HEALTHY for any non-zero value,
+ * which is true forever after the very first notification ever created — a permanently green card
+ * backed by something that happened months ago. An empty window is now NO_DATA: silence may simply
+ * mean there was nothing worth notifying about, which is not evidence of health OR of failure.
  */
-export function classifyNotificationsHealth(totalNotificationsEverCreated: number): HealthStatus {
-  return totalNotificationsEverCreated === 0 ? "NO_DATA" : "HEALTHY";
+export interface NotificationsHealthInput {
+  /** Notifications created inside the displayed window, across all candidates. */
+  createdInWindow: number;
+  /** Lifetime count — retained only to distinguish "never ran" from "quiet lately" in the summary. */
+  everCreated: number;
+}
+
+export function classifyNotificationsHealth(input: NotificationsHealthInput): HealthStatus {
+  return input.createdInWindow > 0 ? "HEALTHY" : "NO_DATA";
 }
 
 // --- Resume / quality pipeline ------------------------------------------------------------------

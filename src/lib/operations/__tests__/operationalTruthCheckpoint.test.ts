@@ -38,6 +38,7 @@ function runtime(overrides: Partial<SchedulerRuntimeState> = {}): SchedulerRunti
   return {
     lastEvaluatedAt: null,
     lastStartedAt: null,
+    lastScanSucceededAt: null,
     lastCompletedAt: null,
     lastSuccessfulAt: null,
     lastFailedAt: null,

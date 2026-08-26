@@ -44,6 +44,7 @@ const RUNTIME_KEYS = {
   lastTickAt: "resume_writer.last_tick_at",
   lastStartedAt: "resume_writer.last_started_at",
   lastCompletedAt: "resume_writer.last_completed_at",
+  lastSuccessAt: "resume_writer.last_success_at",
   lastOutcome: "resume_writer.last_outcome",
   lastError: "resume_writer.last_error",
   lastSummaryJson: "resume_writer.last_summary_json",
@@ -115,6 +116,23 @@ export interface WriterRuntimeState {
   lastTickAt: string | null;
   lastStartedAt: string | null;
   lastCompletedAt: string | null;
+  /**
+   * ADMIN-OPS-2 — when the writer last actually PRODUCED a resume.
+   *
+   * WHY lastCompletedAt cannot answer this. It is stamped by both recordResumeWriterPassCompleted and
+   * recordResumeWriterPassFailed, so it means "a pass finished", success or not. And because each
+   * pass overwrites it, a single failing pass erases the only trace that the writer had ever worked —
+   * "when did tailoring last succeed" becomes unanswerable exactly when an operator needs it most.
+   *
+   * A pass that ran with nothing queued is NOT counted here. It is a healthy, correct pass that did
+   * no useful work, and recording it as success would repeat the liveness-as-success mistake this
+   * phase exists to remove. Only a pass in which the writer actually generated content updates this
+   * field, and nothing ever clears it.
+   *
+   * "Produced", not "published": a resume the quality gate sent to human review still proves the
+   * writer worked. See recordResumeWriterPassCompleted for exactly which outcomes qualify and why.
+   */
+  lastSuccessAt: string | null;
   lastOutcome: string | null;
   lastError: string | null;
   lastSummary: WriterPassRecord | null;
@@ -238,6 +256,30 @@ export function recordResumeWriterPassCompleted(summary: WriterPassRecord, durat
   const technical = summary.outcomes.filter((o) => o.outcome === "TECHNICAL_FAILURE" || o.outcome === "ERROR");
   setValue(RUNTIME_KEYS.lastOutcome, technical.length > 0 ? "TECHNICAL_FAILURE" : "COMPLETED");
   setValue(RUNTIME_KEYS.lastError, technical.length > 0 ? (technical[0].error ?? "Writer pass reported a technical failure") : null);
+
+  /* ADMIN-OPS-2.1 — useful-work evidence: did the writer PRODUCE a resume this pass?
+   *
+   * READY, FAILED and IMPROVEMENT_RUNNING all return from the same point in processOneWorkflow,
+   * immediately after the Claude CLI ran and clearWriterOperationalBlock() declared the run
+   * "demonstrably over" — so all three are proof that content was generated. They differ only in
+   * what the QUALITY GATE then decided: publish it (READY), exhaust the budget and hand a
+   * best-attempt package to human review (FAILED), or iterate again (IMPROVEMENT_RUNNING). Exceptions
+   * never reach here; they are caught below and returned as ERROR.
+   *
+   * ADMIN-OPS-2 counted READY alone, which was too narrow for a field in the writer-infrastructure
+   * namespace: an install where every workflow legitimately ends in human review would report that
+   * the writer had never succeeded, while it was in fact producing a resume on every pass. That is
+   * the false-NEGATIVE mirror of the false-positive this phase exists to remove, and it would have
+   * sent an operator hunting a broken writer that was working perfectly.
+   *
+   * This field therefore means "the writer last produced a resume", NOT "a resume was last
+   * published" — publication recency is a different question, answered by workflow status rather
+   * than by writer runtime state. Only ever stamped, never cleared: a later failure does not
+   * un-happen an earlier success. */
+  const CONTENT_PRODUCED = new Set(["READY", "FAILED", "IMPROVEMENT_RUNNING"]);
+  if (summary.outcomes.some((o) => CONTENT_PRODUCED.has(o.outcome))) {
+    setValue(RUNTIME_KEYS.lastSuccessAt, now.toISOString());
+  }
 }
 
 export function recordResumeWriterPassFailed(error: string, now: Date = new Date()): void {
@@ -263,6 +305,7 @@ export function getResumeWriterRuntimeState(): WriterRuntimeState {
     lastTickAt: getValue(RUNTIME_KEYS.lastTickAt),
     lastStartedAt: getValue(RUNTIME_KEYS.lastStartedAt),
     lastCompletedAt: getValue(RUNTIME_KEYS.lastCompletedAt),
+    lastSuccessAt: getValue(RUNTIME_KEYS.lastSuccessAt),
     lastOutcome: getValue(RUNTIME_KEYS.lastOutcome),
     lastError: getValue(RUNTIME_KEYS.lastError),
     lastSummary: summary,

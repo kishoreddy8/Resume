@@ -11,6 +11,7 @@ import {
   getRecentCandidateMatchRuns,
   getResumeQualitySummary,
   getScanningWindowSummary,
+  getNotificationsCreatedInWindow,
   getTotalNotificationsEverCreated,
   listRecentNotifications,
   listTopFailingConnectors,
@@ -101,7 +102,14 @@ export async function GET(req: NextRequest) {
   // --- Notifications (candidate-scoped) + global health signal -----------------------------------
   const notificationSummary = getNotificationSummary(candidateId, windowDays);
   const recentNotifications = listRecentNotifications(candidateId, RECENT_NOTIFICATIONS_LIMIT);
-  const notificationsHealth = classifyNotificationsHealth(getTotalNotificationsEverCreated());
+  /* ADMIN-OPS-2 — windowed evidence, not a lifetime count. The old input was true forever after the
+   * first notification ever created, so this card could never stop being green. */
+  const notificationsEverCreated = getTotalNotificationsEverCreated();
+  const notificationsCreatedInWindow = getNotificationsCreatedInWindow(windowDays);
+  const notificationsHealth = classifyNotificationsHealth({
+    createdInWindow: notificationsCreatedInWindow,
+    everCreated: notificationsEverCreated,
+  });
 
   // --- Candidate rematch (Stage 5) — provenance limitation, not inferred/guessed -----------------
   const recentCandidateMatchRuns = getRecentCandidateMatchRuns(candidateId, RECENT_MATCH_RUNS_LIMIT);

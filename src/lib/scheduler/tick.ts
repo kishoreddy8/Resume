@@ -15,6 +15,7 @@ import {
 } from "./reliabilityState";
 import {
   getSchedulerRuntimeState,
+  recordScanSucceeded,
   recordSchedulerTickEvaluated,
   recordSchedulerTickFailed,
   recordSchedulerTickStarted,
@@ -144,6 +145,10 @@ export async function runSchedulerTick(now: Date = new Date()): Promise<Schedule
     // non-incremental scan failure already did before Stage 2).
     const { scan, matching, notifications } = await runScanWithIncrementalMatching(companies);
     recordSchedulerTickSucceeded();
+    /* ADMIN-OPS-2 — only HERE, never on the zero-companies path above. This is the one point in the
+     * tick where a scan has actually run against real companies and finished, so it is the only
+     * evidence that can honestly answer "when did the scanner last do useful work". */
+    recordScanSucceeded();
 
     // Maintenance phase — explicit and separate from the scan/matching phases above, on its own
     // independent cadence (see MAINTENANCE_INTERVAL_MINUTES). This is the ONLY place the automatic

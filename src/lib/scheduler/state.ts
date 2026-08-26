@@ -19,6 +19,7 @@ const RUNTIME_KEYS = {
   lastStartedAt: "scheduler_runtime.last_started_at",
   lastCompletedAt: "scheduler_runtime.last_completed_at",
   lastSuccessfulAt: "scheduler_runtime.last_successful_at",
+  lastScanSucceededAt: "scheduler_runtime.last_scan_succeeded_at",
   lastFailedAt: "scheduler_runtime.last_failed_at",
   lastError: "scheduler_runtime.last_error",
 } as const;
@@ -44,6 +45,20 @@ export interface SchedulerRuntimeState {
   lastStartedAt: string | null;
   lastCompletedAt: string | null;
   lastSuccessfulAt: string | null;
+  /**
+   * ADMIN-OPS-2 — when a scan last actually completed against at least one company.
+   *
+   * WHY THIS IS NOT lastSuccessfulAt. That field is stamped by recordSchedulerTickSucceeded, which
+   * the tick calls in TWO situations: after a real scan finishes, and when it finds zero scan-ready
+   * companies and returns SKIPPED_NO_COMPANIES having scanned nothing. Both are legitimate outcomes,
+   * but only one is useful work, and collapsing them means "the scanner last succeeded at 14:02" can
+   * be true of a system that has not fetched a single job all day.
+   *
+   * This field records only the second case: a scan that ran. It is the difference between the tick
+   * being ALIVE and the scanner having DONE something, and Admin needs both separately — a live tick
+   * with no successful scan for a day is exactly the state a health surface must be able to describe.
+   */
+  lastScanSucceededAt: string | null;
   lastFailedAt: string | null;
   lastError: string | null;
 }
@@ -71,6 +86,7 @@ export function getSchedulerRuntimeState(): SchedulerRuntimeState {
     lastStartedAt: getValue(RUNTIME_KEYS.lastStartedAt),
     lastCompletedAt: getValue(RUNTIME_KEYS.lastCompletedAt),
     lastSuccessfulAt: getValue(RUNTIME_KEYS.lastSuccessfulAt),
+    lastScanSucceededAt: getValue(RUNTIME_KEYS.lastScanSucceededAt),
     lastFailedAt: getValue(RUNTIME_KEYS.lastFailedAt),
     lastError: getValue(RUNTIME_KEYS.lastError),
   };
@@ -104,6 +120,16 @@ export function recordSchedulerTickSucceeded(now: Date = new Date()): void {
   setValue(RUNTIME_KEYS.lastCompletedAt, iso);
   setValue(RUNTIME_KEYS.lastSuccessfulAt, iso);
   setValue(RUNTIME_KEYS.lastError, null);
+}
+
+/**
+ * ADMIN-OPS-2 — called ONLY when a scan actually ran against at least one company and completed.
+ *
+ * Deliberately separate from recordSchedulerTickSucceeded: a tick that legitimately found nothing to
+ * scan still succeeded as a tick, and must not be recorded as the scanner having worked.
+ */
+export function recordScanSucceeded(now: Date = new Date()): void {
+  setValue(RUNTIME_KEYS.lastScanSucceededAt, now.toISOString());
 }
 
 /** Called when a scheduled scan attempt throws. lastSuccessfulAt is left untouched — it tracks the
