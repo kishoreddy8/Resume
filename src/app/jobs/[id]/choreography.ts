@@ -1,4 +1,5 @@
-import type { Variants, Transition } from "motion/react";
+import type { Variants } from "motion/react";
+import { MOTION_EMPHASIZED, MOTION_STAGGER_MS } from "@/lib/motion/tokens";
 
 /**
  * The signature selection choreography.
@@ -26,8 +27,10 @@ import type { Variants, Transition } from "motion/react";
  */
 
 /** Critically damped. Bounce stays at 0 everywhere except the dock, where a
- *  trace of overshoot reads as a physical control settling. */
-export const SETTLE: Transition = { type: "spring", duration: 0.32, bounce: 0 };
+ *  trace of overshoot reads as a physical control settling.
+ *  UI-1 — re-exported from the shared `src/lib/motion/tokens.ts` rather than declared here; the
+ *  value is unchanged, `SETTLE` is kept as the name this file's own consumers already import. */
+export const SETTLE = MOTION_EMPHASIZED;
 
 /** Parent: holds no visual state of its own, only the timeline its children read. */
 export const heroStage: Variants = {
@@ -35,7 +38,7 @@ export const heroStage: Variants = {
   settled: {
     transition: {
       delayChildren: 0.04,
-      staggerChildren: 0.055,
+      staggerChildren: MOTION_STAGGER_MS / 1000,
     },
   },
 };

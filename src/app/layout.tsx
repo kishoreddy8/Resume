@@ -20,7 +20,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "JobHunt",
+  /* UI-1 — the product name is Career-Ops everywhere; this is the app's single most visible
+   * surface (every page's browser tab). The old candidate-facing name still used elsewhere in the
+   * app is left for a dedicated copy-cleanup slice — see the UI-1 report. */
+  title: "Career-Ops",
   description: "Personal job-search pipeline",
   /**
    * Stop iOS Safari rewriting our own text into links.

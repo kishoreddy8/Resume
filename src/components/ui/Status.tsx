@@ -14,7 +14,10 @@ export type StatusTone = "ready" | "attention" | "blocked" | "neutral" | "unknow
 
 const DOT: Record<StatusTone, string> = {
   ready: "bg-[var(--success)] shadow-[0_0_7px_var(--success)]",
-  attention: "bg-[var(--warning)]",
+  /* UI-1 — reads --attention, not --warning. "Needs you" and "something is wrong" are different
+   * meanings that happened to share one token; --attention is its own alias (same amber value
+   * today, see globals.css) so the two can diverge later without a second rename here. */
+  attention: "bg-[var(--attention)]",
   blocked: "bg-[var(--error)] shadow-[0_0_7px_var(--error)]",
   active: "bg-[var(--accent)] shadow-[0_0_8px_var(--accent)]",
   /* --separator is 7% alpha — as a 6px dot on a white plane it was invisible, which made every
@@ -25,7 +28,7 @@ const DOT: Record<StatusTone, string> = {
 
 const TEXT: Record<StatusTone, string> = {
   ready: "text-[var(--success)]",
-  attention: "text-[var(--warning)]",
+  attention: "text-[var(--attention)]",
   blocked: "text-[var(--error)]",
   active: "text-[var(--accent)]",
   neutral: "text-secondary",

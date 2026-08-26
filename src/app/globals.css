@@ -21,7 +21,6 @@
   --surface-elevated: #ffffff;
   --surface-hover: rgba(0, 0, 0, 0.04);
   --surface-active: rgba(0, 0, 0, 0.07);
-  --surface-selected: rgba(0, 0, 0, 0.06);
 
   /* Text, by rank */
   --text-primary: #171A22;
@@ -98,12 +97,16 @@
   --well-bg: #e2e5ee;
   --well-edge: inset 0 1px 2px rgba(30, 41, 59, 0.10), inset 0 0 0 1px rgba(30, 41, 59, 0.05);
 
-  /* One accent, matching the blue the app already uses for links. */
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
+  /* UI-1 — `--accent`, `--accent-hover`, `--accent-soft` and `--focus-ring` used to be declared
+   * here too, at the old link-blue value (#2563eb). They are redeclared below in the CINEMATIC
+   * RESTRUCTURE block at the approved indigo, and — same specificity, later in the cascade — the
+   * later declaration always won; the value below never actually rendered. Removed rather than
+   * left as dead weight: proven zero live consumers of the #2563eb value specifically (every
+   * consumer reads the custom property by name, and the name now resolves to exactly one
+   * declaration), and light/dark/high-contrast are unaffected because nothing changes about what
+   * `var(--accent)` resolves to at runtime. `--accent-fg` has no Cinematic override and stays here.
+   */
   --accent-fg: #ffffff;
-  --accent-soft: rgba(37, 99, 235, 0.1);
-  --focus-ring: #2563eb;
 
   /* Semantic status */
   --success: #047857;
@@ -116,10 +119,12 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 10px;
-
-  /* Elevation — used sparingly, for genuinely floating layers only. */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.09), 0 1px 3px rgba(0, 0, 0, 0.05);
+  /* UI-1 — the surface-tier radii the design direction calls for, alongside the scale above rather
+   * than replacing it. Not yet wired into `.plane`/`Surface` (that migration is a later phase, once
+   * a visual diff is actually wanted) — declared now so that migration has real values to move to. */
+  --radius-card: 14px;
+  --radius-panel: 16px;
+  --radius-modal: 20px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -130,7 +135,6 @@
     --surface-elevated: #1f1f23;
     --surface-hover: rgba(255, 255, 255, 0.05);
     --surface-active: rgba(255, 255, 255, 0.09);
-    --surface-selected: rgba(255, 255, 255, 0.08);
 
     --text-primary: #f4f4f5;
     --text-secondary: #a1a1aa;
@@ -157,9 +161,6 @@
     --warning: #fbbf24;
     --error: #f87171;
     --info: #60a5fa;
-
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.4);
   }
 }
 
@@ -182,8 +183,6 @@
   --color-warning: var(--warning);
   --color-error: var(--error);
   --color-info: var(--info);
-
-  --radius-card: var(--radius-lg);
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -470,6 +469,54 @@ table {
   --accent-tint: #EEEBFF;
   --accent-tint-weak: #F7F5FF;
   --focus-ring: #5145F5;
+  /* UI-1 — Button's `pressed` state (Part 15). One step past `--accent-hover`, in the same
+   * direction hover already moves (darker in light mode). */
+  --accent-pressed: #3B30D0;
+
+  /* UI-1 — the approved cool-cyan secondary brand family (design direction §H, Option A). Same
+   * shape as `--accent`'s own token family: an opaque value for text/icon use, a hover step, a
+   * translucent `-soft` for glows (never for text), and two opaque tints for backgrounds.
+   * `--secondary` itself is #0B6D89, not the brief's nominal #0E86A8 — that value measures only
+   * 3.84:1 on the z0 canvas and 3.77:1 on its own tint, both real AA failures; #0B6D89 is the
+   * nearest tone on the same hue that clears 4.5:1 on white (5.89:1), the z0 canvas (5.38:1) and
+   * its own tint (5.28:1), matching the measured-not-guessed discipline the rest of this file
+   * already uses for --text-tertiary and the pill foregrounds above. */
+  --secondary: #0B6D89;
+  --secondary-hover: #094F63;
+  --secondary-soft: rgba(11, 109, 137, 0.12);
+  --secondary-tint: #E3F4F8;
+  --secondary-tint-weak: #F3FAFC;
+
+  /* UI-1 — Part 7's two new semantic roles, named distinctly from the concepts they used to
+   * borrow. Values are aliases to the ALREADY measured pill foregrounds/backgrounds — no new
+   * colour decision, just a name that no longer conflates two different meanings:
+   *   attention    "this needs you" — previously indistinguishable from --warning ("something is
+   *                wrong"). Status.tsx's `attention` tone read --warning directly; see below.
+   *   safety-stop  "Career-Ops deliberately stopped" — reuses the existing blue/info hue rather
+   *                than red, so a deliberate pause never reads as a bug the way --error would.
+   * `-border` values are new (the pill pattern never needed a border) and are plain low-alpha
+   * versions of the same foreground hue, not a fresh colour. */
+  --attention: var(--pill-amber-fg);
+  --attention-bg: var(--pill-amber-bg);
+  --attention-fg: var(--pill-amber-fg);
+  --attention-border: rgba(166, 93, 14, 0.30);
+
+  --safety-stop: var(--pill-blue-fg);
+  --safety-stop-bg: var(--pill-blue-bg);
+  --safety-stop-fg: var(--pill-blue-fg);
+  --safety-stop-border: rgba(34, 112, 192, 0.30);
+
+  /* UI-1 — the approved motion timing system (design direction §N), formalized as tokens rather
+   * than left as the ad hoc per-component values already scattered through this file (duration-150
+   * etc.). Existing shipped transitions are NOT retuned to these values in this phase — that would
+   * be a visual change this phase does not make; new consumers (Button's loading/success state,
+   * below) use them from the start. `--motion-emphasized` here is the CSS-transition duration; the
+   * equivalent spring config for Motion/Framer consumers lives in `src/lib/motion/tokens.ts`, which
+   * this same duration is drawn from — one source, two runtimes. */
+  --motion-fast: 120ms;
+  --motion-normal: 200ms;
+  --motion-emphasized: 320ms;
+  --motion-stagger: 55ms;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -500,6 +547,27 @@ table {
     --accent-tint: rgba(99, 102, 241, 0.16);
     --accent-tint-weak: rgba(99, 102, 241, 0.08);
     --focus-ring: #818cf8;
+    /* UI-1 — dark-mode pressed state. Hover already lightens from --accent; pressed continues in
+     * that direction rather than reversing it, and reuses the tone --tile-lav-fg already validates
+     * on this exact canvas. */
+    --accent-pressed: #a5b4fc;
+
+    /* UI-1 — secondary brand family, dark. Light mode is the measured specification; dark keeps
+     * the same roles at tones that clear contrast on a graphite canvas (10.6:1 on --z0-bg, 8.7:1 on
+     * its own tint) rather than inverting the light values, matching this file's own stated
+     * discipline for every other role above. */
+    --secondary: #6FCBE0;
+    --secondary-hover: #8ED8E8;
+    --secondary-soft: rgba(111, 203, 224, 0.18);
+    --secondary-tint: rgba(111, 203, 224, 0.16);
+    --secondary-tint-weak: rgba(111, 203, 224, 0.08);
+
+    /* UI-1 — attention/safety-stop themselves need no dark override: both are var() aliases to
+     * --pill-amber-fg/-bg and --pill-blue-fg/-bg, which already have their own dark values a few
+     * lines below in this same block, and a var() reference resolves through the cascade at use
+     * time. Only the literal `-border` rgba values need restating for the dark foreground hues. */
+    --attention-border: rgba(252, 211, 77, 0.30);
+    --safety-stop-border: rgba(147, 197, 253, 0.30);
 
     /* The approved palette is a light-mode specification. Dark keeps the same ROLES with tones
      * that belong to a graphite canvas — a #E7F7EE pill would be a lamp on this surface. */
@@ -794,7 +862,6 @@ table {
     --surface-sidebar: #f4f4f5;
     --surface-hover: #e4e4e7;
     --surface-active: #d4d4d8;
-    --surface-selected: #e4e4e7;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -802,7 +869,6 @@ table {
       --surface-sidebar: #131316;
       --surface-hover: #27272a;
       --surface-active: #3f3f46;
-      --surface-selected: #27272a;
     }
   }
 }

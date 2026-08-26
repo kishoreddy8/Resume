@@ -158,11 +158,15 @@ export function StatTile({
   );
 }
 
-export type PillTone = "success" | "warning" | "info" | "danger" | "neutral";
+/* UI-1 — "attention" added alongside "warning", not replacing it: the design direction's rule is
+ * that "needs you" and "something is wrong" are different meanings, so a caller can now say which
+ * one it means. Existing "warning" callers are unaffected. */
+export type PillTone = "success" | "warning" | "attention" | "info" | "danger" | "neutral";
 
 const PILL_TONE: Record<PillTone, string> = {
   success: "bg-[var(--pill-success-bg)] text-[var(--pill-success-fg)]",
   warning: "bg-[var(--pill-amber-bg)] text-[var(--pill-amber-fg)]",
+  attention: "bg-[var(--attention-bg)] text-[var(--attention-fg)]",
   info: "bg-[var(--pill-blue-bg)] text-[var(--pill-blue-fg)]",
   danger: "bg-[var(--pill-red-bg)] text-[var(--pill-red-fg)]",
   neutral: "bg-[var(--z0-bg)] text-secondary",
