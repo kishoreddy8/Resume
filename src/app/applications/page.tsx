@@ -16,10 +16,10 @@ import {
 } from "@/components/ui";
 import {
   IconArrowUpRight,
-  IconCheckCircle,
   IconDocument,
   IconInbox,
   IconSearch,
+  IconShield,
   IconStar,
   IconTrend,
 } from "@/components/icons";
@@ -50,17 +50,19 @@ interface RunRow {
 
 const EMPTY_COPY: Record<ApplicationGroupId | "all", string> = {
   all: "No applications yet",
-  "needs-action": "Nothing needs your action.",
+  "needs-you": "Nothing needs you right now.",
   "in-progress": "No applications are in progress.",
+  "ready-for-review": "Nothing is ready for review yet.",
   submitted: "No confirmed submissions yet.",
-  completed: "No completed applications.",
+  "needs-attention": "Nothing needs attention.",
 };
 
 const SUMMARY_ICON: Record<ApplicationGroupId, ReactNode> = {
-  "needs-action": <IconStar size={22} />,
+  "needs-you": <IconStar size={22} />,
   "in-progress": <IconTrend size={22} />,
+  "ready-for-review": <IconDocument size={22} />,
   submitted: <IconInbox size={22} />,
-  completed: <IconCheckCircle size={22} />,
+  "needs-attention": <IconShield size={22} />,
 };
 
 function initials(name: string | null): string {
@@ -111,10 +113,11 @@ export default function ApplicationsPage() {
 
   const grouped = useMemo(() => {
     const next: Record<ApplicationGroupId, RunRow[]> = {
-      "needs-action": [],
+      "needs-you": [],
       "in-progress": [],
+      "ready-for-review": [],
       submitted: [],
-      completed: [],
+      "needs-attention": [],
     };
     for (const run of runs ?? []) next[groupForStatus(run.status)].push(run);
     for (const group of APPLICATION_GROUPS) {
@@ -124,9 +127,16 @@ export default function ApplicationsPage() {
   }, [runs]);
 
   const counts = useMemo(() => {
-    const next: Record<ApplicationGroupId | "all", number> = { all: runs?.length ?? 0, "needs-action": 0, "in-progress": 0, submitted: 0, completed: 0 };
+    const next: Record<ApplicationGroupId | "all", number> = {
+      all: runs?.length ?? 0,
+      "needs-you": 0,
+      "in-progress": 0,
+      "ready-for-review": 0,
+      submitted: 0,
+      "needs-attention": 0,
+    };
     /* The fallback also keeps Fast Refresh safe when this presentation table and the grouping
-     * module update in adjacent frames; production data still always has all four buckets. */
+     * module update in adjacent frames; production data still always has all five buckets. */
     for (const group of APPLICATION_GROUPS) next[group.id] = grouped[group.id]?.length ?? 0;
     return next;
   }, [grouped, runs]);
@@ -227,10 +237,11 @@ export default function ApplicationsPage() {
 
 function SummaryTile({ icon, group, label, value, hint, onClick }: { icon: ReactNode; group: ApplicationGroupId; label: string; value: number; hint: string; onClick: () => void }) {
   const tone = {
-    "needs-action": "bg-[var(--tile-amber-bg)] text-[var(--tile-amber-fg)]",
+    "needs-you": "bg-[var(--tile-amber-bg)] text-[var(--tile-amber-fg)]",
     "in-progress": "bg-[var(--tile-lav-bg)] text-[var(--tile-lav-fg)]",
+    "ready-for-review": "bg-[var(--tile-amber-bg)] text-[var(--tile-amber-fg)]",
     submitted: "bg-[var(--tile-blue-bg)] text-[var(--tile-blue-fg)]",
-    completed: "bg-[var(--tile-green-bg)] text-[var(--tile-green-fg)]",
+    "needs-attention": "bg-[var(--tile-amber-bg)] text-[var(--tile-amber-fg)]",
   }[group];
   return (
     <article className="premium-hover-lift flex min-h-[166px] flex-col rounded-[16px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 shadow-[var(--lift-1)] sm:rounded-[18px] sm:p-5">

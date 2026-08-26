@@ -1,23 +1,28 @@
-import { presentStatus, type Marker } from "./runStatus";
+import { presentStatus } from "./runStatus";
 
 /**
- * Which of the four candidate-facing groups a run belongs to.
+ * Which of the five candidate-facing groups a run belongs to.
  *
- * DERIVED FROM `presentStatus`, NOT FROM THE STATUS STRING. Every decision below reads the existing
- * presentation contract — `needsUser` and `marker` — so there is exactly one place that knows what
- * a run state means. A second switch over RunStatus here is how "Submitted" and "needs you" would
- * eventually disagree between the list and the detail.
+ * UI-A — this was a four-group model (needs-action/in-progress/submitted/completed) that collapsed
+ * two genuinely different things into one bucket each:
+ *   - "needs-action" covered both "answer a question" (WAITING_FOR_ANSWER, verification, account
+ *     setup) and "go read and approve this" (READY_FOR_REVIEW, WAITING_FOR_SUBMIT_APPROVAL) — the
+ *     same action verb, "needs you", for two different candidate intents.
+ *   - "completed" covered a genuine engine failure (FAILED) and a routine, unremarkable candidate
+ *     cancellation (CANCELLED) under one success-toned ("completed") label, while a run whose
+ *     submission could not be CONFIRMED (SUBMISSION_UNCONFIRMED — needsUser: true) sorted into
+ *     "needs-action" instead, nowhere near the other terminal-but-uncertain outcomes it belongs with.
  *
- * "Completed" is the lifecycle bucket for runs that have ended without a confirmed submission.
- * The row keeps the engine-derived candidate label (Stopped or Cancelled), so the group never turns
- * an unsuccessful outcome into a successful one.
- *
- * WHY SUBMISSION_UNCONFIRMED IS NOT UNDER "SUBMITTED". Its `needsUser` is true — the click happened
- * but nothing confirmed it landed, and that is a thing a person has to check. It sorts into "Needs
- * your action" for exactly that reason, and its row still reads "Submission unconfirmed".
+ * DERIVED FROM `presentStatus`, NOT FROM THE STATUS STRING, wherever that alone is enough to decide
+ * — so there is exactly one place that knows what a run state means. The two `status ===` checks
+ * below are the only exceptions, and both are forced: READY_FOR_REVIEW and WAITING_FOR_SUBMIT_
+ * APPROVAL share the identical (marker: "waiting", needsUser: true) shape as WAITING_FOR_ANSWER and
+ * every verification state in STATUS_PRESENTATION, so nothing on that shared shape can distinguish
+ * "answer a question" from "go review and approve" — the same pattern `primaryActionLabel` and
+ * `applicationContext` already use elsewhere in this file for the same reason.
  */
 
-export type ApplicationGroupId = "needs-action" | "in-progress" | "submitted" | "completed";
+export type ApplicationGroupId = "needs-you" | "in-progress" | "ready-for-review" | "submitted" | "needs-attention";
 
 export interface ApplicationGroup {
   id: ApplicationGroupId;
@@ -27,47 +32,51 @@ export interface ApplicationGroup {
   cardLabel: string;
   /** Summary-card supporting line. */
   cardHint: string;
-  tone: "warning" | "accent" | "info" | "success";
 }
 
 export const APPLICATION_GROUPS: ApplicationGroup[] = [
   {
-    id: "needs-action",
-    label: "Needs your action",
-    cardLabel: "Needs your action",
-    cardHint: "Requires your input",
-    tone: "warning",
+    id: "needs-you",
+    label: "Needs you",
+    cardLabel: "Needs You",
+    cardHint: "Answer a question or continue",
   },
   {
     id: "in-progress",
     label: "In progress",
-    cardLabel: "In progress",
+    cardLabel: "In Progress",
     cardHint: "Applications running",
-    tone: "accent",
+  },
+  {
+    id: "ready-for-review",
+    label: "Ready for review",
+    cardLabel: "Ready for Review",
+    cardHint: "Read it, then approve to submit",
   },
   {
     id: "submitted",
     label: "Submitted",
     cardLabel: "Submitted",
     cardHint: "Sent to employers",
-    tone: "info",
   },
   {
-    id: "completed",
-    label: "Completed",
-    cardLabel: "Completed",
-    cardHint: "Finished or cancelled",
-    tone: "success",
+    id: "needs-attention",
+    label: "Needs attention",
+    cardLabel: "Needs Attention",
+    cardHint: "Stopped, cancelled, or unconfirmed",
   },
 ];
 
 export function groupForStatus(status: string): ApplicationGroupId {
-  const p = presentStatus(status);
-  if (p.needsUser) return "needs-action";
+  if (status === "READY_FOR_REVIEW" || status === "WAITING_FOR_SUBMIT_APPROVAL") return "ready-for-review";
 
-  const marker: Marker = p.marker;
-  if (marker === "done") return "submitted";
-  if (marker === "stopped") return "completed";
+  const p = presentStatus(status);
+  /* SUBMISSION_UNCONFIRMED (marker: "unknown") joins FAILED/CANCELLED (marker: "stopped") here —
+   * all three are terminal-or-uncertain outcomes a candidate should look at, not routine "type an
+   * answer" states. Its row keeps its own honest label ("Submission unconfirmed"), never "Stopped". */
+  if (p.marker === "stopped" || p.marker === "unknown") return "needs-attention";
+  if (p.marker === "done") return "submitted";
+  if (p.needsUser) return "needs-you";
   /* running and waiting-without-a-person: queued, starting, navigating, filling, submitting. */
   return "in-progress";
 }
@@ -123,7 +132,7 @@ export function applicationContext(status: string, prompt: string | null): strin
     case "SUBMITTED":
       return "The employer site confirmed submission.";
     case "SUBMISSION_UNCONFIRMED":
-      return "JobHunt attempted submission but could not confirm the employer site accepted it.";
+      return "Career-Ops attempted submission but could not confirm the employer site accepted it.";
     case "FAILED":
       return "This application run stopped.";
     case "CANCELLED":

@@ -17,7 +17,7 @@ import { sourceLabel } from "@/app/jobs/sourceLabel";
 import { presentStatus, shouldPollRunStatus } from "../runStatus";
 import type { RunStatus } from "@/lib/apply/runState";
 import { applicationContext, detailPhase, primaryActionLabel, type DetailPhase } from "../grouping";
-import { eventLabel } from "../eventLabels";
+import { eventLabel, groupSummaryLabel, groupTimelineEvents } from "../eventLabels";
 import { Disclosure } from "@/app/jobs/[id]/Disclosure";
 import { buildAnswerSubmission, requiredQuestionsSatisfied } from "./questionBatch";
 
@@ -149,6 +149,12 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
   const [humanQuestions, setHumanQuestions] = useState<HumanQuestion[] | null>(null);
   const [batchAnswers, setBatchAnswers] = useState<Record<string, string>>({});
   const [batchReuse, setBatchReuse] = useState<Record<string, boolean>>({});
+  /* UI-A — true only for the real, narrow window between "the server accepted the saved answers
+   * and confirmed the run is resuming" and the next `load()` resolving with whatever the run's
+   * actual new state is. Never set on the button click itself — only after both POSTs below
+   * genuinely succeed — so this can never show "continuing" for a save that failed or a resume the
+   * server refused. */
+  const [justResumed, setJustResumed] = useState(false);
   const answerRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -256,7 +262,6 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
 
             {run.status === "WAITING_FOR_ANSWER" && humanQuestions && humanQuestions.length > 0 ? (
               <BatchQuestionForm
-                run={run}
                 humanQuestions={humanQuestions}
                 batchAnswers={batchAnswers}
                 batchReuse={batchReuse}
@@ -288,36 +293,56 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
                       body: JSON.stringify({ action: "resume", runId: run.id }),
                     });
                     if (!resumeRes.ok) {
+                      /* UI-A.1 checkpoint fix — saveRes.ok was already confirmed true above, so it
+                       * is provably true that the answers were persisted even though resuming
+                       * failed. The prior generic fallback ("Could not resume application.") could
+                       * read as "did my answers even save?" — say plainly that they did. The form
+                       * is deliberately left as-is (no reload here) so nothing the candidate typed
+                       * appears to vanish. */
                       const b = await resumeRes.json().catch(() => ({}));
-                      setError((b as { error?: string }).error ?? "Could not resume application.");
+                      const detail = (b as { error?: string }).error;
+                      setError(
+                        `Your answers were saved, but Career-Ops couldn't continue the application${detail ? `: ${detail}` : "."}`
+                      );
                       return;
                     }
+                    /* Both POSTs above are real, confirmed successes at this point — the run is
+                     * genuinely resuming, not merely "the button was clicked". `load()` below has its
+                     * own network round trip, so this renders for the real duration of that wait,
+                     * then yields to whatever the run's actual next state turns out to be. */
+                    setJustResumed(true);
                     await load();
                   } catch {
                     setError("Could not save answers and resume.");
                   } finally {
                     setBusy(null);
+                    setJustResumed(false);
                   }
                 }}
               />
+            ) : justResumed ? (
+              <div className="mt-4 rounded-[12px] bg-[var(--pill-success-bg)] p-3.5">
+                <p className="text-[14px] font-semibold text-[var(--pill-success-fg)]">Answers saved.</p>
+                <p className="mt-1 text-[13px] leading-5 text-secondary">Career-Ops is continuing your application…</p>
+              </div>
             ) : run.status === "WAITING_FOR_ANSWER" && run.question ? (
               <div className="mt-4">
                 <p className="text-[15px] font-semibold leading-6 text-primary">{run.question}</p>
                 <label className="mt-3 block"><span className="text-[14px] font-medium text-secondary">Your answer</span><input ref={answerRef} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Enter your answer" className="mt-2 min-h-11 w-full rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-3 text-[16px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]" /></label>
                 <label className="mt-3 flex min-h-11 items-center gap-3 text-[14px] text-secondary"><input type="checkbox" checked={reuse} onChange={(event) => setReuse(event.target.checked)} className="h-5 w-5 accent-[var(--accent)]" />Reuse this answer for equivalent questions</label>
                 <button type="button" onClick={() => post({ runId: run.id, answer, reuseForEquivalentQuestions: reuse }, "answer")} disabled={busy !== null || answer.trim().length === 0} className={`${BTN_PRIMARY} mt-3 min-h-11 text-[14px]`}>{busy === "answer" ? "Saving…" : "Save answer and continue"}</button>
-                <p className="mt-3 text-[13px] leading-5 text-tertiary">JobHunt never answers a question it cannot evidence. Your answer is used exactly as provided.</p>
+                <p className="mt-3 text-[13px] leading-5 text-tertiary">Career-Ops never answers a question it cannot evidence. Your answer is used exactly as provided.</p>
               </div>
             ) : verificationState ? (
-              <div className="mt-4"><h3 className="text-[17px] font-bold text-primary">Verification required</h3><p className="mt-2 text-[15px] leading-6 text-secondary">This site needs you to complete a verification step before JobHunt can continue. JobHunt will not solve CAPTCHA, MFA, or email verification for you.</p>{run.blockingReason && <p className="mt-2 text-[13px] leading-5 text-tertiary">{run.blockingReason}</p>}<button type="button" onClick={() => post({ action: "resume", runId: run.id }, "resume")} disabled={busy !== null} className={`${BTN_PRIMARY} mt-4 min-h-11 text-[14px]`}>{busy === "resume" ? "Opening…" : run.status === "ACCOUNT_REQUIRED" ? "Continue setup" : "Continue verification"}</button></div>
+              <div className="mt-4"><h3 className="text-[17px] font-bold text-primary">Verification required</h3><p className="mt-2 text-[15px] leading-6 text-secondary">This site needs you to complete a verification step before Career-Ops can continue. Career-Ops will not solve CAPTCHA, MFA, or email verification for you.</p>{run.blockingReason && <p className="mt-2 text-[13px] leading-5 text-tertiary">{run.blockingReason}</p>}<button type="button" onClick={() => post({ action: "resume", runId: run.id }, "resume")} disabled={busy !== null} className={`${BTN_PRIMARY} mt-4 min-h-11 text-[14px]`}>{busy === "resume" ? "Opening…" : run.status === "ACCOUNT_REQUIRED" ? "Continue setup" : "Continue verification"}</button></div>
             ) : reviewState && review ? (
               <FinalReview run={run} review={review} busy={busy} onSubmit={() => post({ action: "submit", runId: run.id, approvedRunId: run.id }, "submit")} />
             ) : run.status === "SUBMITTING" ? (
-              <div className="mt-4"><h3 className="text-[17px] font-bold text-primary">Submitting application</h3><p className="mt-2 text-[15px] leading-6 text-secondary">JobHunt is sending the application you approved. It is not marked submitted until the employer site confirms acceptance.</p></div>
+              <div className="mt-4"><h3 className="text-[17px] font-bold text-primary">Submitting application</h3><p className="mt-2 text-[15px] leading-6 text-secondary">Career-Ops is sending the application you approved. It is not marked submitted until the employer site confirms acceptance.</p></div>
             ) : run.status === "SUBMITTED" ? (
               <div className="mt-4"><div className="flex items-center gap-2 text-[var(--success)]"><IconCheckCircle size={20} /><h3 className="text-[17px] font-bold">Submitted</h3></div><p className="mt-2 text-[15px] leading-6 text-secondary">The employer site confirmed this application.</p>{run.confirmationText && <p className="mt-2 rounded-[10px] bg-[var(--pill-success-bg)] p-3 text-[14px] leading-6 text-[var(--pill-success-fg)]">“{run.confirmationText}”</p>}</div>
             ) : run.status === "SUBMISSION_UNCONFIRMED" ? (
-              <div className="mt-4"><h3 className="text-[17px] font-bold text-[var(--warning)]">Submission unconfirmed</h3><p className="mt-2 text-[15px] leading-6 text-secondary">JobHunt attempted submission but could not confirm the employer site accepted it.</p>{run.applyUrl && <a href={run.applyUrl} target="_blank" rel="noopener noreferrer" className={`${BTN_PRIMARY} mt-4 min-h-11 text-[14px]`}>Review status<IconArrowUpRight size={14} /></a>}</div>
+              <div className="mt-4"><h3 className="text-[17px] font-bold text-[var(--warning)]">Submission unconfirmed</h3><p className="mt-2 text-[15px] leading-6 text-secondary">Career-Ops attempted submission but could not confirm the employer site accepted it.</p>{run.applyUrl && <a href={run.applyUrl} target="_blank" rel="noopener noreferrer" className={`${BTN_PRIMARY} mt-4 min-h-11 text-[14px]`}>Review status<IconArrowUpRight size={14} /></a>}</div>
             ) : run.status === "FAILED" || run.status === "CANCELLED" ? (
               /* UI-0 DEFECT 3 — blockingReason was already fetched by `load()` and sent by the API
                * on every run of every status; it was simply never rendered here. This is what the
@@ -368,7 +393,7 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
         <aside className="grid gap-5">
           <section id="history" aria-labelledby="application-history-title" className="rounded-[16px] border border-[var(--border)] bg-[var(--z3-bg)] p-5 shadow-[var(--lift-1)]">
             <h2 id="application-history-title" className="text-[17px] font-bold text-primary">Timeline</h2>
-            {events.length === 0 ? <p className="mt-3 text-[14px] leading-6 text-tertiary">No events have been recorded for this run yet.</p> : <ol className="mt-4 grid gap-4">{events.map((event) => <li key={event.id} className="relative border-l-2 border-[var(--separator)] pl-4"><span aria-hidden="true" className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-[var(--accent)]" /><p className="text-[14px] font-semibold text-primary">{eventLabel(event.event_type, event.detail)}</p><p className="mt-1 text-[13px] text-tertiary">{formatDate(event.created_at)}</p>{event.detail && <p className="mt-1 text-[13px] leading-5 text-secondary">{event.detail}</p>}</li>)}</ol>}
+            {events.length === 0 ? <p className="mt-3 text-[14px] leading-6 text-tertiary">No events have been recorded for this run yet.</p> : <Timeline events={events} />}
           </section>
           {run.applyUrl && <a href={run.applyUrl} target="_blank" rel="noopener noreferrer" className={`${BTN_SECONDARY} min-h-11 w-full text-[14px]`}>View employer posting<IconArrowUpRight size={14} /></a>}
         </aside>
@@ -379,17 +404,55 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
   );
 }
 
+/**
+ * UI-A Part 27 — Final Submit must never look or click like an ordinary next-step button (Save
+ * Answers & Continue, Continue verification, Continue setup all use BTN_PRIMARY). This reuses the
+ * exact same design tokens (`--accent-hover`, `--accent-fg`, the existing lift-shadow scale) at a
+ * heavier weight and size, so the deliberate-consequence treatment comes from composition, not a
+ * new color.
+ *
+ * UI-A.1 checkpoint — deliberately NOT gated behind a second confirmation (a `window.confirm` was
+ * tried here during implementation and removed on review). The pre-existing FinalReview screen —
+ * read the answers/documents/warnings, then click ONE button whose own label already states the
+ * consequence in full ("Submit application to {company}") — already IS the one clear, intentional
+ * confirmation boundary this action needs. A native dialog on top would ask the same yes/no question
+ * a second time in inconsistent, un-themed browser chrome, adding friction without adding real
+ * safety; the existing server-side approval gate (approvedRunId, unchanged) is what actually
+ * prevents an unapproved submission, not any UI-layer confirmation step.
+ */
+const SUBMIT_BTN =
+  "candidate-control inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-[12px] bg-[var(--accent-hover)] px-6 text-[15px] font-bold text-[var(--accent-fg)] shadow-[var(--lift-2)] transition-[transform,filter] duration-150 ease-out hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto";
+
 function FinalReview({ run, review, busy, onSubmit }: { run: RunDetail; review: Review; busy: null | "answer" | "resume" | "submit"; onSubmit: () => void }) {
+  const company = run.company ?? "this employer";
   return (
     <div className="mt-4">
       <h3 className="text-[18px] font-bold text-primary">Final review</h3>
       <p className="mt-2 text-[15px] font-semibold leading-6 text-primary">Nothing will be submitted until you approve this application.</p>
       <p className="mt-1 text-[14px] leading-6 text-secondary">Review the documents, employer, role, destination, and application answers below.</p>
+      {/* UI-A.1 checkpoint fix — real counts from the review the server already computed, never an
+       *  invented aggregate; zero is shown honestly, never hidden. The copy itself was rewritten
+       *  during checkpoint review: `answers` here (buildFinalReview, finalReview.ts) is sourced per
+       *  entry from AnswerSource, which includes USER_INTERVENTION and APPLICATION_ANSWER_VAULT —
+       *  values the candidate themselves supplied — alongside profile/resume-derived ones. Calling
+       *  the whole count "completed automatically" would be false for any answer that came from the
+       *  candidate. This states only the neutral, always-true fact: what is recorded for review. */}
+      <p className="mt-3 text-[13px] leading-5 text-tertiary">
+        This review includes {review.answers.length} recorded answer{review.answers.length === 1 ? "" : "s"}
+        {review.documents.length > 0 ? ` and ${review.documents.length} attached document${review.documents.length === 1 ? "" : "s"}` : ""}.
+      </p>
       <div className="mt-4 grid gap-3 rounded-[12px] bg-[var(--z0-bg)] p-4 sm:grid-cols-2"><Info label="Employer" value={run.company ?? "Company unknown"} /><Info label="Role" value={run.title} /><Info label="Resume" value={fileName(run.resumeFile) ?? "None attached"} /><Info label="Cover letter" value={fileName(run.coverLetterFile) ?? "None attached"} /></div>
       {review.answers.length > 0 && <div className="mt-4"><h4 className="text-[14px] font-bold text-primary">Application answers</h4><ul className="mt-2 grid gap-2">{review.answers.map((item) => <li key={item.question} className="rounded-[10px] border border-[var(--border)] p-3 text-[14px] leading-6"><span className="font-medium text-secondary">{item.question}</span><p className="text-primary">{item.value}</p><span className="text-[12px] text-tertiary">Source: {item.source.replace(/_/g, " ").toLowerCase()}</span></li>)}</ul></div>}
       {review.warnings.length > 0 && <ul className="mt-4 grid gap-2 text-[14px] leading-6 text-[var(--warning)]">{review.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
       {review.unresolved.length > 0 && <div className="mt-4 rounded-[11px] bg-[var(--pill-red-bg)] p-4"><h4 className="text-[14px] font-bold text-[var(--pill-red-fg)]">Still unanswered</h4><ul className="mt-2 grid gap-1 text-[13px] leading-5 text-secondary">{review.unresolved.map((item) => <li key={item.question}>{item.question} — {item.reason}</li>)}</ul></div>}
-      <button type="button" onClick={onSubmit} disabled={busy !== null || !review.canApprove} className={`${BTN_PRIMARY} mt-5 min-h-11 text-[14px]`}>{busy === "submit" ? "Submitting…" : "Approve & Submit"}</button>
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={busy !== null || !review.canApprove}
+        className={`${SUBMIT_BTN} mt-5`}
+      >
+        {busy === "submit" ? "Submitting…" : `Submit application to ${company}`}
+      </button>
       {!review.canApprove && <p className="mt-2 text-[13px] leading-5 text-tertiary">Answer everything still unresolved before this application can be submitted.</p>}
     </div>
   );
@@ -480,8 +543,48 @@ function QuestionControl({
   );
 }
 
+/** One question card — a real field the employer's form asked for, in whatever control shape it
+ *  actually is (see QuestionControl). Used for both the Required and Optional groups below; a
+ *  question never disappears or collapses regardless of which group it is in or what the candidate
+ *  has typed into it — the group only changes where it sorts, not whether it stays visible. */
+function QuestionField({
+  q,
+  value,
+  reuse,
+  onAnswerChange,
+  onReuseChange,
+}: {
+  q: HumanQuestion;
+  value: string;
+  reuse: boolean;
+  onAnswerChange: (id: string, value: string) => void;
+  onReuseChange: (id: string, value: boolean) => void;
+}) {
+  return (
+    <div className="rounded-[12px] border border-[var(--border)] bg-[var(--z0-bg)] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <label htmlFor={`batch-${q.id}`} className="block text-[14px] font-semibold text-primary">
+          {q.label}
+          {q.required && <span className="ml-1 text-[var(--error)]" aria-label="required">*</span>}
+        </label>
+        {/* UI-A Part 11 — voluntary/sensitive questions get distinct framing, never implied required. */}
+        {q.questionType === "voluntary_demographic" && (
+          <span className="shrink-0 rounded-full bg-[var(--attention-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--attention-fg)]">Voluntary</span>
+        )}
+      </div>
+      {q.reason && <p className="mt-1 text-[12px] leading-5 text-tertiary">{q.reason}</p>}
+      <QuestionControl question={q} value={value} onChange={(next) => onAnswerChange(q.id, next)} />
+      {q.questionType !== "voluntary_demographic" && (
+        <label className="mt-2 flex min-h-9 items-center gap-2 text-[13px] text-secondary">
+          <input type="checkbox" checked={reuse} onChange={(e) => onReuseChange(q.id, e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+          Remember this answer for equivalent questions
+        </label>
+      )}
+    </div>
+  );
+}
+
 function BatchQuestionForm({
-  run: _run,
   humanQuestions,
   batchAnswers,
   batchReuse,
@@ -490,7 +593,6 @@ function BatchQuestionForm({
   onReuseChange,
   onSave,
 }: {
-  run: RunDetail;
   humanQuestions: HumanQuestion[];
   batchAnswers: Record<string, string>;
   batchReuse: Record<string, boolean>;
@@ -502,40 +604,118 @@ function BatchQuestionForm({
   /* UI-0 DEFECT 4 — gates on REQUIRED questions only. An unanswered optional question (Address
    * Line 2, County, Phone Extension on the real Workday run this fixes) must never block saving. */
   const canSave = requiredQuestionsSatisfied(humanQuestions, batchAnswers);
+  /* UI-A — grouped by the one real, authoritative field the payload carries (`required`), not by a
+   * page/section the payload does not expose (HumanQuestion has no such field — inventing one here
+   * would be exactly the fabrication Career-Ops exists to refuse). Every question stays visible and
+   * editable regardless of group; nothing here ever collapses or hides a question. */
+  const requiredQuestions = humanQuestions.filter((q) => q.required);
+  const optionalQuestions = humanQuestions.filter((q) => !q.required);
   return (
     <div className="mt-4">
       <h3 className="text-[17px] font-bold text-primary">Questions from the employer</h3>
-      <p className="mt-1 text-[14px] leading-6 text-secondary">Answer the required questions below — anything marked optional can be left blank. JobHunt will then continue filling your application automatically.</p>
-      <div className="mt-4 grid gap-5">
-        {humanQuestions.map((q) => (
-          <div key={q.id} className="rounded-[12px] border border-[var(--border)] bg-[var(--z0-bg)] p-4">
-            <label htmlFor={`batch-${q.id}`} className="block text-[14px] font-semibold text-primary">{q.label}{q.required && <span className="ml-1 text-[var(--error)]" aria-label="required">*</span>}</label>
-            {q.reason && <p className="mt-1 text-[12px] leading-5 text-tertiary">{q.reason}</p>}
-            <QuestionControl question={q} value={batchAnswers[q.id] ?? ""} onChange={(value) => onAnswerChange(q.id, value)} />
-            {q.questionType !== "voluntary_demographic" && (
-              <label className="mt-2 flex min-h-9 items-center gap-2 text-[13px] text-secondary">
-                <input
-                  type="checkbox"
-                  checked={batchReuse[q.id] ?? false}
-                  onChange={(e) => onReuseChange(q.id, e.target.checked)}
-                  className="h-4 w-4 accent-[var(--accent)]"
-                />
-                Remember this answer for equivalent questions
-              </label>
-            )}
+      <p className="mt-1 text-[14px] leading-6 text-secondary">Career-Ops completed everything it could on its own. Answer the required questions below — anything marked optional can be left blank — and Career-Ops will continue filling your application automatically.</p>
+      {requiredQuestions.length > 0 && (
+        <div className="mt-4">
+          <h4 className="text-[12px] font-semibold uppercase tracking-[0.07em] text-tertiary">Required</h4>
+          <div className="mt-2 grid gap-5">
+            {requiredQuestions.map((q) => (
+              <QuestionField key={q.id} q={q} value={batchAnswers[q.id] ?? ""} reuse={batchReuse[q.id] ?? false} onAnswerChange={onAnswerChange} onReuseChange={onReuseChange} />
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
+      {optionalQuestions.length > 0 && (
+        <div className="mt-5">
+          <h4 className="text-[12px] font-semibold uppercase tracking-[0.07em] text-tertiary">Optional</h4>
+          <p className="mt-1 text-[12.5px] leading-5 text-tertiary">These are not required by the employer. Leave any of them blank if you prefer.</p>
+          <div className="mt-2 grid gap-5">
+            {optionalQuestions.map((q) => (
+              <QuestionField key={q.id} q={q} value={batchAnswers[q.id] ?? ""} reuse={batchReuse[q.id] ?? false} onAnswerChange={onAnswerChange} onReuseChange={onReuseChange} />
+            ))}
+          </div>
+        </div>
+      )}
       <button
         type="button"
         onClick={onSave}
         disabled={busy !== null || !canSave}
-        className={`${BTN_PRIMARY} mt-5 min-h-11 text-[14px]`}
+        className={`${BTN_PRIMARY} mt-5 min-h-11 text-[14px] lg:w-auto`}
       >
         {busy === "answer" ? "Saving…" : "Save Answers & Continue"}
       </button>
-      <p className="mt-2 text-[13px] leading-5 text-tertiary">Saving answers does not submit the application. JobHunt will continue filling the form and stop again if it needs more from you.</p>
+      <p className="mt-2 text-[13px] leading-5 text-tertiary">Saving answers does not submit the application. Career-Ops will continue filling the form and stop again if it needs more from you.</p>
+      {/* UI-A Part 32 — the sticky mobile duplicate of the SAME Save button above (same onSave,
+       *  same disabled gate) so a long question batch never leaves the primary action scrolled out
+       *  of reach. Fixed above MobileBottomNav using the exact convention established and pointer-
+       *  event-verified in UI-5.1 (56px nav height + safe-area-inset-bottom). Extra bottom padding
+       *  on the form reserves room so this bar never covers the last question or its own inline
+       *  button. */}
+      <div className="h-[84px] lg:hidden" aria-hidden="true" />
+      <div className="fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-30 border-t border-[var(--border)] bg-[var(--z3-bg)] p-3 shadow-[var(--shadow-hero)] lg:hidden">
+        <button type="button" onClick={onSave} disabled={busy !== null || !canSave} className={`${BTN_PRIMARY} block w-full min-h-11 text-center text-[14px]`}>
+          {busy === "answer" ? "Saving…" : "Save Answers & Continue"}
+        </button>
+      </div>
     </div>
+  );
+}
+
+/**
+ * UI-A Part 20 — a narrated timeline, not 100 equally-weighted rows. Every real event still exists
+ * (grouping.ts never deletes anything and this component never drops an event either) — a
+ * repetitive run of the SAME low-value type collapses to one summary row with a real count and a
+ * "Show all" toggle that reveals the exact same rows the ungrouped list would have shown. Milestone
+ * events (status changes, questions, errors, submit) are never grouped and always show individually.
+ */
+function Timeline({ events }: { events: RunEvent[] }) {
+  const items = groupTimelineEvents(events);
+  return (
+    <ol className="mt-4 grid gap-4">
+      {items.map((item, index) =>
+        item.kind === "single" ? (
+          <TimelineRow key={item.event.id} event={item.event} />
+        ) : (
+          <TimelineGroup key={`group-${index}-${item.events[0]!.id}`} eventType={item.eventType} events={item.events} />
+        )
+      )}
+    </ol>
+  );
+}
+
+function TimelineRow({ event }: { event: RunEvent }) {
+  return (
+    <li className="relative border-l-2 border-[var(--separator)] pl-4">
+      <span aria-hidden="true" className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-[var(--accent)]" />
+      <p className="text-[14px] font-semibold text-primary">{eventLabel(event.event_type, event.detail)}</p>
+      <p className="mt-1 text-[13px] text-tertiary">{formatDate(event.created_at)}</p>
+      {event.detail && <p className="mt-1 text-[13px] leading-5 text-secondary">{event.detail}</p>}
+    </li>
+  );
+}
+
+function TimelineGroup({ eventType, events }: { eventType: string; events: RunEvent[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const first = events[0]!;
+  const last = events[events.length - 1]!;
+  return (
+    <li className="relative border-l-2 border-[var(--separator)] pl-4">
+      <span aria-hidden="true" className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-[var(--separator)]" />
+      <p className="text-[14px] font-semibold text-primary">{groupSummaryLabel(eventType, events.length)}</p>
+      <p className="mt-1 text-[13px] text-tertiary">{formatDate(first.created_at)} – {formatDate(last.created_at)}</p>
+      <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-1.5 min-h-9 text-[13px] font-semibold text-[var(--accent)] hover:underline">
+        {expanded ? "Hide details" : `Show all ${events.length}`}
+      </button>
+      {expanded && (
+        <ol className="mt-3 grid gap-3 border-t border-[var(--separator)] pt-3">
+          {events.map((event) => (
+            <li key={event.id}>
+              <p className="text-[13px] font-medium text-secondary">{eventLabel(event.event_type, event.detail)}</p>
+              <p className="mt-0.5 text-[12px] text-tertiary">{formatDate(event.created_at)}</p>
+            </li>
+          ))}
+        </ol>
+      )}
+    </li>
   );
 }
 

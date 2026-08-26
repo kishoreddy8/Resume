@@ -91,6 +91,71 @@ function entryStepLabel(detail: string | null, verb: string): string {
   return `${verb} a step of the application`;
 }
 
+/** Event types repetitive enough (one per field/document/pre-form step) that a long run of the
+ *  identical type in a row is noise rather than narration — Part 20's "collapse low-value
+ *  repetitive fill events". Never includes a milestone (status change, question batch, error,
+ *  submit) — those always render as their own row, however many there are. */
+const COLLAPSIBLE_EVENT_TYPES = new Set(["field_filled", "document_uploaded", "entry_step_completed", "entry_step_skipped"]);
+
+/** Never groups on a synthetic/unrecognised event — only a real, repeated, known type. */
+const MIN_GROUP_SIZE = 3;
+
+export interface TimelineEvent {
+  id: number;
+  event_type: string;
+  detail: string | null;
+  created_at: string;
+}
+
+export type TimelineItem =
+  | { kind: "single"; event: TimelineEvent }
+  | { kind: "group"; eventType: string; events: TimelineEvent[] };
+
+/**
+ * Groups a real event list into single rows and collapsed runs — never drops an event, never
+ * reorders one, never merges two different types together. A run shorter than MIN_GROUP_SIZE stays
+ * as individual rows: three fields filled in a row is not worth collapsing, thirty is.
+ */
+export function groupTimelineEvents(events: readonly TimelineEvent[]): TimelineItem[] {
+  const items: TimelineItem[] = [];
+  let i = 0;
+  while (i < events.length) {
+    const type = events[i]!.event_type;
+    if (COLLAPSIBLE_EVENT_TYPES.has(type)) {
+      let j = i;
+      while (j < events.length && events[j]!.event_type === type) j++;
+      const run = events.slice(i, j);
+      if (run.length >= MIN_GROUP_SIZE) {
+        items.push({ kind: "group", eventType: type, events: run });
+      } else {
+        for (const event of run) items.push({ kind: "single", event });
+      }
+      i = j;
+    } else {
+      items.push({ kind: "single", event: events[i]! });
+      i++;
+    }
+  }
+  return items;
+}
+
+/** The summary sentence for a collapsed group, in the same "what Career-Ops did" voice as
+ *  eventLabel — a real count, never rounded or estimated. */
+export function groupSummaryLabel(eventType: string, count: number): string {
+  switch (eventType) {
+    case "field_filled":
+      return `Filled in ${count} fields`;
+    case "document_uploaded":
+      return `Attached ${count} documents`;
+    case "entry_step_completed":
+      return `Continued through ${count} steps of opening the application`;
+    case "entry_step_skipped":
+      return `Skipped ${count} steps of opening the application`;
+    default:
+      return `${count} similar updates`;
+  }
+}
+
 /**
  * The label for one recorded event. Pure and total — every input produces a string, never throws.
  */

@@ -20,32 +20,41 @@ const apiSource = readFileSync(`${here}/../api/candidates/[candidateId]/applicat
 
 const statuses = Object.keys(STATUS_PRESENTATION) as RunStatus[];
 
-test("APPS-1 lifecycle summary and tabs use the four approved candidate groups", () => {
+test("APPS-1 lifecycle summary and tabs use the five approved candidate groups", () => {
+  /* UI-A — the four-group model split "needs-action" into "needs-you" (routine input) vs
+   * "ready-for-review" (go read and approve), and renamed "completed" to "needs-attention" while
+   * moving SUBMISSION_UNCONFIRMED into it (see APPS-2b/APPS-5 below) — see grouping.ts's own doc
+   * comment for the full reasoning. */
   assert.deepEqual(
     APPLICATION_GROUPS.map(({ id, cardLabel }) => [id, cardLabel]),
     [
-      ["needs-action", "Needs your action"],
-      ["in-progress", "In progress"],
+      ["needs-you", "Needs You"],
+      ["in-progress", "In Progress"],
+      ["ready-for-review", "Ready for Review"],
       ["submitted", "Submitted"],
-      ["completed", "Completed"],
+      ["needs-attention", "Needs Attention"],
     ],
   );
   assert.match(listSource, /role="tablist"/);
 });
 
-test("APPS-2 waiting and unconfirmed runs require candidate action", () => {
+test("APPS-2 waiting states that ask a person for input group as needs-you", () => {
   for (const status of [
     "ACCOUNT_REQUIRED",
     "WAITING_FOR_ANSWER",
     "WAITING_FOR_CAPTCHA",
     "WAITING_FOR_MFA",
     "WAITING_FOR_EMAIL_VERIFICATION",
-    "READY_FOR_REVIEW",
-    "WAITING_FOR_SUBMIT_APPROVAL",
-    "SUBMISSION_UNCONFIRMED",
   ] as RunStatus[]) {
-    assert.equal(groupForStatus(status), "needs-action", status);
+    assert.equal(groupForStatus(status), "needs-you", status);
   }
+});
+
+test("APPS-2b review/approval states group separately from routine input, and an uncertain outcome groups with terminal ones needing attention", () => {
+  for (const status of ["READY_FOR_REVIEW", "WAITING_FOR_SUBMIT_APPROVAL"] as RunStatus[]) {
+    assert.equal(groupForStatus(status), "ready-for-review", status);
+  }
+  assert.equal(groupForStatus("SUBMISSION_UNCONFIRMED"), "needs-attention");
 });
 
 test("APPS-3 active automation remains in progress", () => {
@@ -59,9 +68,9 @@ test("APPS-4 only a confirmed submission is grouped as submitted", () => {
   assert.notEqual(groupForStatus("SUBMISSION_UNCONFIRMED"), "submitted");
 });
 
-test("APPS-5 stopped and cancelled histories are completed without success wording", () => {
-  assert.equal(groupForStatus("FAILED"), "completed");
-  assert.equal(groupForStatus("CANCELLED"), "completed");
+test("APPS-5 stopped and cancelled runs need attention, each keeping its own honest label (never success wording)", () => {
+  assert.equal(groupForStatus("FAILED"), "needs-attention");
+  assert.equal(groupForStatus("CANCELLED"), "needs-attention");
   assert.equal(presentStatus("FAILED").label, "Stopped");
   assert.equal(presentStatus("CANCELLED").label, "Cancelled");
 });
