@@ -366,3 +366,25 @@ test("OPS3.2.1-STAMP-01: production evidence carries real timestamps, not struct
     "and those must be parseable instants"
   );
 });
+
+test("OPS4-FRESH-01: a probe dated in the future can never become the current reading", () => {
+  /* Found by the ADMIN-OPS-4 repair tests. The window filter is a subtraction, so a future row
+   * produced a NEGATIVE age, passed "<= windowDays", sorted last, and became the provider's status —
+   * meaning a clock skew or a bad write could show a broken connector as HEALTHY. */
+  const ids = seedSource("greenhouse", "SkewedClock");
+  seedProbe("greenhouse", ids, "FAILED_HARD", "network");
+
+  const db = getDb();
+  const future = new Date(Date.now() + 3_600_000).toISOString();
+  db.prepare(
+    `INSERT INTO connector_health_check_runs
+       (job_source_id, organization_id, company_id, provider, checker_version, outcome, jobs_seen,
+        latency_ms, error_category, evidence_json, started_at, finished_at)
+     VALUES (?, (SELECT organization_id FROM job_sources WHERE id = ?), ?, 'greenhouse', 'test.v1',
+             'HEALTHY_JOBS', 1, 5, NULL, '{}', ?, ?)`
+  ).run(ids.jobSourceId, ids.jobSourceId, ids.companyId, future, future);
+
+  const row = forProvider(getDiscoveryConnectorHealth(), "greenhouse");
+  assert.notEqual(row.probe.status, "HEALTHY", "a future-dated success must not be believed");
+  assert.equal(row.probe.status, "ERROR", "the real, past evidence stands");
+});

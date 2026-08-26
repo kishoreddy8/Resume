@@ -32,6 +32,15 @@ export interface ConnectorHealthResult {
   latencyMs: number;
   errorCategory: ErrorCategory | null;
   errorMessage: string | null;
+  /**
+   * Row id of the evidence THIS invocation persisted, or null when persist was false.
+   *
+   * ADMIN-OPS-4.1 — added because a caller that needs to verify its own probe cannot do so by
+   * searching for "the newest row for this source": a concurrent probe (a second operator, or the
+   * scheduled batch) can insert between the search and the read, and the searcher would then report
+   * a stranger's outcome as its own. Returning the identity makes that impossible.
+   */
+  evidenceId: number | null;
 }
 
 export interface ConnectorHealthBatchSummary {
@@ -145,9 +154,10 @@ export async function checkConnectorHealth(
     latencyMs,
     errorCategory,
     errorMessage,
+    evidenceId: null,
   };
   if (options.persist ?? true) {
-    getDb().prepare(
+    const info = getDb().prepare(
       `INSERT INTO connector_health_check_runs (
          job_source_id, organization_id, company_id, provider, checker_version, outcome,
          jobs_seen, sample_external_id, sample_title, latency_ms, error_category, error_message,
@@ -160,6 +170,7 @@ export async function checkConnectorHealth(
       JSON.stringify({ schema: CONNECTOR_HEALTH_CHECKER_VERSION, readOnly: true, maxJobs: 1,
         productionJobsMutated: false, approvalMutated: false }), startedAt, finishedAt
     );
+    result.evidenceId = Number(info.lastInsertRowid);
   }
   return result;
 }

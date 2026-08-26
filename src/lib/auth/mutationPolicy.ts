@@ -136,6 +136,7 @@ export const MUTATION_POLICIES: readonly MutationPolicy[] = [
 
   // --- Operator / system -----------------------------------------------------------------------
   { route: "scan", methods: ["POST"], guard: "OPERATOR", consequence: "HIGH", rationale: "Outbound requests to every allowlisted company; holds the shared scan lock." },
+  { route: "admin/repairs/[repairId]", methods: ["POST"], guard: "OPERATOR", consequence: "LOW", rationale: "ADMIN-OPS-4 repair controller. Closed registry; its only registered action is DIAGNOSTIC — a read-only connector probe of one approved source fetching at most one job. LOW because it mutates no source, job or application state and writes only its own evidence row; contrast POST scan, which is HIGH because it reaches every allowlisted company and holds the shared lock. It cannot mark anything healthy." },
   { route: "production-cycle", methods: ["POST"], guard: "OPERATOR", consequence: "HIGH", rationale: "Full ingestion/scan/match orchestration under a lease." },
   { route: "settings", methods: ["PATCH"], guard: "OPERATOR", consequence: "HIGH", rationale: "Global automation configuration, including the master scheduler switch." },
   { route: "settings/reset", methods: ["POST"], guard: "OPERATOR", consequence: "HIGH", rationale: "Restores user-editable settings to defaults; must never touch secrets, leases or runtime state." },

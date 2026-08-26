@@ -99,9 +99,15 @@ interface ProbeRow {
 function readProbeEvidence(windowHours: number): Map<string, ConnectorEvidence> {
   const rows = getDb()
     .prepare(
+      /* ADMIN-OPS-4 — the second condition is not redundant. The window test is a SUBTRACTION, so a
+       * row dated in the future yields a negative difference, satisfies "<= windowDays", sorts last,
+       * and would become the provider's current reading — a clock skew or bad write could make a
+       * broken connector show HEALTHY. OPS-1 already established that future timestamps fail closed
+       * (readLiveness treats them as UNUSABLE); this applies the same rule to probe evidence. */
       `SELECT provider, outcome, finished_at, error_category
          FROM connector_health_check_runs
         WHERE julianday('now') - julianday(finished_at) <= @windowDays
+          AND julianday(finished_at) <= julianday('now')
         ORDER BY finished_at ASC`
     )
     .all({ windowDays: windowHours / 24 }) as ProbeRow[];
