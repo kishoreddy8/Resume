@@ -1325,3 +1325,125 @@ table {
   .admin-pagination { justify-content:space-between; gap:10px; }
   .admin-pagination span { text-align:center; font-size:13.5px; }
 }
+
+/* ================================================================================================
+ * UI-ADMIN-1 — operations console.
+ *
+ * Restrained on purpose. This screen is read when something may be wrong, so the visual system's
+ * job is to make one card stand out from six calm ones — not to decorate. Status is carried by
+ * label, symbol and tone together; colour is never the only channel, and DISABLED never borrows
+ * ERROR's treatment.
+ * ============================================================================================== */
+
+.ops-console { display:flex; flex-direction:column; gap:36px; padding:8px 0 64px; }
+
+.ops-header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; flex-wrap:wrap; }
+.ops-eyebrow { font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--text-secondary); font-weight:600; }
+.ops-title { font-size:clamp(28px,4vw,38px); font-weight:700; letter-spacing:-.02em; color:var(--text-primary); margin-top:6px; }
+.ops-subtitle { color:var(--text-secondary); font-size:15px; margin-top:8px; max-width:62ch; line-height:1.55; }
+
+.ops-window { display:inline-flex; gap:2px; padding:3px; border:1px solid var(--border); border-radius:12px; background:var(--surface); }
+.ops-window-option { padding:7px 14px; border-radius:9px; font-size:13px; font-weight:600; color:var(--text-secondary); background:transparent; border:none; cursor:pointer; }
+.ops-window-option[aria-pressed="true"] { background:color-mix(in oklab,var(--accent) 14%,transparent); color:var(--text-primary); }
+
+.ops-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:12px; }
+.ops-count { display:flex; flex-direction:column; gap:4px; padding:16px 18px; border:1px solid var(--border); border-radius:14px; background:var(--surface); }
+.ops-count-value { font-size:30px; font-weight:700; line-height:1; font-variant-numeric:tabular-nums; color:var(--text-primary); }
+.ops-count-label { font-size:13px; font-weight:600; color:var(--text-secondary); }
+
+.ops-section { display:flex; flex-direction:column; gap:14px; }
+.ops-section-title { font-size:19px; font-weight:700; letter-spacing:-.01em; color:var(--text-primary); }
+.ops-quiet { color:var(--text-secondary); font-size:14px; line-height:1.6; max-width:78ch; }
+.ops-loading { color:var(--text-secondary); font-size:14px; }
+
+.ops-attention-list, .ops-provider-list, .ops-adapter-list, .ops-catalog, .ops-evidence-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+.ops-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(310px,1fr)); gap:14px; }
+
+.ops-card, .ops-provider, .ops-panel { border:1px solid var(--border); border-radius:16px; background:var(--surface); padding:20px; }
+.ops-card { display:flex; flex-direction:column; gap:10px; }
+.ops-card-emphasis { box-shadow:0 8px 26px color-mix(in oklab,#111827 9%,transparent); }
+.ops-card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.ops-card-title { font-size:16px; font-weight:700; color:var(--text-primary); }
+.ops-card-summary { font-size:14.5px; line-height:1.6; color:var(--text-primary); }
+.ops-freshness { font-size:13px; color:var(--text-secondary); font-variant-numeric:tabular-nums; }
+.ops-stale { font-weight:700; color:var(--text-primary); }
+
+/* Tone is one of four; every tone is paired with a text label and a symbol in the markup. */
+.ops-badge { display:inline-flex; align-items:center; gap:2px; padding:4px 10px; border-radius:999px; font-size:12.5px; font-weight:700; border:1px solid var(--border); white-space:nowrap; }
+/* UI-ADMIN-1.1 — the semantic tokens, not fixed hex. --success/--warning/--error are already
+ * retuned for the dark theme (see the prefers-color-scheme block), so hardcoded light-mode hues
+ * would have been the one part of this screen that ignored the theme. */
+.ops-tone-positive.ops-badge { background:color-mix(in oklab,var(--success) 12%,transparent); border-color:color-mix(in oklab,var(--success) 34%,var(--border)); }
+.ops-tone-warning.ops-badge  { background:color-mix(in oklab,var(--warning) 14%,transparent); border-color:color-mix(in oklab,var(--warning) 38%,var(--border)); }
+.ops-tone-critical.ops-badge { background:color-mix(in oklab,var(--error) 13%,transparent); border-color:color-mix(in oklab,var(--error) 40%,var(--border)); }
+.ops-tone-neutral.ops-badge  { background:color-mix(in oklab,var(--text-secondary) 9%,transparent); }
+/* The left rule is a second, non-colour channel: solid for a fault, dashed for "not a fault". */
+.ops-card.ops-tone-critical { border-left:3px solid color-mix(in oklab,var(--error) 62%,var(--border)); }
+.ops-card.ops-tone-warning  { border-left:3px solid color-mix(in oklab,var(--warning) 58%,var(--border)); }
+.ops-card.ops-tone-neutral  { border-left:3px dashed color-mix(in oklab,var(--text-secondary) 34%,var(--border)); }
+.ops-card.ops-tone-positive { border-left:3px solid color-mix(in oklab,var(--success) 42%,var(--border)); }
+
+.ops-details { margin-top:2px; }
+.ops-details > summary { cursor:pointer; font-size:13.5px; font-weight:600; color:var(--text-secondary); padding:6px 0; }
+/* Focus comes from the global :focus-visible rule (--focus-ring); only the radius is nudged so
+ * the ring hugs the summary row. */
+.ops-details > summary:focus-visible { border-radius:6px; }
+.ops-details[open] > summary { color:var(--text-primary); }
+
+.ops-evidence { display:grid; grid-template-columns:minmax(140px,auto) 1fr; gap:6px 16px; margin-top:10px; font-size:13.5px; }
+.ops-evidence dt { color:var(--text-secondary); font-weight:600; }
+.ops-evidence dd { color:var(--text-primary); margin:0; overflow-wrap:anywhere; }
+.ops-evidence code { font-size:12.5px; background:color-mix(in oklab,var(--text-secondary) 10%,transparent); padding:1px 6px; border-radius:5px; }
+.ops-evidence-list li { display:flex; justify-content:space-between; gap:16px; padding:5px 0; border-bottom:1px solid color-mix(in oklab,var(--border) 60%,transparent); }
+.ops-evidence-label { color:var(--text-secondary); }
+.ops-evidence-value { color:var(--text-primary); font-variant-numeric:tabular-nums; text-align:right; overflow-wrap:anywhere; }
+
+.ops-disclosure { align-self:flex-start; }
+.ops-provider { display:flex; flex-direction:column; gap:12px; }
+.ops-provider-head { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+.ops-provider-name { font-size:16px; font-weight:700; color:var(--text-primary); overflow-wrap:anywhere; }
+.ops-capability, .ops-provider-sources, .ops-provider-primary { font-size:12.5px; color:var(--text-secondary); font-weight:600; }
+.ops-capability { border:1px solid var(--border); border-radius:999px; padding:3px 10px; }
+
+/* The two readings sit side by side so neither can be mistaken for the whole picture. */
+.ops-evidence-pair { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+.ops-evidence-block { border:1px solid var(--border); border-radius:13px; padding:14px; display:flex; flex-direction:column; gap:6px; }
+.ops-evidence-title { font-size:13.5px; font-weight:700; color:var(--text-primary); }
+.ops-provider-reason { font-size:14px; line-height:1.6; color:var(--text-primary); }
+
+.ops-action { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding-top:4px; }
+.ops-kind { font-size:11px; letter-spacing:.1em; text-transform:uppercase; font-weight:700; color:var(--text-secondary); border:1px solid var(--border); border-radius:999px; padding:3px 9px; }
+.ops-action-hint { font-size:13px; color:var(--text-secondary); }
+.ops-result { border:1px solid var(--border); border-radius:13px; padding:14px; background:color-mix(in oklab,var(--accent) 5%,transparent); }
+.ops-result-title { font-size:14.5px; font-weight:700; color:var(--text-primary); }
+.ops-result-line { font-size:13.5px; color:var(--text-primary); margin-top:4px; line-height:1.55; }
+
+.ops-adapter { display:flex; align-items:center; gap:12px; flex-wrap:wrap; border:1px solid var(--border); border-radius:13px; padding:14px 16px; background:var(--surface); }
+.ops-adapter-name { font-size:15px; font-weight:700; color:var(--text-primary); text-transform:capitalize; }
+.ops-adapter-capability { font-size:12.5px; color:var(--text-secondary); font-weight:600; }
+.ops-adapter-detail { font-size:13px; color:var(--text-secondary); flex-basis:100%; line-height:1.55; }
+
+.ops-catalog-item { border:1px solid var(--border); border-radius:13px; padding:14px 16px; display:flex; flex-direction:column; gap:6px; background:var(--surface); }
+.ops-catalog-title { font-size:15px; font-weight:700; color:var(--text-primary); }
+.ops-catalog-detail, .ops-catalog-hint { font-size:13.5px; color:var(--text-secondary); line-height:1.55; }
+
+.ops-panel-critical { border-color:color-mix(in oklab,var(--error) 40%,var(--border)); }
+.ops-panel-title { font-size:17px; font-weight:700; color:var(--text-primary); }
+.ops-panel-body { font-size:14px; color:var(--text-secondary); margin-top:8px; line-height:1.6; max-width:70ch; }
+
+.ops-links { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }
+.ops-links .ops-section-title { grid-column:1/-1; }
+
+@media (max-width:640px) {
+  .ops-console { gap:28px; }
+  .ops-grid, .ops-evidence-pair { grid-template-columns:1fr; }
+  /* Evidence stays on screen at every width — it is the reason the verdict is believable. */
+  .ops-evidence { grid-template-columns:1fr; gap:2px 0; }
+  .ops-evidence dt { margin-top:8px; }
+  .ops-evidence-list li { flex-direction:column; gap:2px; }
+  .ops-evidence-value { text-align:left; }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .ops-card, .ops-provider { transition:none; }
+}

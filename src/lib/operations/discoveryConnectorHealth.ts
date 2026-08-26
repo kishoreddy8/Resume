@@ -1,6 +1,7 @@
 import { getDb } from "@/db";
 import { getProviderHealthSummary } from "@/db/queries/reliability";
 import { DISCOVERY_CONNECTOR_PROVIDERS, SCANNABLE_PROVIDERS } from "@/lib/ats/scannableProviders";
+import { PROBE_ELIGIBLE_SOURCE_SQL } from "@/lib/ats/probeEligibility";
 import type { ErrorCategory, SourceType } from "@/types";
 import type { HealthStatus } from "./healthRules";
 
@@ -66,6 +67,17 @@ export interface DiscoveryConnectorHealth {
    * ever reported when a real query returned zero — it is never a stand-in for "unknown".
    */
   configuredSourceCount: number | null;
+  /**
+   * A source the connector recheck could actually be run against, or null when none qualifies.
+   *
+   * UI-ADMIN-1 — added because the contract offered an action no caller could invoke. The recheck
+   * takes a jobSourceId, but these rows are per-PLATFORM, so a console rendering
+   * `availableActions` had a button and no argument for it. Resolved with exactly the conditions
+   * the repair itself enforces (active, authoritative, VERIFIED, APPROVED, probeable provider,
+   * active company), so a non-null value is one the repair will accept and null is a truthful
+   * "there is nothing here to check" rather than a button that would 409.
+   */
+  actionableSourceId: number | null;
   probe: ConnectorEvidence;
   production: ConnectorEvidence;
   /** Which evidence the caller should lead with. PRODUCTION wins when it exists — it is the stronger claim. */
@@ -128,6 +140,26 @@ function readProbeEvidence(windowHours: number): Map<string, ConnectorEvidence> 
     });
   }
   return byProvider;
+}
+
+/**
+ * One recheck-eligible source per provider, in a single grouped query.
+ *
+ * MIN(id) rather than a per-provider lookup: this must not become the N+1 the overview was
+ * deliberately built to avoid. The WHERE clause is copied from the repair's own eligibility so the
+ * two cannot drift into offering an action that would then be refused.
+ */
+function readActionableSourceIds(): Map<string, number> {
+  const rows = getDb()
+    .prepare(
+      `SELECT js.provider, MIN(js.id) AS source_id
+         FROM job_sources js
+         JOIN companies c ON c.id = js.legacy_company_id
+        WHERE ${PROBE_ELIGIBLE_SOURCE_SQL}
+        GROUP BY js.provider`
+    )
+    .all() as { provider: string; source_id: number }[];
+  return new Map(rows.map((r) => [r.provider, r.source_id]));
 }
 
 /** Registered sources per provider. Reads job_sources, the real source registry. */
@@ -238,6 +270,7 @@ export function getDiscoveryConnectorHealth(
   const probes = readProbeEvidence(probeWindowHours);
   const sourceCounts = readConfiguredSourceCounts();
   const scanStamps = readScanStamps(scanWindowHours);
+  const actionableSources = readActionableSourceIds();
   const scanSummaries = new Map(getProviderHealthSummary(scanWindowHours).map((s) => [s.provider as string, s]));
   const scannable = new Set<string>(SCANNABLE_PROVIDERS);
 
@@ -254,6 +287,7 @@ export function getDiscoveryConnectorHealth(
       provider,
       capability: scannable.has(provider) ? "SCANNABLE" : "CONNECTOR_NOT_SCANNED",
       configuredSourceCount: sourceCounts.get(provider) ?? 0,
+      actionableSourceId: actionableSources.get(provider) ?? null,
       probe,
       production,
       primaryEvidence,

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { getDb } from "@/db";
 import { checkConnectorHealth, type ConnectorHealthCandidate } from "@/lib/ats/connectorHealthCheck";
-import { HEALTH_PROBE_PROVIDERS, providerSqlList } from "@/lib/ats/scannableProviders";
+import { PROBE_ELIGIBLE_SOURCE_SQL } from "@/lib/ats/probeEligibility";
 import type { fetchJobsForCompany } from "@/lib/normalize";
 import type { Consequence } from "@/lib/auth/mutationPolicy";
 import type { RepairabilityClass } from "./subsystemHealth";
@@ -161,11 +161,7 @@ function findProbeableSource(jobSourceId: number): SourceRow | null {
          FROM job_sources js
          JOIN organizations o ON o.id = js.organization_id
          JOIN companies c ON c.id = js.legacy_company_id
-        WHERE js.id = ?
-          AND js.is_active = 1 AND js.is_authoritative = 1
-          AND js.resolution_status = 'VERIFIED' AND js.review_status = 'APPROVED'
-          AND js.provider IN (${providerSqlList(HEALTH_PROBE_PROVIDERS)})
-          AND c.is_active = 1`
+        WHERE js.id = ? AND ${PROBE_ELIGIBLE_SOURCE_SQL}`
     )
     .get(jobSourceId) as SourceRow | undefined;
   return row ?? null;

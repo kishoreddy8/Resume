@@ -1,4 +1,4 @@
-import { HEALTH_PROBE_PROVIDERS, providerSqlList } from "./scannableProviders";
+import { PROBE_ELIGIBLE_SOURCE_SQL } from "./probeEligibility";
 import pLimit from "p-limit";
 import { getDb } from "@/db";
 import { fetchJobsForCompany } from "@/lib/normalize";
@@ -87,10 +87,7 @@ export function listConnectorHealthCandidates(
        FROM job_sources js
        JOIN organizations o ON o.id=js.organization_id
        JOIN companies c ON c.id=js.legacy_company_id
-       WHERE js.is_active=1 AND js.is_authoritative=1 AND js.resolution_status='VERIFIED'
-         AND js.review_status='APPROVED'
-         AND js.provider IN (${providerSqlList(HEALTH_PROBE_PROVIDERS)})
-         AND c.is_active=1 ${eligibility}
+       WHERE ${PROBE_ELIGIBLE_SOURCE_SQL} ${eligibility}
      )
      SELECT job_source_id, organization_id, legacy_company_id, canonical_name, provider
      FROM eligible

@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
+import { HEALTH_PRESENTATION } from "@/lib/admin/healthPresentation";
 import test from "node:test";
 import { classifySchedulerHealth, classifySystemHealth, SCHEDULER_TICK_LIVENESS_TIMEOUT_MINUTES } from "../healthRules";
 import type { HealthStatus } from "../healthRules";
 import { getAtsCapability } from "../atsCapability";
-import { ADMIN_STATUS_PRESENTATION, normalizeAdminStatus } from "@/lib/admin/status";
 import { automatedSourceTypes } from "@/lib/apply/agent/selectAdapter";
 import type { SchedulerRuntimeState } from "@/lib/scheduler/state";
 import type { SchedulerSettings } from "@/lib/scheduler/window";
@@ -116,24 +114,29 @@ test("OPS1.1-SYSTEM-01: web host is judged on tick liveness and never requires a
 
 const ALL_HEALTH_STATUSES: HealthStatus[] = ["HEALTHY", "WARNING", "ERROR", "DISABLED", "NO_DATA"];
 
-/** The map admin/page.tsx uses. Read from source because it is a local function, not an export. */
-function displayStatusMapFromSource(): Record<string, string> {
-  const src = fs.readFileSync(path.join(process.cwd(), "src/app/admin/page.tsx"), "utf8");
-  const body = src.slice(src.indexOf("function displayStatus"), src.indexOf("return map[value]"));
-  const map: Record<string, string> = {};
-  for (const [, key, value] of body.matchAll(/^\s{4}([A-Z_]+):\s*"([a-z_]+)",/gm)) map[key] = value;
-  return map;
-}
-
-test("OPS1.1-DISPLAY-01: every health state has an explicit display mapping — none falls through", () => {
-  const map = displayStatusMapFromSource();
+/**
+ * UI-ADMIN-1 — these three tests now read an EXPORTED map instead of regexing a local function out
+ * of admin/page.tsx.
+ *
+ * The invariant they protect is unchanged and is the reason they exist: no health state may fall
+ * through to a default, and no failure may be drawn in a reassuring tone. What changed is that the
+ * page no longer owns a private translation table. It used to, because the API returned bare status
+ * enums with no summary, reason or evidence, so the page had to invent presentation for verdicts it
+ * could not explain. ADMIN-OPS-5 finished the server contract and the console now renders the five
+ * statuses directly, so the mapping is typed, exported and exhaustive by construction — a stronger
+ * guarantee than a regex over source could give, and one a new status cannot slip past.
+ */
+test("OPS1.1-DISPLAY-01: every health state has an explicit presentation — none falls through", () => {
   for (const status of ALL_HEALTH_STATUSES) {
-    assert.ok(map[status], `${status} has no explicit entry and would fall through to "unknown"`);
+    const presentation = HEALTH_PRESENTATION[status];
+    assert.ok(presentation, `${status} has no presentation and would fall through`);
+    assert.ok(presentation.label.length > 0, `${status} must render a text label, not colour alone`);
+    assert.ok(presentation.symbol.length > 0, `${status} must carry a non-colour symbol`);
+    assert.ok(presentation.meaning.length > 0, `${status} must state what it claims`);
   }
 });
 
-test("OPS1.1-DISPLAY-01b: each mapping resolves to a real presentation with a truthful tone", () => {
-  const map = displayStatusMapFromSource();
+test("OPS1.1-DISPLAY-01b: each state resolves to a truthful tone", () => {
   const expectedTone: Record<HealthStatus, string> = {
     HEALTHY: "positive",
     WARNING: "warning",
@@ -142,20 +145,22 @@ test("OPS1.1-DISPLAY-01b: each mapping resolves to a real presentation with a tr
     NO_DATA: "neutral",
   };
   for (const status of ALL_HEALTH_STATUSES) {
-    const presentation = ADMIN_STATUS_PRESENTATION[normalizeAdminStatus(map[status])];
-    assert.ok(presentation, `${status} -> ${map[status]} is not a known admin status`);
-    assert.equal(presentation.tone, expectedTone[status], `${status} must not render as ${presentation.tone}`);
+    assert.equal(HEALTH_PRESENTATION[status].tone, expectedTone[status], `${status} must not render as another tone`);
   }
 });
 
 test("OPS1.1-DISPLAY-01c: no failure state can render with a positive tone", () => {
-  const map = displayStatusMapFromSource();
   for (const status of ["ERROR", "WARNING"] as HealthStatus[]) {
-    const tone = ADMIN_STATUS_PRESENTATION[normalizeAdminStatus(map[status])].tone;
-    assert.notEqual(tone, "positive", `${status} rendering as positive would be a false green`);
+    assert.notEqual(HEALTH_PRESENTATION[status].tone, "positive", `${status} rendering as positive would be a false green`);
   }
   /* NO_DATA is explicitly allowed to be neutral, but never positive. */
-  assert.notEqual(ADMIN_STATUS_PRESENTATION[normalizeAdminStatus(map.NO_DATA)].tone, "positive");
+  assert.notEqual(HEALTH_PRESENTATION.NO_DATA.tone, "positive");
+
+  /* DISABLED and NO_DATA share the neutral tone, so they must be distinguishable by every other
+   * channel — otherwise "switched off" and "never observed" read as the same thing. */
+  assert.notEqual(HEALTH_PRESENTATION.DISABLED.label, HEALTH_PRESENTATION.NO_DATA.label);
+  assert.notEqual(HEALTH_PRESENTATION.DISABLED.symbol, HEALTH_PRESENTATION.NO_DATA.symbol);
+  assert.notEqual(HEALTH_PRESENTATION.DISABLED.meaning, HEALTH_PRESENTATION.NO_DATA.meaning);
 });
 
 // --- OPS1.1-ATS: no circular inference -----------------------------------------------------------

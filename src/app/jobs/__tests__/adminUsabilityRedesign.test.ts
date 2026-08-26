@@ -153,7 +153,16 @@ test("11. No sensitive secrets or API keys are rendered in settings or diagnosti
 });
 
 test("12. Admin overview quick links and health tiles route to proper sub-consoles", () => {
-  const overview = read("src/app/admin/page.tsx");
+  /* UI-ADMIN-1 — the Admin index now renders OperationsConsole, so the sub-console links live in
+   * that component rather than inline in the page.
+   *
+   * UI-ADMIN-1.1 — asserting only that some component contains the strings would prove nothing about
+   * what an operator sees, so the chain is checked: the page renders this component, and this
+   * component carries the links. */
+  const page = read("src/app/admin/page.tsx");
+  assert.match(page, /<OperationsConsole\b/, "the Admin index must actually render the console");
+  assert.match(page, /from "@\/components\/admin\/OperationsConsole"/, "and import the file asserted below");
+  const overview = read("src/components/admin/OperationsConsole.tsx");
   assert.match(overview, /href="\/admin\/operations"/);
   assert.match(overview, /href="\/admin\/scanner"/);
   assert.match(overview, /href="\/admin\/writer"/);
