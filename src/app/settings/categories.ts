@@ -27,8 +27,8 @@ export interface SettingsCategory {
 
 export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   { id: "job-search", label: "Job Search", blurb: "Set your job search preferences." },
-  { id: "notifications", label: "Notifications", blurb: "What JobHunt tells you about." },
-  { id: "applications", label: "Applications", blurb: "How JobHunt helps you apply, and what it will never do without you." },
+  { id: "notifications", label: "Notifications", blurb: "What Career-Ops tells you about." },
+  { id: "applications", label: "Applications", blurb: "How Career-Ops helps you apply, and what it will never do without you." },
   { id: "career-copilot", label: "Career Copilot", blurb: "Guidance grounded in your own evidence." },
   { id: "appearance", label: "Appearance", blurb: "How Career-Ops looks on this device." },
   { id: "data-privacy", label: "Data & Privacy", blurb: "Your profile's protection and storage." },

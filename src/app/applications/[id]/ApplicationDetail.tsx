@@ -20,6 +20,7 @@ import { applicationContext, detailPhase, primaryActionLabel, type DetailPhase }
 import { eventLabel, groupSummaryLabel, groupTimelineEvents } from "../eventLabels";
 import { Disclosure } from "@/app/jobs/[id]/Disclosure";
 import { buildAnswerSubmission, requiredQuestionsSatisfied } from "./questionBatch";
+import { DEFAULT_POLICY, type QuestionType } from "@/lib/apply/questionTypes";
 
 interface RunDetail {
   id: number;
@@ -145,7 +146,6 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "answer" | "resume" | "submit">(null);
   const [answer, setAnswer] = useState("");
-  const [reuse, setReuse] = useState(false);
   const [humanQuestions, setHumanQuestions] = useState<HumanQuestion[] | null>(null);
   const [batchAnswers, setBatchAnswers] = useState<Record<string, string>>({});
   const [batchReuse, setBatchReuse] = useState<Record<string, boolean>>({});
@@ -326,11 +326,20 @@ export function ApplicationDetail({ runId, embedded = false }: { runId: number; 
                 <p className="mt-1 text-[13px] leading-5 text-secondary">Career-Ops is continuing your application…</p>
               </div>
             ) : run.status === "WAITING_FOR_ANSWER" && run.question ? (
+              /* UI-AM.1 checkpoint finding — this legacy single-question fallback (reached when a
+               * live control mismatch is discovered only at fill time, not during planning — see
+               * executor.ts's fillFromPlans, which never populates checkpoint.humanQuestions for
+               * this specific pause) has no questionType for this one blocking question anywhere in
+               * the API response, unlike the batch path's HumanQuestion objects. canOfferAutomaticReuse
+               * cannot be evaluated here, so the same "reuse" checkbox this path used to show
+               * unconditionally — same bug the batch path's canOfferAutomaticReuse gating fixed —
+               * cannot be truthfully offered here either. Removed rather than left promising an
+               * effect this UI cannot verify; the answer is still saved and available as a
+               * suggestion either way (saveAnswer's own unconditional-storage behavior, unchanged). */
               <div className="mt-4">
                 <p className="text-[15px] font-semibold leading-6 text-primary">{run.question}</p>
                 <label className="mt-3 block"><span className="text-[14px] font-medium text-secondary">Your answer</span><input ref={answerRef} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Enter your answer" className="mt-2 min-h-11 w-full rounded-[10px] border border-[var(--border-control)] bg-[var(--z3-bg)] px-3 text-[16px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]" /></label>
-                <label className="mt-3 flex min-h-11 items-center gap-3 text-[14px] text-secondary"><input type="checkbox" checked={reuse} onChange={(event) => setReuse(event.target.checked)} className="h-5 w-5 accent-[var(--accent)]" />Reuse this answer for equivalent questions</label>
-                <button type="button" onClick={() => post({ runId: run.id, answer, reuseForEquivalentQuestions: reuse }, "answer")} disabled={busy !== null || answer.trim().length === 0} className={`${BTN_PRIMARY} mt-3 min-h-11 text-[14px]`}>{busy === "answer" ? "Saving…" : "Save answer and continue"}</button>
+                <button type="button" onClick={() => post({ runId: run.id, answer }, "answer")} disabled={busy !== null || answer.trim().length === 0} className={`${BTN_PRIMARY} mt-3 min-h-11 text-[14px]`}>{busy === "answer" ? "Saving…" : "Save answer and continue"}</button>
                 <p className="mt-3 text-[13px] leading-5 text-tertiary">Career-Ops never answers a question it cannot evidence. Your answer is used exactly as provided.</p>
               </div>
             ) : verificationState ? (
@@ -543,6 +552,24 @@ function QuestionControl({
   );
 }
 
+/**
+ * UI-AM checkpoint finding — whether the "remember" checkbox has ANY real effect for this question.
+ *
+ * THE BUG THIS FIXES. The checkbox used to hide only for `voluntary_demographic`, but the answer is
+ * saved to the vault regardless of whether it is checked at all (see the API route's own
+ * `saveAnswer(...)` call, made unconditionally whenever a canonicalKey exists) — the checkbox only
+ * ever controls `autoFillAllowed`, and `saveAnswer`'s own policy guard silently drops that flag to
+ * false for any type whose `DEFAULT_POLICY.reusePolicy` is not `auto_after_approval` (questionTypes.ts).
+ * For salary, experience, availability, open-ended and security-clearance questions, checking this
+ * box already did nothing — the answer would be remembered and re-offered as a suggestion either
+ * way, and no future run could ever fill it in unattended regardless of the checkbox. Showing a
+ * control with no effect is exactly the fake-functionality this phase exists to remove.
+ */
+function canOfferAutomaticReuse(questionType: string | null): boolean {
+  if (!questionType) return false;
+  return DEFAULT_POLICY[questionType as QuestionType]?.reusePolicy === "auto_after_approval";
+}
+
 /** One question card — a real field the employer's form asked for, in whatever control shape it
  *  actually is (see QuestionControl). Used for both the Required and Optional groups below; a
  *  question never disappears or collapses regardless of which group it is in or what the candidate
@@ -574,10 +601,13 @@ function QuestionField({
       </div>
       {q.reason && <p className="mt-1 text-[12px] leading-5 text-tertiary">{q.reason}</p>}
       <QuestionControl question={q} value={value} onChange={(next) => onAnswerChange(q.id, next)} />
-      {q.questionType !== "voluntary_demographic" && (
+      {/* This answer is remembered either way (see canOfferAutomaticReuse's doc comment) — the
+       *  checkbox only ever controls whether it may ALSO be used without asking again, which is
+       *  real only for question types whose policy permits it. */}
+      {canOfferAutomaticReuse(q.questionType) && (
         <label className="mt-2 flex min-h-9 items-center gap-2 text-[13px] text-secondary">
           <input type="checkbox" checked={reuse} onChange={(e) => onReuseChange(q.id, e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
-          Remember this answer for equivalent questions
+          Use this answer automatically for similar questions in the future
         </label>
       )}
     </div>

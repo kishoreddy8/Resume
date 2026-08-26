@@ -30,13 +30,13 @@ import {
   setThemePreference,
   type ThemePreference,
 } from "@/lib/theme";
-import { SETTINGS_CATEGORIES, type SettingsCategoryId } from "./categories";
+import { isSettingsCategory, SETTINGS_CATEGORIES, type SettingsCategoryId } from "./categories";
 import {
   type CandidateSettingsPayload,
 } from "../profile/types";
 
 /**
- * Settings — how JobHunt searches, notifies, and helps you apply.
+ * Settings — how Career-Ops searches, notifies, and helps you apply.
  *
  * WHAT THIS ROUTE USED TO BE. A page titled "Control Center" holding scanner timeouts, retry
  * backoff, ATS concurrency, archive/delete thresholds and suppression windows. Those are operator
@@ -155,6 +155,19 @@ export default function SettingsPage() {
     load();
   }, [load]);
 
+  /* UI-AM — `isSettingsCategory` already existed (categories.ts) but nothing read the URL, so a
+   * link like `/settings?category=applications` silently landed on the default tab instead — a
+   * fake-looking deep link is exactly what this phase was told never to ship. Read via
+   * window.location.search in an effect (not useSearchParams) so this page needs no Suspense
+   * boundary; an invalid or absent value leaves the existing default untouched. */
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("category");
+    if (requested && isSettingsCategory(requested)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCategory(requested);
+    }
+  }, []);
+
   const active = SETTINGS_CATEGORIES.find((c) => c.id === category)!;
 
   if (error) {
@@ -181,7 +194,7 @@ export default function SettingsPage() {
       <PageHeader
         size="lg"
         title="Settings"
-        description="Choose how JobHunt behaves for your search, applications, and privacy."
+        description="Choose how Career-Ops behaves for your search, applications, and privacy."
       />
 
       <div className="grid grid-cols-1 gap-5 lg:min-h-[calc(100dvh-var(--workspace-chrome)-8rem)] lg:grid-cols-[270px_minmax(0,1fr)] lg:items-stretch lg:gap-5">
@@ -252,7 +265,7 @@ function JobSearchPanel({ blurb, settings }: { blurb: string; settings: Candidat
       <div className="flex flex-col gap-5">
         <div className="rounded-[14px] bg-[var(--tile-lav-bg)] p-4 sm:p-5">
           <h3 className="text-[17px] font-bold text-primary">Your search uses Profile information</h3>
-          <p className="mt-1 max-w-[62ch] text-[14px] leading-6 text-secondary">Target roles, locations, workplace preferences, and work authorization are professional facts. Edit them once in Profile and JobHunt uses the saved values everywhere.</p>
+          <p className="mt-1 max-w-[62ch] text-[14px] leading-6 text-secondary">Target roles, locations, workplace preferences, and work authorization are professional facts. Edit them once in Profile and Career-Ops uses the saved values everywhere.</p>
           <Link href="/profile" className={`${BTN_SECONDARY} mt-4 min-h-11 text-[14px]`}>Review Profile</Link>
         </div>
         <dl className="grid gap-4 sm:grid-cols-2">
@@ -351,7 +364,7 @@ function ApplicationsPanel({
               Always required before submission
             </div>
             <p className="mt-1 max-w-[68ch] text-[14px] leading-6 text-secondary">
-              JobHunt fills in what it can evidence and stops for anything it cannot. Nothing is
+              Career-Ops fills in what it can evidence and stops for anything it cannot. Nothing is
               ever submitted to an employer until you approve it, and there is no setting that
               changes that.
             </p>
@@ -361,20 +374,35 @@ function ApplicationsPanel({
 
       <Field
         label="Saved application answers"
-        hint="Answers you give during an application are kept so JobHunt can offer them again on a similar question."
+        hint="Answers you give during an application are kept so Career-Ops can offer them again on a similar question."
       >
         {savedAnswers === null ? (
           <p className="text-[14px] text-tertiary">Not available.</p>
-        ) : savedAnswers === 0 ? (
-          <p className="text-[14px] leading-6 text-tertiary">
-            No reusable answers saved yet. They appear here once you answer a question during an
-            application.
-          </p>
         ) : (
-          <p className="text-[15px] text-primary">
-            <span className="font-semibold tabular-nums">{savedAnswers}</span>{" "}
-            {savedAnswers === 1 ? "answer" : "answers"} saved.
-          </p>
+          /* UI-AM.1 checkpoint decision — the link is always shown, even at zero, rather than only
+           *  once answers exist. Precedent already set on this same page: the Job Search panel's
+           *  own "Review Profile" link is unconditional regardless of whether Profile has any data
+           *  yet. Answer Memory's own destination page already renders a real, honest, non-dead-end
+           *  empty state (confirmed in visual QA) — hiding the link at zero would make this the one
+           *  Settings destination whose existence a candidate cannot discover until data happens to
+           *  exist, contradicting the "0 is a real, showable fact" principle already used everywhere
+           *  else on this page (StatTile's own doc comment: "renders the number even when it is
+           *  zero"). */
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[15px] text-primary">
+              {savedAnswers === 0 ? (
+                "No reusable answers saved yet."
+              ) : (
+                <>
+                  <span className="font-semibold tabular-nums">{savedAnswers}</span>{" "}
+                  {savedAnswers === 1 ? "answer" : "answers"} saved.
+                </>
+              )}
+            </p>
+            <Link href="/settings/answers" className={`${BTN_SECONDARY} min-h-11 text-[14px]`}>
+              Manage saved answers
+            </Link>
+          </div>
         )}
       </Field>
     </Panel>
@@ -398,7 +426,7 @@ function CareerCopilotPanel({ blurb }: { blurb: string }) {
           Ask why a job matches your evidence, from any job. Copilot answers from your own profile
           and resumes — it runs only when you ask it something, never on its own.
         </p>
-        <p className="max-w-[58ch] text-[13px] leading-5 text-tertiary">Your JobHunt data is stored locally on this Mac. Some AI-assisted features may send the content needed for a task to the configured AI service.</p>
+        <p className="max-w-[58ch] text-[13px] leading-5 text-tertiary">Your Career-Ops data is stored locally on this Mac. Some AI-assisted features may send the content needed for a task to the configured AI service.</p>
         {/* No provider, model or key configuration: that is developer setup, not a candidate
          *  preference, and it would put credentials on a candidate-facing page. */}
         <Pill tone="neutral">Not configurable yet</Pill>
@@ -503,8 +531,8 @@ function DataPrivacyPanel({ blurb, candidate }: { blurb: string; candidate: Cand
         </Field>
 
         <Field
-          label="What JobHunt stores"
-          hint="Your JobHunt data is stored locally on this Mac. Some AI-assisted features may send the content needed for a task to the configured AI service."
+          label="What Career-Ops stores"
+          hint="Your Career-Ops data is stored locally on this Mac. Some AI-assisted features may send the content needed for a task to the configured AI service."
         >
           <ul className="flex flex-col gap-1.5">
             {[

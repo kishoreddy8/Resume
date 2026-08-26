@@ -52,7 +52,12 @@ test("skill provenance names evidence sources without inventing employer attribu
 });
 
 test("privacy copy accurately distinguishes local storage from configured AI services", () => {
-  const copy = "Your JobHunt data is stored locally on this Mac. Some AI-assisted features may send the content needed for a task to the configured AI service.";
+  // UI-AM — updated from "JobHunt" to "Career-Ops": settings/page.tsx was touched for this phase
+  // (the new Answer Memory link), and every rendered "JobHunt" string in a touched file is fixed
+  // per this codebase's established naming policy. The behavioral assertion this test exists for —
+  // an accurate local-vs-AI-service distinction, never an absolute "nothing leaves this Mac" claim
+  // — is unchanged.
+  const copy = "Your Career-Ops data is stored locally on this Mac. Some AI-assisted features may send the content needed for a task to the configured AI service.";
   assert.ok(settings.includes(copy));
   assert.doesNotMatch(settings, /nothing is uploaded|never leaves this Mac/i);
 });

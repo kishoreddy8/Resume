@@ -104,7 +104,9 @@ test("candidate privacy and approval copy state the supported trust boundary", (
 
   assert.doesNotMatch(settings, /Everything stays on this machine/);
   assert.doesNotMatch(settings, /nothing is uploaded/);
-  assert.match(settings, /Your JobHunt data is stored locally on this Mac\./);
+  // UI-AM — "JobHunt" fixed to "Career-Ops" in settings/page.tsx (touched this phase for the new
+  // Answer Memory link); the trust-boundary assertion itself is unchanged.
+  assert.match(settings, /Your Career-Ops data is stored locally on this Mac\./);
   assert.match(settings, /Some AI-assisted features may send the content needed for a task/);
   assert.match(settings, /Always required before submission/);
   assert.match(settings, /there is no setting that\s+changes that\./);

@@ -159,3 +159,106 @@ export function listAnswers(candidateId: number): (VaultAnswer & { canonical_key
     )
     .all(candidateId) as never;
 }
+
+export interface AnswerMemoryRow {
+  id: number;
+  canonical_key: string;
+  /** The most recently seen verbatim wording for this question — never the normalised text, which
+   *  strips filler words and punctuation for matching and is unfit to show a candidate. */
+  question_text: string;
+  question_type: QuestionType;
+  sensitivity: Sensitivity;
+  reuse_policy: ReusePolicy;
+  answer_value: string;
+  answer_source: AnswerSource;
+  approved_by_user: 0 | 1;
+  auto_fill_allowed: 0 | 1;
+  updated_at: string;
+}
+
+/**
+ * UI-AM — the one candidate-facing read of the Answer Vault. Same table, same rows `listAnswers`
+ * already returns; this only adds the one thing a candidate-facing list needs that the internal
+ * fill-time reader never did: a real, human-readable question label. `normalized_question` (used
+ * internally for exact-match lookups) is lowercased and stripped of filler words — showing it
+ * verbatim would read as broken English, not a design choice, so this joins the most recently seen
+ * `application_question_variants.observed_text` for the same question instead.
+ */
+export function listAnswersForCandidate(candidateId: number): AnswerMemoryRow[] {
+  return getDb()
+    .prepare(
+      `SELECT
+         a.id AS id,
+         q.canonical_key AS canonical_key,
+         COALESCE(
+           (SELECT v.observed_text FROM application_question_variants v
+             WHERE v.question_id = q.id ORDER BY v.last_seen_at DESC LIMIT 1),
+           q.normalized_question
+         ) AS question_text,
+         q.question_type AS question_type,
+         q.sensitivity AS sensitivity,
+         q.reuse_policy AS reuse_policy,
+         a.answer_value AS answer_value,
+         a.answer_source AS answer_source,
+         a.approved_by_user AS approved_by_user,
+         a.auto_fill_allowed AS auto_fill_allowed,
+         a.updated_at AS updated_at
+       FROM application_answers a
+       JOIN application_questions q ON q.id = a.question_id
+      WHERE a.candidate_id = ?
+      ORDER BY a.updated_at DESC`
+    )
+    .all(candidateId) as AnswerMemoryRow[];
+}
+
+/**
+ * Edit an existing remembered answer's value and/or its auto-fill flag.
+ *
+ * REUSES `saveAnswer` — THE SAME WRITE PATH THE QUESTION CENTER ALREADY USES, not a second one.
+ * Looked up by `answerId` (scoped to `candidateId`) rather than trusting a client-supplied
+ * canonicalKey, so a candidate can only ever edit their own row. `saveAnswer`'s own policy guard
+ * (only `auto_after_approval` types may ever actually get `auto_fill_allowed=1`) applies exactly as
+ * it does from the Question Center — this cannot grant a type permission its policy refuses.
+ */
+export function editAnswer(
+  candidateId: number,
+  answerId: number,
+  changes: { answerValue?: string; autoFillAllowed?: boolean }
+): VaultAnswer | undefined {
+  const existing = getDb()
+    .prepare(
+      `SELECT
+         a.*,
+         q.canonical_key AS canonical_key,
+         q.question_type AS question_type,
+         COALESCE(
+           (SELECT v.observed_text FROM application_question_variants v
+             WHERE v.question_id = q.id ORDER BY v.last_seen_at DESC LIMIT 1),
+           q.normalized_question
+         ) AS observed_text
+         FROM application_answers a
+         JOIN application_questions q ON q.id = a.question_id
+        WHERE a.id = ? AND a.candidate_id = ?`
+    )
+    .get(answerId, candidateId) as
+    | (VaultAnswer & { canonical_key: string; question_type: QuestionType; observed_text: string })
+    | undefined;
+  if (!existing) return undefined;
+
+  return saveAnswer({
+    candidateId,
+    canonicalKey: existing.canonical_key,
+    questionType: existing.question_type,
+    /* The real, most-recently-observed wording — NOT the canonical key. recordQuestion()
+     * (called inside saveAnswer) re-derives normalized_text from this and upserts it into
+     * application_question_variants; passing anything but genuine question wording here would
+     * write a fabricated "variant" into that table and corrupt future exact-match lookups. */
+    observedText: existing.observed_text,
+    answerValue: changes.answerValue ?? existing.answer_value,
+    /* Editing is itself a deliberate act of confirming this value — the same standing the
+     * Question Center's own save already carries. */
+    answerSource: "USER_INTERVENTION",
+    approvedByUser: true,
+    autoFillAllowed: changes.autoFillAllowed ?? Boolean(existing.auto_fill_allowed),
+  });
+}
