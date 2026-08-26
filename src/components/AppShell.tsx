@@ -29,7 +29,7 @@ export function AppShell({
 
   if (bare) {
     return (
-      <main className="flex-1 overflow-y-auto">
+      <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto outline-none">
         <div className="mx-auto w-full max-w-[var(--home-max-w)] px-[var(--shell-pad)] py-6 lg:py-7">{children}</div>
       </main>
     );
@@ -43,7 +43,11 @@ export function AppShell({
         {/* Follows a running build across every page, so nobody meets an empty Jobs list and
          *  concludes the app is broken while their profile is still being read. */}
         <SetupProgressStrip />
-        <main className="flex-1 overflow-y-auto">
+        {/* UI-2 — the skip-link target. One stable id, present in this render path and the
+         *  chromeless one above, so #main-content resolves to the same landmark on every route.
+         *  `tabIndex={-1}` lets a fragment-navigated focus actually land here (not just scroll to
+         *  it) without adding this element to the normal Tab order. */}
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto outline-none">
           <div className="mx-auto w-full max-w-[var(--home-max-w)] px-[var(--shell-pad)] py-6 lg:py-7">{children}</div>
         </main>
       </div>

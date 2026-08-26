@@ -56,14 +56,14 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
           <span aria-hidden="true">!</span>
           <h1 className="mt-3 text-[24px] font-bold text-primary">Admin access required</h1>
           <p>
-            This area manages how JobHunt discovers jobs and keeps its connectors running. It is
+            This area manages how Career-Ops discovers jobs and keeps its connectors running. It is
             available only to the PIN-unlocked owner of this installation.
           </p>
           <Link
             href="/home"
             className="admin-button admin-button-primary mt-5"
           >
-            Back to JobHunt
+            Back to Career-Ops
           </Link>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ProfileLockPrompt } from "@/components/ProfileLockPrompt";
+import { SkipLink } from "@/components/SkipLink";
 import { AppShell } from "@/components/AppShell";
 import { CommandBar } from "@/components/CommandBar";
 import { Geist, Geist_Mono } from "next/font/google";
@@ -60,6 +61,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="app-canvas flex h-full flex-col overflow-hidden text-primary lg:flex-row">
+        {/* UI-2 — the one global skip-to-content mechanism, first focusable thing on every route. */}
+        <SkipLink />
         <AppShell
           sidebar={<AppSidebar />}
           header={

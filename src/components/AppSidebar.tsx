@@ -230,8 +230,8 @@ export function AppSidebar() {
       <aside className="z-50 w-full shrink-0 border-b border-[var(--rail-border)] bg-[var(--z1-bg)] lg:h-dvh lg:w-64 lg:border-b-0 lg:border-r">
         <div className="flex h-[60px] items-center justify-between px-4 lg:hidden">
           <Link href="/admin" className="flex items-center gap-2.5 rounded-md">
-            <span aria-hidden="true" className="grid h-8 w-8 place-items-center rounded-[8px] bg-[var(--accent)] text-[15px] font-bold text-white">J</span>
-            <span className="text-[17px] font-bold tracking-[-0.018em] text-primary">JobHunt <span className="font-medium text-tertiary">Admin</span></span>
+            <span aria-hidden="true" className="grid h-8 w-8 place-items-center rounded-[8px] bg-[var(--accent)] text-[15px] font-bold text-white">C</span>
+            <span className="text-[17px] font-bold tracking-[-0.018em] text-primary">Career-Ops <span className="font-medium text-tertiary">Admin</span></span>
           </Link>
           <button
             ref={adminMenuButtonRef}
@@ -273,9 +273,9 @@ export function AppSidebar() {
 
         <div className="hidden h-full flex-col lg:flex">
           <div className="flex h-[80px] shrink-0 items-center gap-2.5 border-b border-[var(--separator)] px-5">
-            <span aria-hidden="true" className="grid h-9 w-9 place-items-center rounded-[9px] bg-[var(--accent)] text-[16px] font-bold text-white">J</span>
+            <span aria-hidden="true" className="grid h-9 w-9 place-items-center rounded-[9px] bg-[var(--accent)] text-[16px] font-bold text-white">C</span>
             <div>
-              <p className="text-[17px] font-bold tracking-[-0.018em] text-primary">JobHunt</p>
+              <p className="text-[17px] font-bold tracking-[-0.018em] text-primary">Career-Ops</p>
               <p className="text-[13px] font-medium text-tertiary">Admin Console</p>
             </div>
           </div>
@@ -313,10 +313,10 @@ export function AppSidebar() {
               aria-hidden="true"
               className="relative grid h-8 w-8 shrink-0 place-items-center rounded-[8px] bg-[var(--accent)] text-[15px] font-bold text-white"
             >
-              J
+              C
             </span>
             <span className="truncate text-[18px] font-bold tracking-[-0.018em] text-primary">
-              JobHunt
+              Career-Ops
               {inAdmin && (
                 <span className="ml-1.5 text-[10px] font-normal uppercase tracking-[0.09em] text-tertiary">
                   admin
@@ -330,7 +330,7 @@ export function AppSidebar() {
             aria-hidden="true"
             className="mx-auto grid h-8 w-8 place-items-center rounded-[8px] bg-[var(--accent)] text-[15px] font-bold text-white"
           >
-            J
+            C
           </span>
         )}
         <button
