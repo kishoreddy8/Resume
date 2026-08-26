@@ -42,7 +42,24 @@ test("skills are searched in memory and rendered through a bounded window", () =
   assert.match(profile, /const MAX_RENDERED = 80/);
   assert.match(profile, /matches\.slice\(0, Math\.min\(visibleCount, MAX_RENDERED\)\)/);
   assert.match(profile, /setVisibleCount\(\(count\) => Math\.min\(count \+ 24, MAX_RENDERED\)\)/);
-  assert.equal(profile.match(/fetch\(`/g)?.length, 4, "Profile should make three reads and one existing settings write");
+  // UI-P.1: named per-endpoint checks rather than one magic total, so a future change to this count
+  // says exactly WHICH read moved rather than requiring a re-derivation of the number. Each of the
+  // four reads (candidate, derived profile, settings, master-files manifest — the last added by
+  // UI-P for the Career Files summary) must appear exactly once; no per-row/per-section fetch.
+  const readPatterns = [
+    /fetch\(`\/api\/candidates\/\$\{candidateId\}`\)/,
+    /fetch\(`\/api\/candidates\/\$\{candidateId\}\/profile`\)/,
+    /fetch\(`\/api\/candidates\/\$\{candidateId\}\/settings`\)/,
+    /fetch\(`\/api\/master-files\?candidateId=\$\{candidateId\}`\)/,
+  ];
+  for (const pattern of readPatterns) {
+    assert.equal(profile.match(new RegExp(pattern.source, "g"))?.length, 1, `expected exactly one ${pattern} read`);
+  }
+  // No fetch() call targets /settings/answers — that route is reached only via a plain <Link>.
+  assert.doesNotMatch(profile, /fetch\(`[^`]*\/settings\/answers[^`]*`/);
+  // Backstop: total fetch() call sites — the four reads above plus the one existing settings PATCH
+  // write. A change here without a matching named assertion above is the brittle case this guards.
+  assert.equal(profile.match(/fetch\(`/g)?.length, 5, "Profile should make four reads and one existing settings write");
 });
 
 test("skill provenance names evidence sources without inventing employer attribution", () => {

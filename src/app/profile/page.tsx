@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import {
   BTN_SECONDARY,
+  Disclosure,
   INPUT,
   LoadingRegion,
   PageHeader,
@@ -17,11 +18,13 @@ import {
   IconBriefcase,
   IconCheckCircle,
   IconDocument,
+  IconInbox,
   IconPin,
   IconShield,
   IconStar,
   IconUser,
 } from "@/components/icons";
+import type { Manifest } from "@/components/MasterFileUpload";
 import { EditableSection } from "./EditableSection";
 import {
   CLEARANCE_OPTIONS,
@@ -37,11 +40,11 @@ import {
 } from "./types";
 
 /**
- * Profile — the professional information JobHunt uses.
+ * Profile — the professional information Career-Ops uses.
  *
  * WHAT THIS ROUTE USED TO BE. A `useEffect` that redirected to /candidates/<id>/settings, which is
  * a form. So "Profile" was a place you passed through on the way to editing four fields, and the
- * evidence JobHunt actually reasons over lived on a different route called Candidate Intelligence.
+ * evidence Career-Ops actually reasons over lived on a different route called Candidate Intelligence.
  *
  * TWO KINDS OF INFORMATION, AND THE DIFFERENCE IS LOAD-BEARING. Contact, target roles, preferences
  * and work authorization are things you STATE: editable here, section by section, and the only
@@ -61,18 +64,70 @@ import {
  * NO COMPLETENESS SCORE. There is no deterministic completeness contract in the product, so a
  * "profile 92% complete" ring would be a number invented by this file.
  *
- * THREE PAYLOADS, IN PARALLEL, ONCE. No per-section request, no AI call, no polling.
+ * UI-P — PROFILE STATUS WAS BEING DISCARDED. `/api/candidates/:id/profile` has always returned
+ * `status: "ok" | "missing" | "stale" | "invalid"` (the same contract `loadCandidateProfile` gives
+ * Candidate Intelligence and Home), but this page previously collapsed every non-"ok" status into
+ * the same `evidence: null` and let each empty panel say "not on file yet" — true for `missing`,
+ * misleading for `stale` (experience/skills DO exist, they're just not trusted right now) and for
+ * `invalid` (a real error, not an empty state). The status is now kept and surfaced once, honestly,
+ * in its own section — see the "Needs your review" panel below. The real fix action lives on
+ * Candidate Intelligence (the page with the actual "Build profile now" control and progress
+ * polling) — this page links there rather than re-implementing a second build UI.
+ *
+ * UI-P — CAREER FILES. Master Resume / Master Skills Inventory presence (from the same manifest
+ * /master-files already reads) is now summarized here too, so "what evidence is this profile built
+ * from" is answered in one place instead of requiring a detour to Master Files to find out.
+ *
+ * FOUR PAYLOADS, IN PARALLEL, ONCE. No per-section request, no AI call, no polling.
  */
+
+type ProfileStatus = "ok" | "missing" | "stale" | "invalid";
 
 type Loaded = {
   candidate: CandidateRecord;
   evidence: EvidenceProfile | null;
+  profileStatus: ProfileStatus;
+  profileError: string | null;
   settings: CandidateSettingsPayload;
+  masterFiles: Manifest;
 };
 
 function fullName(c: CandidateRecord): string {
   return c.display_name?.trim() || [c.first_name, c.last_name].filter(Boolean).join(" ").trim() || "Your profile";
 }
+
+/**
+ * Honest, per-reason copy for a profile that is not "ok" — the same three real conditions
+ * loadCandidateProfile reports everywhere else (Home, Candidate Intelligence). The fix action is
+ * always Candidate Intelligence: that is the page with the real "Build profile now" control and
+ * progress polling, not a second build UI invented for this page.
+ *
+ * UI-P.1 — "stale" softened from "changed" to "may have changed": loadCandidateProfile's own source
+ * reports stale identically whether the source files provably changed OR their freshness simply
+ * can't be verified (pre-sha256 uploads have no hash to compare at all) — asserting a definite
+ * change would overclaim in that second, real case.
+ *
+ * UI-P.1 — "invalid" no longer states a specific cause in its primary sentence. The real
+ * loadCandidateProfile error can be a raw JSON-parse message, a Zod validation error naming internal
+ * schema paths, or a schemaVersion mismatch — none of that is candidate-friendly, and Candidate
+ * Intelligence exposing the same raw string elsewhere is not a reason to do it here too. The exact
+ * message is now behind an explicit "Technical details" disclosure (the same pattern ErrorState
+ * already uses), not the primary sentence a candidate reads first.
+ */
+const PROFILE_REVIEW_COPY: Record<Exclude<ProfileStatus, "ok">, { title: string; detail: string }> = {
+  missing: {
+    title: "Your professional profile hasn't been built yet.",
+    detail: "Career-Ops builds this from your Master Resume and Skills Inventory — the sections below stay empty until it runs once.",
+  },
+  stale: {
+    title: "Your professional profile needs a refresh.",
+    detail: "Your master resume or skills inventory may have changed since this was built, so the experience and skills below are hidden until it's rebuilt.",
+  },
+  invalid: {
+    title: "Your professional profile needs review.",
+    detail: "Some information in your saved profile could not be read.",
+  },
+};
 
 function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
@@ -138,19 +193,28 @@ export default function ProfilePage() {
     if (candidateId === null) return;
     setError(false);
     try {
-      const [cRes, pRes, sRes] = await Promise.all([
+      const [cRes, pRes, sRes, mRes] = await Promise.all([
         fetch(`/api/candidates/${candidateId}`),
         fetch(`/api/candidates/${candidateId}/profile`),
         fetch(`/api/candidates/${candidateId}/settings`),
+        fetch(`/api/master-files?candidateId=${candidateId}`),
       ]);
       if (!cRes.ok || !sRes.ok) return setError(true);
-      const [cBody, pBody, sBody] = await Promise.all([cRes.json(), pRes.ok ? pRes.json() : null, sRes.json()]);
+      const [cBody, pBody, sBody, mBody] = await Promise.all([
+        cRes.json(),
+        pRes.ok ? pRes.json() : null,
+        sRes.json(),
+        mRes.ok ? mRes.json() : null,
+      ]);
       setData({
         candidate: cBody.candidate,
         /* A profile that has not been built yet is a real state, not a failure: each panel says so
          * in its own words rather than the page refusing to render. */
         evidence: pBody?.status === "ok" ? (pBody.profile as EvidenceProfile) : null,
+        profileStatus: (pBody?.status as ProfileStatus | undefined) ?? "missing",
+        profileError: pBody?.status === "invalid" ? (pBody.error as string | null) : null,
         settings: sBody as CandidateSettingsPayload,
+        masterFiles: (mBody?.manifest as Manifest | undefined) ?? {},
       });
     } catch {
       setError(true);
@@ -197,7 +261,7 @@ export default function ProfilePage() {
         <PageHeader
           size="lg"
           title="Profile"
-          description="Your professional information and evidence used across JobHunt."
+          description="Your professional information and evidence used across Career-Ops."
         />
         <LoadingRegion label="Loading your profile" />
         <Panel>
@@ -214,7 +278,7 @@ export default function ProfilePage() {
     );
   }
 
-  const { candidate, evidence, settings } = data;
+  const { candidate, evidence, profileStatus, profileError, settings, masterFiles } = data;
   const name = fullName(candidate);
   const prefs = settings.preferences;
   const contact = settings.contact;
@@ -224,13 +288,14 @@ export default function ProfilePage() {
   const experience = evidence?.experience ?? [];
   const education = evidence?.education ?? [];
   const certifications = evidence?.certifications ?? [];
+  const review = profileStatus === "ok" ? null : PROFILE_REVIEW_COPY[profileStatus];
 
   return (
     <div className="mx-auto flex w-full max-w-[var(--candidate-page-max)] flex-col gap-6 pb-12">
       <PageHeader
         size="lg"
         title="Profile"
-        description="Your professional information and evidence used across JobHunt."
+        description="Your professional information and evidence used across Career-Ops."
       />
 
       {/* ── identity ─────────────────────────────────────────────────────────────────────────── */}
@@ -295,6 +360,37 @@ export default function ProfilePage() {
           />
         </div>
       </section>
+
+      {/* ── needs your review ────────────────────────────────────────────────────────────────── */}
+      {/* Only rendered when loadCandidateProfile actually reports a non-"ok" status — never a
+       *  fabricated warning, and never a second priority engine competing with Home's next-action
+       *  card. This is profile-specific review, not global "what needs me". */}
+      {review && (
+        <section aria-labelledby="profile-review-title" className="rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] p-5 shadow-[var(--shadow-card)] sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span aria-hidden="true" className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-[var(--tile-amber-bg)] text-[var(--tile-amber-fg)]">
+                <IconInbox size={17} />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[13px] font-semibold uppercase tracking-[0.075em] text-[var(--pill-amber-fg)]">Needs your review</p>
+                <h2 id="profile-review-title" className="mt-1 text-[18px] font-bold leading-snug text-primary">{review.title}</h2>
+                <p className="mt-1.5 max-w-[62ch] text-[14px] leading-6 text-secondary">{review.detail}</p>
+                {profileStatus === "invalid" && profileError && (
+                  <div className="mt-2 max-w-[62ch]">
+                    <Disclosure title="Technical details">
+                      <p className="text-[13px] leading-6 text-tertiary">{profileError}</p>
+                    </Disclosure>
+                  </div>
+                )}
+              </div>
+            </div>
+            <Link href="/candidate-intelligence" className={`${BTN_SECONDARY} min-h-11 shrink-0 text-[14px]`}>
+              {profileStatus === "missing" ? "Build profile" : "Review profile"}
+            </Link>
+          </div>
+        </section>
+      )}
 
       {/* ── quick sections ───────────────────────────────────────────────────────────────────── */}
       <div>
@@ -576,7 +672,7 @@ export default function ProfilePage() {
                   </Link>
                 }
               >
-                No experience on file yet. JobHunt reads this from your master resume.
+                No experience on file yet. Career-Ops reads this from your master resume.
               </PanelEmpty>
             ) : (
               <ul className="flex flex-col divide-y divide-[var(--separator)]">
@@ -642,6 +738,8 @@ export default function ProfilePage() {
         <div className="flex flex-col gap-5">
           <SkillsPanel employer={skills.employer} inventory={skills.inventory} />
 
+          <CareerFilesPanel manifest={masterFiles} />
+
           <Panel title="Certifications">
             {certifications.length === 0 ? (
               <PanelEmpty>No certifications added.</PanelEmpty>
@@ -669,10 +767,12 @@ export default function ProfilePage() {
             )}
           </Panel>
 
-          {/* Keeps the reference's slot. What it does NOT have is a saved-answers list or a Manage
-           *  answers control: the answer store is empty and no management route exists, so both
-           *  would be controls that lead nowhere. It states that, and shows what IS reused. */}
-          <Panel title="Application information" description="What JobHunt reuses when filling in an application.">
+          {/* UI-P: the reusable-answers count and a real "Manage saved answers" link to /settings/
+           *  answers were added here — the prior version's own comment said no management route
+           *  existed, which was true when it was written and is stale now that UI-AM shipped one.
+           *  Same unconditional-link precedent Settings' own Applications panel already uses: shown
+           *  even at zero, since the destination page has a real, honest empty state of its own. */}
+          <Panel title="Application information" description="What Career-Ops reuses when filling in an application.">
             <ul className="flex flex-col gap-2">
               <li className="flex items-start gap-2.5">
                 <span aria-hidden="true" className="mt-px text-[var(--pill-success-fg)]">
@@ -700,12 +800,15 @@ export default function ProfilePage() {
                 </span>
               </li>
             </ul>
-            <div className="mt-3 rounded-[10px] bg-[var(--z0-bg)] px-3.5 py-3">
-              <p className="text-[14px] leading-6 text-tertiary">
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-[10px] bg-[var(--z0-bg)] px-3.5 py-3">
+              <p className="text-[14px] leading-6 text-primary">
                 {settings.applicationAnswers?.count
-                  ? `${settings.applicationAnswers.count} reusable ${settings.applicationAnswers.count === 1 ? "answer" : "answers"} saved.`
-                  : "No saved application information."}
+                  ? `${settings.applicationAnswers.count} saved ${settings.applicationAnswers.count === 1 ? "answer" : "answers"}`
+                  : "No saved application answers yet"}
               </p>
+              <Link href="/settings/answers" className="shrink-0 text-[14px] font-semibold text-[var(--accent)] hover:underline">
+                Manage saved answers
+              </Link>
             </div>
           </Panel>
         </div>
@@ -747,7 +850,7 @@ function SkillsPanel({ employer, inventory }: {
   return (
     <Panel
       title="Skills & evidence"
-      description="What JobHunt can point to when tailoring, drawn from your resume and Master Skills Inventory."
+      description="What Career-Ops can point to when tailoring, drawn from your resume and Master Skills Inventory."
     >
       {total === 0 ? (
         <PanelEmpty
@@ -820,6 +923,62 @@ function SkillsPanel({ employer, inventory }: {
           )}
         </>
       )}
+    </Panel>
+  );
+}
+
+function uploadedOn(iso: string): string {
+  const d = new Date(iso);
+  return Number.isFinite(d.getTime())
+    ? d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+    : "an unknown date";
+}
+
+/**
+ * Career Files — a summary of the two source documents the profile builder reads, not a second
+ * upload/manage UI. Reuses the exact manifest /master-files already fetches; this page never writes
+ * to it. Real status only: "available" (filename + upload date) or "missing", never "needs review"
+ * for a slot this page has no way to independently judge — that distinction belongs to the profile
+ * status above, which already covers "the documents changed since the profile was rebuilt" (stale).
+ */
+function CareerFilesPanel({ manifest }: { manifest: Manifest }) {
+  const slots: { key: "resume" | "skills"; label: string }[] = [
+    { key: "resume", label: "Master Resume" },
+    { key: "skills", label: "Master Skills Inventory" },
+  ];
+  return (
+    <Panel
+      title="Career Files"
+      description="The source documents your profile is built from."
+      actions={
+        <Link href="/master-files" className={`${BTN_SECONDARY} min-h-11 text-[14px]`}>
+          Manage
+        </Link>
+      }
+    >
+      <ul className="flex flex-col divide-y divide-[var(--separator)]">
+        {slots.map(({ key, label }) => {
+          const entry = manifest[key];
+          return (
+            <li key={key} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
+              <span
+                aria-hidden="true"
+                className={`mt-0.5 grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[9px] ${
+                  entry ? "bg-[var(--tile-green-bg)] text-[var(--tile-green-fg)]" : "bg-[var(--z0-bg)] text-tertiary"
+                }`}
+              >
+                {entry ? <IconCheckCircle size={15} /> : <IconDocument size={15} />}
+              </span>
+              <div className="min-w-0">
+                <div className="text-[15px] font-semibold leading-snug text-primary">{label}</div>
+                <div className="mt-1 text-[14px] text-tertiary">
+                  {entry ? `${entry.filename} · uploaded ${uploadedOn(entry.uploadedAt)}` : "Not uploaded yet"}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </Panel>
   );
 }
