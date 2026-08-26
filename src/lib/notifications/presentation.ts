@@ -36,6 +36,15 @@ export const NOTIFICATION_PRESENTATION: Record<string, NotificationPresentation>
     title: "Resume review needs attention",
     description: "A resume review recorded a problem that needs you.",
   },
+  /* UI-ACT.1 — was actively emitted (src/lib/resumeQuality/writers/writerWorkerCore.ts, once the
+   * bounded technical-retry budget is exhausted) but missing from this list, which this module's own
+   * header says is supposed to be exhaustive ("the list is what the product actually emits"). Distinct
+   * from QUALITY_FAILURE: that one is the quality GATE rejecting an otherwise-valid draft; this one is
+   * the writer failing to produce a valid draft at all after repeated attempts. */
+  WRITER_FAILURE: {
+    title: "Resume tailoring had a technical issue",
+    description: "The writer could not produce a valid draft after repeated attempts.",
+  },
   application_needs_attention: {
     title: "Application needs attention",
     description: "An application stopped and cannot continue without you.",
@@ -51,6 +60,7 @@ export const NOTIFICATION_TYPE_ORDER: string[] = [
   "application_needs_attention",
   "HUMAN_REVIEW_REQUIRED",
   "QUALITY_FAILURE",
+  "WRITER_FAILURE",
   "HIGH_VALUE_JOB_MATCH",
   "RESUME_READY",
   "application_outcome",
