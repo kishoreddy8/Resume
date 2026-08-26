@@ -1,3 +1,4 @@
+import { providerSqlList, VALIDATION_ELIGIBLE_PROVIDERS } from "./scannableProviders";
 import pLimit from "p-limit";
 import { getDb } from "@/db";
 import { recordSourceValidation } from "@/db/queries/jobSourceValidation";
@@ -125,7 +126,7 @@ export function listPendingConnectorCandidates(
        ON l.company_id = c.id AND l.organization_id = js.organization_id
      WHERE js.is_active = 1 AND js.resolution_status = 'VERIFIED'
        AND js.review_status = 'PENDING'
-       AND js.provider IN ('greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters', 'adp_wfn', 'adp_rm', 'eightfold', 'cornerstone', 'avature', 'paylocity', 'icims', 'ukg_pro', 'bamboohr', 'oracle_recruiting_cloud', 'workable', 'rippling', 'paycom', 'jazzhr', 'jobvite', 'breezy', 'teamtailor', 'applicantpro', 'pinpoint', 'clearcompany', 'personio', 'recruitee', 'applicantstack', 'comeet', 'cats', 'gohire', 'newton', 'silkroad', 'jobdiva', 'taleo', 'phenom', 'successfactors')
+       AND js.provider IN (${providerSqlList(VALIDATION_ELIGIBLE_PROVIDERS)})
        ${options.provider ? "AND js.provider = ?" : ""}
        AND js.source_key IS NOT NULL AND js.source_url IS NOT NULL
        AND c.domain_identity_status = 'VERIFIED' AND c.verified_domain IS NOT NULL

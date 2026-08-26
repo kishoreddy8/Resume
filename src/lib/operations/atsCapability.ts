@@ -1,4 +1,5 @@
 import { automatedSourceTypes } from "@/lib/apply/agent/selectAdapter";
+import { DISCOVERY_CONNECTOR_PROVIDERS, SCANNABLE_PROVIDERS } from "@/lib/ats/scannableProviders";
 import type { SourceType } from "@/types";
 
 /**
@@ -53,8 +54,32 @@ export type RecognitionSupport = "UNKNOWN";
 export type AutomationSupport = "RUNTIME_ADAPTER" | "NONE";
 export type ValidationEvidence = "UNKNOWN";
 
+/**
+ * ADMIN-OPS-3 — whether Career-Ops can FETCH jobs from a platform. Entirely independent of whether
+ * it can APPLY to one.
+ */
+export type DiscoverySupport =
+  /** A connector exists AND the scanner is willing to select this provider's sources. */
+  | "SCANNABLE"
+  /** A fetch connector exists, but the scanner's provider allowlist excludes it, so no source of
+   *  this provider is ever selected for scanning. Real today for `phenom`. */
+  | "CONNECTOR_NOT_SCANNED"
+  /** No discovery connector. */
+  | "NONE";
+
 export interface AtsCapability {
   sourceType: SourceType;
+  /**
+   * ADMIN-OPS-3 — the DISCOVERY axis, added because its absence made this model actively misleading.
+   *
+   * Without it every platform outside the three apply adapters reported `automation: NONE` and
+   * `recognition: UNKNOWN` — which reads as "Career-Ops can do nothing here". That is false for 36
+   * platforms: Ashby, iCIMS, Taleo and the rest all have real, individually-tested job-fetch
+   * connectors dispatched by fetchJobsForCompany. The product can find their jobs perfectly well; it
+   * just cannot auto-apply to them. Reporting only the apply axis understated real capability as
+   * badly as claiming apply support would have overstated it.
+   */
+  discovery: DiscoverySupport;
   /**
    * Whether a URL for this platform can be identified. NOT observable in this worktree — the
    * capability registry that would answer it is not on this branch. Reported honestly as UNKNOWN
@@ -78,10 +103,25 @@ export function isRealAtsPlatform(sourceType: string): boolean {
   return !META_SOURCE_TYPES.has(sourceType);
 }
 
+/** Providers the scanner will select sources for — derived from the one authority, never restated. */
+const SCANNABLE = new Set<string>(SCANNABLE_PROVIDERS);
+
+/**
+ * Platforms with a job-fetch connector. Read from the single authority rather than restating the
+ * "+ phenom" delta a third time — see DISCOVERY_CONNECTOR_PROVIDERS.
+ */
+const DISCOVERY_CONNECTORS = new Set<string>(DISCOVERY_CONNECTOR_PROVIDERS);
+
 export function getAtsCapability(sourceType: SourceType): AtsCapability {
   const automated = automatedSourceTypes().includes(sourceType);
+  const discovery: DiscoverySupport = !DISCOVERY_CONNECTORS.has(sourceType)
+    ? "NONE"
+    : SCANNABLE.has(sourceType)
+    ? "SCANNABLE"
+    : "CONNECTOR_NOT_SCANNED";
   return {
     sourceType,
+    discovery,
     recognition: "UNKNOWN",
     automation: automated ? "RUNTIME_ADAPTER" : "NONE",
     validation: "UNKNOWN",
@@ -93,6 +133,10 @@ export function getAtsCapability(sourceType: SourceType): AtsCapability {
 }
 
 export interface AtsCapabilityCounts {
+  /** Platforms whose sources the scanner will fetch. Never conflate with runtimeAdapters. */
+  scannableDiscovery: number;
+  /** Platforms with a fetch connector the scanner's allowlist excludes. */
+  connectorNotScanned: number;
   /** Platforms with a real runtime adapter — the only number that means "can attempt to apply". */
   runtimeAdapters: number;
   /** Platforms whose recognition support this worktree cannot observe. */
@@ -110,6 +154,8 @@ export function summarizeAtsCapabilities(sourceTypes: readonly SourceType[]): At
   const real = sourceTypes.filter((s) => isRealAtsPlatform(s));
   const capabilities = real.map(getAtsCapability);
   return {
+    scannableDiscovery: capabilities.filter((c) => c.discovery === "SCANNABLE").length,
+    connectorNotScanned: capabilities.filter((c) => c.discovery === "CONNECTOR_NOT_SCANNED").length,
     runtimeAdapters: capabilities.filter((c) => c.automation === "RUNTIME_ADAPTER").length,
     recognitionUnknown: capabilities.filter((c) => c.recognition === "UNKNOWN").length,
     validated: capabilities.filter((c) => c.validation !== "UNKNOWN").length,

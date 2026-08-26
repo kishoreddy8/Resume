@@ -1,3 +1,4 @@
+import { CLI_VALIDATION_PROVIDERS, providerSqlList } from "../src/lib/ats/scannableProviders";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -93,9 +94,7 @@ function connectorCounts(): { approved: number; pending: number } {
          SUM(CASE WHEN review_status = 'APPROVED' THEN 1 ELSE 0 END) AS approved,
          SUM(CASE WHEN review_status = 'PENDING' THEN 1 ELSE 0 END) AS pending
        FROM job_sources
-       WHERE provider IN ('greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters', 'adp_wfn',
-                          'paylocity', 'icims', 'ukg_pro', 'bamboohr', 'oracle_recruiting_cloud',
-                          'workable', 'rippling', 'paycom', 'jazzhr', 'jobvite', 'breezy', 'teamtailor', 'applicantpro', 'pinpoint', 'clearcompany', 'personio', 'applicantstack', 'comeet', 'cats', 'gohire', 'newton', 'silkroad', 'jobdiva', 'taleo', 'adp_rm', 'eightfold', 'cornerstone', 'avature', 'successfactors')`
+       WHERE provider IN (${providerSqlList(CLI_VALIDATION_PROVIDERS)})`
     )
     .get() as { approved: number; pending: number };
 }

@@ -1,8 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { runPendingConnectorValidationBatch, type SupportedProvider } from "../src/lib/ats/pendingConnectorValidation";
+import { CLI_VALIDATION_PROVIDERS } from "../src/lib/ats/scannableProviders";
 
-const PROVIDERS: SupportedProvider[] = ["greenhouse", "lever", "ashby", "workday", "smartrecruiters", "adp_wfn", "adp_rm", "eightfold", "cornerstone", "avature", "paylocity", "icims", "ukg_pro", "bamboohr", "oracle_recruiting_cloud", "workable", "rippling", "paycom", "jazzhr", "jobvite", "breezy", "teamtailor", "applicantpro", "pinpoint", "clearcompany", "personio", "applicantstack", "comeet", "cats", "gohire", "newton", "silkroad", "jobdiva", "taleo", "successfactors"];
+/* ADMIN-OPS-3 — derived from the shared authority instead of a sixth hand-written copy.
+ * CLI_VALIDATION_PROVIDERS preserves this script's exact current membership, including its
+ * omission of recruitee — see src/lib/ats/scannableProviders.ts for why that is recorded rather
+ * than corrected here. */
+const PROVIDERS = CLI_VALIDATION_PROVIDERS as SupportedProvider[];
 
 function integerArg(name: string, fallback: number, max: number): number {
   const index = process.argv.indexOf(name);

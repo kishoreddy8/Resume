@@ -1,3 +1,4 @@
+import { CLI_VALIDATION_PROVIDERS, providerSqlList } from "../src/lib/ats/scannableProviders";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -226,7 +227,7 @@ const EXPORTS: ExportDefinition[] = [
           JOIN organizations o ON o.id = js.organization_id
           WHERE js.is_active = 1 AND js.resolution_status = 'VERIFIED'
             AND js.review_status = 'APPROVED'
-            AND js.provider IN ('greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters', 'adp_wfn', 'adp_rm', 'eightfold', 'cornerstone', 'avature', 'paylocity', 'icims', 'ukg_pro', 'bamboohr', 'oracle_recruiting_cloud', 'workable', 'rippling', 'paycom', 'jazzhr', 'jobvite', 'breezy', 'teamtailor', 'applicantpro', 'pinpoint', 'clearcompany', 'personio', 'applicantstack', 'comeet', 'cats', 'gohire', 'newton', 'silkroad', 'jobdiva', 'taleo', 'successfactors')
+            AND js.provider IN (${providerSqlList(CLI_VALIDATION_PROVIDERS)})
           ORDER BY js.provider, o.canonical_name COLLATE NOCASE, js.id`,
   },
   {

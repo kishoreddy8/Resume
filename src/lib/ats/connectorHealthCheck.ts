@@ -1,3 +1,4 @@
+import { HEALTH_PROBE_PROVIDERS, providerSqlList } from "./scannableProviders";
 import pLimit from "p-limit";
 import { getDb } from "@/db";
 import { fetchJobsForCompany } from "@/lib/normalize";
@@ -79,7 +80,7 @@ export function listConnectorHealthCandidates(
        JOIN companies c ON c.id=js.legacy_company_id
        WHERE js.is_active=1 AND js.is_authoritative=1 AND js.resolution_status='VERIFIED'
          AND js.review_status='APPROVED'
-         AND js.provider IN ('greenhouse','lever','ashby','workday','smartrecruiters','adp_wfn','adp_rm','eightfold','cornerstone','avature','paylocity','icims','ukg_pro','bamboohr','oracle_recruiting_cloud','workable','rippling','paycom','jazzhr','jobvite','breezy','teamtailor','applicantpro','pinpoint','clearcompany','personio','recruitee','applicantstack','comeet','cats','gohire','newton','silkroad','jobdiva','taleo','phenom','successfactors')
+         AND js.provider IN (${providerSqlList(HEALTH_PROBE_PROVIDERS)})
          AND c.is_active=1 ${eligibility}
      )
      SELECT job_source_id, organization_id, legacy_company_id, canonical_name, provider
