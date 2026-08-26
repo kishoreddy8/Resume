@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { formatQualityScore } from "../[id]/resumeStage";
+import { formatQualityScore, summarizeResumeStage } from "../[id]/resumeStage";
 
 /**
  * UI-0 DEFECT 1 — the READY success banner used to render `workflow.latest_overall_score ?? 96`,
@@ -39,6 +39,32 @@ test("the fabricated 96 fallback no longer exists anywhere in the resume pipelin
   const source = read("src/app/jobs/[id]/ResumeQualityPipeline.tsx");
   assert.doesNotMatch(source, /\?\?\s*96/, "no `?? 96` fallback may remain");
   assert.match(source, /formatQualityScore\(workflow\.latest_overall_score\)/, "the banner must use the honest formatter");
+});
+
+test("UI5.1-STAGE-BUG-01: a terminal FAILED workflow with a SAFE_BEST_ATTEMPT disposition is reported as safe-best-attempt, not as a plain blocked failure", () => {
+  /* determineFinalDisposition (finalDisposition.ts) can independently return SAFE_BEST_ATTEMPT for a
+   * workflow whose own `status` is FAILED — that is in fact the normal outcome whenever every
+   * absolute safety/truthfulness guardrail holds but the optimisation bar was never cleared after
+   * max iterations. Before this fix, summarizeResumeStage only consulted `disposition` when
+   * status === "READY", so this common, real, reachable case fell through to the generic FAILED
+   * branch and reported {key:"failed", tone:"blocked"} — indistinguishable, in the shared top-level
+   * command-center rail (WorkflowRail.tsx), from a genuinely blocked, unsendable-anything failure.
+   * The candidate would see red "Needs attention" for a resume they actually can review and use. */
+  const result = summarizeResumeStage({
+    status: "FAILED",
+    waitingFor: "NOT_WAITING",
+    disposition: "SAFE_BEST_ATTEMPT",
+    currentIteration: 3,
+  });
+  assert.equal(result.key, "safe_best_attempt");
+  assert.notEqual(result.tone, "blocked", "a safe best attempt must never render with the same tone as a genuine block");
+});
+
+test("UI5.1-STAGE-BUG-02: a terminal FAILED workflow with a BLOCKED disposition (or no disposition at all) still reports as genuinely blocked", () => {
+  const blocked = summarizeResumeStage({ status: "FAILED", waitingFor: "NOT_WAITING", disposition: "BLOCKED", currentIteration: 3 });
+  assert.equal(blocked.tone, "blocked");
+  const unknown = summarizeResumeStage({ status: "FAILED", waitingFor: "NOT_WAITING", disposition: null, currentIteration: 3 });
+  assert.equal(unknown.tone, "blocked", "an indeterminate disposition on a FAILED workflow must still default to the safe (blocked) reading, never to safe-best-attempt");
 });
 
 test("no other component in the repository fabricates a quality-style numeric fallback", () => {

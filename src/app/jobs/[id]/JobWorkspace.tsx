@@ -418,37 +418,20 @@ export function JobWorkspace({
               ) : (
                 <>
                   <TailoringResultsStep plan={plan.state === "ready" ? plan.plan : null} data={qualityData} />
-                  {/* The controls that actually START tailoring live in ResumeQualityPipeline —
-                   *  approve, retry the writer, re-tailor a terminal workflow. They were reachable
-                   *  only from the Validation step, behind a closed disclosure, so arriving here
-                   *  (which is the DEFAULT landing step — see defaultStep) offered no way to run
-                   *  anything. Rendering the same component here, open, gives this step its actions
-                   *  without a second implementation of the approval boundary. */}
-                  <LazyDetails
-                    defaultOpen={
-                      routeRequest.focus === "retailor" ||
-                      routeRequest.focus === "progress" ||
-                      actionFocus === "retailor" ||
-                      actionFocus === "progress"
-                    }
-                    data-workspace-focus="retailor progress"
-                    className="premium-expansion workspace-focus-target group mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 shadow-[var(--shadow-row)]"
-                    summary={
-                      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between text-[13.5px] font-semibold text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
-                        Resume actions and pipeline details
-                        <span aria-hidden="true" className="text-[18px] transition-transform group-open:rotate-45">+</span>
-                      </summary>
-                    }
-                  >
-                    <div className="mt-4 border-t border-[var(--separator)] pt-4">
-                      <ResumeQualityPipeline
-                        jobId={jobId}
-                        jobTitle={job.title}
-                        companyName={job.company_name}
-                        onStageChange={setResume}
-                      />
-                    </div>
-                  </LazyDetails>
+                  {/* UI-5 — this is now the primary candidate-facing tailoring journey (stage rail,
+                   *  explanation, preview, ready-arrival, actions), so it is no longer hidden behind
+                   *  a disclosure the way its previous raw-console presentation was. The
+                   *  data-workspace-focus/tabIndex pair is unchanged from before: the deep-link
+                   *  focus effect above only scrolls to and focuses an existing element, it never
+                   *  depended on a <details> open state. */}
+                  <div data-workspace-focus="retailor progress" tabIndex={-1} className="workspace-focus-target mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 shadow-[var(--shadow-row)] sm:p-5">
+                    <ResumeQualityPipeline
+                      jobId={jobId}
+                      jobTitle={job.title}
+                      companyName={job.company_name}
+                      onStageChange={setResume}
+                    />
+                  </div>
                 </>
               )}
             </div>
@@ -478,11 +461,16 @@ export function JobWorkspace({
                     }
                   >
                     <div className="mt-3">
+                      {/* UI-5 — "technical" here: ValidationStep just rendered this workflow's real
+                       *  verdict above; this disclosure exists to reach the actions and the deep
+                       *  record (approve, retry the writer, export, iteration history), not to
+                       *  repeat the stage rail/ready-arrival ValidationStep already covers. */}
                       <ResumeQualityPipeline
                         jobId={jobId}
                         jobTitle={job.title}
                         companyName={job.company_name}
                         onStageChange={setResume}
+                        variant="technical"
                       />
                     </div>
                   </LazyDetails>

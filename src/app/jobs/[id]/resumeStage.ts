@@ -68,6 +68,21 @@ export function summarizeResumeStage(input: {
   }
 
   if (status === "FAILED") {
+    // UI-5.1 checkpoint fix — the same Stage 28 disposition already special-cased above for READY
+    // is equally real for a terminal FAILED workflow: determineFinalDisposition can independently
+    // return SAFE_BEST_ATTEMPT here (every safety guardrail held, only the optimisation bar fell
+    // short), and that is not the same thing as a genuine, unresolved block. Collapsing both into
+    // "blocked" here — after already refusing to collapse them under READY above — was the gap; a
+    // disposition other than SAFE_BEST_ATTEMPT (BLOCKED, or none recorded) still reads as blocked.
+    if (disposition === "SAFE_BEST_ATTEMPT") {
+      return {
+        key: "safe_best_attempt",
+        label: "Safe best attempt",
+        detail: "Reached the end with usable output — not a full READY publication",
+        step: 3,
+        tone: "active",
+      };
+    }
     return { key: "failed", label: "Needs attention", detail: iter, step: 3, tone: "blocked" };
   }
   if (status === "IMPROVEMENT_RUNNING") {

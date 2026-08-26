@@ -65,10 +65,19 @@ test("canonical refusal or missing readiness hides StartApplication behind a rev
 
 test("pipeline internals stay behind explicit disclosures", () => {
   const workspace = read("src/app/jobs/[id]/JobWorkspace.tsx");
-  assert.match(workspace, /Resume actions and pipeline details/);
+  const pipeline = read("src/app/jobs/[id]/ResumeQualityPipeline.tsx");
+  // UI-5 — ResumeQualityPipeline is now the premium primary journey on the Tailoring Results step
+  // (no longer hidden behind an extra outer disclosure there — a candidate landing on the step
+  // that watches their resume being tailored should see it immediately). Validation still reaches
+  // it through its own disclosure, since that step already shows the verdict and this is here only
+  // for the deeper record/actions.
   assert.match(workspace, /Open the full resume pipeline/);
-  assert.ok((workspace.match(/<LazyDetails/g) ?? []).length >= 2);
+  assert.ok((workspace.match(/<LazyDetails/g) ?? []).length >= 1);
   assert.match(workspace, /open \? children : null/);
+  assert.match(workspace, /variant="technical"/);
+  // The raw diagnostics (scores, iteration history, writer schedule) still live behind exactly one
+  // disclosure — ResumeQualityPipeline's own "Technical details", not a second outer wrapper.
+  assert.match(pipeline, /<Disclosure title="Technical details"/);
 });
 
 test("query changes remount the workspace and focus waits for the rendered target without writes", () => {

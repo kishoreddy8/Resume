@@ -1,21 +1,35 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { formatQualityScore, summarizeResumeStage, type ResumeStageSummary } from "./resumeStage";
 import Link from "next/link";
+import { formatQualityScore, summarizeResumeStage, type ResumeStageSummary } from "./resumeStage";
 import { presentDisposition } from "@/lib/resumeQuality/dispositionPresentation";
+import { presentResumeJourney } from "./resumeJourneyPresentation";
+import { StageRail } from "./StageRail";
+import { jobWorkspaceUrl } from "./workspaceRoute";
 import { useActiveCandidateId } from "@/lib/useActiveCandidateId";
+import { ResumePreview } from "@/app/resume/ResumePreview";
+import { Button, Disclosure, LoadingRegion, SkeletonRows, BTN_PRIMARY, BTN_SECONDARY } from "@/components/ui";
 import type { StructuredResumeReview, RequiredCorrection } from "@/lib/resumeQuality/types";
 
-/** Local, dependency-free label formatter — deliberately NOT imported from
- *  src/lib/resumeQuality/reviewFeedback.ts, which transitively pulls in canonicalInstructions.ts's
- *  node:crypto usage and cannot be bundled into a client component. Purely cosmetic string
- *  formatting, not a second definition of any business logic (unlike best-attempt ranking, which
- *  this file only ever displays via the server-computed `bestAttempt` field, never recomputes). */
-function humanizeCheckName(name: string): string {
-  const spaced = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
+/**
+ * UI-5 — the candidate-facing resume-tailoring journey.
+ *
+ * STATE OWNERSHIP UNCHANGED FROM BEFORE UI-5. This component still owns every fetch, every poll and
+ * every mutation for this job's quality workflow — nothing below reads or writes this state from
+ * anywhere else, and nothing here creates a second polling loop or a second workflow-state machine.
+ * UI-5 only replaces HOW this state is presented: a premium candidate journey (stage rail, plain-
+ * language explanation, resume preview, a genuine "ready" arrival) with every diagnostic that used to
+ * live on the primary surface preserved, verbatim in spirit, behind ONE "Technical details"
+ * disclosure — see the DiagnosticsPanel component at the bottom of this file.
+ *
+ * `variant="journey"` (the default) is the primary experience — used where this component is the
+ * main thing on screen (the Tailoring Results step). `variant="technical"` renders the same real
+ * actions and the same diagnostics, without the stage rail/preview/ready-arrival chrome that would
+ * duplicate what ValidationStep already shows — used where this component sits inside Validation's
+ * own "open the full resume pipeline" disclosure, which exists specifically to reach these actions
+ * and this record, not to repeat the verdict Validation already renders.
+ */
 
 interface QualityWorkflowResponse {
   candidateId: number;
@@ -100,9 +114,6 @@ interface QualityWorkflowResponse {
     hasHumanReviewCoverLetter: boolean;
   };
   waitingFor: "EXTERNAL_WRITER" | "HUMAN_REVIEW" | "COMPLETED" | "NOT_WAITING";
-  /** Stage 26 — writer/scheduler health, present only while the writer owns the next step. Never
-   *  derived from workflow.status: an approved job waiting to be written says nothing about whether
-   *  anything is currently writing it. */
   writer: {
     state:
       | "PROCESSING"
@@ -113,15 +124,12 @@ interface QualityWorkflowResponse {
       | "UNAVAILABLE_NOT_RUNNING"
       | "TECHNICAL_FAILURE"
       | "CANDIDATE_CONTACT_REQUIRED"
-      // Stage 27 — operationally distinct states that used to be reported as ordinary waiting or as
-      // a technical failure that "retries on its own schedule".
       | "BLOCKED_MAX_ATTEMPTS"
       | "SUBSCRIPTION_LIMIT_REACHED"
       | "AUTH_REQUIRED"
       | "UNAUTHORIZED_APPROVAL_STALE";
     detail: string;
     schedulerEnabled: boolean;
-    /** The writer's own switch, distinct from the master automation switch above. */
     writerEnabled: boolean;
     withinWindow: boolean;
     intervalMinutes: number;
@@ -144,15 +152,6 @@ interface QualityWorkflowResponse {
     writerAttemptsRemaining: number;
     targetIteration: number | null;
   } | null;
-  /** Phase 9A publication outcome for a READY workflow, read from the record written beside the
-   *  approved artifacts. "UNKNOWN" means the workflow was approved before this was recorded — it is
-   *  never a stand-in for "published". */
-  /**
-   * Stage 28 — the verdict a human acts on for a finished workflow. Deliberately three distinct
-   * words: READY (the unchanged full quality contract), SAFE_BEST_ATTEMPT (every absolute
-   * truthfulness/safety guardrail passed, optimisation did not) and BLOCKED (a real safety blocker
-   * remains). A safe best attempt must never be shown as READY, and never as a plain failure.
-   */
   finalDisposition: {
     disposition: "READY" | "SAFE_BEST_ATTEMPT" | "BLOCKED";
     selectedIterationNumber: number | null;
@@ -174,10 +173,7 @@ interface QualityWorkflowResponse {
     recordedAt: string | null;
     error: string | null;
   } | null;
-  /** Stage 28 — where a SAFE_BEST_ATTEMPT package was written, when one was. */
   safeAttemptPublication?: { directory: string; resume: string; coverLetter: string; reviewFeedback: string | null } | null;
-  /** The candidate's own explicit approval of THIS exact workflow's safe best attempt, or null. A
-   *  prior (superseded) workflow's approval never appears here — this is always scoped to workflow.id. */
   humanApproval?: {
     workflowId: number;
     selectedIterationNumber: number;
@@ -188,7 +184,6 @@ interface QualityWorkflowResponse {
   } | null;
 }
 
-/** Stage 26 — one short label per writer state, for the pipeline status chip. */
 const WRITER_STATE_LABEL: Record<string, string> = {
   PROCESSING: "Writer processing",
   WAITING_FOR_NEXT_ATTEMPT: "Waiting for writer",
@@ -204,8 +199,6 @@ const WRITER_STATE_LABEL: Record<string, string> = {
   UNAUTHORIZED_APPROVAL_STALE: "Approval no longer valid",
 };
 
-/** Stage 27 — the states an operator (not time) has to resolve. They share the "needs you" styling
- *  and are the ones that offer the Retry writer control. */
 const WRITER_OPERATOR_ACTION_STATES = new Set([
   "BLOCKED_MAX_ATTEMPTS",
   "SUBSCRIPTION_LIMIT_REACHED",
@@ -213,57 +206,11 @@ const WRITER_OPERATOR_ACTION_STATES = new Set([
   "UNAUTHORIZED_APPROVAL_STALE",
 ]);
 
-function getStepIndex(status: string): number {
-  switch (status) {
-    // Stage 26 — an approved workflow now waits in CREATED for the scheduled writer to produce
-    // iteration 1, so it belongs on the Writer step rather than a "nothing has happened yet" step.
-    case "CREATED":
-      return 1;
-    case "WRITER_RUNNING":
-    case "WRITER_COMPLETED":
-      return 1;
-    case "REVIEW_RUNNING":
-    case "REVIEW_COMPLETED":
-      return 2;
-    case "IMPROVEMENT_RUNNING":
-      return 3;
-    case "READY":
-      return 4;
-    case "FAILED":
-      return 3;
-    default:
-      return 0;
-  }
+function humanizeCheckName(name: string): string {
+  const spaced = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-function PriorityBadge({ priority }: { priority: string }) {
-  const colors: Record<string, string> = {
-    CRITICAL: "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300 border-red-200 dark:border-red-800",
-    HIGH: "bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-300 border-orange-200 dark:border-orange-800",
-    MEDIUM: "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 border-amber-200 dark:border-amber-800",
-    LOW: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700",
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${
-        colors[priority] ?? colors.LOW
-      }`}
-    >
-      {priority}
-    </span>
-  );
-}
-
-/**
- * Mirrors evaluateQualityGate()'s strengthened condition (original 4 Stage 7 scores/blocking-issues
- * PLUS every canonical instruction-compliance check PASS) for whichever review is currently
- * displayed — not just the latest iteration, since the user can browse iteration history. Kept as a
- * plain, dependency-free function rather than importing qualityGate.ts directly: that module pulls
- * in canonicalInstructions.ts's node:crypto usage, which client components can't bundle. The one
- * piece intentionally NOT replicated here is "compliance was computed against the CURRENT canonical
- * instruction hash" (that check needs the crypto-derived constant) — the authoritative READY/FAILED
- * status shown elsewhere on this page always comes from the server-computed workflow.status.
- */
 function reviewPassesStrengthenedGate(review: StructuredResumeReview): boolean {
   const originalGate =
     review.overallScore >= 95 &&
@@ -275,21 +222,35 @@ function reviewPassesStrengthenedGate(review: StructuredResumeReview): boolean {
   return originalGate && compliancePass;
 }
 
+function PriorityBadge({ priority }: { priority: string }) {
+  const colors: Record<string, string> = {
+    CRITICAL: "bg-[var(--pill-red-bg)] text-[var(--pill-red-fg)]",
+    HIGH: "bg-[var(--pill-amber-bg)] text-[var(--pill-amber-fg)]",
+    MEDIUM: "bg-[var(--pill-amber-bg)] text-[var(--pill-amber-fg)]",
+    LOW: "bg-[var(--z1-bg)] text-tertiary",
+  };
+  return (
+    <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${colors[priority] ?? colors.LOW}`}>
+      {priority}
+    </span>
+  );
+}
+
 function ScoreBar({ label, score, target = 95 }: { label: string; score: number | null; target?: number }) {
   const val = score ?? 0;
   const isPass = val >= target;
   return (
     <div>
-      <div className="flex justify-between text-xs mb-1">
-        <span className="text-zinc-600 dark:text-zinc-400 font-medium">{label}</span>
-        <span className={`font-semibold ${isPass ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-800 dark:text-zinc-200"}`}>
+      <div className="mb-1 flex justify-between text-[11.5px]">
+        <span className="font-medium text-secondary">{label}</span>
+        <span className={`font-semibold ${isPass ? "text-[var(--pill-success-fg)]" : "text-primary"}`}>
           {score !== null ? `${score}/100` : "—"}
         </span>
       </div>
-      <div className="h-1.5 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--z1-bg)]">
         <div
           className={`h-full transition-all duration-300 ${
-            val >= 95 ? "bg-emerald-500" : val >= 80 ? "bg-blue-500" : val >= 60 ? "bg-amber-500" : "bg-red-500"
+            val >= 95 ? "bg-[var(--pill-success-fg)]" : val >= 80 ? "bg-[var(--accent)]" : val >= 60 ? "bg-[var(--pill-amber-fg)]" : "bg-[var(--error)]"
           }`}
           style={{ width: `${Math.min(Math.max(val, 0), 100)}%` }}
         />
@@ -303,6 +264,7 @@ export function ResumeQualityPipeline({
   jobTitle,
   companyName,
   onStageChange,
+  variant = "journey",
 }: {
   jobId: number;
   jobTitle: string;
@@ -310,6 +272,10 @@ export function ResumeQualityPipeline({
   /** Reports the workflow stage upward so the command center can show where the resume stands.
    *  This is a REPORT of the response this component already fetched — it adds no request. */
   onStageChange?: (stage: ResumeStageSummary) => void;
+  /** "journey" (default): the primary candidate experience — stage rail, explanation, preview,
+   *  ready-arrival. "technical": the same real actions and diagnostics without that chrome, for
+   *  where this component sits behind Validation's own disclosure. */
+  variant?: "journey" | "technical";
 }) {
   const candidateId = useActiveCandidateId();
   const [data, setData] = useState<QualityWorkflowResponse | null>(null);
@@ -317,11 +283,9 @@ export function ResumeQualityPipeline({
   const [actionBusy, setActionBusy] = useState(false);
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedIterationNumber, setSelectedIterationNumber] = useState<number | null>(null);
+  const [previewing, setPreviewing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  /* Report the workflow stage upward. Keyed on the few primitives the summary actually depends on,
-   * so this fires when the STAGE changes rather than on every poll tick that returns the same
-   * status. No request is made here — this is the response this component already has. */
   const reportedStatus = data?.workflow?.status ?? null;
   const reportedWaiting = data?.waitingFor ?? null;
   const reportedDisposition = data?.finalDisposition?.disposition ?? null;
@@ -361,10 +325,6 @@ export function ResumeQualityPipeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidateId, jobId]);
 
-  // Stage 26 — while the scheduled writer owns the next step, this page is the only place the user
-  // watches progress, and the transitions it reports (writer picks the job up, review runs, gate
-  // passes, artifacts publish) now happen without any further click. Polls ONLY in that state, so a
-  // READY/FAILED/unstarted page makes no repeat requests.
   const isAwaitingWriter = data?.waitingFor === "EXTERNAL_WRITER";
   useEffect(() => {
     if (!isAwaitingWriter) return;
@@ -375,14 +335,6 @@ export function ResumeQualityPipeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAwaitingWriter, candidateId, jobId]);
 
-  /**
-   * Explicit user-initiated re-tailor from a READY workflow. Sends freshRewrite:true so
-   * evaluateWorkflowRetry creates a new version alongside the existing READY one — never overwrites
-   * it. The old READY artifacts remain eligible for applications until the new version passes review.
-   *
-   * Refreshes the candidate's tailoring approval against the CURRENT match decision before requesting
-   * freshRewrite, ensuring authorization is never blocked by a stale pre-re-evaluation decision.
-   */
   async function handleReTailor() {
     const confirmed = window.confirm(
       "Create a fresh tailored version for this job?\n\n" +
@@ -401,7 +353,6 @@ export function ResumeQualityPipeline({
       const approvalType: "READY_DIRECT" | "NEEDS_REVIEW_OVERRIDE" =
         matchDecision === "NEEDS_REVIEW" ? "NEEDS_REVIEW_OVERRIDE" : "READY_DIRECT";
 
-      // Refresh approval context against the CURRENT match decision before requesting freshRewrite
       const patchRes = await fetch(`/api/jobs/${jobId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -445,7 +396,6 @@ export function ResumeQualityPipeline({
     setActionMessage(null);
     try {
       if (approvalType && data?.authorization.matchDecision) {
-        // First mark with approval context
         await fetch(`/api/jobs/${jobId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -484,11 +434,6 @@ export function ResumeQualityPipeline({
     }
   }
 
-  /**
-   * Stage 27 — the operator's "Retry writer" action. Clears only technical-retry bookkeeping so the
-   * normal scheduled writer can pick this workflow up again; it writes nothing itself and cannot
-   * change an approval, a score, an iteration, or an application.
-   */
   async function handleRetryWriter() {
     setActionBusy(true);
     setActionMessage(null);
@@ -507,12 +452,6 @@ export function ResumeQualityPipeline({
     }
   }
 
-  /**
-   * The candidate's explicit approval of a SAFE_BEST_ATTEMPT resume. Calls the approve endpoint,
-   * which recomputes the canonical safety authority (determineFinalDisposition) server-side and
-   * refuses anything this component's own state does not already agree is safe — this handler
-   * carries no scores or verdicts of its own, only the workflow id being approved.
-   */
   async function handleApprove() {
     setActionBusy(true);
     setActionMessage(null);
@@ -572,7 +511,6 @@ export function ResumeQualityPipeline({
 
     try {
       const text = await file.text();
-      // Test parse
       JSON.parse(text);
 
       const res = await fetch(`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/import`, {
@@ -608,35 +546,26 @@ export function ResumeQualityPipeline({
 
   if (loading) {
     return (
-      <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Resume Tailoring Pipeline</h2>
-        <p className="mt-2 text-xs text-zinc-500">Loading pipeline status…</p>
+      <div className="rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] p-5">
+        <LoadingRegion label="Loading your resume's tailoring progress" />
+        <SkeletonRows rows={3} />
       </div>
     );
   }
 
-  if (!data) {
-    return null;
-  }
+  if (!data) return null;
 
   const { workflow, authorization, applicationId, tailoringRun, iterations, bestAttempt, availableArtifacts, writer, iterationBudget, publication, finalDisposition, humanApproval } = data;
   const isApprovedForCurrentWorkflow = humanApproval != null && humanApproval.workflowId === workflow?.id;
 
-  // Stage 28 — a terminal FAILED workflow is NOT automatically a failure to the user. When every
-  // absolute truthfulness guardrail passed, the safest attempt is a usable human-review package and
-  // must be presented as such; only a genuine safety blocker is "do not apply".
-  // The presentation rule itself lives in a pure, tested function (dispositionPresentation.ts) so
-  // "a safe best attempt never reads as FAILED, and never as READY" is provable, not just visual.
   const presentation = presentDisposition({
     workflowStatus: workflow?.status ?? "",
     disposition: finalDisposition?.disposition ?? null,
   });
   const isSafeBestAttempt = presentation.tone === "REVIEW" && finalDisposition?.disposition === "SAFE_BEST_ATTEMPT";
   const isBlockedUnsafe = workflow?.status === "FAILED" && !isSafeBestAttempt;
-  /** The attempt a human should actually download — never simply "the latest". */
   const safeSelectedIteration = finalDisposition?.selectedIterationNumber ?? null;
 
-  // Selected iteration data for historical view
   const activeIterNum = selectedIterationNumber ?? workflow?.current_iteration ?? 1;
   const selectedIterRow = iterations.find((it) => it.iteration_number === activeIterNum);
   let displayedReview: StructuredResumeReview | null = null;
@@ -650,363 +579,256 @@ export function ResumeQualityPipeline({
     displayedReview = data.latestReview;
   }
 
-  const currentStep = workflow ? getStepIndex(workflow.status) : -1;
+  const journey = presentResumeJourney({
+    status: workflow?.status ?? null,
+    waitingFor: data.waitingFor,
+    disposition: finalDisposition?.disposition ?? null,
+    blockingReason: finalDisposition?.safety.blockers[0] ?? data.qualityGate?.blockingIssues[0] ?? null,
+  });
+
+  const canPreview = (workflow?.current_iteration ?? 0) >= 1;
+  const canContinueToApplication =
+    journey.tone === "ready" || (isSafeBestAttempt && isApprovedForCurrentWorkflow);
+  const applicationHref = jobWorkspaceUrl(jobId, { step: "application" });
+
+  // UI-5.1 checkpoint fix — computed BEFORE the fixed wrapper below so the wrapper itself can be
+  // entirely absent (not just visually empty) whenever no genuine action exists. The wrapper used to
+  // always render for variant="journey", border/shadow/padding and all, even while this resolved to
+  // null — an invisible-content but still-present, still click-intercepting bar sitting permanently
+  // above MobileBottomNav on every journey state, confirmed by an actual pointer-event interception
+  // in Playwright. Its own reserved bottom padding (below) exists only when this is non-null, for the
+  // same reason: an always-on reservation would starve real content of scroll space for no purpose.
+  const stickyAction =
+    variant !== "journey"
+      ? null
+      : journey.tone === "ready" && canContinueToApplication ? (
+          <Link href={applicationHref} className={`${BTN_PRIMARY} block w-full text-center`}>
+            Continue to application
+          </Link>
+        ) : journey.tone === "ready" ? (
+          <a href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/resume`} download className={`${BTN_PRIMARY} block w-full text-center`}>
+            Download resume
+          </a>
+        ) : isSafeBestAttempt && !isApprovedForCurrentWorkflow ? (
+          <Button variant="attention" className="w-full" state={actionBusy ? "loading" : "idle"} loadingLabel="Approving…" onClick={handleApprove} disabled={actionBusy}>
+            Approve & use for applications
+          </Button>
+        ) : isSafeBestAttempt && canContinueToApplication ? (
+          <Link href={applicationHref} className={`${BTN_PRIMARY} block w-full text-center`}>
+            Continue to application
+          </Link>
+        ) : !workflow ? (
+          authorization.isAuthorized ? (
+            <Button variant="primary" className="w-full" state={actionBusy ? "loading" : "idle"} loadingLabel="Starting…" onClick={() => handleStartTailoring()} disabled={actionBusy}>
+              Start tailoring
+            </Button>
+          ) : null
+        ) : workflow.status === "FAILED" ? (
+          <Button
+            variant="primary"
+            className="w-full"
+            state={actionBusy ? "loading" : "idle"}
+            loadingLabel="Starting…"
+            onClick={() => handleStartTailoring(authorization.matchDecision === "NEEDS_REVIEW" ? "NEEDS_REVIEW_OVERRIDE" : "READY_DIRECT")}
+            disabled={actionBusy}
+          >
+            Re-tailor resume
+          </Button>
+        ) : null;
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900 space-y-5">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 pb-4 dark:border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Resume Tailoring Pipeline</h2>
-            {workflow && (
-              <span
-                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                  workflow.status === "READY"
-                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
-                    : isSafeBestAttempt
-                    ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
-                    : workflow.status === "FAILED"
-                    ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
-                    : workflow.status === "IMPROVEMENT_RUNNING" || workflow.status === "CREATED"
-                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
-                    : "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
-                }`}
-              >
-                {/* Stage 26 — CREATED now means "approved, waiting for the writer's first draft", not
-                    "nothing has happened"; the raw enum name would read as the latter.
-                    Stage 28 — a terminal workflow whose safety checks all passed reads as SAFE BEST
-                    ATTEMPT, never as the bare FAILED enum: the documents are genuinely usable, and
-                    the underlying status stays FAILED only because the full gate was not met. */}
-                {presentation.label}
-              </span>
-            )}
+    <div className={`flex flex-col gap-5 ${stickyAction ? "pb-[84px] lg:pb-0" : ""}`}>
+      {variant === "journey" && (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[18px] font-bold tracking-[-0.015em] text-primary">Resume tailoring</h2>
+            <p className="mt-0.5 text-[13px] text-tertiary">
+              {companyName} — {jobTitle}
+              {applicationId && <span className="ml-1.5">· Application #{applicationId}</span>}
+              {tailoringRun && <span className="ml-1.5">· Run #{tailoringRun.id}</span>}
+            </p>
           </div>
-          <p className="mt-1 text-xs text-zinc-500">
-            {companyName} — {jobTitle}
-            {applicationId && <span className="ml-2">· Application #{applicationId}</span>}
-            {tailoringRun && <span className="ml-2">· Run #{tailoringRun.id}</span>}
-          </p>
+          {canPreview && (
+            <Button variant="secondary" onClick={() => setPreviewing(true)}>
+              View resume
+            </Button>
+          )}
         </div>
+      )}
 
-        {workflow && (
-          <div className="text-right">
-            <div className="text-xs text-zinc-500">Iteration</div>
-            <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-              {workflow.current_iteration} of {workflow.max_iterations}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Action Notification */}
       {actionMessage && (
         <div
-          className={`rounded-md p-3 text-xs ${
+          role={actionMessage.type === "error" ? "alert" : "status"}
+          className={`rounded-[12px] px-3.5 py-2.5 text-[12.5px] ${
             actionMessage.type === "success"
-              ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800"
-              : "bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-200 border border-red-200 dark:border-red-800"
+              ? "bg-[var(--pill-success-bg)] text-[var(--pill-success-fg)]"
+              : "bg-[var(--pill-red-bg)] text-[var(--pill-red-fg)]"
           }`}
         >
           {actionMessage.text}
         </div>
       )}
 
-      {/* State Visualization */}
-      {workflow && (
-        <div className="py-2">
-          <div className="grid grid-cols-5 gap-2 text-center text-xs">
-            {["Created", "Writer", "Review", "Improvement", "Ready"].map((stepLabel, idx) => {
-              const isPast = currentStep > idx;
-              const isCurrent = currentStep === idx;
-              const isReady = workflow.status === "READY" && idx === 4;
-              // Stage 28 — a safe best attempt reached the end of the pipeline with usable output,
-              // so the final step is not painted as a failure.
-              const isFailed = presentation.renderAsFailedStep && idx === 3;
-              return (
-                <div key={stepLabel} className="flex flex-col items-center gap-1.5">
-                  <div
-                    className={`h-2 w-full rounded-full transition-colors ${
-                      isReady
-                        ? "bg-emerald-500"
-                        : isFailed
-                        ? "bg-red-500"
-                        : isCurrent
-                        ? "bg-blue-600"
-                        : isPast
-                        ? "bg-blue-300 dark:bg-blue-800"
-                        : "bg-zinc-100 dark:bg-zinc-800"
-                    }`}
-                  />
-                  <span
-                    className={`text-[11px] font-medium ${
-                      isCurrent || isReady || isFailed
-                        ? "text-zinc-900 dark:text-zinc-100 font-semibold"
-                        : "text-zinc-400 dark:text-zinc-600"
-                    }`}
-                  >
-                    {stepLabel}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+      {variant === "journey" && journey.stages && (
+        <div className="rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] p-4 sm:p-5">
+          <StageRail stages={journey.stages} currentStageKey={journey.currentStageKey} />
+          {/* Always announced via the one live region (Part 7) — including the ready transition,
+           *  which matters most to a screen-reader user. The ready banner below restates it more
+           *  richly for sighted users; the brief overlap is a smaller cost than an unannounced
+           *  arrival. */}
+          <p aria-live="polite" className="mt-4 text-[14px] font-semibold text-primary">
+            {journey.headline}
+          </p>
+          <p className="mt-1 text-[13px] leading-relaxed text-secondary">{journey.explanation}</p>
         </div>
       )}
 
-      {/* 1. Unstarted, unapproved — or a terminal FAILED workflow that may be retried.
-       *
-       * This block used to be gated on `!workflow` alone, so once a workflow existed and ended
-       * FAILED there was no way to run tailoring again from anywhere in the product — even though
-       * evaluateWorkflowRetry has supported CREATE_RETRY the whole time. Three of the real
-       * workflows are in exactly that state, and Resume Studio's "Re-tailor" led here and offered
-       * nothing to press.
-       *
-       * A retry needs a FRESH approval: evaluateWorkflowRetry refuses one recorded before the
-       * failed workflow was created, so the retry path below always passes an approvalType, which
-       * makes handleStartTailoring record the approval before creating the workflow. Nothing about
-       * the approval boundary is bypassed — it is re-asserted, which is the point. */}
+      {/* Unstarted, unapproved — or a terminal FAILED workflow that may be retried. A retry always
+       *  passes an approvalType so evaluateWorkflowRetry never refuses it as a stale approval. */}
       {(!workflow || workflow.status === "FAILED") && (
-        <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-4 dark:border-zinc-800 dark:bg-zinc-800/30 space-y-3">
-          <div>
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              {workflow ? "Re-tailor this resume" : "Tailoring Authorization"}
-            </h3>
-            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-              {workflow
-                ? "This attempt finished without a sendable resume. Starting again creates a new attempt beside it — the version above and its review history are kept, never overwritten."
-                : authorization.isAuthorized
-                  ? "This posting is approved and ready for automated deterministic tailoring."
-                  : authorization.blockingReason ?? "Tailoring approval required."}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2 pt-1">
+        <div className="rounded-[18px] border border-[var(--border)] bg-[var(--z1-bg)] p-4 sm:p-5">
+          <h3 className="text-[14px] font-semibold text-primary">
+            {workflow ? "Re-tailor this resume" : "Start tailoring"}
+          </h3>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-secondary">
+            {workflow
+              ? "This attempt finished without a sendable resume. Starting again creates a new attempt beside it — the version above and its review history are kept, never overwritten."
+              : authorization.isAuthorized
+                ? "This posting is approved and ready for tailoring."
+                : authorization.blockingReason ?? "Tailoring approval required."}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
             {workflow ? (
-              /* Always with an approvalType: a retry without a fresh approval is refused by
-               * evaluateWorkflowRetry as STALE_APPROVAL_FOR_RETRY. */
-              <button
-                onClick={() =>
-                  handleStartTailoring(
-                    authorization.matchDecision === "NEEDS_REVIEW" ? "NEEDS_REVIEW_OVERRIDE" : "READY_DIRECT"
-                  )
-                }
+              <Button
+                variant="primary"
+                state={actionBusy ? "loading" : "idle"}
+                loadingLabel="Starting…"
+                onClick={() => handleStartTailoring(authorization.matchDecision === "NEEDS_REVIEW" ? "NEEDS_REVIEW_OVERRIDE" : "READY_DIRECT")}
                 disabled={actionBusy}
-                className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm font-semibold text-[var(--accent-fg)] transition-colors hover:bg-[var(--accent-hover)] disabled:opacity-50"
               >
-                {actionBusy ? "Starting…" : "Re-tailor resume"}
-              </button>
+                Re-tailor resume
+              </Button>
             ) : authorization.isAuthorized ? (
-              <button
-                onClick={() => handleStartTailoring()}
-                disabled={actionBusy}
-                className="rounded bg-zinc-900 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-              >
-                {actionBusy ? "Starting Pipeline…" : "Start Tailoring Pipeline"}
-              </button>
+              <Button variant="primary" state={actionBusy ? "loading" : "idle"} loadingLabel="Starting…" onClick={() => handleStartTailoring()} disabled={actionBusy}>
+                Start tailoring
+              </Button>
             ) : authorization.matchDecision === "READY_FOR_TAILORING" ? (
-              <button
-                onClick={() => handleStartTailoring("READY_DIRECT")}
-                disabled={actionBusy}
-                className="rounded bg-emerald-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                {actionBusy ? "Authorizing…" : "Approve & Start Tailoring"}
-              </button>
+              <Button variant="primary" state={actionBusy ? "loading" : "idle"} loadingLabel="Authorizing…" onClick={() => handleStartTailoring("READY_DIRECT")} disabled={actionBusy}>
+                Approve & start tailoring
+              </Button>
             ) : authorization.matchDecision === "NEEDS_REVIEW" && authorization.insufficientJdSignal ? (
-              // Stage 24A: this is NOT a genuinely-reviewed borderline case — the evaluation ran
-              // with too little structured JD data to mean anything (see insufficientJdSignal on
-              // JobMatchResult). Offering the same override button here would make "CareerOps
-              // failed to evaluate" look identical to "a human reviewed this and it's a real
-              // judgment call". Re-evaluating (now that job intelligence exists) is the correct
-              // next step, not an exceptional override.
               <div className="space-y-1.5">
-                <p className="text-xs font-medium text-amber-700 dark:text-amber-500">
-                  Evaluated with insufficient structured JD data — this is not a real match judgment yet.
+                <p className="text-[12.5px] font-medium text-[var(--attention-fg)]">
+                  Evaluated with insufficient structured job data — this is not a real match judgment yet.
                 </p>
-                <button
-                  onClick={() => window.location.reload()}
-                  className="rounded border border-amber-300 px-3.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/40"
-                >
+                <Button variant="secondary" onClick={() => window.location.reload()}>
                   Re-evaluate from the job page, then return here
-                </button>
+                </Button>
               </div>
             ) : authorization.matchDecision === "NEEDS_REVIEW" ? (
-              <button
-                onClick={() => handleStartTailoring("NEEDS_REVIEW_OVERRIDE")}
-                disabled={actionBusy}
-                className="rounded bg-amber-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-              >
-                {actionBusy ? "Authorizing…" : "Approve Override & Start Tailoring"}
-              </button>
+              <Button variant="attention" state={actionBusy ? "loading" : "idle"} loadingLabel="Authorizing…" onClick={() => handleStartTailoring("NEEDS_REVIEW_OVERRIDE")} disabled={actionBusy}>
+                Approve override & start tailoring
+              </Button>
             ) : (
-              <span className="text-xs font-medium text-zinc-500 italic">
+              <p className="text-[12.5px] font-medium italic text-tertiary">
                 Match decision is {authorization.matchDecision}. Resolve profile gaps before tailoring.
-              </span>
+              </p>
             )}
           </div>
         </div>
       )}
 
-      {/* 2. Success Banner when READY */}
-      {workflow?.status === "READY" && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/30">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
-                ✓ Resume Ready for Application
-              </h3>
-              <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
-                Quality score: <strong>{formatQualityScore(workflow.latest_overall_score)}</strong>. Approved at Iteration{" "}
-                {workflow.final_approved_iteration ?? workflow.current_iteration}.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <a
-                href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/resume`}
-                download
-                className="inline-flex items-center rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
-              >
-                Download Resume (.docx)
+      {/* Ready — the one place a genuinely completed resume gets a distinct arrival treatment. */}
+      {workflow?.status === "READY" && !isSafeBestAttempt && (
+        <div className="relative overflow-hidden rounded-[20px] border border-[color-mix(in_oklab,var(--accent)_20%,var(--border))] bg-[linear-gradient(135deg,color-mix(in_oklab,var(--accent-soft)_55%,var(--z3-bg)),color-mix(in_oklab,var(--secondary-soft,var(--accent-soft))_35%,var(--z3-bg)))] p-5 sm:p-6">
+          <span className="inline-flex min-h-7 items-center rounded-full bg-[color-mix(in_oklab,var(--accent)_14%,transparent)] px-3 text-[12.5px] font-semibold text-[var(--accent)]">
+            Your resume is ready
+          </span>
+          <p className="mt-3 max-w-xl text-[13.5px] leading-relaxed text-secondary">
+            Quality score: <strong className="text-primary">{formatQualityScore(workflow.latest_overall_score)}</strong>. Approved at
+            iteration {workflow.final_approved_iteration ?? workflow.current_iteration}.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <a href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/resume`} download className={BTN_PRIMARY}>
+              Download resume
+            </a>
+            {availableArtifacts.hasFinalCoverLetter && (
+              <a href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/coverLetter`} download className={BTN_SECONDARY}>
+                Download cover letter
               </a>
-              {availableArtifacts.hasFinalCoverLetter && (
-                <a
-                  href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/coverLetter`}
-                  download
-                  className="inline-flex items-center rounded border border-emerald-600 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100 dark:text-emerald-200 dark:hover:bg-emerald-900/40"
-                >
-                  Download Cover Letter (.docx)
-                </a>
-              )}
-            </div>
+            )}
+            {canContinueToApplication && (
+              <Link
+                href={applicationHref}
+                className="candidate-control inline-flex h-[42px] items-center justify-center gap-1.5 rounded-[10px] bg-[var(--accent)] px-4 text-[13px] font-semibold text-[var(--accent-fg)] transition-colors duration-150 ease-out hover:bg-[var(--accent-hover)] active:scale-[0.98]"
+              >
+                Continue to application
+              </Link>
+            )}
           </div>
 
-          {/* Stage 26 — where the approved application actually landed on disk (Phase 9A). Shown as a
-              repo-relative path with a copy action, never as a link: a browser cannot open a local
-              directory, and a link that silently does nothing would be worse than plain text. */}
           {publication?.status === "PUBLISHED" && publication.directory && (
-            <div className="mt-3 border-t border-emerald-200/70 pt-3 dark:border-emerald-900/40">
-              <p className="text-xs font-medium text-emerald-900 dark:text-emerald-200">Published application folder</p>
+            <div className="mt-4 border-t border-[color-mix(in_oklab,var(--accent)_18%,transparent)] pt-3">
+              <p className="text-[12px] font-medium text-secondary">Published application folder</p>
               <div className="mt-1 flex flex-wrap items-center gap-2">
-                <code className="rounded bg-emerald-100/70 px-2 py-1 text-[11px] text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200">
-                  {publication.directory}
-                </code>
-                <button
+                <code className="rounded bg-[var(--z1-bg)] px-2 py-1 text-[11px] text-secondary">{publication.directory}</code>
+                <Button
+                  variant="quiet"
                   onClick={() => {
                     void navigator.clipboard?.writeText(publication.directory ?? "");
                     setActionMessage({ type: "success", text: "Published folder path copied." });
                   }}
-                  className="rounded border border-emerald-600 px-2 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100 dark:text-emerald-200 dark:hover:bg-emerald-900/40"
                 >
                   Copy path
-                </button>
+                </Button>
               </div>
-              <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
-                Contains the resume, cover letter, review feedback, and a manifest — the same bytes the download
-                buttons above serve.
-              </p>
             </div>
           )}
-
-          {/* A publication failure never unwinds a genuine approval, so it is reported HERE, beside a
-              banner that still correctly says the resume is ready — not by pretending the workflow
-              failed, and not by staying silent. */}
           {publication?.status === "FAILED" && (
-            <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
-              <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-                Resume approved, but not copied to the applications folder
-              </p>
-              <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-300">
-                {publication.error ?? "Publication did not complete."} The approved documents are still available from the
-                download buttons above.
-              </p>
+            <div className="mt-4 rounded-[12px] bg-[var(--pill-amber-bg)] p-3">
+              <p className="text-[12px] font-semibold text-[var(--pill-amber-fg)]">Resume approved, but not copied to the applications folder</p>
+              <p className="mt-1 text-[11.5px] text-secondary">{publication.error ?? "Publication did not complete."} The downloads above are still available.</p>
             </div>
           )}
 
-          {publication?.status === "UNKNOWN" && (
-            <p className="mt-3 text-[11px] text-emerald-700 dark:text-emerald-300">
-              Publication status for this approval was not recorded, so the applications-folder copy cannot be confirmed
-              from here. The approved documents above are authoritative.
-            </p>
-          )}
-
-          {/* Re-tailor: explicit user action that creates a NEW version beside this READY one.
-              Not a retry of a failure — a deliberate choice to generate a fresh tailored draft.
-              The current READY artifacts remain available until the new version passes review. */}
-          <div className="mt-4 border-t border-emerald-200/70 pt-3 dark:border-emerald-900/40">
-            <button
-              type="button"
-              onClick={handleReTailor}
-              disabled={actionBusy}
-              className="rounded border border-emerald-600/60 px-3 py-1.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100/60 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-900/30"
-            >
-              {actionBusy ? "Starting…" : "Re-tailor Resume"}
-            </button>
-            <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-400">
-              Creates a new tailored version alongside this one. Your current READY resume stays available until the new
-              version passes review.
+          <div className="mt-4 border-t border-[color-mix(in_oklab,var(--accent)_18%,transparent)] pt-3">
+            <Button variant="quiet" state={actionBusy ? "loading" : "idle"} loadingLabel="Starting…" onClick={handleReTailor} disabled={actionBusy}>
+              Re-tailor resume
+            </Button>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-tertiary">
+              Creates a new tailored version alongside this one. Your current ready resume stays available until the new version passes review.
             </p>
           </div>
         </div>
       )}
 
-      {/* Stage 28 — SAFE BEST ATTEMPT. A truthful package that did not clear the full optimisation
-             bar. Styled as review/warning, never as success and never as failure: showing this in red
-             "FAILED" styling was the Stage 28 gap, because the documents are genuinely usable. */}
+      {/* Safe best attempt — every truthfulness/safety guardrail passed; the optimisation bar did
+       *  not. Never styled as success and never as failure. */}
       {isSafeBestAttempt && finalDisposition && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/30 space-y-3">
-          <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="rounded-[20px] border border-[color-mix(in_oklab,var(--attention-fg)_25%,var(--border))] bg-[var(--attention-bg)] p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                SAFE BEST ATTEMPT — HUMAN REVIEW REQUIRED
-              </h3>
-              <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
-                This package passed every truthfulness and safety check, but did not clear the full quality gate. It is
-                not an approved READY publication. Review it and decide for yourself — CareerOps never submits an
-                application.
+              <h3 className="text-[14px] font-semibold text-[var(--attention-fg)]">Ready for your review</h3>
+              <p className="mt-1 max-w-xl text-[12.5px] leading-relaxed text-secondary">
+                This resume passed every truthfulness and safety check but did not clear the full quality bar. Review it, then decide for
+                yourself — Career-Ops never submits an application.
               </p>
             </div>
-            <div className="text-right">
-              <div className="text-[11px] text-amber-700 dark:text-amber-400">Selected attempt</div>
-              <div className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                Iteration {finalDisposition.selectedIterationNumber} of {workflow?.max_iterations}
-              </div>
+            <div className="shrink-0 text-right text-[12px] text-tertiary">
+              Iteration {finalDisposition.selectedIterationNumber} of {workflow?.max_iterations}
             </div>
           </div>
 
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
-            <div>
-              <dt className="text-amber-700 dark:text-amber-400">Safety / truthfulness</dt>
-              <dd className="font-semibold text-emerald-700 dark:text-emerald-400">
-                {finalDisposition.safety.safe ? "PASS" : "FAIL"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-amber-700 dark:text-amber-400">Optimization</dt>
-              <dd className="font-semibold text-amber-900 dark:text-amber-200">
-                {finalDisposition.optimizationScore ?? "—"}
-                <span className="ml-1 font-normal text-[11px] text-amber-700 dark:text-amber-400">(not a pass threshold)</span>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-amber-700 dark:text-amber-400">Blocking issues</dt>
-              <dd className="font-semibold text-amber-900 dark:text-amber-200">{finalDisposition.safety.blockers.length}</dd>
-            </div>
-            <div>
-              <dt className="text-amber-700 dark:text-amber-400">Human application</dt>
-              <dd className="font-semibold text-amber-900 dark:text-amber-200">
-                {finalDisposition.humanMaySend ? "Allowed after review" : "Not allowed"}
-              </dd>
-            </div>
-          </dl>
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-secondary">
+            <span>Safety <strong className={finalDisposition.safety.safe ? "text-[var(--pill-success-fg)]" : "text-[var(--error)]"}>{finalDisposition.safety.safe ? "Passed" : "Not passed"}</strong></span>
+            <span>Blocking issues <strong className="text-primary">{finalDisposition.safety.blockers.length}</strong></span>
+            <span>Application by hand <strong className="text-primary">{finalDisposition.humanMaySend ? "Allowed after review" : "Not allowed"}</strong></span>
+          </div>
 
-          {/* The remaining findings, stated plainly and never hidden — but labelled for what they
-                 are, so a presentation nit is not mistaken for a truthfulness problem. */}
           {finalDisposition.optimizationFindings.length > 0 && (
-            <div className="rounded border border-amber-300/70 bg-white/70 p-3 dark:border-amber-800/50 dark:bg-amber-950/20">
-              <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-                Remaining optimization / presentation findings — none of these is a truthfulness blocker
-              </p>
-              <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-xs text-amber-800 dark:text-amber-300">
+            <div className="mt-3 rounded-[12px] bg-[color-mix(in_oklab,var(--z0-bg)_60%,transparent)] p-3">
+              <p className="text-[12px] font-semibold text-primary">Remaining findings — none is a truthfulness blocker</p>
+              <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[12px] text-secondary">
                 {finalDisposition.optimizationFindings.map((f, i) => (
                   <li key={i}>{f}</li>
                 ))}
@@ -1014,81 +836,51 @@ export function ResumeQualityPipeline({
             </div>
           )}
 
-          {/* Downloads resolve to the SELECTED attempt explicitly, never "the latest iteration". */}
           {safeSelectedIteration !== null && (
-            <div className="flex flex-wrap gap-2">
-              <a
-                href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/resume?iteration=${safeSelectedIteration}`}
-                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-100"
-              >
-                Download Resume (iteration {safeSelectedIteration})
+            <div className="mt-3 flex flex-wrap gap-2">
+              <a href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/resume?iteration=${safeSelectedIteration}`} className={BTN_SECONDARY}>
+                Download resume
               </a>
-              <a
-                href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/coverLetter?iteration=${safeSelectedIteration}`}
-                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-100"
-              >
-                Download Cover Letter (iteration {safeSelectedIteration})
-              </a>
-              <a
-                href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/feedback?iteration=${safeSelectedIteration}`}
-                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-100"
-              >
-                Review Feedback
+              <a href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/coverLetter?iteration=${safeSelectedIteration}`} className={BTN_SECONDARY}>
+                Download cover letter
               </a>
             </div>
           )}
 
-          {data.safeAttemptPublication?.directory && (
-            <p className="text-[11px] text-amber-800 dark:text-amber-300">
-              Human-review package published to:{" "}
-              <code className="rounded bg-amber-100 px-1 py-0.5 font-mono dark:bg-amber-900/40">
-                {data.safeAttemptPublication.directory}
-              </code>
-            </p>
-          )}
-
-          {/* The candidate's own explicit decision, separate from the autonomous gate. Approving
-              records an auditable row tied to this exact workflow/iteration — it never sets
-              workflow.status to READY and never overrides the safety verdict above. */}
-          {isApprovedForCurrentWorkflow ? (
-            <div className="rounded border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/30">
-              <p className="text-xs font-semibold text-emerald-900 dark:text-emerald-200">Human approved</p>
-              <p className="mt-1 text-[11px] text-emerald-800 dark:text-emerald-300">
-                Score: {humanApproval?.overallScore ?? "—"} · Reviewed:{" "}
-                {humanApproval ? new Date(humanApproval.approvedAt).toLocaleString() : "—"}. This resume is
-                eligible for applications.
-              </p>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={handleApprove}
-              disabled={actionBusy}
-              className="rounded-md bg-amber-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {actionBusy ? "Approving…" : "Approve & Use for Applications"}
-            </button>
-          )}
-
-          {finalDisposition.selectionReason && (
-            <p className="text-[11px] text-amber-700 dark:text-amber-400">Why this attempt: {finalDisposition.selectionReason}</p>
-          )}
+          <div className="mt-3">
+            {isApprovedForCurrentWorkflow ? (
+              <div className="rounded-[12px] bg-[var(--pill-success-bg)] p-3">
+                <p className="text-[12.5px] font-semibold text-[var(--pill-success-fg)]">Human approved</p>
+                <p className="mt-1 text-[11.5px] text-secondary">
+                  Score: {humanApproval?.overallScore ?? "—"} · Reviewed:{" "}
+                  {humanApproval ? new Date(humanApproval.approvedAt).toLocaleString() : "—"}. This resume is eligible for applications.
+                </p>
+                {canContinueToApplication && (
+                  <Link href={applicationHref} className="mt-2 inline-flex text-[12.5px] font-semibold text-[var(--accent)] underline-offset-2 hover:underline">
+                    Continue to application →
+                  </Link>
+                )}
+              </div>
+            ) : (
+              <Button variant="attention" state={actionBusy ? "loading" : "idle"} loadingLabel="Approving…" onClick={handleApprove} disabled={actionBusy}>
+                Approve & Use for Applications
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Stage 28 — BLOCKED. A real safety/truthfulness blocker remains, so the package must not be
-             sent at all. This is the only case that keeps the hard red "do not apply" styling. */}
+      {/* Blocked — a genuine, unresolved safety/truthfulness blocker. The only case that must never
+       *  offer downloads of the primary package (a best-attempt package for manual review is still
+       *  reachable, further down in the disclosure/legacy section). */}
       {isBlockedUnsafe && finalDisposition && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950/40 space-y-3">
-          <div>
-            <h3 className="text-sm font-semibold text-red-900 dark:text-red-200">BLOCKED / UNSAFE — DO NOT APPLY</h3>
-            <p className="mt-1 text-xs text-red-800 dark:text-red-300">
-              This package has {finalDisposition.safety.blockers.length} unresolved truthfulness/safety blocker
-              {finalDisposition.safety.blockers.length === 1 ? "" : "s"}. It must not be sent, and no application
-              download is offered for it.
-            </p>
-          </div>
-          <ul className="list-disc space-y-0.5 pl-4 text-xs text-red-800 dark:text-red-300">
+        <div className="rounded-[20px] border border-[color-mix(in_oklab,var(--error)_25%,var(--border))] bg-[color-mix(in_oklab,var(--error)_6%,var(--z3-bg))] p-4 sm:p-5">
+          <h3 className="text-[14px] font-semibold text-[var(--error)]">Needs your attention</h3>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-secondary">
+            This package has {finalDisposition.safety.blockers.length} unresolved safety blocker{finalDisposition.safety.blockers.length === 1 ? "" : "s"}. It must
+            not be sent, and no download is offered for it.
+          </p>
+          <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[12px] text-secondary">
             {finalDisposition.safety.blockers.slice(0, 10).map((b, i) => (
               <li key={i}>{b}</li>
             ))}
@@ -1096,107 +888,209 @@ export function ResumeQualityPipeline({
         </div>
       )}
 
-      {/* 3. Human Review / FAILED Banner — the legacy detail panel. Retained for the diagnostic
-             best-attempt scores, but no longer the thing that decides how the outcome READS: a safe
-             best attempt is headlined by the amber panel above. */}
-      {workflow?.status === "FAILED" && !isSafeBestAttempt && (
-        <div className="rounded-lg border border-red-200 bg-red-50/80 p-4 dark:border-red-900/60 dark:bg-red-950/30 space-y-3">
-          <div>
-            <h3 className="text-sm font-semibold text-red-900 dark:text-red-200">Human Review Required</h3>
-            <p className="mt-1 text-xs text-red-700 dark:text-red-300">
-              {workflow.max_iterations} automatic quality attempt{workflow.max_iterations === 1 ? "" : "s"} completed.{" "}
-              {workflow.failure_reason ?? "Max improvement iterations reached without meeting quality threshold."}
-            </p>
+      {/* Writer status — shown only while the writer genuinely owns the next step. */}
+      {data.waitingFor === "EXTERNAL_WRITER" && writer && (
+        <div
+          className={`rounded-[18px] border p-4 ${
+            writer.state === "PROCESSING"
+              ? "border-[var(--border)] bg-[var(--tile-blue-bg)]"
+              : writer.state === "TECHNICAL_FAILURE" || writer.state === "BLOCKED_MAX_ATTEMPTS"
+                ? "border-[color-mix(in_oklab,var(--error)_20%,var(--border))] bg-[color-mix(in_oklab,var(--error)_6%,var(--z3-bg))]"
+                : "border-[color-mix(in_oklab,var(--attention-fg)_20%,var(--border))] bg-[var(--attention-bg)]"
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-[13.5px] font-semibold text-primary">
+                {workflow?.status === "CREATED" ? "Approved — awaiting first draft" : "Corrections required — awaiting next draft"}
+              </h3>
+              <p className="mt-0.5 text-[12px] text-secondary">
+                {WRITER_STATE_LABEL[writer.state] ?? writer.state}: {writer.detail}
+              </p>
+            </div>
+            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${writer.writerEnabled ? "bg-[var(--pill-success-bg)] text-[var(--pill-success-fg)]" : "bg-[var(--z1-bg)] text-tertiary"}`}>
+              Resume writer {writer.writerEnabled ? "on" : "off"}
+            </span>
           </div>
 
+          {writer.state === "UNAVAILABLE_SCHEDULER_DISABLED" && (
+            <p className="mt-2 text-[12px] font-medium text-[var(--attention-fg)]">
+              This job is approved and queued, but nothing will write it until background automation is enabled in Settings.
+            </p>
+          )}
+          {writer.state === "CANDIDATE_CONTACT_REQUIRED" && (
+            <p className="mt-2 text-[12px] font-medium text-[var(--attention-fg)]">
+              This is a configuration issue, not a resume problem —{" "}
+              <a href={`/candidates/${candidateId}/settings`} className="underline">add your contact details</a> and this job resumes
+              automatically on the next scheduled pass.
+            </p>
+          )}
+          {(writer.state === "TECHNICAL_FAILURE" || WRITER_OPERATOR_ACTION_STATES.has(writer.state)) && writer.state !== "CANDIDATE_CONTACT_REQUIRED" && (
+            <p className="mt-2 text-[12px] font-medium text-[var(--error)]">
+              {writer.state === "SUBSCRIPTION_LIMIT_REACHED"
+                ? "Your Claude subscription usage limit is exhausted, so the writer is waiting rather than retrying."
+                : writer.state === "AUTH_REQUIRED"
+                  ? "The Claude CLI is not signed in on this Mac, so nothing can be written."
+                  : writer.state === "UNAUTHORIZED_APPROVAL_STALE"
+                    ? "The tailoring approval recorded for this job no longer matches its current match decision."
+                    : "No resume was produced and no quality iteration was consumed."}
+            </p>
+          )}
+          {WRITER_OPERATOR_ACTION_STATES.has(writer.state) && writer.state !== "UNAUTHORIZED_APPROVAL_STALE" && (
+            <div className="mt-2">
+              <Button variant="secondary" state={actionBusy ? "loading" : "idle"} loadingLabel="Retrying…" onClick={handleRetryWriter} disabled={actionBusy}>
+                Retry writer
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Mobile sticky primary action — only when a real, genuine action exists (never while
+       *  tailoring is simply processing, per Part 20). The wrapper itself is absent, not just
+       *  visually empty, whenever stickyAction is null — see its computation above for why that
+       *  matters. Fixed above MobileBottomNav using the same safe-area/height convention AppShell's
+       *  own content padding already uses, so it never overlaps the nav or gets clipped by it.
+       *  Desktop/laptop never shows this — the same action is already inline above. */}
+      {stickyAction && (
+        <div className="fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-30 border-t border-[var(--border)] bg-[var(--z3-bg)] p-3 shadow-[var(--shadow-hero)] lg:hidden">
+          {stickyAction}
+        </div>
+      )}
+
+      <DiagnosticsPanel
+        variant={variant}
+        data={data}
+        workflow={workflow}
+        bestAttempt={bestAttempt}
+        writer={writer}
+        iterationBudget={iterationBudget}
+        displayedReview={displayedReview}
+        iterations={iterations}
+        activeIterNum={activeIterNum}
+        candidateId={candidateId}
+        jobId={jobId}
+        actionBusy={actionBusy}
+        onSelectIteration={setSelectedIterationNumber}
+        onExportPackage={handleExportPackage}
+        onFileUpload={handleFileUpload}
+        fileInputRef={fileInputRef}
+        isSafeBestAttempt={isSafeBestAttempt}
+      />
+
+      {previewing && candidateId !== null && (
+        <ResumePreview
+          candidateId={candidateId}
+          jobId={jobId}
+          company={companyName}
+          role={jobTitle}
+          hasCoverLetter={availableArtifacts.hasFinalCoverLetter || availableArtifacts.hasIterationCoverLetter}
+          downloadHref={(doc) => `/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/${doc}`}
+          onClose={() => setPreviewing(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Everything below the primary journey — real diagnostics, real actions, never deleted, just moved
+ * behind ONE "Technical details" disclosure (Part 15). In `variant="technical"` this renders
+ * unwrapped (no second nested disclosure), since JobWorkspace's own Validation-step disclosure is
+ * already what a person opened to reach it.
+ */
+function DiagnosticsPanel({
+  variant,
+  data,
+  workflow,
+  bestAttempt,
+  writer,
+  iterationBudget,
+  displayedReview,
+  iterations,
+  activeIterNum,
+  candidateId,
+  jobId,
+  actionBusy,
+  onSelectIteration,
+  onExportPackage,
+  onFileUpload,
+  fileInputRef,
+  isSafeBestAttempt,
+}: {
+  variant: "journey" | "technical";
+  data: QualityWorkflowResponse;
+  workflow: QualityWorkflowResponse["workflow"];
+  bestAttempt: QualityWorkflowResponse["bestAttempt"];
+  writer: QualityWorkflowResponse["writer"];
+  iterationBudget: QualityWorkflowResponse["iterationBudget"];
+  displayedReview: StructuredResumeReview | null;
+  iterations: QualityWorkflowResponse["iterations"];
+  activeIterNum: number;
+  candidateId: number | null;
+  jobId: number;
+  actionBusy: boolean;
+  onSelectIteration: (n: number) => void;
+  onExportPackage: () => void;
+  onFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  isSafeBestAttempt: boolean;
+}) {
+  const content = (
+    <div className="flex flex-col gap-4">
+      {/* Legacy FAILED detail — retained for the diagnostic best-attempt scores and downloads. */}
+      {workflow?.status === "FAILED" && !isSafeBestAttempt && (
+        <div className="rounded-[14px] border border-[color-mix(in_oklab,var(--error)_20%,var(--border))] bg-[color-mix(in_oklab,var(--error)_5%,var(--z3-bg))] p-3.5">
+          <h4 className="text-[12.5px] font-semibold text-primary">Human review required</h4>
+          <p className="mt-1 text-[12px] text-secondary">
+            {workflow.max_iterations} automatic quality attempt{workflow.max_iterations === 1 ? "" : "s"} completed.{" "}
+            {workflow.failure_reason ?? "Max improvement iterations reached without meeting quality threshold."}
+          </p>
           {(data.candidateRepairQuestions?.length ?? 0) > 0 && (
-            <div className="rounded border border-red-200/70 bg-white/70 p-3 dark:border-red-900/40 dark:bg-red-950/10">
-              <p className="text-xs font-semibold text-red-900 dark:text-red-200">Candidate evidence questions</p>
-              <p className="mt-1 text-xs text-red-700 dark:text-red-300">
-                These appear only where CareerOps cannot resolve employer-scoped evidence deterministically. A confirmed answer is required before evidence can expand.
-              </p>
-              <ul className="mt-2 space-y-2 text-xs text-red-800 dark:text-red-300">
+            <div className="mt-2 rounded-[10px] bg-[var(--z1-bg)] p-2.5">
+              <p className="text-[11.5px] font-semibold text-primary">Candidate evidence questions</p>
+              <ul className="mt-1.5 space-y-2 text-[11.5px] text-secondary">
                 {data.candidateRepairQuestions?.map((item) => (
                   <li key={item.findingKey}>
                     <p>{item.question}</p>
-                    <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">Choices: {item.choices.join(" · ")}</p>
+                    <p className="mt-0.5 text-tertiary">Choices: {item.choices.join(" · ")}</p>
                   </li>
                 ))}
               </ul>
             </div>
           )}
-
           {bestAttempt && (
-            <div className="rounded border border-red-200/70 bg-white/60 p-3 dark:border-red-900/40 dark:bg-red-950/10">
-              <p className="text-xs font-semibold text-red-900 dark:text-red-200">
-                Best Attempt: Iteration {bestAttempt.iterationNumber}
-              </p>
-              <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-red-800 dark:text-red-300 sm:grid-cols-4">
-                <div>
-                  <dt className="text-red-600 dark:text-red-400">Overall</dt>
-                  <dd className="font-medium">{bestAttempt.overallScore}</dd>
-                </div>
-                <div>
-                  <dt className="text-red-600 dark:text-red-400">ATS Match</dt>
-                  <dd className="font-medium">{bestAttempt.atsScore}</dd>
-                </div>
-                <div>
-                  <dt className="text-red-600 dark:text-red-400">Truthfulness</dt>
-                  <dd className="font-medium">{bestAttempt.truthfulnessScore}</dd>
-                </div>
-                <div>
-                  <dt className="text-red-600 dark:text-red-400">Architecture</dt>
-                  <dd className="font-medium">{bestAttempt.architectureConsistencyScore}</dd>
-                </div>
+            <div className="mt-2 rounded-[10px] bg-[var(--z1-bg)] p-2.5">
+              <p className="text-[11.5px] font-semibold text-primary">Best attempt: iteration {bestAttempt.iterationNumber}</p>
+              <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11.5px] text-secondary sm:grid-cols-4">
+                <div><dt className="text-tertiary">Overall</dt><dd className="font-medium text-primary">{bestAttempt.overallScore}</dd></div>
+                <div><dt className="text-tertiary">ATS match</dt><dd className="font-medium text-primary">{bestAttempt.atsScore}</dd></div>
+                <div><dt className="text-tertiary">Truthfulness</dt><dd className="font-medium text-primary">{bestAttempt.truthfulnessScore}</dd></div>
+                <div><dt className="text-tertiary">Architecture</dt><dd className="font-medium text-primary">{bestAttempt.architectureConsistencyScore}</dd></div>
               </dl>
-              <p className="mt-2 text-xs text-red-700 dark:text-red-300">
-                Instruction Compliance: {bestAttempt.instructionCompliancePassCount}/{bestAttempt.instructionComplianceTotal} PASS
+              <p className="mt-2 text-[11.5px] text-secondary">
+                Instruction compliance: {bestAttempt.instructionCompliancePassCount}/{bestAttempt.instructionComplianceTotal} pass
               </p>
               {bestAttempt.failingChecks.length > 0 && (
-                <div className="mt-1.5">
-                  <p className="text-xs font-medium text-red-800 dark:text-red-300">Failed checks:</p>
-                  <ul className="mt-0.5 list-disc pl-4 text-xs text-red-700 dark:text-red-300">
-                    {bestAttempt.failingChecks.map((name) => (
-                      <li key={name}>{humanizeCheckName(name)}</li>
-                    ))}
-                  </ul>
-                </div>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11.5px] text-secondary">
+                  {bestAttempt.failingChecks.map((name) => (
+                    <li key={name}>{humanizeCheckName(name)}</li>
+                  ))}
+                </ul>
               )}
-              <p className="mt-2 text-xs text-red-700 dark:text-red-300">
-                This resume did not pass CareerOps approval. It is provided as the strongest attempt for manual review.
-              </p>
+              {/* UI-5.1 checkpoint fix: this block only ever renders when isSafeBestAttempt is false
+               *  for a FAILED workflow — i.e. exactly the BLOCKED case the primary surface already
+               *  tells the candidate "no download is offered for it" (a genuine, unresolved safety
+               *  blocker). The resume/cover-letter download links previously here served that same
+               *  disposition-unaware artifact route with no safety check, directly contradicting that
+               *  promise one click away. Diagnostic-only artifacts (the review record, the failed-
+               *  check list) stay — neither is the sendable document itself. */}
               <div className="mt-2 flex flex-wrap gap-2">
-                {availableArtifacts.hasHumanReviewResume && (
-                  <a
-                    href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/resume`}
-                    download
-                    className="inline-flex items-center rounded border border-red-600 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900/40"
-                  >
-                    Download Best Resume
-                  </a>
-                )}
-                {availableArtifacts.hasHumanReviewCoverLetter && (
-                  <a
-                    href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/coverLetter`}
-                    download
-                    className="inline-flex items-center rounded border border-red-600 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900/40"
-                  >
-                    Download Best Cover Letter
-                  </a>
-                )}
-                <a
-                  href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/review`}
-                  download
-                  className="inline-flex items-center rounded border border-red-600 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900/40"
-                >
-                  View CareerOps Review
+                <a href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/review`} download className="text-[11.5px] font-medium text-[var(--accent)] underline-offset-2 hover:underline">
+                  View review
                 </a>
-                <a
-                  href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/feedback`}
-                  download
-                  className="inline-flex items-center rounded border border-red-600 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900/40"
-                >
-                  View Failed Checks
+                <a href={`/api/candidates/${candidateId}/jobs/${jobId}/quality-workflow/artifacts/feedback`} download className="text-[11.5px] font-medium text-[var(--accent)] underline-offset-2 hover:underline">
+                  View failed checks
                 </a>
               </div>
             </div>
@@ -1204,434 +1098,194 @@ export function ResumeQualityPipeline({
         </div>
       )}
 
-      {/* 3b. Stage 26 — Autonomous writer status. Shown whenever the writer owns the next step
-              (CREATED = iteration 1 not written yet, IMPROVEMENT_RUNNING = corrections required).
-              Every line here comes from the scheduler/lease/last-pass record, never from the
-              workflow status alone. */}
+      {/* Writer scheduler/queue detail. */}
       {data.waitingFor === "EXTERNAL_WRITER" && writer && (
-        <div
-          className={`rounded-lg border p-4 space-y-2 ${
-            writer.state === "PROCESSING"
-              ? "border-blue-200 bg-blue-50/70 dark:border-blue-900/50 dark:bg-blue-950/20"
-              : writer.state === "TECHNICAL_FAILURE" || writer.state === "BLOCKED_MAX_ATTEMPTS"
-              ? "border-red-200 bg-red-50/70 dark:border-red-900/50 dark:bg-red-950/20"
-              : WRITER_OPERATOR_ACTION_STATES.has(writer.state)
-              ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30"
-              : writer.state === "CANDIDATE_CONTACT_REQUIRED"
-              ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30"
-              : writer.state === "UNAVAILABLE_SCHEDULER_DISABLED" || writer.state === "UNAVAILABLE_NOT_RUNNING"
-              ? "border-zinc-300 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800/40"
-              : "border-amber-200 bg-amber-50/70 dark:border-amber-900/50 dark:bg-amber-950/20"
-          }`}
-        >
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                {workflow?.status === "CREATED" ? "Approved — awaiting first resume draft" : "Corrections required — awaiting next draft"}
-              </h3>
-              <p className="mt-0.5 text-xs text-zinc-700 dark:text-zinc-300">
-                {WRITER_STATE_LABEL[writer.state] ?? writer.state}: {writer.detail}
-              </p>
-            </div>
-            {/* The writer's OWN switch, reported where you actually watch it work.
-             *
-             * This line used to be absent entirely, and the status sentence above reports the
-             * MASTER automation switch — so turning the resume writer on in Settings changed
-             * nothing visible here and looked like the setting had not saved. It had: the tick
-             * genuinely honours `scheduler.writerEnabled`, it simply was not on the wire.
-             *
-             * Read-only on purpose. Settings owns the control; duplicating it here would be a
-             * second place to change one boolean, and stopping work already in flight is a
-             * separate question this does not answer. */}
-            <div className="flex shrink-0 items-center gap-2">
-              <span
-                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                  writer.writerEnabled
-                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
-                    : "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
-                }`}
-              >
-                Resume writer {writer.writerEnabled ? "on" : "off"}
-              </span>
-              <Link
-                href="/settings"
-                className="text-[11px] font-medium text-[var(--accent)] underline-offset-2 hover:underline"
-              >
-                Manage
-              </Link>
-            </div>
-            {iterationBudget && (
-              <div className="text-right">
-                <div className="text-[11px] text-zinc-500">Writer attempt</div>
-                <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-                  {iterationBudget.targetIteration} of {iterationBudget.max}
-                </div>
-                <div className="text-[11px] text-zinc-500">
-                  {iterationBudget.writerAttemptsRemaining} remaining
-                </div>
-              </div>
-            )}
-          </div>
-
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-zinc-600 dark:text-zinc-400 sm:grid-cols-4">
-            {writer.state === "PROCESSING" && writer.processingSince && (
-              <div>
-                <dt>Started</dt>
-                <dd className="font-medium text-zinc-800 dark:text-zinc-200">{new Date(writer.processingSince).toLocaleString()}</dd>
-              </div>
-            )}
-            {writer.state !== "PROCESSING" && writer.nextAttemptAt && (
-              <div>
-                <dt>Next attempt</dt>
-                <dd className="font-medium text-zinc-800 dark:text-zinc-200">{new Date(writer.nextAttemptAt).toLocaleString()}</dd>
-              </div>
-            )}
-            {writer.lastPassCompletedAt && (
-              <div>
-                <dt>Last writer pass</dt>
-                <dd className="font-medium text-zinc-800 dark:text-zinc-200">{new Date(writer.lastPassCompletedAt).toLocaleString()}</dd>
-              </div>
-            )}
-            <div>
-              <dt>Queue</dt>
-              <dd className="font-medium text-zinc-800 dark:text-zinc-200">
-                {writer.pendingWorkflowCount} awaiting · {writer.batchSize} per pass
-              </dd>
-            </div>
-            <div>
-              <dt>Cadence</dt>
-              <dd className="font-medium text-zinc-800 dark:text-zinc-200">every {writer.intervalMinutes} min</dd>
-            </div>
+        <div className="rounded-[14px] border border-[var(--border)] bg-[var(--z1-bg)] p-3.5">
+          <p className="text-[11.5px] font-semibold uppercase tracking-wide text-tertiary">Writer schedule</p>
+          <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-[11.5px] text-secondary sm:grid-cols-4">
+            {writer.processingSince && <div><dt className="text-tertiary">Started</dt><dd className="font-medium text-primary">{new Date(writer.processingSince).toLocaleString()}</dd></div>}
+            {writer.nextAttemptAt && <div><dt className="text-tertiary">Next attempt</dt><dd className="font-medium text-primary">{new Date(writer.nextAttemptAt).toLocaleString()}</dd></div>}
+            {writer.lastPassCompletedAt && <div><dt className="text-tertiary">Last pass</dt><dd className="font-medium text-primary">{new Date(writer.lastPassCompletedAt).toLocaleString()}</dd></div>}
+            <div><dt className="text-tertiary">Queue</dt><dd className="font-medium text-primary">{writer.pendingWorkflowCount} awaiting · {writer.batchSize} per pass</dd></div>
+            <div><dt className="text-tertiary">Cadence</dt><dd className="font-medium text-primary">every {writer.intervalMinutes} min</dd></div>
+            {iterationBudget && <div><dt className="text-tertiary">Writer attempt</dt><dd className="font-medium text-primary">{iterationBudget.targetIteration} of {iterationBudget.max} ({iterationBudget.writerAttemptsRemaining} remaining)</dd></div>}
           </dl>
-
           {writer.workflowOutcome && (
-            <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
-              Last outcome for this job: <strong>{writer.workflowOutcome.outcome.replace(/_/g, " ")}</strong>
+            <p className="mt-1.5 text-[11.5px] text-secondary">
+              Last outcome: <strong className="text-primary">{writer.workflowOutcome.outcome.replace(/_/g, " ")}</strong>
               {writer.workflowOutcome.error ? ` — ${writer.workflowOutcome.error}` : ""}
             </p>
           )}
-
-          {writer.state === "UNAVAILABLE_SCHEDULER_DISABLED" && (
-            <p className="text-xs font-medium text-amber-800 dark:text-amber-400">
-              This job is approved and queued, but nothing will write it until background automation is enabled in
-              Settings. You can also use the manual writer handoff below.
-            </p>
-          )}
-          {writer.state === "CANDIDATE_CONTACT_REQUIRED" && (
-            <p className="text-xs font-medium text-amber-900 dark:text-amber-300">
-              This is a configuration issue, not a resume problem — no quality iteration was used.{" "}
-              <a href={`/candidates/${candidateId}/settings`} className="underline">
-                Add your contact details in Candidate Settings
-              </a>{" "}
-              and this job resumes automatically on the next scheduled pass.
-            </p>
-          )}
-          {writer.state === "TECHNICAL_FAILURE" && (
-            <p className="text-xs font-medium text-red-800 dark:text-red-400">
-              No resume was produced and no quality iteration was consumed. The writer retries on its own schedule,
-              within a bounded number of attempts.
-            </p>
-          )}
-          {/* Stage 27 — this state is terminal for automatic processing. Saying anything about the
-              writer "retrying on its own schedule" here would be false, which is exactly what the
-              previous single TECHNICAL_FAILURE branch did. */}
-          {writer.state === "BLOCKED_MAX_ATTEMPTS" && (
-            <p className="text-xs font-medium text-red-800 dark:text-red-400">
-              The writer has stopped retrying this job automatically after repeated technical failures. No resume was
-              produced and no quality iteration was consumed. Use <strong>Retry writer</strong> below once you know why
-              it was failing.
-            </p>
-          )}
-          {writer.state === "SUBSCRIPTION_LIMIT_REACHED" && (
-            <p className="text-xs font-medium text-amber-900 dark:text-amber-300">
-              Your Claude subscription usage limit is exhausted, so the writer is waiting rather than retrying. No
-              quality iteration was consumed. CareerOps is not told when your usage window resets, so it re-checks
-              periodically — you can also use <strong>Retry writer</strong> once you know it has reset.
-            </p>
-          )}
-          {writer.state === "AUTH_REQUIRED" && (
-            <p className="text-xs font-medium text-amber-900 dark:text-amber-300">
-              The Claude CLI is not signed in on this Mac, so nothing can be written. Run <code>claude login</code> in a
-              terminal, then use <strong>Retry writer</strong>. Nothing is retried automatically until then, and no
-              quality iteration was consumed.
-            </p>
-          )}
-          {writer.state === "UNAUTHORIZED_APPROVAL_STALE" && (
-            <p className="text-xs font-medium text-amber-900 dark:text-amber-300">
-              The tailoring approval recorded for this job no longer matches its current match decision, so the writer
-              declines it on every pass. Review the job and approve it again if you still want it tailored. Nothing was
-              written and no quality iteration was consumed.
-            </p>
-          )}
-          {WRITER_OPERATOR_ACTION_STATES.has(writer.state) && writer.state !== "UNAUTHORIZED_APPROVAL_STALE" && (
-            <button
-              type="button"
-              onClick={handleRetryWriter}
-              disabled={actionBusy}
-              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-            >
-              {actionBusy ? "Retrying…" : "Retry writer"}
-            </button>
-          )}
         </div>
       )}
 
-      {/* 4. Manual writer handoff — the human fallback, no longer the normal path. Since Stage 26 the
-              scheduled writer does this automatically; these controls remain for running a draft by
-              hand (a different agent, outside the automation window, or after repeated failures). */}
+      {/* Manual writer handoff — a power-user fallback, not the normal path since the scheduled
+       *  writer now does this automatically. */}
       {data.waitingFor === "EXTERNAL_WRITER" && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900/50 dark:bg-amber-950/20 space-y-3">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">Manual Writer Handoff (optional)</h3>
-              <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">
-                Target Iteration: {(workflow?.current_iteration ?? 0) + 1} of {workflow?.max_iterations ?? 0} — only needed if
-                you want to write this draft yourself instead of waiting for the scheduled writer.
-              </p>
-            </div>
-            <button
-              onClick={handleExportPackage}
-              disabled={actionBusy}
-              className="rounded bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-            >
-              {actionBusy ? "Exporting…" : "Export Writer Package"}
-            </button>
-          </div>
-
-          <p className="text-xs text-zinc-600 dark:text-zinc-400">
-            Use this package with <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>Antigravity</strong>, or
-            another external writer agent. After it writes <code>writer_output.json</code>, return here and import the
-            result.
+        <div className="rounded-[14px] border border-[var(--border)] bg-[var(--z1-bg)] p-3.5">
+          <h4 className="text-[12.5px] font-semibold text-primary">Manual writer handoff (optional)</h4>
+          <p className="mt-1 text-[11.5px] text-secondary">
+            Target iteration {(workflow?.current_iteration ?? 0) + 1} of {workflow?.max_iterations ?? 0} — only needed to write this draft
+            yourself with an external agent instead of waiting for the scheduled writer.
           </p>
-
-          <div className="pt-2 border-t border-amber-200/60 dark:border-amber-900/40 flex items-center gap-3">
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".json"
-              onChange={handleFileUpload}
-              className="hidden"
-              id="writer-output-upload"
-            />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button variant="secondary" state={actionBusy ? "loading" : "idle"} loadingLabel="Exporting…" onClick={onExportPackage} disabled={actionBusy}>
+              Export writer package
+            </Button>
+            <input type="file" ref={fileInputRef} accept=".json" onChange={onFileUpload} className="hidden" id="writer-output-upload" />
             <label
               htmlFor="writer-output-upload"
-              className={`inline-flex items-center cursor-pointer rounded border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 ${
-                actionBusy ? "opacity-50 pointer-events-none" : ""
-              }`}
+              className={`candidate-control inline-flex h-[42px] cursor-pointer items-center rounded-[10px] border border-[var(--border)] bg-[var(--z3-bg)] px-4 text-[13px] font-medium text-secondary hover:bg-[var(--surface-hover)] ${actionBusy ? "pointer-events-none opacity-50" : ""}`}
             >
-              {actionBusy ? "Processing Import…" : "Import writer_output.json"}
+              {actionBusy ? "Processing import…" : "Import writer_output.json"}
             </label>
-            <span className="text-[11px] text-zinc-500">Upload the completed writer JSON output</span>
           </div>
         </div>
       )}
 
-      {/* 5. Quality Score & Deterministic Sub-scores */}
+      {/* Quality score + sub-scores + canonical compliance + reviewer diagnostics. */}
       {displayedReview && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-          {/* Prominent Overall Score Card */}
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-800/40 flex flex-col justify-between">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="flex flex-col justify-between rounded-[14px] border border-[var(--border)] bg-[var(--z1-bg)] p-3.5">
             <div>
-              <div className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Overall Quality Score</div>
-              <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">
-                  {displayedReview.overallScore}
-                </span>
-                <span className="text-sm font-semibold text-zinc-400">/ 100</span>
+              <div className="text-[11px] font-medium uppercase tracking-wide text-tertiary">Overall quality score</div>
+              <div className="mt-1.5 flex items-baseline gap-1.5">
+                <span className="text-[26px] font-bold text-primary">{displayedReview.overallScore}</span>
+                <span className="text-[13px] font-semibold text-tertiary">/ 100</span>
               </div>
             </div>
-
-            <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-700 text-xs">
-              <div className="font-medium text-zinc-700 dark:text-zinc-300 mb-1">Quality Gate Status</div>
+            <div className="mt-3 border-t border-[var(--separator)] pt-2.5 text-[11.5px]">
+              <div className="mb-1 font-medium text-secondary">Quality gate</div>
               {reviewPassesStrengthenedGate(displayedReview) ? (
-                <span className="font-semibold text-emerald-600 dark:text-emerald-400">✓ Ready for Application</span>
+                <span className="font-semibold text-[var(--pill-success-fg)]">Passed</span>
               ) : (
-                <span className="font-semibold text-amber-600 dark:text-amber-400">⚠ Needs Improvement</span>
+                <span className="font-semibold text-[var(--attention-fg)]">Needs improvement</span>
               )}
             </div>
           </div>
-
-          {/* Component Sub-scores */}
-          <div className="md:col-span-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-800/40 space-y-2.5">
-            <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 uppercase tracking-wider mb-2">
-              Deterministic Review Components
-            </div>
-            <ScoreBar label="ATS Keyword Alignment" score={displayedReview.atsScore} target={90} />
-            <ScoreBar label="Truthfulness / Master Consistency" score={displayedReview.truthfulnessScore} target={100} />
-            <ScoreBar label="Architecture Consistency" score={displayedReview.architectureConsistencyScore} target={100} />
-            <ScoreBar label="Recruiter Readability" score={displayedReview.recruiterReadabilityScore} target={85} />
-            <ScoreBar label="Document Formatting" score={displayedReview.formattingScore} target={95} />
+          <div className="flex flex-col gap-2.5 rounded-[14px] border border-[var(--border)] bg-[var(--z1-bg)] p-3.5 md:col-span-2">
+            <div className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-tertiary">Deterministic review components</div>
+            <ScoreBar label="ATS keyword alignment" score={displayedReview.atsScore} target={90} />
+            <ScoreBar label="Truthfulness / master consistency" score={displayedReview.truthfulnessScore} target={100} />
+            <ScoreBar label="Architecture consistency" score={displayedReview.architectureConsistencyScore} target={100} />
+            <ScoreBar label="Recruiter readability" score={displayedReview.recruiterReadabilityScore} target={85} />
+            <ScoreBar label="Document formatting" score={displayedReview.formattingScore} target={95} />
           </div>
         </div>
       )}
 
-      {/* 5b. Canonical Instruction Compliance */}
-      {displayedReview && (
-        <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-800/40">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-            <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
-              Canonical Instruction Compliance
-            </div>
-            {displayedReview.instructionCompliance && (
-              <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                Standard v{displayedReview.instructionCompliance.instructionVersion}
-                {data?.qualityGate?.instructionCompliance && !data.qualityGate.instructionCompliance.isCurrent && (
-                  <span className="ml-1 font-semibold text-amber-600 dark:text-amber-400">(stale — re-review required)</span>
-                )}
-              </span>
-            )}
-          </div>
-          {!displayedReview.instructionCompliance ? (
-            <p className="text-xs text-zinc-500 italic">
-              No canonical compliance data (legacy review, produced before this standard existed).
-            </p>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
-                {Object.entries(displayedReview.instructionCompliance.checks).map(([name, status]) => (
-                  <div key={name} className="flex items-center gap-1.5">
-                    <span
-                      className={
-                        status === "PASS"
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : status === "FAIL"
-                          ? "text-red-600 dark:text-red-400"
-                          : status === "NOT_APPLICABLE"
-                          ? "text-zinc-400 dark:text-zinc-500"
-                          : "text-amber-600 dark:text-amber-400"
-                      }
-                    >
-                      {/* A dash, never a tick: "did not apply" must not read as "satisfied". */}
-                      {status === "PASS" ? "✓" : status === "FAIL" ? "✗" : status === "NOT_APPLICABLE" ? "–" : "⚠"}
-                    </span>
-                    <span className="text-zinc-600 dark:text-zinc-400">
-                      {name.replace(/([a-z0-9])([A-Z])/g, "$1 $2")}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              {displayedReview.instructionCompliance.notes.length > 0 && (
-                <ul className="mt-2 pt-2 border-t border-zinc-200 dark:border-zinc-700 list-disc list-inside space-y-0.5 text-xs text-zinc-600 dark:text-zinc-400">
-                  {displayedReview.instructionCompliance.notes.map((note, i) => (
-                    <li key={i}>{note}</li>
-                  ))}
-                </ul>
+      {displayedReview?.instructionCompliance && (
+        <div className="rounded-[14px] border border-[var(--border)] bg-[var(--z1-bg)] p-3.5">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-tertiary">Canonical instruction compliance</div>
+            <span className="text-[11px] text-tertiary">
+              Standard v{displayedReview.instructionCompliance.instructionVersion}
+              {data.qualityGate?.instructionCompliance && !data.qualityGate.instructionCompliance.isCurrent && (
+                <span className="ml-1 font-semibold text-[var(--attention-fg)]">(stale — re-review required)</span>
               )}
-            </>
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11.5px] sm:grid-cols-3">
+            {Object.entries(displayedReview.instructionCompliance.checks).map(([name, status]) => (
+              <div key={name} className="flex items-center gap-1.5">
+                <span className={status === "PASS" ? "text-[var(--pill-success-fg)]" : status === "FAIL" ? "text-[var(--error)]" : status === "NOT_APPLICABLE" ? "text-tertiary" : "text-[var(--attention-fg)]"}>
+                  {status === "PASS" ? "✓" : status === "FAIL" ? "✗" : status === "NOT_APPLICABLE" ? "–" : "⚠"}
+                </span>
+                <span className="text-secondary">{name.replace(/([a-z0-9])([A-Z])/g, "$1 $2")}</span>
+              </div>
+            ))}
+          </div>
+          {displayedReview.instructionCompliance.notes.length > 0 && (
+            <ul className="mt-2 list-disc space-y-0.5 border-t border-[var(--separator)] pl-4 pt-2 text-[11.5px] text-secondary">
+              {displayedReview.instructionCompliance.notes.map((note, i) => (
+                <li key={i}>{note}</li>
+              ))}
+            </ul>
           )}
         </div>
       )}
 
-      {/* 6. Review Feedback & Diagnostics */}
       {displayedReview && (
-        <div className="space-y-4 pt-2">
-          {/* Blocking Issues */}
+        <div className="flex flex-col gap-3">
           {displayedReview.blockingIssues.length > 0 && (
-            <div className="rounded-md border border-red-200 bg-red-50 p-3.5 dark:border-red-900 dark:bg-red-950/40">
-              <h4 className="text-xs font-semibold text-red-900 dark:text-red-200 mb-1.5">
-                Blocking Issues ({displayedReview.blockingIssues.length})
-              </h4>
-              <ul className="list-disc pl-4 space-y-1 text-xs text-red-800 dark:text-red-300">
-                {displayedReview.blockingIssues.map((issue, i) => (
-                  <li key={i}>{issue}</li>
-                ))}
+            <div className="rounded-[12px] bg-[var(--pill-red-bg)] p-3">
+              <h4 className="mb-1.5 text-[11.5px] font-semibold text-[var(--pill-red-fg)]">Blocking issues ({displayedReview.blockingIssues.length})</h4>
+              <ul className="list-disc space-y-1 pl-4 text-[11.5px] text-[var(--pill-red-fg)]">
+                {displayedReview.blockingIssues.map((issue, i) => <li key={i}>{issue}</li>)}
               </ul>
             </div>
           )}
-
-          {/* Required Corrections */}
           {displayedReview.requiredCorrections && displayedReview.requiredCorrections.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-                Required Corrections ({displayedReview.requiredCorrections.length})
+            <div>
+              <h4 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-tertiary">
+                Required corrections ({displayedReview.requiredCorrections.length})
               </h4>
-              <div className="space-y-2">
+              <div className="flex flex-col gap-1.5">
                 {displayedReview.requiredCorrections.map((corr: RequiredCorrection, i: number) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-2.5 rounded-md border border-zinc-200 bg-white p-2.5 text-xs dark:border-zinc-800 dark:bg-zinc-900/60"
-                  >
+                  <div key={i} className="flex items-start gap-2.5 rounded-[10px] border border-[var(--border)] bg-[var(--z3-bg)] p-2.5 text-[11.5px]">
                     <PriorityBadge priority={corr.priority} />
-                    <p className="text-zinc-800 dark:text-zinc-200 flex-1">{corr.description}</p>
+                    <p className="flex-1 text-secondary">{corr.description}</p>
                   </div>
                 ))}
               </div>
             </div>
           )}
-
-          {/* Detailed Diagnostic Pills */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+          <div className="grid grid-cols-1 gap-2.5 text-[11.5px] md:grid-cols-2">
             {displayedReview.missingRequiredSkills.length > 0 && (
-              <div className="rounded border border-zinc-200 p-3 dark:border-zinc-800">
-                <div className="font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">Missing Required Skills</div>
+              <div className="rounded-[10px] border border-[var(--border)] p-2.5">
+                <div className="mb-1.5 font-medium text-secondary">Missing required skills</div>
                 <div className="flex flex-wrap gap-1">
                   {displayedReview.missingRequiredSkills.map((s, i) => (
-                    <span key={i} className="rounded bg-red-100 px-2 py-0.5 text-red-800 dark:bg-red-900/40 dark:text-red-300">
-                      {s}
-                    </span>
+                    <span key={i} className="rounded bg-[var(--pill-red-bg)] px-2 py-0.5 text-[var(--pill-red-fg)]">{s}</span>
                   ))}
                 </div>
               </div>
             )}
-
             {displayedReview.truthfulnessIssues.length > 0 && (
-              <div className="rounded border border-zinc-200 p-3 dark:border-zinc-800">
-                <div className="font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">Truthfulness Diagnostics</div>
-                <ul className="list-disc pl-4 space-y-0.5 text-zinc-700 dark:text-zinc-300">
-                  {displayedReview.truthfulnessIssues.map((t, i) => (
-                    <li key={i}>{t}</li>
-                  ))}
+              <div className="rounded-[10px] border border-[var(--border)] p-2.5">
+                <div className="mb-1.5 font-medium text-secondary">Truthfulness diagnostics</div>
+                <ul className="list-disc space-y-0.5 pl-4 text-secondary">
+                  {displayedReview.truthfulnessIssues.map((t, i) => <li key={i}>{t}</li>)}
                 </ul>
               </div>
             )}
-
             {displayedReview.incorrectTechnologyUsage.length > 0 && (
-              <div className="rounded border border-zinc-200 p-3 dark:border-zinc-800">
-                <div className="font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">Technology Usage Warnings</div>
-                <ul className="list-disc pl-4 space-y-0.5 text-zinc-700 dark:text-zinc-300">
-                  {displayedReview.incorrectTechnologyUsage.map((c, i) => (
-                    <li key={i}>{c}</li>
-                  ))}
+              <div className="rounded-[10px] border border-[var(--border)] p-2.5">
+                <div className="mb-1.5 font-medium text-secondary">Technology usage warnings</div>
+                <ul className="list-disc space-y-0.5 pl-4 text-secondary">
+                  {displayedReview.incorrectTechnologyUsage.map((c, i) => <li key={i}>{c}</li>)}
                 </ul>
               </div>
             )}
-
             {displayedReview.genericBullets.length > 0 && (
-              <div className="rounded border border-zinc-200 p-3 dark:border-zinc-800">
-                <div className="font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">Generic / Weak Bullets</div>
-                <p className="text-zinc-500">{displayedReview.genericBullets.length} bullet(s) flagged for generic phrasing.</p>
+              <div className="rounded-[10px] border border-[var(--border)] p-2.5">
+                <div className="mb-1.5 font-medium text-secondary">Generic / weak bullets</div>
+                <p className="text-tertiary">{displayedReview.genericBullets.length} bullet(s) flagged for generic phrasing.</p>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* 7. Iteration History */}
       {iterations.length > 0 && (
-        <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
-          <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Iteration History</div>
+        <div className="border-t border-[var(--separator)] pt-3">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-tertiary">Iteration history</div>
           <div className="flex flex-wrap gap-2">
             {iterations.map((iter) => {
               const isSelected = iter.iteration_number === activeIterNum;
-              const isReady = iter.overall_score && iter.overall_score >= 95 && iter.blocking_issue_count === 0;
+              const isReady = iter.overall_score !== null && iter.overall_score >= 95 && iter.blocking_issue_count === 0;
               const isBestAttempt = bestAttempt?.iterationNumber === iter.iteration_number;
               return (
                 <button
                   key={iter.id}
-                  onClick={() => setSelectedIterationNumber(iter.iteration_number)}
-                  className={`rounded-md px-3 py-1.5 text-xs font-medium border transition-colors ${
-                    isSelected
-                      ? "bg-zinc-900 text-white border-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 dark:border-zinc-100"
-                      : "bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800 dark:hover:bg-zinc-800"
+                  onClick={() => onSelectIteration(iter.iteration_number)}
+                  className={`rounded-[9px] border px-3 py-1.5 text-[11.5px] font-medium transition-colors duration-150 ease-out ${
+                    isSelected ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] bg-[var(--z3-bg)] text-secondary hover:bg-[var(--surface-hover)]"
                   }`}
                 >
                   Iteration {iter.iteration_number} — {iter.overall_score ?? "—"}/100
                   {isReady && " ✓"}
-                  {isBestAttempt && (
-                    <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">
-                      Best Attempt
-                    </span>
-                  )}
+                  {isBestAttempt && <span className="ml-1.5 rounded bg-[var(--pill-amber-bg)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--pill-amber-fg)]">Best attempt</span>}
                 </button>
               );
             })}
@@ -1639,5 +1293,13 @@ export function ResumeQualityPipeline({
         </div>
       )}
     </div>
+  );
+
+  if (variant === "technical") return content;
+
+  return (
+    <Disclosure title="Technical details" hint={workflow ? `Iteration ${workflow.current_iteration} of ${workflow.max_iterations}` : undefined}>
+      {content}
+    </Disclosure>
   );
 }
