@@ -1,16 +1,94 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { backfillOrganizationDiscoveryState, runOrganizationRegistryBackfill } from "@/db/organizationRegistryCore";
 
 const DATA_DIR = path.join(process.cwd(), "data");
-// Override lets integration tests point at an isolated temp file instead of the real database —
-// unset in normal app/script usage, so production behavior is unchanged.
-// Exported so migrate.ts can locate the live file for its pre-migration backup step — no other
-export function getDbPath(): string {
-  return process.env.CAREER_OPS_DB_PATH ?? path.join(DATA_DIR, "app.db");
+
+/**
+ * ADMIN-OPS-5 — is this process a test runner?
+ *
+ * `NODE_TEST_CONTEXT` is set by node:test itself in every test child process. That matters more than
+ * it looks: it cannot be forgotten. NODE_ENV is undefined under `tsx --test`, and an opt-in
+ * convention (each suite setting CAREER_OPS_DB_PATH) is exactly the kind of rule that holds until
+ * someone writes a suite without it — which is what happened here. NODE_ENV is still honoured for
+ * scripts run outside the runner.
+ */
+function isTestRuntime(): boolean {
+  /* Set by node:test in every child process it spawns. The strongest signal when it is present. */
+  if (process.env.NODE_TEST_CONTEXT) return true;
+  /* Explicit, and what a CI job or a script outside the runner would set. */
+  if (process.env.NODE_ENV === "test") return true;
+  if (process.argv.includes("--test")) return true;
+  /* ADMIN-OPS-5.1 — the case the env vars miss. Running one file directly to debug it
+   * (`npx tsx src/foo/__tests__/bar.test.ts`) sets NONE of the above: no NODE_TEST_CONTEXT, no
+   * NODE_ENV, no --test. Measured, not assumed. Without this line that perfectly ordinary workflow
+   * resolves to the operator's real database, which is the whole failure being closed. */
+  const entry = process.argv[1] ?? "";
+  return /\.(test|spec)\.[cm]?[jt]sx?$/.test(entry) || entry.includes(`${path.sep}__tests__${path.sep}`);
 }
-export const DB_PATH = process.env.CAREER_OPS_DB_PATH ?? path.join(DATA_DIR, "app.db");
+
+let isolatedTestDb: string | null = null;
+
+/**
+ * A private database for THIS process, created on first use and removed on exit.
+ *
+ * Keyed by pid because node:test runs one child process per test FILE, so per-process isolation is
+ * per-file isolation — suites cannot contaminate each other, and nothing is shared that would make
+ * results depend on execution order. Created lazily: a suite that never touches a database never
+ * pays for one.
+ */
+function isolatedTestDbPath(): string {
+  if (isolatedTestDb) return isolatedTestDb;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `career-ops-test-${process.pid}-`));
+  isolatedTestDb = path.join(dir, "app.db");
+  process.on("exit", () => {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* Best effort. A leftover temp directory is harmless; throwing here would fail the run. */
+    }
+  });
+  return isolatedTestDb;
+}
+
+/**
+ * Where the database lives, resolved at CALL time.
+ *
+ * Precedence is explicit override, then the test fail-safe, then production. The middle rule is the
+ * point: under a test runner, the real data/app.db is unreachable unless a caller names it outright.
+ * Before ADMIN-OPS-5 the fallback was production, so any suite that opened a connection before
+ * setting the override — or never set it — wrote to the operator's live database. getDb() memoises
+ * on a GLOBAL, so the first such caller in a process decided the file for every later one.
+ *
+ * Exported so migrate.ts can locate the live file for its pre-migration backup step.
+ */
+export function getDbPath(): string {
+  const productionPath = path.join(DATA_DIR, "app.db");
+  const override = process.env.CAREER_OPS_DB_PATH;
+
+  if (isTestRuntime()) {
+    /* ADMIN-OPS-5.1 — fail closed rather than merely defaulting away. An explicit override pointing
+     * at the real database is almost certainly a mistake (a copied line, an env var leaking in from
+     * a shell), and honouring it would hand a test suite write access to the operator's data. No
+     * committed test wants this: of 430 test files, 155 set a temp override and the other 275 rely
+     * on the fallback below — none names the production file. Throwing is louder than a silent
+     * redirect and cannot be mistaken for a passing run. */
+    if (override && path.resolve(override) === productionPath) {
+      throw new Error(
+        "Refusing to open the production database from a test runtime. " +
+          "Point CAREER_OPS_DB_PATH at a temporary file, or unset it to get an isolated one."
+      );
+    }
+    return override ?? isolatedTestDbPath();
+  }
+
+  return override ?? productionPath;
+}
+
+/** Import-time snapshot. Kept for migrate.ts; prefer getDbPath() anywhere timing could matter. */
+export const DB_PATH = getDbPath();
 
 function ensureDataDirs() {
   const currentDbPath = getDbPath();

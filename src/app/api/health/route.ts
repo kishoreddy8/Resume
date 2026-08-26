@@ -1,6 +1,8 @@
+import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { closeDbConnection, getDb, getDbPath } from "@/db";
 import { checkDatabaseFile, getDbHealth, handleDbFailure, probeDatabaseFile } from "@/db/health";
+import { redactPaths } from "@/lib/operations/redact";
 
 /**
  * Stage 25B — Blocker 2. Readiness/health endpoint.
@@ -21,7 +23,18 @@ import { checkDatabaseFile, getDbHealth, handleDbFailure, probeDatabaseFile } fr
  *
  * Returns 200 when serving is possible and 503 when it is not, so it can be used as a readiness
  * probe. The body never contains candidate-derived data — only SQLite result codes and counters.
+ *
+ * ADMIN-OPS-5 — this route is deliberately UNAUTHENTICATED, because a readiness probe that requires
+ * a session cannot report the failure it exists to report: during the Stage 25A incident every
+ * authenticated route was returning 500. That makes what it says a security boundary in itself.
+ *
+ * It used to answer with `dbPath`, the absolute path of the database — which on a local-first
+ * product means the operator's home directory and username, handed to anyone who can reach the port.
+ * Nothing needed it: the file always sits at data/app.db relative to the install, so the only
+ * genuinely useful facts are its NAME and whether it is in the expected place. SQLite error strings
+ * embed the same path, so they are redacted through one helper rather than trusted individually.
  */
+
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const deep = req.nextUrl.searchParams.get("deep") === "1";
 
@@ -63,10 +76,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   return NextResponse.json(
     {
       status,
-      dbPath: getDbPath(),
-      connection: { ok: connectionOk, error: connectionError, recovery },
-      file: { readable: fileProbe.readable, error: fileProbe.error },
-      deepCheck: deepCheck === null ? { run: false } : { run: true, ok: deepCheck.ok, result: deepCheck.result },
+      /* Name and expectedness only — never the absolute path. */
+      database: {
+        file: path.basename(getDbPath()),
+        atDefaultLocation: getDbPath() === path.join(process.cwd(), "data", "app.db"),
+      },
+      connection: { ok: connectionOk, error: redactPaths(connectionError), recovery },
+      file: { readable: fileProbe.readable, error: redactPaths(fileProbe.error) },
+      deepCheck:
+        deepCheck === null
+          ? { run: false }
+          : { run: true, ok: deepCheck.ok, result: redactPaths(deepCheck.result) },
       recoveryState: health,
     },
     { status: status === "failed" ? 503 : 200 }
