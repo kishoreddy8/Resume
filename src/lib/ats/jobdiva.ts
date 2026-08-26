@@ -7,7 +7,46 @@ import { fetchWithRetry } from "@/lib/scan/retry";
 import { decodeHtmlEntities, stripHtml } from "@/lib/stripHtml";
 import type { NormalizedJob } from "@/types";
 
-const JOBDIVA_BASIC_AUTH = "Basic YXhlbG9uOmF4ZWxvbg==";
+/**
+ * ADMIN-SEC-2 — JobDiva's portal bootstrap credential, read from server-only process environment.
+ *
+ * This used to be a Basic Authorization header committed directly into this file and sent on every
+ * JobDiva discovery request. That is an embedded secret in a public source tree: it is readable by
+ * anyone with repository access, it cannot be rotated without a code change and redeploy, and it
+ * travels into every clone and every fork of the history.
+ *
+ * Two variables rather than one pre-encoded header, deliberately. Basic auth is a username and a
+ * password; storing the encoded composite would oblige an operator to base64 it by hand and would
+ * put a single opaque credential string into the environment for no benefit. Encoding happens here,
+ * at the moment of use.
+ *
+ * BOTH must be present. A half-configured connector is not usable, and treating a missing password
+ * as an empty one would send a malformed credential to a third party rather than failing locally.
+ *
+ * The thrown message deliberately begins with "Missing " and names only the variables, never their
+ * values: categorizeThrownError (src/lib/scan/errors.ts) maps a leading "Missing"/"Invalid" to the
+ * `invalid_config` category, which is exactly right here — this is a configuration problem, not a
+ * broken board, and it is non-retryable, so the scanner will not hammer JobDiva over a setting.
+ */
+const JOBDIVA_USERNAME_ENV = "JOBDIVA_API_USERNAME";
+const JOBDIVA_PASSWORD_ENV = "JOBDIVA_API_PASSWORD";
+
+/** True when both credential variables are set. Reports configuration state only — never a value. */
+export function isJobDivaConfigured(): boolean {
+  return Boolean(process.env[JOBDIVA_USERNAME_ENV]) && Boolean(process.env[JOBDIVA_PASSWORD_ENV]);
+}
+
+function jobDivaAuthorizationHeader(): string {
+  const username = process.env[JOBDIVA_USERNAME_ENV];
+  const password = process.env[JOBDIVA_PASSWORD_ENV];
+  if (!username || !password) {
+    throw new Error(
+      `Missing JobDiva API credentials — set ${JOBDIVA_USERNAME_ENV} and ${JOBDIVA_PASSWORD_ENV} in the server environment.`
+    );
+  }
+  return `Basic ${Buffer.from(`${username}:${password}`, "utf-8").toString("base64")}`;
+}
+
 const PAGE_SIZE = 100;
 
 interface JobDivaConfig {
@@ -225,10 +264,13 @@ export async function fetchJobDivaJobs(tokenValue: string, options: FetchJobDiva
     ...retryOptions
   } = options;
   const apiOrigin = apiOriginOverride.replace(/\/$/, "");
+  /* Resolved before the request is built: a missing credential must fail locally, never as an
+   * outbound call carrying an empty or malformed Authorization header. */
+  const authorization = jobDivaAuthorizationHeader();
   const auth = await fetchWithRetry(`${apiOrigin}/candPortal/rest/auth/a`, {
     headers: {
       Accept: "application/json",
-      Authorization: JOBDIVA_BASIC_AUTH,
+      Authorization: authorization,
       portalID: "1",
       a: config.account,
       compid: String(config.compid),

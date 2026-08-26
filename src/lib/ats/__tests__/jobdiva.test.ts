@@ -12,7 +12,14 @@ test("JobDiva identity preserves exact host, tenant, company, and division scope
   assert.throws(() => normalizeJobDivaToken(`www1.jobdiva.com|short|0|`));
 });
 
+/* ADMIN-SEC-2 — the connector no longer carries a committed credential, so any test that exercises
+ * a real fetch must supply configuration. Obvious fakes; the removed value is never reproduced. */
+const FAKE_JOBDIVA_USERNAME = "test-jobdiva-user";
+const FAKE_JOBDIVA_PASSWORD = "test-jobdiva-credential";
+
 test("JobDiva exhausts exact scoped pages and filters before full details", async () => {
+  process.env.JOBDIVA_API_USERNAME = FAKE_JOBDIVA_USERNAME;
+  process.env.JOBDIVA_API_PASSWORD = FAKE_JOBDIVA_PASSWORD;
   const detailIds: string[] = [];
   const pageStarts: number[] = [];
   const rows = Array.from({ length: 101 }, (_, index) => ({
