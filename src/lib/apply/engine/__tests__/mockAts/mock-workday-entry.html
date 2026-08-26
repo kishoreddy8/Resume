@@ -1,0 +1,72 @@
+<!doctype html>
+<!-- SANITIZED Workday ENTRY-sequence fixture (Phase 9E.2).
+
+     Structure captured read-only from a real Workday tenant on 2026-08-25, then sanitized: no
+     candidate PII, no email/phone/address, no cookies, no session or CSRF tokens, no account
+     identifiers, no employer-confidential content. Only the structural facts the entry stage must
+     be written against are preserved.
+
+     Encodes the observed three-control path from job POSTING to the application:
+       legalNoticeAcceptButton (cookie notice; overlays and gates the page)
+         -> adventureButton ("Apply")
+         -> applyManually ("Apply Manually")
+         -> the application form appears
+
+     Also reproduces two observed traps:
+       * autofillWithResume / useMyLastApplication sit beside applyManually and must NOT be chosen.
+       * a generic "Apply Now" control exists elsewhere on the page and must NEVER be clicked by
+         the universal core, which only ever follows the adapter's exact declared selectors. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Workday — Entry</title></head>
+<body>
+  <div id="notice">
+    <p>Click 'Accept Cookies' to confirm you are giving consent to cookies being used.</p>
+    <button data-automation-id="legalNoticeDeclineButton" type="button">Decline</button>
+    <button data-automation-id="legalNoticeAcceptButton" type="button"
+      onclick="document.getElementById('notice').remove()">Accept Cookies</button>
+  </div>
+
+  <h1>Data Engineer at Mockcorp</h1>
+  <p>locations Somewhere · time type Full time · posted on Posted Yesterday</p>
+
+  <!-- A generic final-action control that the universal core must never touch. -->
+  <button id="unrelated-apply-now" type="button"
+    onclick="document.body.innerHTML='<h1>WRONGLY SUBMITTED</h1>'">Apply Now</button>
+
+  <a data-automation-id="adventureButton" href="#" onclick="showChooser()">Apply</a>
+  <div id="chooser"></div>
+  <div id="stage"></div>
+
+  <script>
+    function showChooser() {
+      document.getElementById("chooser").innerHTML =
+        '<a data-automation-id="autofillWithResume" href="#">Autofill with Resume</a>' +
+        '<a data-automation-id="applyManually" href="#">Apply Manually</a>' +
+        '<a data-automation-id="useMyLastApplication" href="#">Use My Last Application</a>';
+      document.querySelector('[data-automation-id="applyManually"]').addEventListener("click", showForm);
+    }
+    function showForm() {
+      document.getElementById("chooser").remove();
+      document.getElementById("stage").innerHTML =
+        '<nav data-automation-id="progressBar"><ol>' +
+        '<li data-automation-id="progressBarActiveStep"><label>current step 1 of 7 My Information</label></li>' +
+        '<li data-automation-id="progressBarInactiveStep"><label>Review</label></li>' +
+        '</ol></nav>' +
+        '<h2>My Information</h2>' +
+        '<div data-automation-id="formField-legalName--firstName"><div><div>' +
+        '<label for="name--legalName--firstName">First Name*</label>' +
+        '<input id="name--legalName--firstName" type="text" required></div></div></div>' +
+        '<div data-automation-id="formField-legalName--lastName"><div><div>' +
+        '<label for="name--legalName--lastName">Last Name*</label>' +
+        '<input id="name--legalName--lastName" type="text" required></div></div></div>' +
+        '<div data-automation-id="formField-city"><div><div>' +
+        '<label for="address--city">City*</label>' +
+        '<input id="address--city" type="text" required></div></div></div>' +
+        '<div data-automation-id="formField-phoneNumber"><div><div>' +
+        '<label for="phoneNumber--phoneNumber">Phone Number*</label>' +
+        '<input id="phoneNumber--phoneNumber" type="text" required></div></div></div>' +
+        '<button data-automation-id="pageFooterNextButton" type="button">Save and Continue</button>';
+    }
+  </script>
+</body>
+</html>

@@ -95,6 +95,9 @@ export function boundMaxPages(adapterMax: number | undefined): number {
 export interface MultiPageConfig {
   nextSelector: string;
   reviewMarkers: string[];
+  /** PHASE 9E — structural review test; see AtsAdapter.reviewPageSelector. Null when the adapter
+   *  declares none, in which case only `reviewMarkers` applies, exactly as before. */
+  reviewSelector: string | null;
   loginMarkers: string[];
   maxPages: number;
 }
@@ -109,6 +112,7 @@ export function resolveMultiPageConfig(adapter: AtsAdapter | null | undefined): 
   return {
     nextSelector: adapter.nextPageSelector(),
     reviewMarkers: (adapter.reviewPageMarkers?.() ?? []).map((m) => m.toLowerCase()),
+    reviewSelector: adapter.reviewPageSelector?.() ?? null,
     loginMarkers: (adapter.loginWallMarkers?.() ?? []).map((m) => m.toLowerCase()),
     maxPages: boundMaxPages(adapter.maxPages?.()),
   };
@@ -118,11 +122,15 @@ export function resolveMultiPageConfig(adapter: AtsAdapter | null | undefined): 
 
 /** What one page looks like, for the sole purpose of telling "moved on" from "still here". */
 export interface PageFingerprint {
+  /** Path only — the hash is excluded, since an `<a href="#">` click changes it without navigating. */
   url: string;
   /** Identities of the form fields present (inputs/selects/textareas, buttons excluded). */
   fieldIds: string[];
   /** Button texts — the tiebreaker for a page with no form fields at all. */
   buttonTexts: string[];
+  /** PHASE 9E — the page's own primary heading. The strongest available evidence that the STEP
+   *  changed, as opposed to the same step merely re-rendering. */
+  heading: string;
 }
 
 /**
@@ -135,11 +143,22 @@ export interface PageFingerprint {
  * mis-increment the page count and skip the page's unresolved questions.
  */
 export function hasPageAdvanced(before: PageFingerprint, after: PageFingerprint): boolean {
+  /* A real navigation. */
   if (before.url !== after.url) return true;
-  if (before.fieldIds.length === 0) {
-    /* A page with no form fields (rare interstitial): fall back to field appearance or the
-     * buttons changing. */
+  /* A different step. */
+  if (before.heading !== after.heading && after.heading.length > 0) return true;
+
+  /* FIELD CHURN IS NOT ADVANCEMENT — the lesson of the first real multi-page Workday run.
+   *
+   * This used to return true whenever any previously-seen field id disappeared. Workday re-mounts
+   * its form after a rejected "Save and Continue", regenerating every id (`input-6` becomes
+   * `input-9`), so every old id vanished and the walk counted EIGHT phantom advances through the
+   * same page — inflating one page's questions into forty-one and then failing on the page cap.
+   *
+   * With a same URL and an unchanged heading, the page has not changed, whatever its ids did. The
+   * remaining fallback covers only a field-less interstitial, which has no heading to compare. */
+  if (before.fieldIds.length === 0 && before.heading.length === 0) {
     return after.fieldIds.length > 0 || before.buttonTexts.join("\x00") !== after.buttonTexts.join("\x00");
   }
-  return before.fieldIds.some((id) => !after.fieldIds.includes(id));
+  return false;
 }

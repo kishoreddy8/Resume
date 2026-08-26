@@ -1,6 +1,7 @@
 import type { SourceType } from "@/types";
 import type { AnswerSource, QuestionType } from "../questionTypes";
 import type { AdapterAuthConfig } from "../auth";
+import type { ApplicationEntryStep } from "../entry";
 
 /**
  * The agent contract, split so the decisions are testable without a browser.
@@ -165,6 +166,21 @@ export interface AtsAdapter {
    *  walk, reaching a page matching any of these will end the walk at READY_FOR_REVIEW — the walk
    *  will never advance past review. */
   reviewPageMarkers?(): string[];
+  /**
+   * PHASE 9E — a STRUCTURAL review-page test: a selector whose mere presence means "this is the
+   * review page". Checked in addition to `reviewPageMarkers`, and needed wherever page TEXT cannot
+   * express the distinction.
+   *
+   * Workday is exactly that case. Its step navigator renders every step name — "Review" included —
+   * on EVERY page, so any text marker matching "review" fires on page 1 and would declare the very
+   * first page the review page. What distinguishes the real review page is structural: Workday
+   * marks the active step `progressBarActiveStep` and every other step `progressBarInactiveStep`,
+   * so "the ACTIVE step is Review" is expressible as a selector and nothing else.
+   *
+   * Evaluated with the browser's own selector engine, so Playwright text pseudo-classes such as
+   * `:has-text(...)` are available to an adapter that needs them.
+   */
+  reviewPageSelector?(): string;
   /** Lowercased page-text/DOM markers of this ATS's login/account wall, to be merged into the
    *  generic blocking detector's own signals by the future multi-page engine. Such a run will stop
    *  with ACCOUNT_REQUIRED; nothing automates account creation or credentials. */
@@ -183,6 +199,34 @@ export interface AtsAdapter {
   // treats an adapter with no `auth` as having nothing more automatable, and continues to pause with
   // the existing generic ACCOUNT_REQUIRED behavior.
   auth?(): AdapterAuthConfig;
+
+  /**
+   * PHASE 9E — how this ATS renders the options of a finite picker, when it is not the
+   * `[role="option"]` convention the engine assumes by default.
+   *
+   * Observed on Workday: its pickers render options as `[data-automation-id="menuItem"]` and expose
+   * no `aria-controls`, so the engine could neither find them nor scope them. Declaring the
+   * selector is a UI fact, not a policy: the engine still decides what may be filled, and still
+   * refuses to present options it cannot attribute to the control it opened.
+   */
+  pickerOptionSelector?(): string;
+
+  // --- PHASE 9E.2 — optional application-ENTRY contract ------------------------------------------
+  // Describes how to get from a saved apply_url that is NOT the form (a job posting, a career page)
+  // to the form itself — or to the auth wall in front of it. Declared as EXACT observed selectors
+  // with the text each control was observed carrying; the engine never text-searches for an entry
+  // control, and refuses to click one whose text has since drifted.
+  //
+  // Omitted entirely (Greenhouse, Lever) the entry stage does nothing at all and the run behaves
+  // byte-identically to before this contract existed — their apply_url IS the form.
+  //
+  // This describes NAVIGATION ONLY. It cannot express an answer, a consent decision, or permission
+  // to submit: entry runs before a single field is filled, so there is nothing to submit when it
+  // runs, and the executor enforces that ordering.
+  entrySequence?(): ApplicationEntryStep[];
+  /** Upper bound on entry steps. Bounded by the engine's own ENTRY_HARD_CAP; an adapter may only
+   *  lower it. */
+  entryMaxSteps?(): number;
 }
 
 /** Detected blocking conditions. Each maps to a run status that stops and asks the user. */

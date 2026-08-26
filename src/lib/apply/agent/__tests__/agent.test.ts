@@ -167,10 +167,29 @@ test("AGENT-10b a URL fallback uses the CONNECTOR's detector, not a private one"
 });
 
 test("AGENT-10c an ATS with no form adapter yields null rather than a generic guess", () => {
-  assert.equal(selectAdapter({ source_type: "workday", url: null }), null);
+  /* PHASE 9E — this tripwire previously asserted that Workday yields null. That expectation was
+   * correct for as long as no Workday adapter existed, and it was deliberately left in place
+   * through Phases 9A-9D so that registering one could never happen by accident.
+   *
+   * It changes here, in the SAME change that registers the adapter, because the underlying fact
+   * changed: Workday's real application form was observed read-only against a live tenant on
+   * 2026-08-25 under explicit operator authorisation, sanitized into
+   * `mockAts/mock-workday-myinformation.html`, and covered by the WORKDAY-* suite. The adapter
+   * declares only what that observation showed. See adapters/workday.ts.
+   *
+   * The tripwire itself is NOT weakened: an ATS with no adapter must still yield null, and that is
+   * still asserted below with ashby — a SourceType the connector layer detects and the apply layer
+   * deliberately does not automate. */
+  assert.equal(selectAdapter({ source_type: "ashby", url: null }), null, "an unautomated ATS still yields null, never a generic guess");
   assert.equal(selectAdapter({ source_type: null, url: null }), null);
   assert.equal(selectAdapter({ source_type: null, url: "not a url" }), null);
-  assert.deepEqual(automatedSourceTypes().sort(), ["greenhouse", "lever"]);
+  assert.deepEqual(automatedSourceTypes().sort(), ["greenhouse", "lever", "workday"]);
+});
+
+test("AGENT-10d Workday is selected by the job record's own identity, like every other adapter", () => {
+  const wd = selectAdapter({ source_type: "workday", url: null });
+  assert.equal(wd?.adapter.sourceType, "workday");
+  assert.equal(wd?.via, "job_record", "no URL is needed when the record already knows");
 });
 
 /* ── Lever, from a real apply form ───────────────────────────────────────────────────────────── */

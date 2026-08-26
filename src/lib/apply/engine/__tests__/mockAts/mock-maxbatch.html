@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- Multi-page fixture for maximum-reachable question batching.
+
+     PAGE 1  fills First/Last name from PROFILE; has an OPTIONAL unknown ("Preferred Nickname")
+             and a required-but-answerable field. It CAN advance.
+     PAGE 2  adds another OPTIONAL unknown ("Referral Code"). It CAN advance.
+     PAGE 3  has a REQUIRED unknown ("Security Clearance Level") and REFUSES to advance until it is
+             filled — the hard barrier.
+
+     The contract under test: the user is interrupted ONCE, at page 3, with all three questions. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock MaxBatch ATS</title></head>
+<body>
+  <div id="stage"></div>
+  <template id="page1">
+    <h2>Contact</h2>
+    <label for="first_name">First Name*</label><input id="first_name" type="text" required>
+    <label for="last_name">Last Name*</label><input id="last_name" type="text" required>
+    <label for="nickname">Preferred Nickname</label><input id="nickname" type="text">
+    <button id="advance" type="button">Next</button>
+  </template>
+  <template id="page2">
+    <h2>Details</h2>
+    <label for="email">Email*</label><input id="email" type="email" required>
+    <label for="referral_code">Referral Code</label><input id="referral_code" type="text">
+    <button id="advance" type="button">Continue</button>
+  </template>
+  <template id="page3">
+    <h2>Screening</h2>
+    <label for="clearance">What is your security clearance level?*</label>
+    <input id="clearance" type="text" required>
+    <div id="err"></div>
+    <button id="advance" type="button">Next</button>
+  </template>
+  <script>
+    let page = 1;
+    function render() {
+      const stage = document.getElementById("stage");
+      stage.replaceChildren(document.getElementById("page" + page).content.cloneNode(true));
+      stage.querySelector("#advance").addEventListener("click", () => {
+        if (page === 3) {
+          // Hard barrier: refuses to advance while the required field is empty.
+          if (!document.getElementById("clearance").value) {
+            document.getElementById("err").textContent = "Please complete all required fields.";
+            return;
+          }
+        }
+        if (page < 3) { page++; render(); }
+      });
+    }
+    render();
+  </script>
+</body>
+</html>

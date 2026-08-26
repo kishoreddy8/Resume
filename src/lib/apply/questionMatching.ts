@@ -59,7 +59,13 @@ const RULES: Rule[] = [
   { key: "first_name", type: "identity", all: ["first name"] },
   { key: "last_name", type: "identity", all: ["last name"] },
   { key: "email", type: "contact", all: ["email"] },
-  { key: "phone", type: "contact", all: ["phone"] },
+  /* PHASE 9E.2 — the `none` guard is what keeps a phone SUB-FIELD from collecting the phone
+   * NUMBER. Observed on a real Workday form, which renders "Phone Device Type", "Country Phone
+   * Code", "Phone Number" and "Phone Extension" as four separate controls: the unguarded ["phone"]
+   * rule matched every one of them, so the candidate's number was written into the country-code and
+   * extension fields of a live application. Same discipline as the sponsorship/authorization rules
+   * — a broad token needs an explicit exclusion list wherever a more specific sibling exists. */
+  { key: "phone", type: "contact", all: ["phone"], none: ["country", "code", "extension", "device", "type"] },
   { key: "location_current", type: "contact", all: ["current location"] },
   // "relocat" (stem, not "relocate" alone) excludes both "relocate" and "relocation" — a relocation
   // question is about a DIFFERENT city than the one the candidate lives in now, never answered with

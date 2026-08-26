@@ -23,11 +23,18 @@ export function mockAtsUrl(
     | "mock-submit-reauth"
     | "mock-submit-new-question"
     | "mock-already-applied"
+    | "mock-workday-myinformation"
+    | "mock-no-form-landing"
+    | "mock-workday-entry"
+    | "mock-workday-entry-stuck"
+    | "mock-workday-entry-changed"
+    | "mock-maxbatch"
     | "mock-auth-verify"
     | "mock-auth-mfa"
     | "mock-auth-captcha-create"
     | "mock-multipage-auth-login"
     | "mock-multipage-auth-verify"
+    | "mock-chrome-then-form"
 ): string {
   return pathToFileURL(path.join(import.meta.dirname, `${name}.html`)).href;
 }

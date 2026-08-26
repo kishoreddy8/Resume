@@ -82,3 +82,30 @@ test("neither new pattern collides with work authorization or sponsorship", () =
   assert.notEqual(matchQuestion("Are you authorized to work in the United States?", new Map())?.canonicalKey, "referral_source");
   assert.notEqual(matchQuestion("Will you require sponsorship?", new Map())?.canonicalKey, "previously_employed");
 });
+
+// ── PHASE 9E.2 — phone sub-fields must never collapse into the phone number ─────────────────────
+
+test("PHONE-PARTS-01: 'Country Phone Code' maps to phone_country_code, never to phone", () => {
+  /* FOUND ON THE REAL WORKDAY FORM. The broad ["phone"] rule matched "Country Phone Code" first,
+   * so Career-Ops wrote the candidate's phone NUMBER into the country-code field of a live
+   * application. Greenhouse never exposed this because its adapter hint claims #country before
+   * matching runs; Workday has no such hint. */
+  const match = matchQuestion("Country Phone Code*", new Map());
+  assert.equal(match?.canonicalKey, "phone_country_code");
+});
+
+test("PHONE-PARTS-02: 'Phone Extension' is not the phone number", () => {
+  const match = matchQuestion("Phone Extension", new Map());
+  assert.notEqual(match?.canonicalKey, "phone", "an extension must never receive the full phone number");
+});
+
+test("PHONE-PARTS-03: 'Phone Device Type' is not the phone number", () => {
+  const match = matchQuestion("Phone Device Type*", new Map());
+  assert.notEqual(match?.canonicalKey, "phone");
+});
+
+test("PHONE-PARTS-04: a plain phone question still maps to phone", () => {
+  assert.equal(matchQuestion("Phone", new Map())?.canonicalKey, "phone");
+  assert.equal(matchQuestion("Phone Number*", new Map())?.canonicalKey, "phone");
+  assert.equal(matchQuestion("Mobile Phone", new Map())?.canonicalKey, "phone");
+});

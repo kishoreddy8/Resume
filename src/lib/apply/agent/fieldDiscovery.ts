@@ -27,6 +27,13 @@ export interface RawControl {
   /** PHASE 9 — the `data-automation-id` attribute. Workday's only tenant-stable control identity;
    *  its `id`s are generated per render. Null/absent everywhere the attribute isn't used. */
   automationId?: string | null;
+  /** PHASE 9E — the owning `<fieldset>`'s `<legend>` text, when there is one. Captured EXPLICITLY
+   *  rather than inferred from `ancestorText`, because for a radio group the legend is the QUESTION
+   *  while each member's own `<label for>` is only an OPTION. Observed on a real Workday tenant:
+   *  `<fieldset><legend>Have you previously worked for our Organization?</legend>` wrapping
+   *  `<label for=..>Yes</label><input type=radio>` — reading the option label as the question is how
+   *  the Human Question Center ends up asking the user a question titled "Yes". */
+  groupLegend?: string | null;
   /** The `class` attribute, as a generic secondary signal only — react-select's own default class
    *  names (e.g. "…select__input…") are a library convention used across many ATS boards, not a
    *  Celigo-specific hack. Never the primary signal; `role="combobox"` is checked first. */
@@ -42,6 +49,15 @@ export interface RawControl {
   ancestorText?: string | null;
   required: boolean;
   options?: string[];
+  /** PHASE 9E — VALIDATION OBSERVATION. Some Workday tenant fields are triggered by a `<button>`,
+   *  not an `<input role="combobox">` — observed on State Street's own tenant for "State" and
+   *  "Phone Device Type" (`data-automation-id="formField-countryRegion"` /
+   *  "formField-phoneType"), each carrying `aria-haspopup="listbox"` and no `role` at all. Neither
+   *  was ever matched by `role === "combobox"`, so both were completely invisible to discovery —
+   *  never filled, never asked about, and never counted toward "nothing more could be safely
+   *  filled" — which is exactly why a real run filled everything it could see and Workday still
+   *  refused to advance. See kindOf below. */
+  ariaHaspopup?: string | null;
 }
 
 /** react-select's own generated class prefix — a library convention, not any one company's markup. */
@@ -55,6 +71,12 @@ function kindOf(raw: RawControl): DiscoveredField["kind"] {
   // unsafe way as a free-text box — exactly the GAP-2 bug observed on a real Greenhouse form.
   if (raw.role === "combobox") return "combobox";
   if (raw.className && COMBOBOX_CLASS_PATTERN.test(raw.className)) return "combobox";
+  // PHASE 9E — VALIDATION OBSERVATION. Workday's "State" and "Phone Device Type" are real
+  // <button>s with aria-haspopup="listbox" and no role at all — a button-triggered listbox is the
+  // same trigger-plus-popup shape as an input-based combobox, just a different tag. Recognised by
+  // the ARIA contract, not by tag alone, so an ordinary submit/cancel button (aria-haspopup absent)
+  // is never swept in.
+  if (raw.tag === "button" && raw.ariaHaspopup === "listbox") return "combobox";
   switch (raw.type) {
     case "email":
       return "email";
@@ -127,20 +149,105 @@ export function selectorFor(raw: RawControl): string | null {
   return null;
 }
 
+/**
+ * PHASE 9E — a radio GROUP is one question, not one question per member.
+ *
+ * THE SEMANTIC RULE. For a radio group the `<legend>` is the QUESTION and each member's own
+ * `<label for>` is an OPTION. Reading the option label as the question is how the Human Question
+ * Center ends up asking the user a question literally titled "Yes" — observed against a real
+ * Workday tenant, where every radio carries its own `<label for>`. Greenhouse and Lever radios carry
+ * no per-option label, so `ancestorText` already surfaced their legend correctly; this rule makes
+ * that behaviour explicit and universal rather than an accident of label absence.
+ *
+ * THE CARDINALITY RULE. Members are grouped by the `name` attribute — HTML's own definition of a
+ * radio group — so five options produce ONE DiscoveredField, one planning decision, and one human
+ * question. A radio with no `name` cannot be grouped and remains its own field, exactly as before.
+ *
+ * The emitted field's selector is the FIRST member's. That is deliberate and sufficient: the
+ * executor's radio branch resolves the whole group from that element's `name` and matches the
+ * approved answer against every member's label/value, so a group-level selector addresses the group.
+ */
+function radioGroupKey(raw: RawControl): string | null {
+  return raw.name && raw.name.trim().length > 0 ? raw.name : null;
+}
+
 export function discoverFields(controls: RawControl[]): DiscoveredField[] {
   const fields: DiscoveredField[] = [];
+  /** name -> index in `fields`, for radio groups already emitted. */
+  const emittedRadioGroups = new Map<string, number>();
 
   for (const raw of controls) {
     const selector = selectorFor(raw);
     if (!selector) continue; // Unaddressable — see selectorFor.
 
-    const label = cleanLabel(raw.labelText) ?? cleanLabel(raw.ariaLabel) ?? cleanLabel(raw.ancestorText ?? null);
     const kind = kindOf(raw);
 
     /* Search boxes and hidden helpers are page furniture, not questions. Matched on role rather
      * than on a blocklist of ids, so it holds across companies. */
     if (raw.type === "search") continue;
+
+    /* PHASE 9E.2 — a password input is AUTHENTICATION, never application data.
+     *
+     * Found by the first real Workday run: a mis-detected auth state let the engine treat a sign-in
+     * form as the application form, fill the email, and then ask the operator for "Password"
+     * through the Human Question Center — where any answer would have been persisted into the run
+     * checkpoint, writing a password into SQLite. `ensureAuthenticated`'s `fillSecret` is the only
+     * thing that may ever type into a password field, and it addresses one by explicit adapter
+     * selector, never through discovery. Dropping these here means a password can never enter a
+     * FieldPlan, a checkpoint, an audit event, the answer vault, or a review. */
+    if (raw.type === "password") continue;
+
+    /* The option's own text, for a radio member. Not the question. */
+    const ownLabel = cleanLabel(raw.labelText) ?? cleanLabel(raw.ariaLabel);
+
+    if (kind === "radio") {
+      const groupKey = radioGroupKey(raw);
+      /* Legend first: it is the question. Only when a group has no legend at all does the existing
+       * fallback chain apply, preserving pre-9E behaviour for markup that never had one. */
+      const question = cleanLabel(raw.groupLegend ?? null) ?? cleanLabel(raw.ancestorText ?? null) ?? ownLabel;
+      if (groupKey !== null) {
+        const existing = emittedRadioGroups.get(groupKey);
+        if (existing !== undefined) {
+          /* Fold this member into the group already emitted: contribute its option text, and let a
+           * required member make the whole group required. */
+          const target = fields[existing]!;
+          if (ownLabel) target.options = [...(target.options ?? []), ownLabel];
+          if (raw.required) target.required = true;
+          continue;
+        }
+        emittedRadioGroups.set(groupKey, fields.length);
+      }
+      if (!question && !ownLabel) continue;
+      fields.push({
+        selector,
+        kind,
+        label: question ?? null,
+        id: raw.id,
+        name: raw.name,
+        ...(raw.automationId ? { automationId: raw.automationId } : {}),
+        required: raw.required,
+        ...(ownLabel ? { options: [ownLabel] } : {}),
+      });
+      continue;
+    }
+
+    const label = ownLabel ?? cleanLabel(raw.ancestorText ?? null);
     if (kind === "unknown" && !label) continue;
+
+    /* PHASE 9E.3 — FORM-CONTROL SCOPING. A button-driven listbox with NO discoverable label is page
+     * CHROME, not a question. Observed directly on real Run 23 (State Street, 2026-08-25):
+     * `languageSelectorButton` and `settingsSelectorButton` — both `<button aria-haspopup="listbox">`
+     * with no `<label for>`, no `aria-label`, and no recognizable field-container ancestor — were
+     * swept in by the button-picker discovery added for State/Phone Device Type and surfaced as two
+     * junk Human Questions, while the real form's fields were never reached at all. Both of THOSE
+     * real fields carry a genuine `<label for>` (see BUTTON-PICKER-05). This is exactly the same
+     * "no label, no question" rule already applied to `kind === "unknown"` above, extended to the
+     * one other kind capable of matching page chrome. UNIVERSAL, not Workday-specific: it depends
+     * only on label presence, so it costs Greenhouse and Lever nothing (neither renders this shape)
+     * and needs no adapter hint, id blacklist, or Workday-specific selector. Scoped to `tag ===
+     * "button"` only — an input-based combobox (Greenhouse/Lever's react-select shape) is untouched,
+     * since it never matched page chrome in the first place. */
+    if (kind === "combobox" && raw.tag === "button" && !label) continue;
 
     fields.push({
       selector,
@@ -158,18 +265,62 @@ export function discoverFields(controls: RawControl[]): DiscoveredField[] {
 }
 
 /** The browser-side snippet, kept beside the parser it feeds so the two cannot drift. */
+/**
+ * PHASE 9E — the `automationId` read walks ANCESTORS, not just the element.
+ *
+ * Observed on a real Workday tenant (2026-08-25): Workday does NOT put `data-automation-id` on the
+ * <input>. It sits on a wrapper div up to three levels above it
+ * (`formField-legalName--firstName`), while the input itself carries a stable semantic id
+ * (`name--legalName--firstName`). Phase 9A read the attribute off the element and therefore saw
+ * `null` on every single Workday control — the automation-id path was dead code against the very
+ * ATS it was written for.
+ *
+ * The walk is bounded to 4 hops so it can never climb out of a field's own wrapper into a
+ * page-level container and mislabel every control with the same id. An element that carries the
+ * attribute itself still wins immediately, so Greenhouse/Lever behaviour is unchanged (neither
+ * uses the attribute at all).
+ *
+ * `ancestorText` matches `formField*` by PREFIX for the same reason: Workday's wrappers are
+ * `formField-city`, never a bare `formField`, so the previous exact match never fired.
+ */
 export const COLLECT_CONTROLS_SCRIPT = `
-  [...document.querySelectorAll("input, select, textarea")].map((el) => ({
+  [...document.querySelectorAll('input, select, textarea, button[aria-haspopup="listbox"]')].filter((el) => {
+    /* PHASE 9E.2 — an INVISIBLE control is not a question.
+     *
+     * Found by the real Workday run: after authenticating, the sign-in form's inputs remain in the
+     * DOM, merely hidden. Discovery picked one up (its generated id "input-6" was demoted, so its
+     * "email" automation id became the selector), the planner filled it from the profile, and
+     * page.fill then hung for 30 seconds on an element that could never be typed into before
+     * failing the whole run.
+     *
+     * A zero-area rect covers display:none, visibility-collapsed, and detached-but-referenced
+     * nodes alike, which is exactly the class of leftover this must exclude. Anything a human can
+     * actually see and answer has a non-zero box. */
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }).map((el) => ({
     tag: el.tagName.toLowerCase(),
     type: el.getAttribute("type"),
     id: el.id || null,
     name: el.getAttribute("name"),
     ariaLabel: el.getAttribute("aria-label"),
+    ariaHaspopup: el.getAttribute("aria-haspopup"),
     role: el.getAttribute("role"),
     className: el.getAttribute("class"),
-    automationId: el.getAttribute("data-automation-id"),
-    labelText: (el.id && document.querySelector('label[for="' + el.id + '"]')?.textContent) || null,
-    ancestorText: (el.closest("li, .application-question, .application-field, fieldset, [data-automation-id=formField]")
+    automationId: (() => {
+      let node = el;
+      let hops = 0;
+      while (node && hops < 4) {
+        const found = node.getAttribute && node.getAttribute("data-automation-id");
+        if (found) return found;
+        node = node.parentElement;
+        hops++;
+      }
+      return null;
+    })(),
+    labelText: (el.id && document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) + '"]')?.textContent) || null,
+    groupLegend: (el.closest("fieldset")?.querySelector("legend")?.textContent) || null,
+    ancestorText: (el.closest("li, .application-question, .application-field, fieldset, [data-automation-id^=formField]")
       ?.querySelector(".application-label, legend, label, .text")?.textContent || null),
     required: el.hasAttribute("required") || el.getAttribute("aria-required") === "true",
     options: el.tagName.toLowerCase() === "select"

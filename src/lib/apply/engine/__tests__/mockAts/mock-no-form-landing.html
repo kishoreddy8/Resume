@@ -1,0 +1,16 @@
+<!doctype html>
+<!-- A job POSTING landing page with no application form on it — the shape observed on a real
+     Workday tenant, where the application sits several navigations behind an Apply control.
+
+     The engine must never call this READY_FOR_REVIEW: nothing was filled, nothing was uploaded,
+     and the application form was never reached. Reporting success here would tell the operator
+     their application is ready to submit when it does not exist. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Job Posting — No Form</title></head>
+<body>
+  <h1>Data Engineer at Mockcorp</h1>
+  <p>locations Somewhere · time type Full time · posted on Posted Yesterday</p>
+  <p>Job description text that contains no application form whatsoever.</p>
+  <a data-automation-id="adventureButton" href="#">Apply</a>
+</body>
+</html>

@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- PHASE 9E.3 — FORM READINESS. Reproduces the exact Run 23 race, sanitized: Workday's persistent
+     page chrome (an unlabeled language switcher + settings/accessibility menu, each a
+     <button aria-haspopup="listbox">) paints immediately and goes DOM-quiet within
+     waitForQuietPage's default window, long before the real application form exists.
+
+     ?form=delayed injects the real form (one required, LABELED text field) after 2200ms —
+     deliberately longer than waitForQuietPage's default 1500ms quiet window, so a page that has
+     merely "stopped changing" is proven NOT yet form-ready without the new gate.
+     ?form=never (or the param omitted) never injects it — the genuinely form-less case. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock — Chrome Then Form</title></head>
+<body>
+  <h1>Application Shell</h1>
+  <button id="languageSelectorButton" aria-haspopup="listbox"></button>
+  <button id="settingsSelectorButton" aria-haspopup="listbox"></button>
+  <div id="form-slot"></div>
+  <script>
+    var params = new URLSearchParams(location.search);
+    if (params.get("form") === "delayed") {
+      setTimeout(function () {
+        document.getElementById("form-slot").innerHTML =
+          '<h2>My Information</h2>' +
+          '<label for="legalName--firstName">First Name*</label>' +
+          '<input id="legalName--firstName" type="text" required>';
+      }, 2200);
+    }
+  </script>
+</body>
+</html>

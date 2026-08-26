@@ -497,8 +497,36 @@ export function collectHumanQuestions(
   plans: FieldPlan[],
   knownVariants: Map<string, { canonicalKey: string; type: QuestionType }>
 ): HumanQuestion[] {
-  return plans
-    .filter((p): p is Extract<FieldPlan, { action: "ask" }> => p.action === "ask" && p.field.required)
+  return toHumanQuestions(
+    plans.filter((p): p is Extract<FieldPlan, { action: "ask" }> => p.action === "ask" && p.field.required),
+    knownVariants
+  );
+}
+
+/**
+ * PHASE 9E — every unresolved question on a page, REQUIRED AND OPTIONAL.
+ *
+ * `collectHumanQuestions` deliberately returns only required ones, because those are what force a
+ * pause. An optional unknown must never interrupt the user on its own — but it must not be silently
+ * dropped either: it is accumulated across the walk and shown in the one consolidated batch when a
+ * required question eventually forces a stop. Asking about it then is free; asking about it alone
+ * would be an avoidable interruption.
+ */
+export function collectAllUnresolvedQuestions(
+  plans: FieldPlan[],
+  knownVariants: Map<string, { canonicalKey: string; type: QuestionType }>
+): HumanQuestion[] {
+  return toHumanQuestions(
+    plans.filter((p): p is Extract<FieldPlan, { action: "ask" }> => p.action === "ask"),
+    knownVariants
+  );
+}
+
+function toHumanQuestions(
+  asks: Extract<FieldPlan, { action: "ask" }>[],
+  knownVariants: Map<string, { canonicalKey: string; type: QuestionType }>
+): HumanQuestion[] {
+  return asks
     .map((p) => {
       const match = matchQuestion(p.question, knownVariants);
       return {

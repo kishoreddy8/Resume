@@ -188,6 +188,20 @@ test("MULTIPAGE-10: a Next that does nothing is clicked a bounded number of time
   assert.equal(JSON.parse(after.checkpoint_json!).page, 1, "the page index never moved");
 });
 
+test("PHASE9E VALIDATION-SNAPSHOT — a non-advancing page with nothing new to fill records a sanitized validation_snapshot event", async () => {
+  const run = newRun(mockAtsUrl("mock-multipage-stuck"), "greenhouse");
+  await executeRun(run.id, runtime, deps(), { adapter: multiAdapter() });
+
+  const snapshotEvent = runsDb.listEvents(run.id).find((e) => e.event_type === "validation_snapshot");
+  assert.ok(snapshotEvent, "a validation_snapshot event must be recorded at the exact moment the page refuses to advance");
+
+  const detail = JSON.parse(snapshotEvent!.detail!);
+  assert.ok("heading" in detail && "pageErrors" in detail && "invalidControls" in detail);
+  /* None of this fixture's real values (Jordan Rivera, jordan@example.test, the phone number) may
+   * ever appear in the recorded event — the whole point of this capability. */
+  assert.doesNotMatch(snapshotEvent!.detail!, /Jordan|Rivera|jordan@example\.test|555-0100/);
+});
+
 test("MULTIPAGE-11: a validation error after Next is not a page transition — the revealed question pauses the run", async () => {
   const run = newRun(mockAtsUrl("mock-multipage-validation"), "greenhouse");
   const after = await executeRun(run.id, runtime, deps(), { adapter: multiAdapter() });
@@ -264,4 +278,60 @@ test("PHASE9D-DUPLICATE-01: the ATS reporting an existing application fails the 
   const events = runsDb.listEvents(run.id).map((e) => e.event_type);
   assert.ok(events.includes("already_applied_detected"));
   assert.equal(JSON.parse(after.checkpoint_json!).completed.length, 0, "nothing was filled — the run stopped before touching the page");
+});
+
+// ── PHASE 9E — a run that filled nothing is never "ready" ───────────────────────────────────────
+
+test("PHASE9E-NOFORM-01: a page with no application form NEVER reaches READY_FOR_REVIEW", async () => {
+  /* FOUND BY THE REAL WORKDAY BENCHMARK. Workday's apply_url lands on a job POSTING, with the
+   * application several navigations behind an Apply control. The engine discovered zero fields,
+   * planned nothing, found no advance control, fell through to "review built", and reported
+   * READY_FOR_REVIEW with canApprove=true — offering the operator an Approve & Submit button for an
+   * application that was never opened, let alone filled.
+   *
+   * This is not Workday-specific: ANY ats whose apply_url is not the form itself would do this. An
+   * application that filled nothing and uploaded nothing has not been prepared. */
+  const run = newRun(mockAtsUrl("mock-no-form-landing"), "greenhouse");
+  /* formReadinessTimeoutMs kept short — this fixture has no controls at all, so the readiness gate
+   * (PHASE 9E.3) would otherwise wait its full production bound before honestly giving up. */
+  const after = await executeRun(run.id, runtime, deps(), { formReadinessTimeoutMs: 500 });
+
+  assert.notEqual(after.status, "READY_FOR_REVIEW", "nothing was filled — this is not a prepared application");
+  assert.equal(after.status, "FAILED");
+  assert.match(after.blocking_reason ?? "", /form/i, "the reason must say the form was never reached");
+  assert.equal(after.submitted_at, null);
+});
+
+// ── PHASE 9E.3 — form readiness: DOM-quiet page chrome is not a ready application form ─────────────
+
+test("FORM-READY-01/05/06/10: page chrome that never grows a real form times out honestly, bounded, with zero junk questions", async () => {
+  const run = newRun(`${mockAtsUrl("mock-chrome-then-form")}?form=never`, "greenhouse");
+  const startedAt = Date.now();
+  const after = await executeRun(run.id, runtime, deps(), { adapter: singlePageAdapter, formReadinessTimeoutMs: 800 });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(after.status, "FAILED", "chrome alone is never a prepared application");
+  assert.match(after.blocking_reason ?? "", /form/i);
+  assert.ok(elapsedMs < 8000, `must be bounded, not an indefinite wait (took ${elapsedMs}ms)`);
+
+  const events = runsDb.listEvents(run.id);
+  assert.ok(events.some((e) => e.event_type === "application_form_not_ready"), "the honest timeout must be audited");
+  assert.ok(!events.some((e) => e.event_type === "human_question_batch_created"), "chrome must never produce a Human Question Center batch");
+  for (const e of events) {
+    assert.doesNotMatch(e.detail ?? "", /languageSelectorButton|settingsSelectorButton/, "page chrome must never be named as a question anywhere in the audit trail");
+  }
+});
+
+test("FORM-READY-02/04/07/09: chrome appears first and goes quiet; the real form mounts later; readiness waits and the field is filled", async () => {
+  const run = newRun(`${mockAtsUrl("mock-chrome-then-form")}?form=delayed`, "greenhouse");
+  const after = await executeRun(run.id, runtime, deps(), { adapter: singlePageAdapter });
+
+  assert.equal(after.status, "READY_FOR_REVIEW", "the delayed-but-real form must eventually be reached and filled");
+  const checkpoint = JSON.parse(after.checkpoint_json!);
+  assert.equal(checkpoint.completed.length, 1);
+  assert.equal(checkpoint.completed[0].selector, "#legalName--firstName");
+
+  const events = runsDb.listEvents(run.id);
+  assert.ok(events.some((e) => e.event_type === "application_form_ready" && /fields=1/.test(e.detail ?? "")), "readiness must be recorded once the real field appears");
+  assert.ok(!events.some((e) => e.event_type === "human_question_batch_created"), "the two chrome buttons must never surface as questions once the real form is present");
 });

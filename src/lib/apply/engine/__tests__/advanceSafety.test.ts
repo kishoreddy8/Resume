@@ -86,23 +86,40 @@ test("boundMaxPages: adapter bound is respected, absent falls back to the hard c
 
 // ── transition evidence ─────────────────────────────────────────────────────────────────────────
 
-const fp = (url: string, fieldIds: string[], buttonTexts: string[] = []): PageFingerprint => ({ url, fieldIds, buttonTexts });
+const fp = (url: string, fieldIds: string[], buttonTexts: string[] = [], heading = "Same Step"): PageFingerprint => ({
+  url,
+  fieldIds,
+  buttonTexts,
+  heading,
+});
 
-test("hasPageAdvanced: URL change or old fields disappearing is a transition", () => {
+test("hasPageAdvanced: a URL change, or the step's heading changing, is a transition", () => {
   assert.equal(hasPageAdvanced(fp("file:///a", ["input:first_name"]), fp("file:///b", ["input:first_name"])), true);
-  assert.equal(hasPageAdvanced(fp("file:///a", ["input:first_name"]), fp("file:///a", ["input:city"])), true);
+  assert.equal(
+    hasPageAdvanced(fp("file:///a", ["input:first_name"], [], "Contact"), fp("file:///a", ["input:city"], [], "Your Details")),
+    true,
+    "same URL, different step heading — a real SPA page change"
+  );
+});
+
+test("hasPageAdvanced: field-id CHURN on the same step is NOT a transition (real Workday regression)", () => {
+  /* Workday re-mounts its form after a rejected "Save and Continue", regenerating every id. Trusting
+   * "old ids disappeared" counted eight phantom advances through one page on the live run. */
+  const before = fp("file:///a", ["input:input-6", "input:input-7"], [], "My Information");
+  const after = fp("file:///a", ["input:input-9", "input:input-10"], [], "My Information");
+  assert.equal(hasPageAdvanced(before, after), false, "same URL and same heading means the same page, whatever the ids did");
 });
 
 test("hasPageAdvanced: a validation reveal (all old fields kept, new ones added) is NOT a transition", () => {
-  const before = fp("file:///a", ["input:first_name", "input:email"]);
-  const after = fp("file:///a", ["input:first_name", "input:email", "input:q_workauth"]);
+  const before = fp("file:///a", ["input:first_name", "input:email"], [], "Contact");
+  const after = fp("file:///a", ["input:first_name", "input:email", "input:q_workauth"], [], "Contact");
   assert.equal(hasPageAdvanced(before, after), false, "same page complaining, not progress");
   assert.equal(hasPageAdvanced(before, before), false, "an unchanged page is not a transition");
 });
 
 test("hasPageAdvanced: a field-less page falls back to field appearance or button changes", () => {
-  assert.equal(hasPageAdvanced(fp("file:///a", [], ["Begin"]), fp("file:///a", ["input:email"], ["Next"])), true);
-  assert.equal(hasPageAdvanced(fp("file:///a", [], ["Begin"]), fp("file:///a", [], ["Begin"])), false);
+  assert.equal(hasPageAdvanced(fp("file:///a", [], ["Begin"], ""), fp("file:///a", ["input:email"], ["Next"], "")), true);
+  assert.equal(hasPageAdvanced(fp("file:///a", [], ["Begin"], ""), fp("file:///a", [], ["Begin"], "")), false);
 });
 
 // ── markers and contract resolution ─────────────────────────────────────────────────────────────

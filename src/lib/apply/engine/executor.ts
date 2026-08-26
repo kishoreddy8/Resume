@@ -1,13 +1,16 @@
 import type { Page } from "playwright";
 import { advanceRun, getRun, recordEvent, updateCheckpoint, type ApplicationRun } from "@/db/queries/applicationRuns";
 import { discoverFields, COLLECT_CONTROLS_SCRIPT, escapeAttributeValue, type RawControl } from "../agent/fieldDiscovery";
-import { planFields, collectHumanQuestions } from "../agent/planFields";
+import { planFields, collectHumanQuestions, collectAllUnresolvedQuestions } from "../agent/planFields";
 import { exactComboboxOption } from "../agent/comboboxSelection";
 import { findCanonicalLocation } from "../agent/locationNormalizer";
 import { findCanonicalPhoneCountry } from "../agent/phoneCountryNormalizer";
 import { detectBlocking, detectAlreadyApplied, BLOCKING_STATUS } from "../agent/detectBlocking";
-import { readPageSignals } from "./pageSignals";
+import { readPageSignals, waitForQuietPage } from "./pageSignals";
 import { ensureAuthenticated } from "./auth";
+import { captureValidationSnapshot, captureMultiselectCommitState } from "./validationSnapshot";
+import { openApplication } from "./entry";
+import { ENTRY_OUTCOME_REASON } from "../entry";
 import { authOutcomeProceeds, authOutcomeToBlockingCondition, deriveTenantKey } from "../auth";
 import { keychainCredentialStore, type AtsAccountIdentity, type CredentialStore } from "../credentials";
 import type { BlockingCondition } from "../agent/types";
@@ -23,7 +26,7 @@ import {
   type PageFingerprint,
 } from "./multiPage";
 import type { StoredAnswer } from "../resolveAnswer";
-import type { QuestionType } from "../questionTypes";
+import { DEFAULT_POLICY, type QuestionType } from "../questionTypes";
 import { getCandidateContact } from "@/db/queries/candidateSettings";
 import { derivePhoneCountryCode } from "../agent/phoneCountryNormalizer";
 import { ApplicationBrowserRuntime, type BrowserSession } from "./browserRuntime";
@@ -89,9 +92,22 @@ async function readPageFingerprint(page: Page): Promise<PageFingerprint> {
       buttonTexts: [...document.querySelectorAll("button, input[type=submit], input[type=button]")].map((el) =>
         ((el as HTMLElement).innerText || el.getAttribute("value") || "").trim()
       ),
+      /* EVERY h1/h2 on the page, joined — not just the first.
+       *
+       * A single querySelector returns the first heading in document order, which on a real
+       * application is usually a page-level title ("Apply — Platform Engineer") that is identical
+       * on every step. That masked the per-step heading entirely and made every page look the same.
+       * Joining them means a step change alters the string even when an outer title persists.
+       * See hasPageAdvanced for why heading, not id churn, is the evidence that matters. */
+      heading: [...document.querySelectorAll("h1, h2")]
+        .map((h) => (h.textContent ?? "").trim())
+        .filter((t) => t.length > 0)
+        .join(" | ")
+        .slice(0, 200),
+      path: `${location.origin}${location.pathname}${location.search}`,
     }))
-    .catch(() => ({ fieldIds: [], buttonTexts: [] }));
-  return { url: page.url(), ...read };
+    .catch(() => ({ fieldIds: [], buttonTexts: [], heading: "", path: "" }));
+  return { url: read.path || page.url(), fieldIds: read.fieldIds, buttonTexts: read.buttonTexts, heading: read.heading };
 }
 
 /** Every text the page offers for the advance control, or null when the control is absent.
@@ -110,6 +126,44 @@ async function readAdvanceControlTexts(page: Page, selector: string): Promise<st
       (node.getAttribute("title") ?? "").trim(),
     ].filter((v) => v.length > 0)
   );
+}
+
+/**
+ * PHASE 9E.3 — FORM READINESS. "The DOM stopped changing" and "the application form exists" are
+ * different questions. Real Run 23 evidence proved it: `waitForQuietPage` correctly saw a stable
+ * page — because it was reading page CHROME (a language switcher, a settings menu) that painted
+ * once and never changed again — while the actual My Information form had not yet mounted. Quiet is
+ * necessary but not sufficient.
+ *
+ * This asks the one thing that actually matters: does the page contain either a real, labeled
+ * application field, or the control that would let a human reach one (the adapter's own advance
+ * selector)? It reuses the EXACT SAME discovery path (`COLLECT_CONTROLS_SCRIPT` + `discoverFields`,
+ * now excluding unlabeled button-chrome — see fieldDiscovery.ts) the page walk itself uses a moment
+ * later, so "ready" can never disagree with what discovery actually sees — a second, bespoke DOM
+ * query here would be exactly the kind of duplicate, competing waiting system that drifts from the
+ * real one over time.
+ *
+ * BOUNDED. A page that never grows a real field (this ATS's apply_url is not the form; the form
+ * failed to load at all) times out and is reported honestly rather than polled forever — the
+ * existing zero-fill guard (`no_application_form_found`, below) is what turns that into a terminal
+ * FAILED, exactly the same as it always has; this function only decides how long to wait first.
+ */
+async function waitForApplicationFormReady(
+  page: Page,
+  advanceSelector: string | null,
+  opts: { pollMs?: number; capMs?: number } = {}
+): Promise<{ ready: boolean; fieldCount: number; waitedMs: number }> {
+  const pollMs = opts.pollMs ?? 350;
+  const capMs = opts.capMs ?? 10_000;
+  const startedAt = Date.now();
+  for (;;) {
+    const controls = (await page.evaluate(COLLECT_CONTROLS_SCRIPT).catch(() => [])) as RawControl[];
+    const fieldCount = discoverFields(controls).length;
+    const hasAdvance = advanceSelector !== null && (await readAdvanceControlTexts(page, advanceSelector)) !== null;
+    if (fieldCount > 0 || hasAdvance) return { ready: true, fieldCount, waitedMs: Date.now() - startedAt };
+    if (Date.now() - startedAt >= capMs) return { ready: false, fieldCount, waitedMs: Date.now() - startedAt };
+    await page.waitForTimeout(pollMs).catch(() => null);
+  }
 }
 
 /**
@@ -160,7 +214,11 @@ async function selectComboboxOption(
   page: Page,
   selector: string,
   targetValue: string,
-  normalize?: (opts: readonly string[]) => string | null
+  normalize?: (opts: readonly string[]) => string | null,
+  /* PHASE 9E — MULTISELECT OBSERVATION. Optional and additive: when a runId is supplied, sanitized
+   * post-click commit-state evidence is captured and recorded. Every existing caller that omits it
+   * behaves exactly as before — this changes nothing about what gets clicked or filled. */
+  runId?: number
 ): Promise<string | null> {
   await page.click(selector);
 
@@ -200,6 +258,14 @@ async function selectComboboxOption(
     ? page.locator(`#${listboxId} [role="option"]`).filter({ hasText: new RegExp(`^${escaped}$`) }).first()
     : page.locator('[role="option"]').filter({ hasText: new RegExp(`^${escaped}$`) }).first();
   await optionLocator.click();
+
+  if (runId !== undefined) {
+    const commitState = await captureMultiselectCommitState(page, chosen).catch(() => null);
+    if (commitState) {
+      recordEvent(runId, "combobox_commit_state", JSON.stringify(commitState).slice(0, 2000));
+    }
+  }
+
   return chosen;
 }
 
@@ -212,13 +278,73 @@ async function selectComboboxOption(
  *
  * READ-ONLY GUARANTEE. Never clicks any option, never types into the input, never selects any value.
  */
-export async function discoverComboboxOptions(page: Page, selector: string): Promise<string[] | null> {
+export async function discoverComboboxOptions(
+  page: Page,
+  selector: string,
+  opts: { requireScoped?: boolean; pickerOptionSelector?: string } = {}
+): Promise<string[] | null> {
   try {
+    /**
+     * PHASE 9E — DIFFERENTIAL capture for a picker with no `aria-controls`.
+     *
+     * Workday renders picker options as `[data-automation-id="menuItem"]` in a page-level popup and
+     * exposes no aria-controls, so a global read returns whatever other pickers happen to be
+     * rendered too — "How Did You Hear About Us?" came back holding the phone country-code list.
+     * Reading the option set BEFORE opening this control and subtracting it leaves only what THIS
+     * control contributed, without needing to know how the popup is nested.
+     */
+    const adapterOptionSelector = opts.pickerOptionSelector;
+    const baseline = adapterOptionSelector
+      ? await page
+          .$$eval(adapterOptionSelector, (els) => els.map((el) => (el.textContent ?? "").trim()))
+          .catch(() => [] as string[])
+      : [];
+
     await page.click(selector);
 
     // React Select sets aria-controls on the input to the id of its listbox once the menu opens.
     // Scoping to that listbox keeps unrelated open menus out of our option reads.
     const listboxId = await page.$eval(selector, (el) => el.getAttribute("aria-controls") ?? "").catch(() => "");
+    /* PHASE 9E — `requireScoped` refuses the unscoped fallback.
+     *
+     * Without `aria-controls` the fallback reads EVERY `[role="option"]` on the page, which on a
+     * real Workday form meant the "How Did You Hear About Us?" picker came back holding the phone
+     * country-code listbox's options — "United States of America (+1)" offered to the user as an
+     * answer to how they heard about the job. Wrong options are worse than none: the user can
+     * always type an answer, but cannot know a presented list belongs to a different question. */
+    /* An adapter-declared picker selector, read differentially, is scoped by construction — it
+     * needs no aria-controls to be trustworthy. */
+    if (adapterOptionSelector) {
+      await page.waitForTimeout(600).catch(() => null);
+      const afterOpen = await page
+        .$$eval(adapterOptionSelector, (els) => els.map((el) => (el.textContent ?? "").trim()))
+        .catch(() => [] as string[]);
+      const seen = new Set<string>();
+      const contributed: string[] = [];
+      const baselineCounts = new Map<string, number>();
+      for (const b of baseline) baselineCounts.set(b, (baselineCounts.get(b) ?? 0) + 1);
+      for (const value of afterOpen) {
+        const remaining = baselineCounts.get(value) ?? 0;
+        if (remaining > 0) {
+          baselineCounts.set(value, remaining - 1);
+          continue; // already on the page before this control opened — not its option
+        }
+        const trimmed = value.trim();
+        if (trimmed.length > 0 && !seen.has(trimmed)) {
+          seen.add(trimmed);
+          contributed.push(trimmed);
+        }
+      }
+      await page.keyboard.press("Escape").catch(() => null);
+      await page.$eval(selector, (el) => (el as HTMLElement).blur?.()).catch(() => null);
+      return contributed.length > 0 ? contributed : null;
+    }
+
+    if (opts.requireScoped && !listboxId) {
+      await page.keyboard.press("Escape").catch(() => null);
+      await page.$eval(selector, (el) => (el as HTMLElement).blur?.()).catch(() => null);
+      return null;
+    }
     const optionSelector = listboxId ? `#${listboxId} [role="option"]` : '[role="option"]';
 
     // Wait a bounded amount of time for options to render into the scoped listbox (sync or fast-loading)
@@ -276,7 +402,7 @@ export function getComboboxNormalizer(
   return undefined;
 }
 
-async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { ok: false; reason: string }> {
+async function applyPlan(page: Page, plan: FieldPlan, runId?: number): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (plan.action === "fill") {
     if (plan.field.kind === "select") {
       await page.selectOption(plan.field.selector, { label: plan.value });
@@ -356,7 +482,7 @@ async function applyPlan(page: Page, plan: FieldPlan): Promise<{ ok: true } | { 
         locationContext: plan.locationContext,
         phoneCountryContext: plan.phoneCountryContext,
       });
-      const selected = await selectComboboxOption(page, plan.field.selector, plan.value, normalize);
+      const selected = await selectComboboxOption(page, plan.field.selector, plan.value, normalize, runId);
       if (!selected) {
         return {
           ok: false,
@@ -385,8 +511,10 @@ export async function executeRun(
   runtime: ApplicationBrowserRuntime,
   deps: ExecutorDeps,
   /* Same convention as approveAndSubmit's opts: the mock harness injects the adapter under test
-   * here. Production callers omit it, and selection stays with the job record's own identity. */
-  opts: { adapter?: AtsAdapter; credentialStore?: CredentialStore } = {}
+   * here. Production callers omit it, and selection stays with the job record's own identity.
+   * `formReadinessTimeoutMs` is a test-only tuning knob for `waitForApplicationFormReady`'s bound —
+   * production omits it and gets the safe default. */
+  opts: { adapter?: AtsAdapter; credentialStore?: CredentialStore; formReadinessTimeoutMs?: number } = {}
 ): Promise<ApplicationRun> {
   let run = getRun(runId);
   if (!run) throw new Error(`No application run ${runId}`);
@@ -467,7 +595,47 @@ export async function executeRun(
       });
     }
 
-    const blocking = await resolveBlockingWithAuth(session.page, detectBlocking(signals));
+    /* ── PHASE 9E.2 — open the application ──────────────────────────────────────────────────────
+     * A saved apply_url is not always the form. On Workday it is a job POSTING, with the form
+     * several navigations behind an Apply control — which is why this run previously discovered
+     * zero fields and (before the zero-fill guard) reported a prepared application that had never
+     * been opened.
+     *
+     * Runs HERE deliberately: after the page is open and the already-applied check has had its say,
+     * but BEFORE blocking/auth detection and before a single field is discovered. That ordering is
+     * the safety property — an entry click happens when `checkpoint.completed` is necessarily
+     * empty, so it can never be the submission of filled data. An adapter with no entry contract
+     * (Greenhouse, Lever) does nothing here at all.
+     *
+     * Entry deliberately does NOT handle auth, CAPTCHA, MFA or login walls. It just gets the run to
+     * the page where those already-existing checks — immediately below — do their job. */
+    const entry = await openApplication({ runId, page: session.page, adapter: activeAdapter });
+    if (entry.outcome !== "PROCEED" && entry.outcome !== "NO_ENTRY_CONTRACT") {
+      recordEvent(runId, "application_entry_failed", `${entry.outcome}: ${entry.detail}`);
+      return advanceRun(runId, "FAILED", { checkpoint, blockingReason: ENTRY_OUTCOME_REASON[entry.outcome] });
+    }
+    if (entry.outcome === "PROCEED") {
+      checkpoint.url = session.page.url();
+      checkpoint.lastAction = entry.detail;
+      updateCheckpoint(runId, checkpoint);
+      recordEvent(runId, "application_entry_completed", entry.detail);
+    }
+
+    /* Blocking/auth is evaluated on whatever page entry landed on — the auth wall behind Workday's
+     * entry sequence is found here, by the SAME check that has always run, and handed to
+     * ensureAuthenticated. No second auth path. */
+    const postEntrySignals = entry.outcome === "PROCEED" ? await readPageSignals(session.page) : signals;
+    /* The adapter's OWN login-wall markers are consulted here, not only inside the multi-page walk.
+     * Workday's sign-in page reads simply "Sign In", which matches none of detectBlocking's generic
+     * account phrases ("sign in to apply", "create an account", …) — so without this the run walked
+     * straight past its own auth wall and failed at the zero-fill guard instead of authenticating.
+     * Declaring those markers is exactly what an adapter is for. */
+    const genericPostEntry =
+      detectBlocking(postEntrySignals) ??
+      (multi && matchesAnyMarker(`${postEntrySignals.text} ${postEntrySignals.markers.join(" ")}`, multi.loginMarkers)
+        ? ("account_required" as const)
+        : null);
+    const blocking = await resolveBlockingWithAuth(session.page, genericPostEntry);
     if (blocking) {
       recordEvent(runId, "blocking_detected", blocking.detail);
       return advanceRun(runId, BLOCKING_STATUS[blocking.condition], { checkpoint });
@@ -476,12 +644,98 @@ export async function executeRun(
     if (run.status !== "FILLING") run = advanceRun(runId, "FILLING", { checkpoint });
     checkpoint.step = "filling";
 
+    /* PHASE 9E.2 — settle before the FIRST discovery.
+     *
+     * Found by the real Workday run: authentication succeeded, the engine immediately discovered
+     * the page, and found zero fields — because the authenticated application had not finished
+     * painting. The zero-fill guard then correctly failed the run for an application that was in
+     * fact reachable. A single-page ATS answers "is the form there?" a second or two after it
+     * answers "am I signed in?", and this waits for the page to stop changing rather than assuming
+     * they are simultaneous. Bounded, and near-free on a page that is already static. */
+    await waitForQuietPage(session.page);
+
+    /* PHASE 9E.3 — form readiness is semantic, not merely "the DOM stopped changing" — see
+     * waitForApplicationFormReady above. Not its own terminal branch: a page that times out here
+     * still enters the walk below, discovers (almost certainly) zero real fields on its one pass,
+     * and falls through to the EXISTING "an application that filled NOTHING was never prepared"
+     * guard — the same bounded, honest FAILED this codebase already had, reused rather than
+     * duplicated. */
+    const formReadiness = await waitForApplicationFormReady(session.page, multi?.nextSelector ?? null, {
+      capMs: opts.formReadinessTimeoutMs,
+    });
+    recordEvent(
+      runId,
+      formReadiness.ready ? "application_form_ready" : "application_form_not_ready",
+      `fields=${formReadiness.fieldCount} waitedMs=${formReadiness.waitedMs}`
+    );
+
     /* ── PHASE 9B — the page walk ────────────────────────────────────────────────────────────────
      * One bounded loop of discover → plan → fill → checkpoint per page. A single-page adapter
      * (multi === null) runs the body exactly once and breaks where the pre-9B code returned, so
      * Greenhouse and Lever behavior is unchanged by construction. Everything the loop DECIDES —
      * whether a control may be clicked, whether a page is review or a login wall, when to stop —
      * is a pure function in multiPage.ts. */
+    /* ── PHASE 9E — run-scoped unresolved-question accumulator ──────────────────────────────────
+     * Career-Ops must minimise interruptions: one batch of ten questions beats ten interruptions of
+     * one. Unresolved questions are therefore accumulated ACROSS every safely reachable page rather
+     * than pausing on the first page that has any, and the user is interrupted only when the ATS
+     * itself refuses to let the walk continue.
+     *
+     * DEDUPLICATION. A canonical question is identified by its canonical key, so the same question
+     * rediscovered after an SPA re-render — with a different generated id — folds into one entry. A
+     * non-canonical, ATS-specific question has no such identity, so it is keyed conservatively by
+     * page plus normalised label: two genuinely different questions are never merged just because
+     * their wording is similar. A false duplicate would hide a real question; a false distinct only
+     * costs one extra row in the batch. */
+    const accumulatedQuestions = new Map<string, HumanQuestion>();
+    /**
+     * Which unresolved questions belong in the batch.
+     *
+     * An OPTIONAL question is normally carried forward and asked once, at the barrier — asking it
+     * then is free. The exception is a question whose policy explicitly permits leaving it
+     * unanswered: a VOLUNTARY demographic question is `protected`/`never_auto` precisely because
+     * declining to answer is a perfectly good outcome, and putting it in the batch would pressure
+     * the user to disclose something the form itself treats as optional. A REQUIRED protected
+     * question still appears — it blocks the application, so the user has to decide either way.
+     */
+    const accumulableQuestions = (questions: HumanQuestion[]): HumanQuestion[] =>
+      questions.filter((q) => {
+        if (q.required) return true;
+        const policy = q.questionType ? DEFAULT_POLICY[q.questionType] : undefined;
+        return policy?.sensitivity !== "protected";
+      });
+    const questionKey = (q: HumanQuestion, page: number): string =>
+      q.canonicalKey
+        ? `canonical:${q.canonicalKey}`
+        : /* Keyed on the question's own wording, NOT on the page it was seen on. Workday re-mounts a
+           * form after a rejected advance, so page-keyed identity turned one page's questions into
+           * a fresh set on every re-render. Two genuinely different questions sharing identical
+           * wording within one application is far rarer than that. */
+          `label:${q.label.trim().toLowerCase().replace(/\s+/g, " ")}`;
+    const accumulate = (questions: HumanQuestion[], page: number): void => {
+      for (const q of questions) {
+        const key = questionKey(q, page);
+        /* First sighting wins: the earliest capture has the options as they were when the question
+         * was actually reachable. A later re-render must not overwrite them with a stale or empty
+         * list. */
+        if (!accumulatedQuestions.has(key)) accumulatedQuestions.set(key, q);
+      }
+    };
+    /** Pause with EVERYTHING accumulated so far — never only the question that happened to block. */
+    const pauseWithAccumulated = (reasonEvent: string, detail: string): Promise<ApplicationRun> => {
+      const batch = [...accumulatedQuestions.values()];
+      checkpoint.humanQuestions = batch;
+      recordEvent(runId, reasonEvent, detail);
+      recordEvent(runId, "human_question_batch_created", String(batch.length));
+      return Promise.resolve(
+        advanceRun(runId, "WAITING_FOR_ANSWER", {
+          checkpoint,
+          blockingQuestion: batch[0]?.label ?? null,
+          blockingReason: batch[0]?.reason ?? detail,
+        })
+      );
+    };
+
     const allPlans: FieldPlan[] = [];
     const plannedSelectors = new Set<string>();
     /* Review is built from the first plan seen for each selector; a remediation re-plan of the
@@ -510,7 +764,7 @@ export async function executeRun(
           const groupKey = plan.field.name ?? plan.field.selector;
           if (filledRadioGroups.has(groupKey)) continue;
         }
-        const result = await applyPlan(session!.page, plan);
+        const result = await applyPlan(session!.page, plan, runId);
         if (!result.ok) {
           /* A combobox/radio/checkbox with no exact mapping for the approved value — discoverable
            * only against the live control, so this is caught here rather than during planning.
@@ -561,40 +815,81 @@ export async function executeRun(
       /* Discover options for any required combobox questions going into the batch, so the
        * candidate UI can render multiple-choice dropdowns/pills instead of a plain text box. */
       for (const plan of plans) {
+        /* PHASE 9E — also attempted for `unknown`-kind controls. Workday renders finite pickers
+         * ("How Did You Hear About Us?", "State") as an input inside a `multiselectInputContainer`
+         * whose options live in a popup listbox, and such an input carries no `type`, so `kindOf`
+         * classifies it `unknown` rather than `combobox`. Without this the batch would offer the
+         * user a free-text box for a finite choice. `discoverComboboxOptions` is read-only — it
+         * opens the picker, reads the visible options, and dismisses with Escape without selecting
+         * anything — so attempting it costs nothing when the control turns out not to be a picker. */
         if (
           plan.action === "ask" &&
           plan.field.required &&
-          plan.field.kind === "combobox" &&
+          (plan.field.kind === "combobox" || plan.field.kind === "unknown") &&
           (!plan.field.options || plan.field.options.length === 0)
         ) {
-          const discovered = await discoverComboboxOptions(session.page, plan.field.selector);
+          /* An `unknown`-kind control is only GUESSED to be a picker, so its options are accepted
+           * only when the control itself scopes them via aria-controls. A real combobox keeps the
+           * existing behaviour unchanged. */
+          const discovered = await discoverComboboxOptions(session.page, plan.field.selector, {
+            requireScoped: plan.field.kind === "unknown",
+            pickerOptionSelector: activeAdapter?.pickerOptionSelector?.(),
+          });
           if (discovered && discovered.length > 0) {
             plan.field.options = discovered;
           }
         }
       }
 
-      /* Collect all required unanswered fields at once. A single pause lets the user answer
-       * everything in one batch rather than one field per execution cycle. */
-      const humanQuestions = collectHumanQuestions(plans, deps.knownVariants);
-      if (humanQuestions.length > 0) {
-        checkpoint.humanQuestions = humanQuestions;
-        recordEvent(runId, "human_question_batch_created", String(humanQuestions.length));
-        return advanceRun(runId, "WAITING_FOR_ANSWER", {
-          checkpoint,
-          blockingQuestion: humanQuestions[0]!.label,
-          blockingReason: humanQuestions[0]!.reason,
-        });
+      /* PHASE 9E — ACCUMULATE, do not pause. Required and optional unknowns alike are recorded and
+       * the walk keeps going: whether this page can actually advance is a question only the ATS can
+       * answer, and it answers it when the advance is attempted below. Pausing here would interrupt
+       * the user once per page instead of once per application. */
+      accumulate(accumulableQuestions(collectAllUnresolvedQuestions(plans, deps.knownVariants)), pageNumber);
+      const requiredUnknownsHere = collectHumanQuestions(plans, deps.knownVariants).length;
+      if (requiredUnknownsHere > 0) {
+        recordEvent(runId, "unresolved_questions_accumulated", `page ${pageNumber}: ${requiredUnknownsHere} required, ${accumulatedQuestions.size} total so far`);
       }
 
-      /* Single-page adapters exit here — the exact point the pre-9B flow fell through to review. */
-      if (!multi) break;
+      /* Single-page adapters exit here — the exact point the pre-9B flow fell through to review.
+       * With no walk to continue, an unresolved question IS the barrier. */
+      if (!multi) {
+        if (accumulatedQuestions.size > 0) {
+          return pauseWithAccumulated("question_barrier_single_page", "this ATS has a single application page");
+        }
+        break;
+      }
 
       const signals = await readPageSignals(session.page);
-      if (matchesAnyMarker(signals.text, multi.reviewMarkers)) {
+      /* PHASE 9E — the STRUCTURAL test runs alongside the text markers, and both are evaluated
+       * BEFORE the advance control is even read. Workday's navigator prints "Review" on every page,
+       * so text alone would end the walk on page 1; its `progressBarActiveStep` selector is the only
+       * thing that distinguishes the real review page. A selector that fails to evaluate is treated
+       * as "not review" rather than throwing — the walk then stops on its own at the advance-control
+       * check, which is the safe direction. */
+      const structurallyReview = multi.reviewSelector
+        ? await session.page
+            .$(multi.reviewSelector)
+            .then((el) => el !== null)
+            .catch(() => false)
+        : false;
+      if (structurallyReview || matchesAnyMarker(signals.text, multi.reviewMarkers)) {
         /* The review page ends the walk. No further advance control is read, let alone clicked —
          * the engine never advances past review. */
-        recordEvent(runId, "review_page_detected", `page ${pageNumber}`);
+        recordEvent(runId, "review_page_detected", `page ${pageNumber}${structurallyReview ? " (structural)" : " (text marker)"}`);
+        /* Review is the destination. Only a REQUIRED unresolved question justifies interrupting
+         * here: the application cannot be completed without it. Interrupting for an OPTIONAL one
+         * would be exactly the avoidable interruption this design exists to prevent — the user is
+         * about to read the whole application anyway, and a blank optional field is visible there.
+         * (A required unknown would normally have blocked an earlier advance; this covers an ATS
+         * that defers all validation to its own review step.) */
+        const requiredOutstanding = [...accumulatedQuestions.values()].filter((q) => q.required);
+        if (requiredOutstanding.length > 0) {
+          return pauseWithAccumulated("question_barrier_at_review", `review reached with ${requiredOutstanding.length} required question(s) outstanding`);
+        }
+        if (accumulatedQuestions.size > 0) {
+          recordEvent(runId, "optional_questions_left_unanswered", String(accumulatedQuestions.size));
+        }
         break;
       }
       if (pageNumber >= multi.maxPages) {
@@ -606,7 +901,13 @@ export async function executeRun(
       }
 
       const advanceTexts = await readAdvanceControlTexts(session.page, multi.nextSelector);
-      if (advanceTexts === null) break; /* no advance control — this is the final page */
+      if (advanceTexts === null) {
+        /* No advance control — this is the last reachable page. */
+        if (accumulatedQuestions.size > 0) {
+          return pauseWithAccumulated("question_barrier_last_page", "no advance control on the final reachable page");
+        }
+        break;
+      }
       const classification = classifyAdvanceControl(advanceTexts);
       if (classification !== "safe_advance") {
         /* NEVER-SUBMIT GUARD. A final-action control ("Submit Application", "Finish", …) is the
@@ -619,6 +920,11 @@ export async function executeRun(
           classification === "final_action" ? "advance_control_blocked" : "advance_control_ambiguous",
           advanceTexts.join(" | ").slice(0, 200)
         );
+        /* The walk cannot go further. If questions were accumulated on the way, this is the barrier
+         * at which the user finally sees them — all of them, together. */
+        if (accumulatedQuestions.size > 0) {
+          return pauseWithAccumulated("question_barrier_no_safe_advance", "no further page can be reached safely");
+        }
         break;
       }
 
@@ -627,6 +933,33 @@ export async function executeRun(
       let advanced = await waitForPageTransition(session.page, before);
       if (!advanced) {
         recordEvent(runId, "page_did_not_advance", `page ${pageNumber}`);
+        /* PHASE 9E — VALIDATION OBSERVATION. Career-Ops filled every field it could see and the
+         * page still refused to advance — Workday's own validation is rejecting something the
+         * engine believes is correct. Captured here, before any remediation runs, so the evidence
+         * reflects the exact state Workday itself refused. Structurally sanitized — see
+         * validationSnapshot.ts: no control's value is ever included, only presence/length,
+         * labels, roles, and Workday's own fixed validation copy. */
+        const validationSnapshot = await captureValidationSnapshot(session.page).catch(() => null);
+        if (validationSnapshot) {
+          const invalidControls = validationSnapshot.controls.filter((c) => c.ariaInvalid);
+          recordEvent(
+            runId,
+            "validation_snapshot",
+            JSON.stringify({
+              heading: validationSnapshot.heading,
+              pageErrors: validationSnapshot.pageErrors,
+              invalidControls: invalidControls.map((c) => ({
+                tag: c.tag,
+                role: c.role,
+                automationId: c.automationId,
+                label: c.label,
+                ariaHaspopup: c.ariaHaspopup,
+                describedByText: c.describedByText,
+                hasValue: c.hasValue,
+              })),
+            }).slice(0, 4000)
+          );
+        }
         /* Bounded remediation, once: the click may have surfaced validation errors or revealed
          * required fields. Re-discover; fill anything newly authoritative; pause on anything
          * needing a human. Only a pass that actually filled something earns ONE more click —
@@ -646,15 +979,20 @@ export async function executeRun(
         );
         const retryPaused = await fillFromPlans(retryPlans);
         if (retryPaused) return retryPaused;
-        const retryQuestions = collectHumanQuestions(retryPlans, deps.knownVariants);
-        if (retryQuestions.length > 0) {
-          checkpoint.humanQuestions = retryQuestions;
-          recordEvent(runId, "human_question_batch_created", String(retryQuestions.length));
-          return advanceRun(runId, "WAITING_FOR_ANSWER", {
-            checkpoint,
-            blockingQuestion: retryQuestions[0]!.label,
-            blockingReason: retryQuestions[0]!.reason,
-          });
+
+        /* The failed advance may have surfaced validation messages that reveal fields the first
+         * pass never saw. Merge them into the accumulator — deduplicated — so the eventual batch
+         * includes them too. */
+        accumulate(accumulableQuestions(collectAllUnresolvedQuestions(retryPlans, deps.knownVariants)), pageNumber);
+
+        /* THE HARD QUESTION BARRIER. The page refused to advance and there is at least one thing
+         * only the user can answer. Show EVERYTHING accumulated across every page reached so far —
+         * never just the question that happened to block this one. */
+        if (accumulatedQuestions.size > 0) {
+          return pauseWithAccumulated(
+            "question_barrier_validation",
+            `page ${pageNumber} would not advance with unresolved questions outstanding`
+          );
         }
         if (newlyFillable.length === 0) {
           return advanceRun(runId, "FAILED", {
@@ -696,6 +1034,25 @@ export async function executeRun(
         recordEvent(runId, "blocking_detected", blockingNow.detail);
         return advanceRun(runId, BLOCKING_STATUS[blockingNow.condition], { checkpoint });
       }
+    }
+
+    /* ── PHASE 9E — an application that filled NOTHING was never prepared ───────────────────────
+     * Found by the first real Workday benchmark. Workday's apply_url lands on a job POSTING, with
+     * the application several navigations behind an Apply control, so the walk discovered zero
+     * fields, planned nothing, found no advance control, and fell straight through to here — which
+     * reported READY_FOR_REVIEW with canApprove=true. That offers the operator an Approve & Submit
+     * button for an application that was never opened.
+     *
+     * Not Workday-specific: any ATS whose apply_url is not the form itself behaves this way. A real
+     * application always fills at least one field or attaches at least one document, so zero
+     * completed actions means the form was never reached — a failure, not a success. */
+    if (checkpoint.completed.length === 0) {
+      recordEvent(runId, "no_application_form_found", checkpoint.url ?? applyUrl);
+      return advanceRun(runId, "FAILED", {
+        checkpoint,
+        blockingReason:
+          "No application form was found at this URL — nothing could be filled, so the application was not prepared. The form may sit behind an Apply control or a sign-in this ATS adapter does not yet navigate.",
+      });
     }
 
     checkpoint.step = "review";
@@ -818,12 +1175,16 @@ export async function approveAndSubmit(
         if (completed.kind === "upload") {
           const doc = completed.selector.toLowerCase().includes("cover") ? run.cover_letter_file : run.resume_file;
           if (doc) {
-            const result = await applyPlan(session.page, {
-              action: "upload",
-              field,
-              filePath: doc,
-              source: completed.source as Extract<FieldPlan, { action: "upload" }>["source"],
-            });
+            const result = await applyPlan(
+              session.page,
+              {
+                action: "upload",
+                field,
+                filePath: doc,
+                source: completed.source as Extract<FieldPlan, { action: "upload" }>["source"],
+              },
+              runId
+            );
             if (!result.ok) throw new Error(`Approved document could not be re-attached for ${field.label ?? field.selector}: ${result.reason}`);
           }
           continue;
@@ -842,7 +1203,7 @@ export async function approveAndSubmit(
           ...(completed.canonicalKey === "location_city" ? { locationContext: locationContext ?? undefined } : {}),
           ...(completed.canonicalKey === "phone_country_code" ? { phoneCountryContext: phoneCountryContext ?? undefined } : {}),
         };
-        const result = await applyPlan(session.page, plan);
+        const result = await applyPlan(session.page, plan, runId);
         if (!result.ok) {
           throw new Error(`Approved value "${line.value}" is no longer valid for ${field.label ?? field.selector}: ${result.reason}`);
         }

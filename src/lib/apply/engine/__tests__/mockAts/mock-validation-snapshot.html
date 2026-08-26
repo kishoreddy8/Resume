@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Mock ATS – Validation Snapshot</title></head>
+<body>
+  <h1>My Information</h1>
+
+  <div role="alert">Please correct the errors below before continuing.</div>
+
+  <label for="first-name">First Name</label>
+  <input id="first-name" type="text" required value="X" />
+
+  <fieldset>
+    <legend>County</legend>
+    <input
+      id="county-combobox"
+      role="combobox"
+      aria-required="true"
+      aria-invalid="true"
+      aria-haspopup="listbox"
+      aria-controls="county-listbox"
+      aria-expanded="false"
+      aria-describedby="county-error"
+      value="Collin"
+    />
+    <ul id="county-listbox" role="listbox" style="display:none">
+      <li role="option">Collin</li>
+      <li role="option">Dallas</li>
+    </ul>
+    <span id="county-error">Please select a valid option from the list.</span>
+  </fieldset>
+
+  <input id="hidden-field" type="text" value="secret-should-not-appear" style="display:none" />
+</body>
+</html>

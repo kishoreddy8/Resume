@@ -11,6 +11,7 @@ import {
   type PasswordPolicy,
 } from "../auth";
 import { readPageSignals } from "./pageSignals";
+import { clickPossiblyOverlaid } from "./clickControl";
 
 /**
  * PHASE 9C — the universal `ensureAuthenticated` orchestration.
@@ -40,6 +41,46 @@ function hasAny(haystack: string, needles: readonly string[] | undefined): boole
 /** The ONLY function that types a secret into a page. Never logged, never wrapped in a plan. */
 async function fillSecret(page: Page, selector: string, value: string): Promise<void> {
   await page.fill(selector, value);
+}
+
+/**
+ * PHASE 9E.2 — did the value actually STICK?
+ *
+ * SPA HYDRATION RACE, observed on the live Workday sign-in form. The engine reaches that form far
+ * faster than a human does — the entry stage advances the moment the page changes, sometimes within
+ * a few hundred milliseconds — and `fill` can set a React-controlled input's DOM value before React
+ * has attached its handlers. The field then LOOKS correct while React's own state is still empty,
+ * so submitting sends blank credentials and the sign-in fails silently. A manual run with a
+ * multi-second pause never reproduces it, which is exactly why only the real run found it.
+ *
+ * The check runs IN THE BROWSER and returns only a boolean. For a secret field the value is
+ * length-checked in page context and never crosses back into Node, so no password can be logged,
+ * inspected, or captured by this verification.
+ */
+async function valueDidStick(page: Page, selector: string, expected: string | null): Promise<boolean> {
+  return page
+    .$eval(
+      selector,
+      (el, exp) => {
+        const value = (el as HTMLInputElement).value ?? "";
+        return exp === null ? value.length > 0 : value === exp;
+      },
+      expected
+    )
+    .catch(() => false);
+}
+
+/**
+ * Fill a control and confirm it took, refilling ONCE if it did not. Bounded: never a retry loop,
+ * and a value that refuses to stick twice is reported honestly rather than submitted blind.
+ */
+async function fillAndVerify(page: Page, selector: string, value: string, secret: boolean): Promise<boolean> {
+  await fillSecret(page, selector, value);
+  if (await valueDidStick(page, selector, secret ? null : value)) return true;
+
+  await page.waitForTimeout(1200).catch(() => null);
+  await fillSecret(page, selector, value);
+  return valueDidStick(page, selector, secret ? null : value);
 }
 
 /** Exported for direct testing — this is a pure helper, not part of the ensureAuthenticated
@@ -80,6 +121,37 @@ async function findUnclassifiedRequiredConsent(page: Page, safeSelectors: readon
   });
 }
 
+/**
+ * PHASE 9E.2 — wait for the auth attempt to actually RESOLVE, rather than for a fixed interval.
+ *
+ * A fixed 600ms settle was enough for the local mock fixtures and far too short for a real one: on
+ * the live Workday tenant the authenticated shell takes several seconds to render, so a correct
+ * sign-in was read as "unconfirmed" and the run stopped at ACCOUNT_REQUIRED with a valid
+ * credential. Polling for the FIRST piece of real evidence — success marker, blocking condition, or
+ * an explicit invalid-credential message — resolves instantly against a fast page and still gives a
+ * slow SPA time to answer. Bounded, so an unresponsive page can never hang the run.
+ */
+async function settleAfterAuthAttempt(
+  page: Page,
+  config: AdapterAuthConfig,
+  timeoutMs = 20_000
+): Promise<{ text: string; markers: string[]; url: string }> {
+  const deadline = Date.now() + timeoutMs;
+  let latest = await readPageSignals(page);
+  for (;;) {
+    if (
+      hasAny(latest.text, config.authenticatedMarkers) ||
+      hasAny(latest.text, config.invalidCredentialMarkers) ||
+      detectBlocking(latest) !== null
+    ) {
+      return latest;
+    }
+    if (Date.now() >= deadline) return latest;
+    await page.waitForTimeout(400).catch(() => null);
+    latest = await readPageSignals(page);
+  }
+}
+
 async function attemptLogin(
   page: Page,
   identity: AtsAccountIdentity,
@@ -96,12 +168,23 @@ async function attemptLogin(
   }
 
   recordEvent(runId, "login_started", `${identity.ats}:${identity.tenant}:${identity.email}`);
-  await fillSecret(page, config.emailSelector, identity.email);
-  await fillSecret(page, config.passwordSelector, secret);
-  await page.click(config.signInSelector);
-  await page.waitForTimeout(600);
+  const emailStuck = await fillAndVerify(page, config.emailSelector, identity.email, false);
+  const secretStuck = await fillAndVerify(page, config.passwordSelector, secret, true);
+  if (!emailStuck || !secretStuck) {
+    /* Reported as its own outcome rather than submitted anyway: clicking sign-in with a field that
+     * did not take would spend the one permitted attempt against blank credentials, and would look
+     * indistinguishable from a wrong password. */
+    recordEvent(runId, "login_field_not_accepted", emailStuck ? "password field" : "email field");
+    return {
+      outcome: "AUTH_FAILED",
+      detail: "The sign-in form did not accept the credentials being entered; stopped without attempting a blind sign-in.",
+    };
+  }
+  /* Overlay-aware: Workday covers its auth buttons with a click_filter div that intercepts pointer
+   * events, so a plain click never lands. A no-op on every ATS without overlays. */
+  await clickPossiblyOverlaid(page, config.signInSelector);
 
-  const after = await readPageSignals(page);
+  const after = await settleAfterAuthAttempt(page, config);
   const blocking = detectBlocking(after);
   if (blocking === "captcha") {
     recordEvent(runId, "captcha_required", null);
@@ -120,8 +203,18 @@ async function attemptLogin(
     return { outcome: "AUTHENTICATED", detail: AUTH_OUTCOME_MESSAGE.AUTHENTICATED };
   }
 
-  /* Bounded: exactly one attempt. Never retried with the same, or a re-derived, credential. */
-  recordEvent(runId, "login_failed", hasAny(after.text, config.invalidCredentialMarkers) ? "invalid_credentials" : "unconfirmed");
+  /* Bounded: exactly one attempt. Never retried with the same, or a re-derived, credential.
+   *
+   * The recorded detail includes a short, NON-SECRET excerpt of what the page actually said. A bare
+   * "unconfirmed" is undiagnosable — it cannot distinguish a wrong password from a marker that
+   * simply never matched. The excerpt is page-visible text only: the password was typed into a
+   * password input, is never rendered back, and no credential, cookie or token can appear here. */
+  const excerpt = after.text.replace(/\s+/g, " ").trim().slice(0, 200);
+  recordEvent(
+    runId,
+    "login_failed",
+    hasAny(after.text, config.invalidCredentialMarkers) ? `invalid_credentials | ${excerpt}` : `unconfirmed | ${excerpt}`
+  );
   return {
     outcome: "AUTH_FAILED",
     detail: "Sign-in was attempted once and could not be confirmed; stopped rather than retrying.",
@@ -156,10 +249,9 @@ async function attemptAccountCreation(
   for (const selector of config.safeRequiredConsentSelectors ?? []) {
     await page.check(selector).catch(() => null);
   }
-  await page.click(config.createAccountSelector);
-  await page.waitForTimeout(600);
+  await clickPossiblyOverlaid(page, config.createAccountSelector);
 
-  const after = await readPageSignals(page);
+  const after = await settleAfterAuthAttempt(page, config);
   const blocking = detectBlocking(after);
   if (blocking === "captcha") {
     recordEvent(runId, "captcha_required", null);

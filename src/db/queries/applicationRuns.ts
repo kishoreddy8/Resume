@@ -213,3 +213,24 @@ export function listRuns(candidateId: number, limit = 50): ApplicationRun[] {
     .prepare("SELECT * FROM application_runs WHERE candidate_id = ? ORDER BY updated_at DESC LIMIT ?")
     .all(candidateId, limit) as ApplicationRun[];
 }
+
+/**
+ * PHASE 9E RETRY HARDENING — the most recent terminally-FAILED run for this exact (candidate,
+ * dedupe_key) pair, if one exists. `dedupe_key` already encodes ATS + tenant + the employer's own
+ * job identifier (see createRun), so matching on it together with candidate_id is matching on
+ * candidate + job + application context in one column — no separate tenant check is needed.
+ *
+ * Deliberately FAILED only, not CANCELLED: a cancellation is the user choosing to stop, which may
+ * be exactly because something about their answers needed to change — carrying those forward into
+ * the next attempt would be assuming the opposite of why they cancelled. A technical FAILED has no
+ * such implication.
+ */
+export function getMostRecentFailedRun(candidateId: number, dedupeKey: string): ApplicationRun | undefined {
+  return getDb()
+    .prepare(
+      `SELECT * FROM application_runs
+        WHERE candidate_id = ? AND dedupe_key = ? AND status = 'FAILED'
+        ORDER BY updated_at DESC LIMIT 1`
+    )
+    .get(candidateId, dedupeKey) as ApplicationRun | undefined;
+}

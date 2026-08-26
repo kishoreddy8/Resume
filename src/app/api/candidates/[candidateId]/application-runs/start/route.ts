@@ -4,14 +4,17 @@ import { requireActiveCandidate } from "@/db/queries/candidates";
 import { requireCandidateAccess } from "@/lib/auth/guard";
 import { getJob } from "@/db/queries/jobs";
 import { getCompany } from "@/db/queries/companies";
-import { createRun, getRun, getExistingProtectedRun } from "@/db/queries/applicationRuns";
+import { createRun, getRun, getExistingProtectedRun, recordEvent, updateCheckpoint } from "@/db/queries/applicationRuns";
+import { priorRunAnswersForRetry } from "@/lib/apply/retryContext";
 import { loadKnownVariants, listAnswers } from "@/db/queries/applicationVault";
+import { listEmployment, listEducation } from "@/db/queries/candidateApplicationProfile";
 import { resolveCandidateContact } from "@/lib/resumeQuality/candidateContact";
 import { resolveApplicationDocuments } from "@/lib/apply/documentLinkage";
 import { selectAdapter } from "@/lib/apply/agent/selectAdapter";
 import { ApplicationBrowserRuntime, realApplicationAgentDisabled } from "@/lib/apply/engine/browserRuntime";
 import { executeRun, approveAndSubmit } from "@/lib/apply/engine/executor";
 import type { StoredAnswer } from "@/lib/apply/resolveAnswer";
+import type { EmploymentEntry, EducationEntry } from "@/lib/apply/agent/types";
 import type { QuestionType } from "@/lib/apply/questionTypes";
 import { notifyApplicationState } from "@/lib/apply/applicationNotifications";
 
@@ -39,6 +42,35 @@ const SubmitBody = z.object({
   approvedRunId: z.number().int().positive(),
 });
 const Body = z.discriminatedUnion("action", [StartBody, ResumeBody, SubmitBody]);
+
+/**
+ * PHASE 9E — the candidate's structured employment/education facts, in the shape AdapterContext
+ * declares. Returns `undefined` (not an empty array) when the candidate has no records, so a
+ * candidate without them behaves EXACTLY as before this wiring existed: every employment/education
+ * question becomes a Human Question Center question rather than a guess. Nothing here derives a
+ * record from a resume, a JD, or any other prose — it only forwards rows a human explicitly
+ * entered.
+ */
+function applicationProfileFor(candidateId: number): {
+  employment?: EmploymentEntry[];
+  education?: EducationEntry[];
+} {
+  const employment = listEmployment(candidateId).map((e) => ({
+    employer: e.employer,
+    title: e.title,
+    startDate: e.startDate,
+    endDate: e.endDate,
+  }));
+  const education = listEducation(candidateId).map((e) => ({
+    level: e.level,
+    field: e.field,
+    institution: e.institution,
+  }));
+  return {
+    ...(employment.length > 0 ? { employment } : {}),
+    ...(education.length > 0 ? { education } : {}),
+  };
+}
 
 function storedAnswerMap(candidateId: number): Map<string, StoredAnswer> {
   const map = new Map<string, StoredAnswer>();
@@ -116,6 +148,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
             contact: contact.contact,
             resumePath: run.resume_file,
             coverLetterPath: run.cover_letter_file,
+            ...applicationProfileFor(candidateId),
           },
           knownVariants: loadKnownVariants() as Map<string, { canonicalKey: string; type: QuestionType }>,
           storedAnswers: storedAnswerMap(candidateId),
@@ -138,6 +171,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
           contact: contact.contact,
           resumePath: run.resume_file,
           coverLetterPath: run.cover_letter_file,
+          ...applicationProfileFor(candidateId),
         },
         knownVariants: loadKnownVariants() as Map<string, { canonicalKey: string; type: QuestionType }>,
         storedAnswers: storedAnswerMap(candidateId),
@@ -196,12 +230,37 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ candidateI
       coverLetterFile: docs.coverLetterPath,
     });
 
+    /* PHASE 9E RETRY HARDENING — if the immediately-prior attempt at this exact (candidate, job)
+     * failed for a technical reason, carry forward what the user already approved for THIS
+     * application rather than asking them again. Seeded into the checkpoint BEFORE executeRun ever
+     * reads it, so no engine code needs to know this run is a retry — executeRun's own
+     * `previousCheckpoint?.runAnswers ?? {}` picks these up exactly as it would any other run's
+     * saved answers, with the SAME existing option/control revalidation in planFields.ts. Never
+     * touches the prior (FAILED) run — read-only lookup, nothing written back to it. */
+    const retryContext = priorRunAnswersForRetry(candidateId, job.dedupe_key);
+    if (retryContext && retryContext.carriedCount > 0) {
+      updateCheckpoint(run.id, {
+        url: null,
+        ats: adapter.sourceType,
+        step: "starting",
+        completed: [],
+        runAnswers: retryContext.answers,
+        lastAction: "retry context seeded",
+      });
+      recordEvent(
+        run.id,
+        "retry_context_carried_forward",
+        `from run ${retryContext.priorRunId}: ${retryContext.eligibleCount} eligible, ${retryContext.carriedCount} carried, ${retryContext.excludedForPolicyCount} excluded by policy`
+      );
+    }
+
     const after = await executeRun(run.id, runtime, {
       context: {
         candidateId,
         contact: contact.contact,
         resumePath: docs.resumePath,
         coverLetterPath: docs.coverLetterPath,
+        ...applicationProfileFor(candidateId),
       },
       knownVariants: loadKnownVariants() as Map<string, { canonicalKey: string; type: QuestionType }>,
       storedAnswers: storedAnswerMap(candidateId),

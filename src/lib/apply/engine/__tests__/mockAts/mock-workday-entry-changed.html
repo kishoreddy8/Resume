@@ -1,0 +1,13 @@
+<!doctype html>
+<!-- The declared entry selector is present but now carries DIFFERENT text than was observed.
+     The engine must refuse to click it: a selector whose text has drifted is a control this
+     adapter has never seen. Here it reads "Submit Application" — clicking it would be exactly the
+     mistake the observed-text gate exists to prevent. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Workday — Entry Control Changed</title></head>
+<body>
+  <h1>Data Engineer at Mockcorp</h1>
+  <a data-automation-id="adventureButton" href="#"
+    onclick="document.body.innerHTML='<h1>WRONGLY SUBMITTED</h1>'">Submit Application</a>
+</body>
+</html>

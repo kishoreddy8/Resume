@@ -3,6 +3,7 @@ import { detectAtsFromUrlString } from "@/lib/ats/detect";
 import type { AtsAdapter } from "./types";
 import { greenhouseAdapter } from "./adapters/greenhouse";
 import { leverAdapter } from "./adapters/lever";
+import { workdayAdapter } from "./adapters/workday";
 
 /**
  * Choosing the form adapter for a job.
@@ -16,7 +17,12 @@ import { leverAdapter } from "./adapters/lever";
  * calls the CONNECTOR LAYER'S OWN detector rather than reimplementing one.
  */
 
-const ADAPTERS: readonly AtsAdapter[] = [greenhouseAdapter, leverAdapter];
+/* PHASE 9E — Workday joins the list only now, and deliberately. `ATS_APPLICATION_ADAPTER_ASSESSMENT.md`
+ * refused to write this adapter until its form had actually been observed rather than guessed at;
+ * that observation happened on 2026-08-25 against a live tenant, is pinned by a sanitized fixture,
+ * and is covered by the WORKDAY-* tests. See adapters/workday.ts for what the observation changed
+ * about the original assumptions. */
+const ADAPTERS: readonly AtsAdapter[] = [greenhouseAdapter, leverAdapter, workdayAdapter];
 
 export interface AdapterSelection {
   adapter: AtsAdapter;

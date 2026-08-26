@@ -1,0 +1,133 @@
+<!doctype html>
+<!-- SANITIZED Workday "My Information" fixture (Phase 9E).
+
+     Structure captured read-only from a real Workday tenant's step 2 of 8 on 2026-08-25, then
+     sanitized: no candidate PII, no email, no phone, no address, no cookies, no session/CSRF
+     tokens, no account identifiers, no employer-confidential content. Only the STRUCTURAL facts
+     the adapter must be written against are preserved.
+
+     The four structural facts this fixture exists to encode, each observed rather than assumed:
+
+     1. data-automation-id is NOT on the <input>. It sits on a wrapper div THREE levels up
+        (formField-legalName--firstName). The inputs instead carry stable, semantic ids
+        (name--legalName--firstName). Phase 9A's discovery read the attribute off the element
+        itself and therefore saw null on every Workday control.
+     2. Every button is covered by an overlay div[data-automation-id="click_filter"] that
+        intercepts pointer events, whose aria-label does NOT match the button's own text.
+     3. The 8-step navigator — including the word "Review" — renders on EVERY page, so a naive
+        review-page marker match false-positives on page 1.
+     4. beecatcher is a bot honeypot: a visible text input that must never be filled.
+     5. PHASE 9E — VALIDATION OBSERVATION (2026-08-25, Run 22, State Street tenant). "State" and
+        "Phone Device Type" are NOT <input>/<select> at all — they are <button>s with
+        aria-haspopup="listbox" and no `role` attribute, carrying data-automation-id
+        "formField-countryRegion" / "formField-phoneType" directly on the button itself. Neither
+        was ever matched by the pre-existing `input, select, textarea` query, so both were
+        completely invisible to discovery: never filled, never asked about, and never counted
+        toward "nothing more could be safely filled" — a validation_snapshot capture at the exact
+        moment Workday refused to advance showed both marked required-and-empty by Workday's own
+        validation, which is the actual reason a real run filled every field it could see and the
+        page still would not proceed. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Mock Workday — My Information</title></head>
+<body>
+  <!-- (3) the full step navigator renders on every page, "Review" included -->
+  <nav data-automation-id="progressBar">
+    <span>current step 2 of 8</span>
+    <ol>
+      <li>Create Account/Sign In</li>
+      <li>My Information</li>
+      <li>My Experience</li>
+      <li>Application Questions 1 of 2</li>
+      <li>Application Questions 2 of 2</li>
+      <li>Voluntary Disclosures</li>
+      <li>Self Identify</li>
+      <li>Review</li>
+    </ol>
+  </nav>
+
+  <h1>My Information</h1>
+
+  <div data-automation-id="formField-sourceSection">
+    <label for="source--source">How Did You Hear About Us?*</label>
+    <div data-automation-id="multiselectInputContainer">
+      <div><input id="source--source" required></div>
+    </div>
+  </div>
+
+  <fieldset>
+    <legend>Have you previously worked for our Organization?*</legend>
+    <label for="prev_yes">Yes</label><input type="radio" id="prev_yes" name="previouslyWorked" value="Yes">
+    <label for="prev_no">No</label><input type="radio" id="prev_no" name="previouslyWorked" value="No">
+  </fieldset>
+
+  <!-- (1) automation-id on a wrapper THREE levels above the input; input has a stable semantic id -->
+  <div data-automation-id="formField-legalName--firstName">
+    <div><div>
+      <label for="name--legalName--firstName">First Name*</label>
+      <input id="name--legalName--firstName" type="text" required>
+    </div></div>
+  </div>
+
+  <div data-automation-id="formField-legalName--lastName">
+    <div><div>
+      <label for="name--legalName--lastName">Last Name*</label>
+      <input id="name--legalName--lastName" type="text" required>
+    </div></div>
+  </div>
+
+  <div data-automation-id="formField-addressLine1">
+    <div><div>
+      <label for="address--addressLine1">Address Line 1*</label>
+      <input id="address--addressLine1" type="text" required>
+    </div></div>
+  </div>
+
+  <div data-automation-id="formField-city">
+    <div><div>
+      <label for="address--city">City*</label>
+      <input id="address--city" type="text" required>
+    </div></div>
+  </div>
+
+  <div data-automation-id="formField-postalCode">
+    <div><div>
+      <label for="address--postalCode">Postal Code*</label>
+      <input id="address--postalCode" type="text" required>
+    </div></div>
+  </div>
+
+  <div data-automation-id="formField-phoneNumber">
+    <div><div>
+      <label for="phoneNumber--phoneNumber">Phone Number*</label>
+      <input id="phoneNumber--phoneNumber" type="text" required>
+    </div></div>
+  </div>
+
+  <!-- (5) button-triggered listbox pickers — observed shape: the automation id is on the BUTTON
+       itself (not a wrapper), aria-haspopup="listbox", no role attribute at all. -->
+  <div data-automation-id="formField-countryRegion">
+    <label for="address--countryRegion">State*</label>
+    <button id="address--countryRegion" data-automation-id="formField-countryRegion" aria-haspopup="listbox" required></button>
+  </div>
+
+  <div data-automation-id="formField-phoneType">
+    <label for="phoneNumber--phoneType">Phone Device Type*</label>
+    <button id="phoneNumber--phoneType" data-automation-id="formField-phoneType" aria-haspopup="listbox" required></button>
+  </div>
+
+  <!-- an ordinary button with no aria-haspopup — must NOT be swept in as a field -->
+  <button data-automation-id="pageFooterCancelButton" type="button">Cancel</button>
+
+  <!-- (4) honeypot: visible, but its own label says it is for robots only -->
+  <label for="beecatcher-input">Enter website. This input is for robots only, do not enter if you're human.</label>
+  <input id="beecatcher-input" data-automation-id="beecatcher" type="text">
+
+  <!-- (2) the advance control, covered by a click_filter overlay whose aria-label differs -->
+  <div style="position:relative;display:inline-block">
+    <button data-automation-id="pageFooterNextButton" type="button"
+      onclick="document.body.insertAdjacentHTML('beforeend','<p>advanced</p>')">Save and Continue</button>
+    <div data-automation-id="click_filter" role="button" aria-label="Submit"
+      style="position:absolute;inset:0"></div>
+  </div>
+</body>
+</html>
