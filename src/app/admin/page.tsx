@@ -15,6 +15,7 @@ import {
   TimeWindowControl,
 } from "@/components/admin";
 import { useAdminCandidate } from "@/lib/admin/AdminContext";
+import { ADMIN_STATUS_PRESENTATION, normalizeAdminStatus } from "@/lib/admin/status";
 
 type WindowKey = "24h" | "7d" | "30d";
 
@@ -72,6 +73,13 @@ function displayStatus(value: string): string {
     HEALTHY: "healthy",
     DEGRADED: "degraded",
     DISABLED: "disabled",
+    /* ADMIN-OPS-1 — the shared operational vocabulary (src/lib/operations/healthRules.ts) now backs
+     * system/scanner/applications. Without these three entries those verdicts fell through to
+     * "unknown", which would have drawn a genuine ERROR as a neutral gray card — a real failure
+     * rendered as "nothing observed". NO_DATA legitimately maps to unknown: that IS the claim. */
+    WARNING: "degraded",
+    ERROR: "failed",
+    NO_DATA: "unknown",
     PROCESSING: "running",
     IDLE: "idle",
     WAITING_FOR_NEXT_ATTEMPT: "queued",
@@ -186,7 +194,9 @@ export default function AdminOverviewPage() {
         statusSummary={
           <AdminStatus
             status={displayStatus(data.health.system)}
-            label={data.health.system === "HEALTHY" ? "System Healthy" : data.health.system}
+            /* ADMIN-OPS-1 — a raw enum ("NO_DATA") is not a sentence. The shared presentation map
+             * already owns the candidate-facing wording for every status this can now be. */
+            label={ADMIN_STATUS_PRESENTATION[normalizeAdminStatus(displayStatus(data.health.system))].label}
           />
         }
         actions={

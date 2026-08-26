@@ -2,6 +2,9 @@ import { getDb } from "@/db";
 import { getScanningWindowSummary, getLatestScanActivity, type WindowKey, WINDOW_DAYS } from "@/db/queries/operations";
 import { getApplicationsWindowSummary, type ApplicationsWindowSummary } from "@/db/queries/applicationRuns";
 import { getAppSettings } from "@/db/queries/settings";
+import { classifyScanningHealth, classifySystemHealth, type HealthStatus } from "@/lib/operations/healthRules";
+import { getConfiguredSchedulerHost } from "@/lib/scheduler/host";
+import { getSchedulerRuntimeState } from "@/lib/scheduler/state";
 import {
   evaluateRuntimeFreshness,
   getLoadedResumeWriterRuntimeContract,
@@ -40,8 +43,25 @@ export function compareRuntimeVersions(
  * within the window — the window itself is what the operator controls (24h/7d/30d) to decide how
  * long a failure remains "recent" before it is spoken of only as history.
  */
-export function applicationsHealth(summary: ApplicationsWindowSummary): "HEALTHY" | "DEGRADED" {
-  return summary.failedCount > 0 ? "DEGRADED" : "HEALTHY";
+export function applicationsHealth(summary: ApplicationsWindowSummary): HealthStatus {
+  /* ADMIN-OPS-1.1 — THE CONTRACT, settled from the caller rather than from first principles.
+   *
+   * This value has exactly one consumer: a HealthTile labelled "Application Pipeline" inside
+   * Admin's "Subsystem Health" grid (src/app/admin/page.tsx). It is therefore a claim about the
+   * SUBSYSTEM — "is application automation working" — and NOT a claim about the candidate's queue
+   * ("are there problems right now"). The distinction decides the empty-window case, and it is worth
+   * being explicit about because the two readings give opposite answers:
+   *
+   *   subsystem reading  -> zero runs proves nothing about the engine        -> NO_DATA
+   *   open-issues reading -> zero runs means zero problems                    -> HEALTHY
+   *
+   * The tile's own framing settles it: a green "Application Pipeline" card asserts the pipeline
+   * works, and no run has been observed that could support that. ADMIN-OPS-1 reversed the original
+   * HEALTHY behaviour on exactly this ground, and this is the same conclusion classifyScanningHealth
+   * already reaches for an empty scan window. If a future Admin surface genuinely wants the
+   * open-issues reading, it needs its own field — it must not be obtained by loosening this one. */
+  if (summary.total === 0) return "NO_DATA";
+  return summary.failedCount > 0 ? "WARNING" : "HEALTHY";
 }
 
 function groupedCounts(table: "resume_quality_workflows" | "application_runs"): Record<string, number> {
@@ -92,12 +112,31 @@ export function getAdminOverview(window: WindowKey) {
   const applications = groupedCounts("application_runs");
   const scanning = getScanningWindowSummary(windowDays);
   const applicationsWindow = getApplicationsWindowSummary(windowDays);
+  const schedulerRuntime = getSchedulerRuntimeState();
 
   return {
     generatedAt: new Date().toISOString(), window,
     health: {
-      system: runtimeCompatibility.state === "MISMATCH" ? "VERSION_MISMATCH" : worker.running ? "HEALTHY" : "DEGRADED",
-      scanner: scanning.failedCount > 0 ? "DEGRADED" : settings.scheduler.scanEnabled ? "HEALTHY" : "DISABLED",
+      /* ADMIN-OPS-1 — both verdicts below were derived from the wrong evidence and are now delegated
+       * to the shared, unit-tested rules in src/lib/operations/healthRules.ts.
+       *
+       * `system` asked whether the standalone worker was running, but the default host runs ticks in
+       * the web process where no worker exists — so a correct install reported DEGRADED forever.
+       * It now asks whether the CONFIGURED host is alive.
+       *
+       * `scanner` consulted only `scanEnabled` and ignored `scheduler.enabled`, the master switch
+       * that gates it — so a fully disabled scanner with no failures reported HEALTHY. It also had
+       * no way to say "nothing ran in this window", which classifyScanningHealth already models. */
+      system: classifySystemHealth({
+        schedulerHost: getConfiguredSchedulerHost(),
+        workerRunning: worker.running,
+        workerEverReported: worker.pid !== null,
+        lastEvaluatedAt: schedulerRuntime.lastEvaluatedAt,
+        runtimeCompatibility: runtimeCompatibility.state,
+      }),
+      scanner: settings.scheduler.enabled && settings.scheduler.scanEnabled
+        ? classifyScanningHealth({ window: scanning, schedulerEnabled: true })
+        : "DISABLED",
       writer: writer.state,
       applications: applicationsHealth(applicationsWindow),
       runtimeCompatibility,

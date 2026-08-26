@@ -15,6 +15,7 @@ import {
 } from "./reliabilityState";
 import {
   getSchedulerRuntimeState,
+  recordSchedulerTickEvaluated,
   recordSchedulerTickFailed,
   recordSchedulerTickStarted,
   recordSchedulerTickSucceeded,
@@ -95,6 +96,13 @@ export type SchedulerTickOutcome =
  */
 export async function runSchedulerTick(now: Date = new Date()): Promise<SchedulerTickOutcome> {
   const settings = getAppSettings();
+
+  /* ADMIN-OPS-1 — record that this tick evaluated, BEFORE any early return below. Every check that
+   * follows is a legitimate reason to do no work, and each one used to return without leaving any
+   * trace, which made a dead timer look exactly like a quiet one. This single write is what lets
+   * Admin tell "the scheduler is alive and had nothing to do" apart from "nothing is running the
+   * scheduler". It records evaluation only — never that a scan happened. */
+  recordSchedulerTickEvaluated(now);
 
   // Stage 27 — master kill switch first, then this tick's own switch. A false per-tick flag is
   // reported as the same SKIPPED_DISABLED outcome, so nothing downstream has to learn a new state.

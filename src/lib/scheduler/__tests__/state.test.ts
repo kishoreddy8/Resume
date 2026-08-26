@@ -7,6 +7,7 @@ import { after, before, beforeEach, test } from "node:test";
 let tmpDir: string;
 let getDb: typeof import("@/db").getDb;
 let getSchedulerRuntimeState: typeof import("../state").getSchedulerRuntimeState;
+let recordSchedulerTickEvaluated: typeof import("../state").recordSchedulerTickEvaluated;
 let recordSchedulerTickStarted: typeof import("../state").recordSchedulerTickStarted;
 let recordSchedulerTickSucceeded: typeof import("../state").recordSchedulerTickSucceeded;
 let recordSchedulerTickFailed: typeof import("../state").recordSchedulerTickFailed;
@@ -17,7 +18,7 @@ before(async () => {
   process.env.CAREER_OPS_DB_PATH = path.join(tmpDir, "test.db");
 
   ({ getDb } = await import("@/db"));
-  ({ getSchedulerRuntimeState, recordSchedulerTickStarted, recordSchedulerTickSucceeded, recordSchedulerTickFailed, resetSchedulerRuntimeStateForTests } =
+  ({ getSchedulerRuntimeState, recordSchedulerTickEvaluated, recordSchedulerTickStarted, recordSchedulerTickSucceeded, recordSchedulerTickFailed, resetSchedulerRuntimeStateForTests } =
     await import("../state"));
 
   getDb();
@@ -36,6 +37,7 @@ beforeEach(() => {
 
 test("29. getSchedulerRuntimeState returns all-null on a fresh/never-run database", () => {
   assert.deepEqual(getSchedulerRuntimeState(), {
+    lastEvaluatedAt: null,
     lastStartedAt: null,
     lastCompletedAt: null,
     lastSuccessfulAt: null,
@@ -83,10 +85,35 @@ test("33. resetSchedulerRuntimeStateForTests clears every field back to null", (
   recordSchedulerTickSucceeded(new Date());
   resetSchedulerRuntimeStateForTests();
   assert.deepEqual(getSchedulerRuntimeState(), {
+    lastEvaluatedAt: null,
     lastStartedAt: null,
     lastCompletedAt: null,
     lastSuccessfulAt: null,
     lastFailedAt: null,
     lastError: null,
   });
+});
+
+test("OPS1-SCHED-02: recordSchedulerTickEvaluated persists liveness without claiming a scan ran", () => {
+  /* ADMIN-OPS-1 — the whole point of the new signal: a tick that evaluates and decides to do
+   * nothing must leave a trace, and that trace must not imply a scan attempt. */
+  const when = new Date("2026-08-26T12:00:00.000Z");
+  recordSchedulerTickEvaluated(when);
+
+  const state = getSchedulerRuntimeState();
+  assert.equal(state.lastEvaluatedAt, when.toISOString(), "evaluation is recorded");
+  assert.equal(state.lastStartedAt, null, "no scan attempt is implied");
+  assert.equal(state.lastSuccessfulAt, null);
+  assert.equal(state.lastCompletedAt, null);
+});
+
+test("OPS1-SCHED-02b: evaluation and scan-attempt bookkeeping are independent", () => {
+  recordSchedulerTickEvaluated(new Date("2026-08-26T12:00:00.000Z"));
+  recordSchedulerTickStarted(new Date("2026-08-26T12:00:01.000Z"));
+  recordSchedulerTickSucceeded(new Date("2026-08-26T12:00:09.000Z"));
+
+  const state = getSchedulerRuntimeState();
+  assert.equal(state.lastEvaluatedAt, "2026-08-26T12:00:00.000Z");
+  assert.equal(state.lastStartedAt, "2026-08-26T12:00:01.000Z");
+  assert.equal(state.lastSuccessfulAt, "2026-08-26T12:00:09.000Z");
 });

@@ -1,3 +1,4 @@
+import type { SchedulerHost } from "@/lib/scheduler/host";
 import type { SchedulerRuntimeState } from "@/lib/scheduler/state";
 import type { SchedulerSettings } from "@/lib/scheduler/window";
 
@@ -25,6 +26,45 @@ export interface SchedulerHealthInput {
 const OVERDUE_INTERVAL_MULTIPLE = 2;
 
 /**
+ * ADMIN-OPS-1 — how long without a tick EVALUATION before the scan scheduler is reported as not
+ * running.
+ *
+ * Deliberately not a new number: this mirrors RESUME_WRITER_TICK_LIVENESS_TIMEOUT_MINUTES
+ * (src/lib/resumeQuality/writers/writerHealth.ts) exactly, because both ticks are evaluated by the
+ * same 60-second timer in src/instrumentation.ts and therefore have identical liveness semantics —
+ * five missed evaluations, long enough not to false-alarm on a busy event loop, short enough to tell
+ * the truth when nothing is hosting the scheduler at all. Reusing the established threshold keeps
+ * one operational meaning rather than two competing ones.
+ */
+export const SCHEDULER_TICK_LIVENESS_TIMEOUT_MINUTES = 5;
+
+/**
+ * ADMIN-OPS-1.1 — how a persisted liveness timestamp is read, including when it is unusable.
+ *
+ * These values live in the `settings` key/value table as free text. A truncated write, a manual
+ * edit, or a clock-skewed future value all produce something that is not a usable observation, and
+ * the arithmetic on it silently yields NaN. Every NaN comparison is false, so a naive
+ * `minutesSince > threshold` check answers "not stale" for a corrupt value and the caller then
+ * concludes HEALTHY — a green verdict derived from unreadable data, which is precisely the
+ * false-green this phase exists to remove.
+ *
+ * Unreadable is therefore reported as "no usable observation", not as fresh and not as stale: we
+ * cannot prove the scheduler is alive, and we equally cannot prove it is dead, so the honest answer
+ * is that nothing was observed. A future timestamp is treated the same way — it cannot be evidence
+ * of a past evaluation. Mirrors the Number.isFinite guard `subsystemHealth.isStale` already applies.
+ */
+type LivenessReading = "FRESH" | "STALE" | "UNUSABLE";
+
+function readLiveness(observedAt: string | null, now: Date, thresholdMinutes: number): LivenessReading {
+  if (observedAt === null) return "UNUSABLE";
+  const observed = new Date(observedAt).getTime();
+  if (!Number.isFinite(observed)) return "UNUSABLE";
+  const minutesSince = (now.getTime() - observed) / 60_000;
+  if (minutesSince < 0) return "UNUSABLE";
+  return minutesSince > thresholdMinutes ? "STALE" : "FRESH";
+}
+
+/**
  * Rules, in order:
  *   1. disabled                                                -> DISABLED
  *   2. never attempted (lastStartedAt === null)                 -> NO_DATA
@@ -46,7 +86,22 @@ export function classifySchedulerHealth(input: SchedulerHealthInput): HealthStat
   const now = input.now ?? new Date();
 
   if (!settings.enabled) return "DISABLED";
-  if (runtime.lastStartedAt === null) return "NO_DATA";
+
+  /* ADMIN-OPS-1 — liveness before outcome. `lastEvaluatedAt` is written by every tick evaluation,
+   * including the ones that decide not to scan (see scheduler/state.ts), so a stale value means the
+   * tick function itself has stopped being called — nothing is hosting the scheduler. That is a
+   * different and more serious fact than "the last scan failed", and it has to be checked first:
+   * the outcome fields below all describe the last ATTEMPT, and a long-dead scheduler can still be
+   * carrying a perfectly successful one. */
+  const liveness = readLiveness(runtime.lastEvaluatedAt, now, SCHEDULER_TICK_LIVENESS_TIMEOUT_MINUTES);
+  if (liveness === "STALE") return "ERROR";
+
+  if (runtime.lastStartedAt === null) {
+    /* Enabled, and the tick is demonstrably evaluating — it simply has not been due yet. That is a
+     * working scheduler with nothing to show, not an absence of evidence. Without a usable
+     * evaluation there is genuinely nothing observed, which is NO_DATA rather than a fault. */
+    return liveness === "FRESH" ? "HEALTHY" : "NO_DATA";
+  }
 
   const lastFailureIsLatest =
     runtime.lastFailedAt !== null && (runtime.lastSuccessfulAt === null || runtime.lastFailedAt > runtime.lastSuccessfulAt);
@@ -166,4 +221,72 @@ export function classifyResumePipelineHealth(counts: ResumePipelineWindowCounts)
   if (counts.workflows === 0) return "NO_DATA";
   if (counts.failed > 0) return "WARNING";
   return "HEALTHY";
+}
+
+// --- System (scheduler host) --------------------------------------------------------------------
+
+export interface SystemHealthInput {
+  /** Which process is CONFIGURED to run the scheduled ticks — see src/lib/scheduler/host.ts. */
+  schedulerHost: SchedulerHost;
+  /** Whether the standalone background worker process is alive and owns its lock. */
+  workerRunning: boolean;
+  /** Whether that worker has ever written a status file — distinguishes "never started" from "died". */
+  workerEverReported: boolean;
+  /** Web-process tick liveness: when the scan tick last evaluated anything. */
+  lastEvaluatedAt: string | null;
+  /** MISMATCH is fail-closed for the writer and outranks every other consideration. */
+  runtimeCompatibility: "MATCH" | "MISMATCH" | "UNKNOWN";
+  now?: Date;
+}
+
+/**
+ * ADMIN-OPS-1 — is the process that is SUPPOSED to be running scheduled work actually running?
+ *
+ * THE DEFECT THIS REPLACES. Admin previously answered this with `worker.running ? HEALTHY : DEGRADED`
+ * (src/lib/admin/overview.ts). `worker.running` describes the standalone background worker — but the
+ * default and fully supported host is "web", where scheduled work runs inside the Next.js process and
+ * there is deliberately NO separate worker to find. On that configuration the check could only ever
+ * fail, so a correctly-installed, perfectly healthy system reported DEGRADED permanently. The
+ * question was never "is a worker running"; it is "is the CONFIGURED host running", and the two only
+ * coincide in one of the three supported modes.
+ *
+ * Which evidence is authoritative therefore depends on the configured host, and nothing else:
+ *   worker -> the worker's own pid/lock liveness
+ *   web    -> the web process's tick-evaluation liveness
+ *   none   -> no host is configured; silence is the intended behaviour, not a fault
+ *
+ * A MISMATCH is checked first because it is fail-closed regardless of host: the writer refuses to
+ * process work at all, so a live host is not the interesting fact.
+ */
+export function classifySystemHealth(input: SystemHealthInput): HealthStatus {
+  const now = input.now ?? new Date();
+
+  if (input.runtimeCompatibility === "MISMATCH") return "ERROR";
+
+  switch (input.schedulerHost) {
+    case "none":
+      /* An explicit "nobody runs scheduled work" choice. Nothing is broken, and reporting a fault
+       * here would train an operator to ignore the field. */
+      return "DISABLED";
+
+    case "worker":
+      if (input.workerRunning) return "HEALTHY";
+      /* Configured to use a worker that is not running. If it has never reported at all, the setup
+       * was simply never completed — that is an absence of evidence, not proof of a crash. */
+      return input.workerEverReported ? "ERROR" : "NO_DATA";
+
+    case "web": {
+      /* The web process owns the ticks here, so the worker's absence is expected and says nothing.
+       * Liveness comes from whether the tick is still evaluating. An unusable timestamp is NO_DATA,
+       * never HEALTHY — see readLiveness. */
+      switch (readLiveness(input.lastEvaluatedAt, now, SCHEDULER_TICK_LIVENESS_TIMEOUT_MINUTES)) {
+        case "FRESH":
+          return "HEALTHY";
+        case "STALE":
+          return "ERROR";
+        case "UNUSABLE":
+          return "NO_DATA";
+      }
+    }
+  }
 }

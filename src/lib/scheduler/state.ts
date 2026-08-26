@@ -15,6 +15,7 @@ import { getDb } from "@/db";
  */
 
 const RUNTIME_KEYS = {
+  lastEvaluatedAt: "scheduler_runtime.last_evaluated_at",
   lastStartedAt: "scheduler_runtime.last_started_at",
   lastCompletedAt: "scheduler_runtime.last_completed_at",
   lastSuccessfulAt: "scheduler_runtime.last_successful_at",
@@ -23,6 +24,23 @@ const RUNTIME_KEYS = {
 } as const;
 
 export interface SchedulerRuntimeState {
+  /**
+   * ADMIN-OPS-1 — when the scan tick last EVALUATED, whatever it decided to do.
+   *
+   * WHY THIS IS SEPARATE FROM lastStartedAt. Every other field here describes a scan ATTEMPT, and
+   * all of them are written after the lock is acquired. But the tick returns early — before any of
+   * them — whenever it is disabled, outside its window, not yet due, or the lock is held. Those are
+   * the tick working correctly, and they left no trace at all, so "the timers are dead" was
+   * indistinguishable from "there was legitimately nothing to do". A subsystem cannot be reported as
+   * alive on the strength of a decision it never recorded making.
+   *
+   * This field is that record, and ONLY that: it says the tick function ran and reached a verdict.
+   * It says nothing about whether a scan happened — lastStartedAt/lastSuccessfulAt still own that,
+   * and nothing about their meaning changes. The resume writer already solved this exact problem
+   * the same way (resume_writer.last_tick_at, see writerState.ts) and this brings the scan tick in
+   * line with that established precedent rather than inventing a second mechanism.
+   */
+  lastEvaluatedAt: string | null;
   lastStartedAt: string | null;
   lastCompletedAt: string | null;
   lastSuccessfulAt: string | null;
@@ -49,12 +67,29 @@ function setValue(key: string, value: string | null): void {
 
 export function getSchedulerRuntimeState(): SchedulerRuntimeState {
   return {
+    lastEvaluatedAt: getValue(RUNTIME_KEYS.lastEvaluatedAt),
     lastStartedAt: getValue(RUNTIME_KEYS.lastStartedAt),
     lastCompletedAt: getValue(RUNTIME_KEYS.lastCompletedAt),
     lastSuccessfulAt: getValue(RUNTIME_KEYS.lastSuccessfulAt),
     lastFailedAt: getValue(RUNTIME_KEYS.lastFailedAt),
     lastError: getValue(RUNTIME_KEYS.lastError),
   };
+}
+
+/**
+ * ADMIN-OPS-1 — called at the TOP of every scan-tick evaluation, before any decision is made.
+ *
+ * Deliberately unconditional: a tick that decides to do nothing is still a tick that ran, and that
+ * is precisely the case the old bookkeeping could not express. Writing this before the enabled /
+ * window / interval / lock checks is the whole point — moving it below any of them would restore the
+ * blind spot it exists to close.
+ *
+ * This is one row in the `settings` key/value table, under the same `scheduler_runtime.*` namespace
+ * the other fields already use, outside STORAGE_KEYS — so it is no more writable through the
+ * settings API than its siblings, and it needs no schema change.
+ */
+export function recordSchedulerTickEvaluated(now: Date = new Date()): void {
+  setValue(RUNTIME_KEYS.lastEvaluatedAt, now.toISOString());
 }
 
 /** Called once, right before a tick attempts to run a scan (after the lock is acquired). */

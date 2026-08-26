@@ -13,8 +13,27 @@ import { applicationsHealth } from "../overview";
 
 test("ADMIN-HEALTH-01/02: healthy with zero recent failures, degraded with any", () => {
   assert.equal(applicationsHealth({ total: 10, failedCount: 0 }), "HEALTHY");
-  assert.equal(applicationsHealth({ total: 10, failedCount: 1 }), "DEGRADED");
-  assert.equal(applicationsHealth({ total: 0, failedCount: 0 }), "HEALTHY", "no activity at all is healthy, not unknown");
+  assert.equal(applicationsHealth({ total: 10, failedCount: 1 }), "WARNING");
+});
+
+test("OPS1.1-APP-01: an empty window is NO_DATA because this field means SUBSYSTEM health, not open issues", () => {
+  /* The semantics, not just the value, are the assertion here.
+   *
+   * This function's only consumer is the "Application Pipeline" tile in Admin's "Subsystem Health"
+   * grid, so it answers "is application automation working" — a claim that zero observed runs cannot
+   * support. Under the other plausible reading ("are there problems right now") zero runs would
+   * legitimately be HEALTHY, which is why the contract has to be stated rather than assumed.
+   *
+   * ADMIN-OPS-1 reversed the original HEALTHY behaviour on exactly this ground. If this assertion
+   * ever needs to flip back, the tile's meaning must have changed first — flipping it to make a
+   * caller pass would silently restore a green card backed by no evidence. */
+  assert.equal(applicationsHealth({ total: 0, failedCount: 0 }), "NO_DATA");
+});
+
+test("OPS1.1-HEALTH-02: NO_DATA is distinct from both HEALTHY and the failure state", () => {
+  const empty = applicationsHealth({ total: 0, failedCount: 0 });
+  assert.notEqual(empty, "HEALTHY", "absence of evidence must not read as working");
+  assert.notEqual(empty, "WARNING", "absence of evidence must not read as a fault either");
 });
 
 test("the old unwindowed bug is not reachable through this function's own contract", () => {

@@ -27,7 +27,7 @@ function scheduler(overrides: Partial<SchedulerSettings> = {}): SchedulerSetting
 }
 
 function runtime(overrides: Partial<SchedulerRuntimeState> = {}): SchedulerRuntimeState {
-  return { lastStartedAt: null, lastCompletedAt: null, lastSuccessfulAt: null, lastFailedAt: null, lastError: null, ...overrides };
+  return { lastEvaluatedAt: null, lastStartedAt: null, lastCompletedAt: null, lastSuccessfulAt: null, lastFailedAt: null, lastError: null, ...overrides };
 }
 
 // --- Scheduler ------------------------------------------------------------------------------
