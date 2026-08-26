@@ -9,6 +9,7 @@ import {
   V2_RENDER_GRACE_MS,
   V2_SAFETY_CHECK_TIMEOUT_MS,
 } from "@/lib/ats/discoveryConfig";
+import { DISCOVERY_CONNECTOR_PROVIDERS } from "@/lib/ats/scannableProviders";
 import { detectAtsFromUrlString } from "@/lib/ats/detect";
 import { detectUnsupportedAts, findBestCareersLink, findEmbeddedAtsUrl, findEmbeddedUnsupportedAtsUrl, scoreCareersLink } from "@/lib/ats/discovery";
 import type { SupportedProvider } from "@/lib/ats/pendingConnectorValidation";
@@ -111,13 +112,13 @@ export interface DiscoveryV2Result {
   reason: string;
 }
 
-const SUPPORTED_PROVIDERS = new Set<SupportedProvider>([
-  "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "adp_wfn", "adp_rm", "eightfold",
-  "cornerstone", "avature", "paylocity", "icims", "ukg_pro", "bamboohr", "oracle_recruiting_cloud",
-  "workable", "rippling", "paycom", "jazzhr", "jobvite", "breezy", "teamtailor", "applicantpro",
-  "pinpoint", "clearcompany", "personio", "recruitee", "applicantstack", "comeet", "cats", "gohire", "newton",
-  "silkroad", "jobdiva", "taleo", "phenom", "successfactors",
-]);
+/* ADMIN-OPS-3.2.1 — derived, not restated. This was an eighth hand-written copy of the 37-provider
+ * connector list, identical in membership to the authority but requiring lockstep edits with it; the
+ * comment below already asserted the two were "built from the same provider set", which is now true
+ * by construction rather than by convention. Membership is unchanged. */
+const SUPPORTED_PROVIDERS = new Set<SupportedProvider>(
+  DISCOVERY_CONNECTOR_PROVIDERS as readonly SupportedProvider[]
+);
 
 // Recognized non-HTML resource extensions — a career_page_url pointing at one of these (e.g. a PDF
 // EEO notice, seen for real in Stage 1 production testing) can never contain a rendered careers DOM;

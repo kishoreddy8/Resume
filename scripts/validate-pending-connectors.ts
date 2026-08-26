@@ -4,9 +4,9 @@ import { runPendingConnectorValidationBatch, type SupportedProvider } from "../s
 import { CLI_VALIDATION_PROVIDERS } from "../src/lib/ats/scannableProviders";
 
 /* ADMIN-OPS-3 — derived from the shared authority instead of a sixth hand-written copy.
- * CLI_VALIDATION_PROVIDERS preserves this script's exact current membership, including its
- * omission of recruitee — see src/lib/ats/scannableProviders.ts for why that is recorded rather
- * than corrected here. */
+ * ADMIN-OPS-3.2 — the recruitee omission this previously preserved has been corrected; the list is
+ * now the scannable set. Note this gates ONLY the --provider argument below: it is not passed to
+ * runPendingConnectorValidationBatch, which selects on VALIDATION_ELIGIBLE_PROVIDERS. */
 const PROVIDERS = CLI_VALIDATION_PROVIDERS as SupportedProvider[];
 
 function integerArg(name: string, fallback: number, max: number): number {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { execSync } from "node:child_process";
 import { getAtsCapability, isRealAtsPlatform, summarizeAtsCapabilities } from "../atsCapability";
 import {
   CLI_VALIDATION_PROVIDERS,
@@ -181,13 +182,14 @@ test("OPS3-SOURCE-05: no provider allowlist remains hand-written anywhere", asyn
 });
 
 test("OPS3-SOURCE-06: each derived list preserves its call site's exact historical membership", () => {
-  /* Behaviour must be unchanged by the extraction — these are the counts measured before it. */
+  /* OPS-3 measured these before the extraction and pinned them so the refactor could not move them.
+   * OPS-3.2 then changed ONE of them on purpose: the CLI list. Every other count is still the
+   * originally-measured value, and the relationships are asserted rather than restated as literals. */
   assert.equal(SCANNABLE_PROVIDERS.length, 36, "scan allowlist");
-  assert.equal(VALIDATION_ELIGIBLE_PROVIDERS.length, 37, "validation sweep = scan + phenom");
-  assert.equal(HEALTH_PROBE_PROVIDERS.length, 37, "health probe = scan + phenom");
-  assert.equal(CLI_VALIDATION_PROVIDERS.length, 35, "CLI/export = scan - recruitee");
-  assert.ok(!CLI_VALIDATION_PROVIDERS.includes("recruitee" as SourceType), "the recruitee omission is preserved, not silently fixed");
-  assert.ok(SCANNABLE_PROVIDERS.includes("recruitee" as SourceType), "recruitee IS scannable — that is the inconsistency");
+  assert.equal(VALIDATION_ELIGIBLE_PROVIDERS.length, SCANNABLE_PROVIDERS.length + 1, "validation sweep = scan + phenom");
+  assert.equal(HEALTH_PROBE_PROVIDERS.length, SCANNABLE_PROVIDERS.length + 1, "health probe = scan + phenom");
+  assert.equal(CLI_VALIDATION_PROVIDERS.length, SCANNABLE_PROVIDERS.length, "OPS-3.2: CLI now tracks the scan allowlist exactly");
+  assert.ok(SCANNABLE_PROVIDERS.includes("recruitee" as SourceType), "recruitee IS scannable");
 });
 
 /* ================================================================================================
@@ -228,10 +230,21 @@ test("OPS3.1-PHENOM-01: phenom behaviour is unchanged — connector and validati
   assert.ok(!CLI_VALIDATION_PROVIDERS.includes("phenom" as SourceType), "phenom absent from the CLI list — unchanged");
 });
 
-test("OPS3.1-RECRUITEE-01: recruitee behaviour is unchanged — scanned, but absent from CLI tooling", () => {
-  assert.ok(SCANNABLE_PROVIDERS.includes("recruitee" as SourceType), "recruitee IS scanned");
-  assert.ok(VALIDATION_ELIGIBLE_PROVIDERS.includes("recruitee" as SourceType), "and is validation-eligible");
-  assert.ok(!CLI_VALIDATION_PROVIDERS.includes("recruitee" as SourceType), "but the CLI omits it — unchanged");
+test("OPS3.2-RECRUITEE-01: the recruitee CLI omission was stale tooling, and is now fixed", () => {
+  /* OPS-3.1 pinned this omission deliberately, so that a behaviour-preserving refactor could not
+   * quietly "tidy" it away. OPS-3.2 is the phase licensed to resolve it, and the evidence says it was
+   * an oversight rather than an intent: commit ee00a03 added the recruitee connector and put it in
+   * BOTH the scan allowlist and the validation set, but not the CLI list, and left no comment
+   * justifying the gap. The connector has passing tests and five detector matches.
+   *
+   * The blast radius is reporting and operator tooling: a --provider argument allowlist, the
+   * continuous worker's approved/pending counts, and the scan_ready_sources export. It is NOT the
+   * validation batch — that selects on VALIDATION_ELIGIBLE_PROVIDERS, which has always included
+   * recruitee — and it is NOT the scanner, which reads SCANNABLE_PROVIDERS. The next two assertions
+   * pin both of those as unchanged. */
+  assert.ok(SCANNABLE_PROVIDERS.includes("recruitee" as SourceType), "recruitee IS scanned — unchanged");
+  assert.ok(VALIDATION_ELIGIBLE_PROVIDERS.includes("recruitee" as SourceType), "and is validation-eligible — unchanged");
+  assert.ok(CLI_VALIDATION_PROVIDERS.includes("recruitee" as SourceType), "and the CLI now covers it too");
 });
 
 test("OPS3.1-AUTHORITY-01: the phenom delta is expressed once, not restated per consumer", () => {
@@ -258,4 +271,103 @@ test("OPS3.1-SQL-01: every provider value is a bare identifier that cannot break
   }
   const sql = providerSqlList(DISCOVERY_CONNECTOR_PROVIDERS);
   assert.doesNotMatch(sql, /['"];|--|\/\*|\bUNION\b|\bSELECT\b/i, "no injection-shaped token may appear");
+});
+
+/* ================================================================================================
+ * ADMIN-OPS-3.2 — the two provider inconsistencies OPS-3.1 pinned are now resolved deliberately.
+ * Recruitee changed (above); phenom deliberately did NOT, and this records why.
+ * ============================================================================================== */
+
+test("OPS3.2-PHENOM-01: phenom stays unscanned because no phenom source can ever be discovered", () => {
+  /* The tempting move is symmetry: phenom has a 13.7KB connector with passing tests, so why is it
+   * absent from the scan allowlist? Because the allowlist is not where phenom is blocked.
+   *
+   * Sources are identified exclusively by detectAtsFromUrlString — discovery.ts and discoveryV2.ts
+   * both route through it and nothing else — and the detector contains no phenom branch at all. So no
+   * phenom source can be DISCOVERED by any automated path.
+   *
+   * ADMIN-OPS-3.2.1 correction: that is not the same as "can hold no rows". job_sources.provider has
+   * no CHECK constraint, so a manual insert or import could create one; there simply are none today.
+   * The accurate consequence is that adding phenom to the allowlist would select zero additional rows
+   * now, so it changes scanner behaviour for no operational benefit — while the missing detector, the
+   * real blocker, would remain.
+   *
+   * The connector is therefore kept reachable (validation, health probe, manual fetch) and kept out of
+   * scanning. If a phenom detector is ever written, THAT is the change that makes scanning meaningful. */
+  const detector = fs.readFileSync(path.join(process.cwd(), "src/lib/ats/detect.ts"), "utf8");
+  assert.equal(/phenom/i.test(detector), false, "no phenom detector exists — this is the real blocker");
+  assert.ok(/recruitee/i.test(detector), "contrast: recruitee IS detectable, which is why it is scanned");
+
+  assert.ok(DISCOVERY_CONNECTOR_PROVIDERS.includes("phenom" as SourceType), "the connector still exists");
+  assert.ok(HEALTH_PROBE_PROVIDERS.includes("phenom" as SourceType), "and is still probed");
+  assert.ok(!SCANNABLE_PROVIDERS.includes("phenom" as SourceType), "but is deliberately not scanned");
+});
+
+test("OPS3.2-AUTHORITY-01: no NEW hand-written provider list may appear, and the known debt cannot grow", () => {
+  /* ADMIN-OPS-3.2.1 corrected this test. It previously claimed "every provider list derives from one
+   * authority" while only inspecting scannableProviders.ts itself — a repo-wide claim backed by a
+   * single-file check. A real sweep found four surviving hand-written 36/37-provider literals that
+   * OPS-3's centralization had missed. discoveryV2's was folded into the authority (identical
+   * membership, so provably behaviour-preserving); the remaining three are recorded below rather
+   * than changed, because two sit in zod/type positions on API input boundaries where rewriting the
+   * literal would weaken compile-time typing — a change that needs its own phase.
+   *
+   * This test now does what its name says: it fails on any NEW duplicate, and it fails if a listed
+   * one is centralized without being removed from the list. The debt is visible and bounded. */
+  const KNOWN_DUPLICATES = [
+    "src/app/api/companies/route.ts",   // zod enum, SCANNABLE + career_link — API input allowlist
+    "src/app/api/jobs/route.ts",        // VALID_SOURCES, SCANNABLE + career_link — filter allowlist
+    "src/db/queries/atsCoverage.ts",    // supportedSourceTypes, SCANNABLE — coverage reporting
+  ];
+
+  const known = new Set<string>(DISCOVERY_CONNECTOR_PROVIDERS as readonly string[]);
+  const files = execSync("git ls-files 'src/**/*.ts' 'scripts/**/*.ts'", { encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .filter((f) => f && !f.includes("__tests__") && f !== "src/lib/ats/scannableProviders.ts");
+
+  const offenders: string[] = [];
+  for (const rel of files) {
+    const body = fs.readFileSync(path.join(process.cwd(), rel), "utf8");
+    for (const literal of body.matchAll(/\[[^\[\]]{40,}\]/g)) {
+      const names = new Set([...literal[0].matchAll(/["']([a-z_]+)["']/g)].map((m) => m[1]).filter((n) => known.has(n)));
+      /* Eight is well above any legitimate grouping — the apply registry lists three — and well below
+       * the 36 a real copy carries. */
+      if (names.size >= 8 && !offenders.includes(rel)) offenders.push(rel);
+    }
+  }
+
+  assert.deepEqual(
+    offenders.sort(),
+    [...KNOWN_DUPLICATES].sort(),
+    "a hand-written provider list appeared or disappeared — derive it from scannableProviders.ts, or update KNOWN_DUPLICATES"
+  );
+
+  /* The authority itself must still hold exactly one literal, and state the +phenom delta once. */
+  const src = fs.readFileSync(path.join(process.cwd(), "src/lib/ats/scannableProviders.ts"), "utf8");
+  assert.equal((src.match(/\[\s*"[a-z_]+"\s*,\s*"[a-z_]+"/g) ?? []).length, 1, "only SCANNABLE_PROVIDERS is written by hand");
+  assert.equal((src.match(/"phenom"/g) ?? []).length, 1, "phenom is named exactly once in the authority");
+
+  for (const p of SCANNABLE_PROVIDERS) {
+    assert.ok(VALIDATION_ELIGIBLE_PROVIDERS.includes(p), `${p} missing from validation`);
+    assert.ok(HEALTH_PROBE_PROVIDERS.includes(p), `${p} missing from health probe`);
+    assert.ok(CLI_VALIDATION_PROVIDERS.includes(p), `${p} missing from CLI`);
+  }
+});
+
+test("OPS3.2.1-RECRUITEE-02: the CLI list cannot reach the validation batch or the scanner", () => {
+  /* The checkpoint's concern was that CLI_VALIDATION_PROVIDERS might not be CLI-only — it is in fact
+   * read by a continuous background worker too. This pins the boundary that actually matters: the two
+   * queries that select real work must derive from their own authorities, never from the tooling list.
+   * If someone later wires CLI_VALIDATION_PROVIDERS into either, this fails. */
+  const batch = fs.readFileSync(path.join(process.cwd(), "src/lib/ats/pendingConnectorValidation.ts"), "utf8");
+  assert.match(batch, /providerSqlList\(VALIDATION_ELIGIBLE_PROVIDERS\)/, "the batch selects on the validation set");
+  assert.doesNotMatch(batch, /CLI_VALIDATION_PROVIDERS/, "and must never select on the tooling list");
+
+  const registry = fs.readFileSync(path.join(process.cwd(), "src/db/queries/organizationRegistry.ts"), "utf8");
+  assert.doesNotMatch(registry, /CLI_VALIDATION_PROVIDERS/, "nor may the scanner's own queries");
+
+  /* And the CLI script uses it for argument validation only, not to choose the batch's work. */
+  const cli = fs.readFileSync(path.join(process.cwd(), "scripts/validate-pending-connectors.ts"), "utf8");
+  assert.doesNotMatch(cli, /runPendingConnectorValidationBatch\([^)]*PROVIDERS/, "PROVIDERS must not be passed to the batch");
 });

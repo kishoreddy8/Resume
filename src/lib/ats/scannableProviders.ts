@@ -60,28 +60,46 @@ export const SCANNABLE_PROVIDERS: readonly SourceType[] = [
 ] as const;
 
 /**
- * THE DRIFT, STATED EXPLICITLY. The same list was hand-written in five places and no two of them
- * agreed. Each constant below preserves its call site's CURRENT membership exactly — nothing here
- * changes what any query selects — but the differences are now expressed as deltas from one baseline
- * instead of hiding inside five SQL literals nobody diffs.
+ * THE TWO HISTORICAL INCONSISTENCIES, NOW DECIDED (ADMIN-OPS-3.2).
  *
- *   scan (×2, organizationRegistry)      36   baseline
- *   pending-connector validation         37   + phenom
- *   connector health probe               37   + phenom
- *   validate-pending-connectors script   35   − phenom, − recruitee
+ * ADMIN-OPS-3 found this list hand-written in seven places with two disagreements, and deliberately
+ * preserved both rather than resolving them without evidence. That evidence has now been gathered.
  *
- * Two independent inconsistencies fall out of that:
+ * RECRUITEE — stale tooling, fixed. Commit ee00a03 ("add Recruitee job discovery connector") added
+ * recruitee to the scan allowlist in organizationRegistry.ts AND to the validation set in
+ * pendingConnectorValidation.ts, but not to the list below. No comment anywhere justifies that gap,
+ * and every one of its 35 peers is present, so the list below is now simply the scannable set.
  *
- *   `phenom` has a real discovery connector (fetchPhenomJobs, dispatched by src/lib/normalize.ts)
- *   and is both validated and health-probed — but is absent from the scan allowlist, so a phenom
- *   source can be discovered, validated, approved and probed, and then never scanned by anything.
+ * WHAT THE OMISSION DID AND DID NOT DO — measured, because the obvious guess is wrong. It did NOT
+ * strand recruitee sources: the validation batch selects on VALIDATION_ELIGIBLE_PROVIDERS (see
+ * pendingConnectorValidation.ts), which has included recruitee since ee00a03, so recruitee sources
+ * were always validated and auto-approved like any other. The list below never reaches that query.
+ * Its three real effects were narrow: `--provider recruitee` was rejected by the CLI as an invalid
+ * argument, recruitee was missing from the continuous worker's approved/pending counts, and it was
+ * absent from the scan_ready_sources export. Tooling and reporting only — no scan, approval or
+ * fetch behaviour changes in either direction.
  *
- *   `recruitee` is fully scannable but is missing from the CLI validator's list, so its pending
- *   sources are never picked up by that script.
+ * PHENOM — kept unscannable, deliberately, and NOT for symmetry. Its connector is real and well
+ * covered (14 passing tests in __tests__/phenom.test.ts), so "not production ready" is not the
+ * reason. The reason is upstream: `src/lib/ats/detect.ts` contains no phenom detector at all, and
+ * BOTH discovery paths — discovery.ts and discoveryV2.ts — identify a provider exclusively through
+ * detectAtsFromUrlString. discoveryV2's own comment says its SUPPORTED_PROVIDERS set mirrors what
+ * detectAtsFromUrlString "can currently produce", so phenom's presence there is unreachable rather
+ * than active. No phenom source can therefore be DISCOVERED by any automated path.
  *
- * Both are preserved rather than resolved: adding phenom to the scan set would change what the
- * scanner fetches, and removing it from validation would change what gets validated. Those are
- * behaviour changes that belong to a phase that can verify them, not to this extraction.
+ * PRECISELY WHAT THAT DOES AND DOES NOT MEAN. It does NOT mean a phenom row is impossible:
+ * job_sources.provider is a bare `TEXT NOT NULL` with no CHECK, enum or foreign key, so a manual
+ * insert, an import, or an operator running promote-supported-ats-adapters could create one. (None
+ * exist today — both job_sources and companies hold zero phenom rows.) What the omission means is
+ * narrower and worth stating exactly: IF such a row existed and were verified and approved, both
+ * scan queries in organizationRegistry.ts filter on `js.provider IN (SCANNABLE_PROVIDERS)`, so it
+ * would sit approved and never be scanned by anything.
+ *
+ * That residual trap is why this stays a deliberate decision rather than a fix. Enabling scanning
+ * would select zero additional rows today, so it buys nothing; the real blocker is the missing
+ * detector, and it belongs to whoever writes one. Meanwhile the trap is no longer silent: the
+ * connector-health projection reports phenom as CONNECTOR_NOT_SCANNED alongside its real configured
+ * source count, so a phenom source that can never be scanned is visible instead of merely absent.
  */
 
 /**
@@ -108,14 +126,19 @@ export const VALIDATION_ELIGIBLE_PROVIDERS: readonly SourceType[] = DISCOVERY_CO
 export const HEALTH_PROBE_PROVIDERS: readonly SourceType[] = DISCOVERY_CONNECTOR_PROVIDERS;
 
 /**
- * Providers the `validate-pending-connectors` CLI passes to the batch. Narrower than both of the
- * above: it omits phenom AND recruitee. The recruitee omission looks unintentional — it is scannable
- * and validation-eligible everywhere else — but correcting it would change which sources the script
- * validates, so it is recorded here for review rather than silently fixed.
+ * Providers the operator-facing tooling covers. Despite the name there are three consumers, and only
+ * the first is a CLI: the `--provider` argument allowlist in scripts/validate-pending-connectors.ts,
+ * the approved/pending counts in scripts/discover-organizations-continuous.ts, and the
+ * scan_ready_sources query in scripts/export-ats-source-of-truth.ts. None of them selects the work a
+ * scanner or validation batch performs — those read SCANNABLE_PROVIDERS and
+ * VALIDATION_ELIGIBLE_PROVIDERS respectively.
+ *
+ * ADMIN-OPS-3.2 — exactly the scannable set, for a reason rather than by coincidence: reporting on
+ * and hand-validating a source only matters if approving it would let the scanner fetch that source.
+ * Phenom is excluded because it is not scannable (see above); recruitee is now included because its
+ * absence was a list that was never updated when its connector landed.
  */
-export const CLI_VALIDATION_PROVIDERS: readonly SourceType[] = SCANNABLE_PROVIDERS.filter(
-  (p) => p !== "recruitee"
-);
+export const CLI_VALIDATION_PROVIDERS: readonly SourceType[] = SCANNABLE_PROVIDERS;
 
 /** Renders a provider list as the quoted, comma-separated body of a SQL `IN (...)` clause. */
 export function providerSqlList(providers: readonly SourceType[]): string {

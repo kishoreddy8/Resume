@@ -235,11 +235,16 @@ test("SEC2.1-ENV-01: .env.example documents the variables with empty placeholder
 test("SEC2.1-ENV-02: the credential variables are server-only and never client-exposed", async () => {
   const { execSync } = await import("node:child_process");
   const src = execSync("git ls-files 'src/**/*.ts' 'src/**/*.tsx'", { encoding: "utf8" }).trim().split("\n");
+  /* Test files are excluded from BOTH checks, not just the second. A suite asserting that
+   * NEXT_PUBLIC_JOBDIVA is absent necessarily contains that string as an assertion literal — this
+   * very file does, below — and __tests__ is never bundled for a client, so a match there is not an
+   * exposure. Scanning them anyway made this test fail on itself the moment it became tracked. */
   for (const rel of src) {
+    if (rel.includes("__tests__")) continue;
     const body = fs.readFileSync(path.join(process.cwd(), rel), "utf8");
     if (!/JOBDIVA_API_/.test(body)) continue;
     assert.doesNotMatch(body, /NEXT_PUBLIC_JOBDIVA/, `${rel} must not expose the credential to the client`);
-    if (rel !== "src/lib/ats/jobdiva.ts" && !rel.includes("__tests__")) {
+    if (rel !== "src/lib/ats/jobdiva.ts") {
       assert.fail(`${rel} references the credential variables outside the connector`);
     }
   }
