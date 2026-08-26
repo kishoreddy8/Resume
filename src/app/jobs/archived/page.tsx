@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { H1bBadge } from "@/components/H1bBadge";
 import type { JobWithCompany } from "@/types";
 import { sourceLabel } from "../sourceLabel";
+import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 
 const ARCHIVED_LIMIT = 100;
 const ARCHIVED_STEP = 200;
@@ -19,11 +20,14 @@ function formatDate(iso: string | null): string {
 
 function RestoreButton({ jobId, onRestored }: { jobId: number; onRestored: () => void }) {
   const [busy, setBusy] = useState(false);
+  /* ADMIN-SEC-1 — restore is candidate-guarded now; send the resolved profile, never a guess. */
+  const candidateId = useResolvedCandidateId();
 
   async function restore() {
+    if (candidateId === null) return;
     setBusy(true);
     try {
-      await fetch(`/api/jobs/${jobId}/restore`, { method: "POST" });
+      await fetch(`/api/jobs/${jobId}/restore?candidateId=${candidateId}`, { method: "POST" });
       onRestored();
     } finally {
       setBusy(false);

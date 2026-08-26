@@ -190,10 +190,50 @@ export function updateAppSettings(patch: unknown): UpdateSettingsResult {
   return { ok: true, settings };
 }
 
-/** Deletes every stored setting row — getAppSettings() then falls back to DEFAULT_SETTINGS for
- *  every key, which is indistinguishable from "never configured". Also covers any LEGACY_KEYS
- *  row, same as updateAppSettings — a reset must not leave a stale, no-longer-read key behind. */
+/**
+ * Restores every user-editable setting to its default.
+ *
+ * ADMIN-SEC-1 — THIS USED TO BE `DELETE FROM settings` WITH NO FILTER, and that was a far larger
+ * action than its name. The `settings` table is not just app preferences: it is the process-wide
+ * key/value store, and at least seven unrelated subsystems keep state there under their own
+ * namespaces. An unfiltered delete therefore also destroyed, silently:
+ *
+ *   - `profile_unlock_secret`  — the HMAC key every unlock token is signed with. Erasing it
+ *                                invalidates every unlocked session at once, including the
+ *                                operator's own, and mints a fresh secret on next read.
+ *   - `*_lock.*` / lease rows  — the scan lock and the machine-wide writer/production leases.
+ *                                Releasing those mid-run defeats the exact concurrency invariant
+ *                                they exist to guarantee: a second writer pass could start against
+ *                                a job the first is still working.
+ *   - `*_runtime.*` and tick   — all operational liveness and provenance, which is what Admin's
+ *     bookkeeping                health verdicts are derived from.
+ *
+ * The modules that own those keys justify their safety by living "outside STORAGE_KEYS, so no
+ * client can overwrite them through the settings API" — true of updateAppSettings, which only ever
+ * upserts fixed keys, but not of a blanket delete that never consulted STORAGE_KEYS at all.
+ *
+ * SO THIS IS AN ALLOWLIST, DELIBERATELY, AND NOT A `NOT IN (...)` BLACKLIST. The distinction is the
+ * whole point: a blacklist has to be updated every time a subsystem adds a key, and forgetting is
+ * silent and destructive. With an allowlist, a newly-added internal, security, or lease key is
+ * preserved by default and the worst outcome of forgetting is that a genuinely user-editable
+ * setting is not reset — visible, harmless, and easy to correct.
+ *
+ * LEGACY_KEYS are still removed, matching updateAppSettings: a reset must not leave behind a stale
+ * key the product no longer reads.
+ */
 export function resetAppSettings(): AppSettings {
-  getDb().prepare("DELETE FROM settings").run();
+  const db = getDb();
+  const remove = db.prepare("DELETE FROM settings WHERE key = ?");
+  const resetAll = db.transaction(() => {
+    for (const key of Object.values(STORAGE_KEYS)) remove.run(key);
+    for (const key of LEGACY_KEYS) remove.run(key);
+  });
+  resetAll();
   return DEFAULT_SETTINGS;
 }
+
+/**
+ * The exact set of keys `resetAppSettings` will remove. Exported for the ADMIN-SEC-1 regression
+ * tests so they assert against the real allowlist rather than a copy that could drift from it.
+ */
+export const RESETTABLE_SETTINGS_KEYS: readonly string[] = [...Object.values(STORAGE_KEYS), ...LEGACY_KEYS];

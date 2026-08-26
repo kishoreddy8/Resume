@@ -11,6 +11,8 @@ import {
   type JobDetailEnrichmentOutput,
 } from "@/lib/ai/tasks/jobDetailEnrichment";
 import { runAiTask } from "@/lib/ai/runAiTask";
+import { requireCandidateAccess } from "@/lib/auth/guard";
+import { requireActiveCandidate } from "@/db/queries/candidates";
 import type { DescriptionSections, JobWithCompany } from "@/types";
 
 /**
@@ -64,7 +66,30 @@ function buildInput(job: JobWithCompany): JobDetailEnrichmentInput {
   };
 }
 
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+/**
+ * ADMIN-SEC-1 — the highest-consequence of the three job routes: it is the only route in the app
+ * that can spend real provider money. On an install where AI is enabled and a key is configured, an
+ * unauthenticated caller could previously bill the operator in a loop, bounded only by the hardcoded
+ * budget caps. It IS reached from the candidate product (AiInsightsCard on job detail), so the fix
+ * is authentication rather than the operator boundary, which would remove the feature.
+ */
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  /* ADMIN-SEC-1 — CANDIDATE_MUTATION. This writes to the shared `jobs` corpus, so it is not
+   * candidate-OWNED data, but it is reached from the candidate product and must not require the
+   * operator boundary: doing so would break the feature for every non-owner profile and for any
+   * install without a PIN. The boundary this closes is the real one — it was callable by anyone who
+   * could reach the port. candidateId is an explicit query parameter, never inferred, so the request
+   * names the profile whose unlocked session is authorising the write. */
+  const candidateId = Number(req.nextUrl.searchParams.get("candidateId"));
+  if (!Number.isInteger(candidateId) || candidateId <= 0) {
+    return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
+  }
+  if (!requireActiveCandidate(candidateId)) {
+    return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  }
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
+
   const { id } = await params;
   const jobId = Number(id);
   if (!Number.isInteger(jobId)) {
@@ -117,6 +142,22 @@ const PATCH_SCHEMA = z
  *  Architecture plan's review-granularity design) so a future read can distinguish "accepted
  *  industry / rejected seniority / unreviewed workplace" for the same enrichment row. */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  /* ADMIN-SEC-1 — CANDIDATE_MUTATION. This writes to the shared `jobs` corpus, so it is not
+   * candidate-OWNED data, but it is reached from the candidate product and must not require the
+   * operator boundary: doing so would break the feature for every non-owner profile and for any
+   * install without a PIN. The boundary this closes is the real one — it was callable by anyone who
+   * could reach the port. candidateId is an explicit query parameter, never inferred, so the request
+   * names the profile whose unlocked session is authorising the write. */
+  const candidateId = Number(req.nextUrl.searchParams.get("candidateId"));
+  if (!Number.isInteger(candidateId) || candidateId <= 0) {
+    return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
+  }
+  if (!requireActiveCandidate(candidateId)) {
+    return NextResponse.json({ error: "Not an active candidate" }, { status: 404 });
+  }
+  const accessDenial = requireCandidateAccess(req, candidateId);
+  if (accessDenial) return accessDenial;
+
   const { id } = await params;
   const jobId = Number(id);
   if (!Number.isInteger(jobId)) {

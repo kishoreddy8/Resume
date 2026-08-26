@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AiConfidenceBadge } from "@/components/AiConfidenceBadge";
 import { toConfidenceBand } from "@/lib/ai/confidence";
+import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
 import type { FieldSuggestion } from "@/lib/ai/tasks/jobDetailEnrichment";
 
 /**
@@ -48,12 +49,16 @@ function SuggestionRow({
 }) {
   const [decision, setDecision] = useState<Decision | null>(null);
   const [busy, setBusy] = useState(false);
+  /* ADMIN-SEC-1 — the enrich route is now candidate-guarded, so the request must name the profile
+   * whose unlocked session authorises it. Resolved (never optimistic) so a guess is never sent. */
+  const candidateId = useResolvedCandidateId();
   const band = toConfidenceBand(suggestion.confidence);
 
   async function decide(event: Decision) {
+    if (candidateId === null) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/jobs/${jobId}/ai-enrich`, {
+      const res = await fetch(`/api/jobs/${jobId}/ai-enrich?candidateId=${candidateId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enrichmentId, event, field: suggestion.field }),
@@ -106,11 +111,13 @@ export function AiInsightsCard({ jobId }: { jobId: number }) {
   const [state, setState] = useState<"idle" | "loading" | "ok" | "unavailable">("idle");
   const [result, setResult] = useState<Extract<EnrichResponse, { status: "ok" }> | null>(null);
   const [reason, setReason] = useState<string | null>(null);
+  const candidateId = useResolvedCandidateId();
 
   async function handleEnrich() {
+    if (candidateId === null) return;
     setState("loading");
     try {
-      const res = await fetch(`/api/jobs/${jobId}/ai-enrich`, { method: "POST" });
+      const res = await fetch(`/api/jobs/${jobId}/ai-enrich?candidateId=${candidateId}`, { method: "POST" });
       const body = (await res.json().catch(() => null)) as EnrichResponse | null;
       if (!res.ok || !body || body.status !== "ok") {
         setReason(body && "reason" in body ? body.reason : null);

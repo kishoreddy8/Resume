@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { UNLOCK_COOKIE, verifyUnlockToken } from "./candidatePin";
-import { getPinState, getUnlockSecret, isOwner } from "@/db/queries/candidatePinStore";
+import { getOwnerId, getPinState, getUnlockSecret, isOwner } from "@/db/queries/candidatePinStore";
 import { requireActiveCandidate, type CandidateRow } from "@/db/queries/candidates";
 
 /**
@@ -151,4 +151,40 @@ export function requireOwnerAuthorization(req: NextRequest): AccessDenial | null
 export function ownerHasPin(ownerId: number | null): boolean {
   if (ownerId === null) return false;
   return getPinState(ownerId)?.hasPin ?? false;
+}
+
+/**
+ * ADMIN-SEC-1 — the guard for profile creation, which is neither an ordinary candidate mutation nor
+ * an ordinary operator one.
+ *
+ * WHY IT CANNOT SIMPLY BE requireOwnerAuthorization. Owner is seeded from the lowest-numbered
+ * EXISTING candidate (see runCandidatePinMigrations), so on a brand-new install there is no owner at
+ * all. Requiring owner authorisation to create a profile would make the first profile impossible to
+ * create and leave the product permanently unusable — the guard would be perfectly secure and
+ * completely broken. First-run creation therefore has to be allowed.
+ *
+ * WHY IT IS NOT SIMPLY LEFT OPEN EITHER. Once an install is set up, an unauthenticated caller
+ * creating unlimited profiles is real: it cannot read anyone's data, but it is an unauthenticated
+ * write to shared state, and profile creation is the one mutation that has no owner to check against
+ * afterwards.
+ *
+ * SO PROTECTION FOLLOWS THE INSTALL'S OWN CHOICE, exactly as requireCandidateAccess already does
+ * one function above: a profile with no PIN is "unprotected by design" there, and an install whose
+ * owner has set no PIN is unprotected by design here. Enforcing owner authorisation on a PIN-less
+ * install would be stricter than every other candidate route in the same app and would break adding
+ * a second profile for users who never opted into a PIN — inconsistency, not security.
+ *
+ *   no candidates yet        -> allow  (first-run bootstrap; nothing exists to authorise against)
+ *   owner has no PIN         -> allow  (install is unprotected by design, same as every other route)
+ *   owner has a PIN          -> require an unlocked owner session
+ *
+ * Deliberately NOT reused for destructive routes. Deleting a profile keeps the stricter
+ * ownerHasPin + requireOwnerAuthorization pair, which refuses outright on a PIN-less install —
+ * correct there, because that action is irreversible and creation is not.
+ */
+export function requireProfileCreationAuthorization(req: NextRequest): AccessDenial | null {
+  const ownerId = getOwnerId();
+  if (ownerId === null) return null;
+  if (!ownerHasPin(ownerId)) return null;
+  return requireOwnerAuthorization(req);
 }

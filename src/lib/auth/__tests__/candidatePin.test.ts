@@ -86,6 +86,13 @@ test("every candidate-scoped API route calls requireCandidateAccess", () => {
       }
       if (entry.name !== "route.ts") continue;
       const src = fs.readFileSync(p, "utf-8");
+      /* ADMIN-SEC-1 — this skip is why the check could not see the routes that were actually
+       * unguarded: a route with no candidate in it mentions no candidateId, so archive, restore,
+       * ai-enrich and candidate creation were all exempted silently. The skip is KEPT here because
+       * this test's contract is specifically "candidate-scoped routes call requireCandidateAccess",
+       * and that contract is still worth enforcing. Completeness across ALL mutating routes — the
+       * thing this file could never provide — now lives in ./mutationPolicy.test.ts, which walks the
+       * same tree and fails on any mutating route missing from the declared policy registry. */
       if (!src.includes("candidateId")) continue;
       const rel = p.slice(root.length);
       if (rel.includes(`${path.sep}unlock${path.sep}`) || rel.includes(`${path.sep}pin${path.sep}`)) continue;
