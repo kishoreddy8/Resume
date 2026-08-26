@@ -18,10 +18,12 @@ test("Candidate Home page provides deterministic, accessible deep-links and CTAs
   assert.match(presentation, /jobWorkspaceUrl\(entry\.jobId,\s*\{\s*step:\s*"results",\s*focus:\s*"progress"\s*\}\)/);
   assert.match(presentation, /jobWorkspaceUrl\(recommendation\.job\.id,\s*\{\s*step:\s*"match"\s*\}\)/);
 
-  // Quick navigation tiles
-  assert.match(home, /href: "\/jobs"/);
-  assert.match(home, /href: "\/resume"/);
-  assert.match(home, /counts\.needsAttention \? action\.href : "\/applications"/);
+  // Real, existing deep-links (UI-H: no dashboard tile grid, but the same destinations remain
+  // reachable — /jobs from the Recommended-for-you section, /resume as the resume-row fallback,
+  // and /applications as the dominant card's secondary destination when an application is waiting).
+  assert.match(home, /href="\/jobs"/);
+  assert.match(home, /\?\? "\/resume"/);
+  assert.match(presentation, /secondaryHref: "\/applications"/);
 });
 
 test("Jobs page tabs, search debouncing, and empty-state switching work smoothly", () => {

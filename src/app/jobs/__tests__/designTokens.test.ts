@@ -50,7 +50,12 @@ test("resume and applications tiles now reference the real, existing amber tile 
 
 test("home's empty state and tile hover now reference real, existing tokens", () => {
   const home = read("src/app/home/page.tsx");
-  assert.match(home, /bg-\[var\(--surface-muted\)\]/);
+  // UI-H redesign: Home's hand-rolled empty-state box (the original source of the --surface-subtle
+  // bug this test guards against) was replaced by the shared, already-token-safe
+  // @/components/ui EmptyState primitive (confirmed to use only real, defined tokens like --z0-bg) —
+  // so the fix for THIS file is no longer "point the literal string at --surface-muted", it is
+  // "don't hand-roll the empty state at all." The no-phantom-token invariant above still holds.
+  assert.match(home, /EmptyState as SharedEmptyState/);
   assert.match(home, /hover:shadow-\[var\(--lift-1\)\]/);
 });
 

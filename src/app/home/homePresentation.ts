@@ -61,9 +61,33 @@ export function presentHomeResumes(entries: ResumeLibraryEntry[]): HomeResumeRow
   });
 }
 
+/** Home shows a small taste of the Jobs feed, not a second feed — see UI-H Part 6. */
+const HOME_RECOMMENDATION_LIMIT = 3;
+
 export function boundedRecommendations(entries: ForYouResponseEntry[]): ForYouResponseEntry[] {
-  return entries.slice(0, 5);
+  return entries.slice(0, HOME_RECOMMENDATION_LIMIT);
 }
+
+/**
+ * Honest, per-reason copy for a candidate profile that is not "ok" — never one generic sentence for
+ * three different real conditions. Mirrors the wording candidate-intelligence/page.tsx already
+ * established for the same three states, so a candidate does not learn three different vocabularies
+ * for the same fact depending which screen tells them.
+ */
+const PROFILE_ACTION_COPY: Record<"missing" | "stale" | "invalid", { title: string; detail: string }> = {
+  missing: {
+    title: "Build your candidate profile",
+    detail: "No candidate profile has been built yet — your resume and skills inventory are required before matching can begin.",
+  },
+  stale: {
+    title: "Refresh your candidate profile",
+    detail: "Your master resume or skills inventory changed since this profile was built, so matching is paused until it's refreshed.",
+  },
+  invalid: {
+    title: "Your candidate profile needs attention",
+    detail: "The saved candidate profile could not be read. Rebuilding it will restore matching.",
+  },
+};
 
 export function homeCounts(input: HomePresentationInput): {
   tailoring: number;
@@ -97,11 +121,14 @@ export function chooseHomeAction(input: HomePresentationInput): HomeAction {
   }
 
   if (input.profileStatus !== "ok") {
+    const copy =
+      (PROFILE_ACTION_COPY as Record<string, { title: string; detail: string }>)[input.profileStatus] ??
+      PROFILE_ACTION_COPY.missing;
     return {
       kind: "profile",
       eyebrow: "Start here",
-      title: "Complete your candidate profile",
-      detail: "Your resume and skills inventory are required before matching can begin.",
+      title: copy.title,
+      detail: copy.detail,
       href: "/onboarding",
       cta: "Complete setup",
     };
@@ -191,4 +218,22 @@ export function homeAttention(input: HomePresentationInput): AttentionItem[] {
       tone: "danger",
     }));
   return [...applications, ...resumes].slice(0, 5);
+}
+
+/** Kinds `chooseHomeAction` can pick that are drawn from the SAME blocking pool `homeAttention`
+ *  aggregates (applications waiting + resumes needing attention) — i.e. the dominant card, when one
+ *  of these, is already one of the items `attention` counts. "profile" is deliberately excluded: an
+ *  incomplete profile is real and blocking, but it is not a resume or application row, so it is
+ *  never counted inside `attention` and can never be "the one already shown." */
+const ATTENTION_POOL_KINDS: ReadonlySet<HomeAction["kind"]> = new Set(["application", "issues", "revalidate", "retry"]);
+
+/**
+ * How many MORE blocking items exist beyond whichever one the dominant card already shows — for the
+ * primary card's compact secondary line (UI-H Part 3: "one dominant item + a compact secondary
+ * queue/count", never a second full list). Zero whenever nothing else needs the candidate, which is
+ * exactly when Part 4's calm state applies.
+ */
+export function attentionOverflowCount(action: HomeAction, attention: AttentionItem[]): number {
+  const dominantAlreadyCounted = ATTENTION_POOL_KINDS.has(action.kind);
+  return Math.max(0, attention.length - (dominantAlreadyCounted ? 1 : 0));
 }

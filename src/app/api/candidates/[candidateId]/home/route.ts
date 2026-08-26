@@ -1,10 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireActiveCandidate, getCandidate } from "@/db/queries/candidates";
 import { requireCandidateAccess } from "@/lib/auth/guard";
-import { getCandidateMatchDecisionCounts } from "@/db/queries/operations";
 import { listWaitingRuns } from "@/db/queries/applicationRuns";
 import { loadCandidateProfile } from "@/lib/match/candidateProfile";
-import { deserializeJobMatchResult, type JobMatchResultRow } from "@/db/queries/jobMatches";
 import { getDb } from "@/db";
 import { FRESHNESS_PRIMARY_MAX_DAYS, FRESHNESS_SECONDARY_MAX_DAYS } from "@/lib/rank/forYou";
 
@@ -12,45 +10,33 @@ import { FRESHNESS_PRIMARY_MAX_DAYS, FRESHNESS_SECONDARY_MAX_DAYS } from "@/lib/
  * GET — everything the home screen states, in one request.
  *
  * ONE ENDPOINT, ALL AGGREGATES. Home exists to answer "what should I do next", so it must cost less
- * than the pages it points at. Counts come from tallies the database already computes; the three
- * recommended jobs are three rows, not a ranked page; and no resume, no application history and no
- * job description crosses this boundary.
+ * than the pages it points at. Counts come from tallies the database already computes; the
+ * recommended jobs themselves are read from the same match-decision + For You feed the Jobs page
+ * uses (fetched separately by the client, not recomputed here — see UI-H's audit note below), and no
+ * resume body, application history or job description crosses this boundary.
  *
  * EVERY FIGURE IS REAL. There is no profile strength, no readiness score, no market signal, no
  * confidence number. The app does not know those things, and a home screen is exactly where an
  * invented one would be most believed. Where nothing is known, the field is empty and the UI says
  * so rather than filling the space.
  *
- * NOTHING IS RE-RANKED HERE. The recommended jobs are read from the decisions the matching engine
- * already persisted, ordered by the score it already assigned. This route computes no relevance of
- * its own and changes no ranking contract.
+ * UI-H — REMOVED THREE UNUSED QUERIES. This route previously also computed a second, unused set of
+ * "recommended" jobs directly from job_match_results, a match-decision tally
+ * (readyForTailoring/needsReview/evaluated), and a resume-workflow completion tally
+ * (resumesCreated/resumesThisWeek) — none of which the candidate-facing page has ever read (grep
+ * confirmed zero references in src/app/home/page.tsx). Home's own recommended-jobs card reuses the
+ * client's existing For You fetch instead (see Part 6 of the UI-H spec: reuse the real feed, never a
+ * second ranking path), so this route computing its own competing set was dead weight, not a second
+ * source of truth anything depended on. Removed rather than left to rot, per "cost less than the
+ * pages it points at."
  *
- * THE EXTRA FIELDS ARE PRESENTATION, NOT NEW KNOWLEDGE. `score`, `postedAt`, the requirement tallies
- * and the waiting-run titles are all columns and buckets that were already persisted and already
- * read on this path — they are returned so the card can show a job the way the job pages show it,
- * instead of the client fetching a job detail per row to learn the same facts. No value here is
- * derived, weighted or recomputed.
+ * UI-H.1 — ADDED THEN REMOVED A FOURTH FIELD. This route briefly also returned an
+ * `answerMemoryCount` for a "saved answers" card under Home's "Ready for you" section. On checkpoint
+ * review that card didn't answer "what is ready for me to ACT on" — a saved answer is a passive,
+ * always-available resource with no pending task attached, not a completed work product like a
+ * ready resume — so the card was removed from src/app/home/page.tsx, and the query removed here
+ * with it rather than left to become a fifth unused field the next audit would have to rediscover.
  */
-
-interface RecommendedJob {
-  id: number;
-  title: string;
-  company: string | null;
-  location: string | null;
-  source: string | null;
-  /** The engine's own weighted score, 0-100, rounded exactly as the jobs list rounds it. */
-  score: number;
-  /** When the employer published it. Null for boards that do not state one — then `firstSeenAt`
-   *  is used and the UI says "seen", never "posted", because those are different claims. */
-  postedAt: string | null;
-  firstSeenAt: string;
-  /** Requirements THIS candidate can evidence at a named employer. Read, never derived. */
-  evidence: string[];
-  /** Tallies behind the chips: how many requirements are employer-evidenced, and how many the
-   *  engine found in the description at all. */
-  evidenced: number;
-  requirements: number;
-}
 
 interface ActivityItem {
   at: string;
@@ -82,82 +68,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ candidateId
 
   const db = getDb();
   const candidate = getCandidate(candidateId);
-  const counts = getCandidateMatchDecisionCounts(candidateId);
   const waiting = listWaitingRuns(candidateId);
   const profile = loadCandidateProfile(candidateId);
-
-  /* Three jobs the engine already decided are ready, in the order it already scored them. Selected
-   * with a LIMIT so this stays three rows even against 150,000 evaluated pairs.
-   *
-   * status = 'active' IS LOAD-BEARING. job_match_results keeps every snapshot it has ever written
-   * for a job and marks the outdated ones 'superseded' — one job here had seven rows across four
-   * engine versions. Without this filter the "top three" were three copies of the SAME job: three
-   * identical cards, one priority (the dedupe there hid half of it), and three React children
-   * sharing a key. getCandidateMatchDecisionCounts filters on exactly this column for exactly this
-   * reason; this query simply has to agree with it.
-   *
-   * It is a correctness filter, not a ranking change: the ordering is still the engine's own
-   * overall_score, and the row chosen per job is the one the engine currently considers true. */
-  const topRows = db
-    .prepare(
-      `SELECT m.*, j.id AS j_id, j.title AS j_title, j.location AS j_location,
-              j.source_type AS j_source, j.posted_at AS j_posted, j.first_seen_at AS j_seen,
-              c.name AS c_name
-         FROM job_match_results m
-         JOIN jobs j ON j.dedupe_key = m.dedupe_key
-    LEFT JOIN companies c ON c.id = j.company_id
-        WHERE m.candidate_id = ?
-          AND m.status = 'active'
-          AND m.decision = 'READY_FOR_TAILORING'
-          AND j.is_active = 1 AND j.is_archived = 0
-     ORDER BY m.overall_score DESC
-        LIMIT 3`
-    )
-    .all(candidateId) as (JobMatchResultRow & {
-    j_id: number;
-    j_title: string;
-    j_location: string | null;
-    j_source: string | null;
-    j_posted: string | null;
-    j_seen: string;
-    c_name: string | null;
-  })[];
-
-  const recommended: RecommendedJob[] = topRows.map((row) => {
-    let evidence: string[] = [];
-    let evidenced = 0;
-    let requirements = 0;
-    try {
-      /* The engine's own employer-evidenced matches. Not a keyword list and not re-derived — if the
-       * card names a skill, the resume can support it at a named employer. */
-      const result = deserializeJobMatchResult(row);
-      evidence = result.employerEvidencedMatches.slice(0, 4).map((m) => m.requirement.label);
-      evidenced = result.employerEvidencedMatches.length;
-      /* Every requirement the engine extracted, whichever bucket it landed in. The denominator has
-       * to be the whole set or "4 of 4" would be true of a job with eight unmet requirements. */
-      requirements =
-        result.employerEvidencedMatches.length +
-        result.inventoryOnlyMatches.length +
-        result.transferableMatches.length +
-        result.missingRequirements.length +
-        result.unresolvedRequirements.length;
-    } catch {
-      evidence = [];
-    }
-    return {
-      id: row.j_id,
-      title: row.j_title,
-      company: row.c_name,
-      location: row.j_location,
-      source: row.j_source,
-      score: Math.round(row.overall_score),
-      postedAt: row.j_posted,
-      firstSeenAt: row.j_seen,
-      evidence,
-      evidenced,
-      requirements,
-    };
-  });
 
   /* Recent activity, from events that were actually recorded. Notifications are already written for
    * a person to read, so they are used verbatim rather than re-worded into something vaguer. */
@@ -169,18 +81,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ candidateId
       )
       .all(candidateId) as { type: string; title: string; created_at: string }[]
   ).map((n) => ({ at: n.created_at, type: n.type, text: n.title }));
-
-  /* Resume workflows that actually produced something, and how many of those landed in the last
-   * seven days. `completed_at` is set only when a workflow reaches READY, so "this week" is the
-   * real completion date, not the date the run was queued. */
-  const resumes = db
-    .prepare(
-      `SELECT COUNT(*) AS ready,
-              SUM(CASE WHEN completed_at >= datetime('now','-7 days') THEN 1 ELSE 0 END) AS thisWeek
-         FROM resume_quality_workflows WHERE candidate_id = ? AND status = 'READY'`
-    )
-    .get(candidateId) as { ready: number; thisWeek: number | null };
-  const resumesCreated = resumes.ready;
 
   /* NEW OPPORTUNITIES — what is worth opening right now.
    *
@@ -217,20 +117,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ candidateId
       secondaryDays: FRESHNESS_SECONDARY_MAX_DAYS,
     }) as { fresh: number; recent: number | null };
 
-  /* How many applications exist at all, and how many reached the end. Two tallies, not a list —
-   * the applications page owns the list. */
-  /* APPLICATIONS TRACKING — runs JobHunt is still carrying through the lifecycle. Cancelled runs
-   * are excluded: an application the candidate called off is not being tracked, and counting it
-   * would make the number grow every time someone changed their mind. */
-  const runTotals = db
-    .prepare(
-      `SELECT COUNT(*) AS total,
-              SUM(CASE WHEN status <> 'CANCELLED' THEN 1 ELSE 0 END) AS tracking,
-              SUM(CASE WHEN status = 'SUBMITTED' THEN 1 ELSE 0 END) AS submitted
-         FROM application_runs WHERE candidate_id = ?`
-    )
-    .get(candidateId) as { total: number; tracking: number | null; submitted: number | null };
-
   /* The waiting runs, named by the job they are for. `listWaitingRuns` already decided WHICH states
    * count as waiting — that set is not restated here — and only the first three are titled, since
    * the rail shows three. */
@@ -262,17 +148,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ candidateId
       /* Candidate-facing: fresh, relevant, undismissed. See the query above. */
       newOpportunities: opportunities.fresh,
       newOpportunitiesRecent: opportunities.recent ?? 0,
-      readyForTailoring: counts.readyForTailoring,
-      needsReview: counts.needsReview,
-      evaluated: counts.readyForTailoring + counts.needsReview + counts.blocked,
     },
     applications: {
       waitingOnYou: waiting.length,
-      total: runTotals.total,
-      tracking: runTotals.tracking ?? 0,
-      submitted: runTotals.submitted ?? 0,
-      /* What they are waiting for, so home can name it rather than say "3 things". */
-      reasons: [...new Set(waiting.map((r) => r.status))],
       /* The single most pressing one, for the primary action card. */
       first: waiting[0]
         ? { id: waiting[0].id, status: waiting[0].status, question: waiting[0].blocking_question }
@@ -281,12 +159,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ candidateId
     },
     profile: {
       status: profile.status,
-      skills: profile.status === "ok" ? profile.profile.skills.length : 0,
-      employers: profile.status === "ok" ? profile.profile.experience.length : 0,
     },
-    resumesCreated,
-    resumesThisWeek: resumes.thisWeek ?? 0,
-    recommended,
     activity,
   });
 }

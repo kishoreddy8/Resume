@@ -7,26 +7,31 @@ import type { ResumeLibraryEntry } from "@/app/api/candidates/[candidateId]/resu
 import type { ForYouApiResponse, ForYouResponseEntry } from "@/app/api/candidates/[candidateId]/for-you/route";
 import { sourceLabel } from "@/app/jobs/sourceLabel";
 import { SaveJobButton } from "@/app/jobs/SaveJobButton";
+import { SponsorshipRow, formatSalary } from "@/app/jobs/JobCardPresentation";
 import { useResolvedCandidateId } from "@/lib/useActiveCandidateId";
-import { LoadingRegion, SkeletonRows } from "@/components/ui";
+import { LoadingRegion, SkeletonRows, EmptyState as SharedEmptyState, ErrorState } from "@/components/ui";
 import {
   IconArrowUpRight,
   IconCheckCircle,
   IconChevronRight,
-  IconDocument,
-  IconInbox,
-  IconSearch,
-  IconTrend,
 } from "@/components/icons";
 import {
+  attentionOverflowCount,
   boundedRecommendations,
   chooseHomeAction,
   homeAttention,
-  homeCounts,
   presentHomeResumes,
+  type HomeAction,
   type HomePresentationInput,
   type WaitingApplication,
 } from "./homePresentation";
+
+/**
+ * UI-H — Spatial Premium Home. Answers, in order: does anything need me; what is ready for me; what
+ * good jobs should I look at; what has Career-Ops been doing; where should I go next. One dominant
+ * next-action card, never a KPI dashboard — see homePresentation.ts for the state logic this page
+ * only renders.
+ */
 
 interface HomeSummary {
   firstName: string | null;
@@ -41,11 +46,9 @@ interface HomeSummary {
 }
 
 const CARD = "rounded-[18px] border border-[var(--border)] bg-[var(--z3-bg)] shadow-[var(--shadow-card)]";
-const STATUS_TONE: Record<string, string> = {
-  ready: "bg-[var(--pill-success-bg)] text-[var(--pill-success-fg)]",
-  tailoring: "bg-[var(--pill-blue-bg)] text-[var(--pill-blue-fg)]",
-  attention: "bg-[var(--pill-amber-bg)] text-[var(--pill-amber-fg)]",
-};
+/** Kinds where the dominant card is reporting something blocking the candidate, not merely
+ *  suggesting a next step — drives the card's tone (amber vs. calm accent) per UI-H Part 10. */
+const URGENT_KINDS = new Set<HomeAction["kind"]>(["application", "profile", "issues", "revalidate", "retry"]);
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -87,15 +90,6 @@ function SectionHeading({ title, href, linkLabel }: { title: string; href?: stri
           {linkLabel}<IconChevronRight size={15} />
         </Link>
       ) : null}
-    </div>
-  );
-}
-
-function EmptyState({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex min-h-[92px] items-center gap-3 rounded-[14px] border border-dashed border-[var(--border)] bg-[var(--surface-muted)] px-4 py-4">
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[var(--tile-green-bg)] text-[var(--tile-green-fg)]"><IconCheckCircle size={19} /></span>
-      <p className="text-[14px] leading-relaxed text-secondary">{children}</p>
     </div>
   );
 }
@@ -150,39 +144,52 @@ export default function HomePage() {
     return <div className="mx-auto w-full max-w-[var(--home-max-w)] pt-2"><LoadingRegion label="Loading your job search" /><div className={`${CARD} mt-6 p-6`}><SkeletonRows rows={5} /></div></div>;
   }
   if (!summary || !view) {
-    return <div className="mx-auto w-full max-w-[var(--home-max-w)] pt-2"><h1 className="text-[28px] font-bold text-primary">JobHunt</h1><p className="mt-2 text-[14px] text-secondary">Your dashboard could not be loaded right now.</p><button type="button" onClick={() => void load()} className="mt-5 min-h-11 rounded-[10px] bg-[var(--accent)] px-5 text-[14px] font-semibold text-[var(--accent-fg)]">Try again</button></div>;
+    return (
+      <div className="mx-auto w-full max-w-[var(--home-max-w)] pt-2">
+        <ErrorState
+          title="Your home screen couldn't load"
+          whatHappened="Career-Ops couldn't reach your job search summary just now."
+          whatIsSafe="Nothing about your jobs, applications or resumes was changed."
+          onRetry={() => void load()}
+        />
+      </div>
+    );
   }
 
   const action = chooseHomeAction(view);
-  const counts = homeCounts(view);
+  const urgent = URGENT_KINDS.has(action.kind);
   const attention = homeAttention(view);
+  const overflow = attentionOverflowCount(action, attention);
   const resumeRows = presentHomeResumes(resumes);
-  const tailoring = resumeRows.filter((row) => row.presentation.bucket === "tailoring").slice(0, 3);
   const ready = resumeRows.filter((row) => row.presentation.bucket === "ready").slice(0, 3);
   const jobs = boundedRecommendations(recommendations);
-  const tiles = [
-    { label: "New matches", value: summary.jobs.newOpportunities, detail: summary.jobs.newOpportunitiesRecent ? `${summary.jobs.newOpportunitiesRecent} found in the last 10 days` : "No recent matches", href: "/jobs", icon: <IconSearch size={20} />, tone: "bg-[var(--tile-lav-bg)] text-[var(--tile-lav-fg)]" },
-    { label: "Tailoring in progress", value: counts.tailoring, detail: counts.tailoring ? "Resume work underway" : "Nothing running now", href: "/resume", icon: <IconDocument size={20} />, tone: "bg-[var(--tile-blue-bg)] text-[var(--tile-blue-fg)]" },
-    { label: "Needs attention", value: counts.needsAttention, detail: counts.needsAttention ? "Candidate action required" : "You're all caught up", href: counts.needsAttention ? action.href : "/applications", icon: <IconInbox size={20} />, tone: "bg-[var(--tile-amber-bg)] text-[var(--tile-amber-fg)]" },
-    { label: "Ready to use", value: counts.ready, detail: counts.ready ? "Approved resume packages" : "No approved resumes yet", href: "/resume", icon: <IconCheckCircle size={20} />, tone: "bg-[var(--tile-green-bg)] text-[var(--tile-green-fg)]" },
-  ];
+  const readyForYouEmpty = ready.length === 0;
+  const allEmpty = readyForYouEmpty && jobs.length === 0 && summary.activity.length === 0;
   const rise = (delay: number) => ({ initial: reduced ? { opacity: 0 } : { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: { duration: reduced ? 0 : 0.28, delay: reduced ? 0 : delay } });
 
   return (
     <div className="mx-auto w-full max-w-[var(--home-max-w)] pb-10 pt-1">
-      <motion.header {...rise(0)} className="relative overflow-hidden rounded-[20px] bg-[linear-gradient(125deg,color-mix(in_oklab,var(--accent)_8%,transparent),transparent_62%)] px-1 py-5 sm:px-6 sm:py-7">
+      <motion.header {...rise(0)} className="relative overflow-hidden rounded-[20px] bg-[linear-gradient(125deg,color-mix(in_oklab,var(--accent)_8%,transparent),transparent_62%)] px-1 py-4 sm:px-6 sm:py-6">
         <div aria-hidden="true" className="absolute -right-10 -top-16 h-52 w-52 rounded-full bg-[color-mix(in_oklab,var(--accent)_10%,transparent)] blur-3xl" />
-        <h1 className="relative text-[30px] font-bold leading-tight tracking-[-0.03em] text-primary sm:text-[36px]">{greeting()}{summary.firstName ? `, ${summary.firstName}` : ""}! <span aria-hidden="true">👋</span></h1>
-        <p className="relative mt-2 text-[15px] leading-relaxed text-secondary">One clear next step, backed by the latest state of your search.</p>
+        <h1 className="relative text-[26px] font-bold leading-tight tracking-[-0.03em] text-primary sm:text-[32px]">{greeting()}{summary.firstName ? `, ${summary.firstName}` : ""}!</h1>
+        <p className="relative mt-1.5 text-[14px] leading-relaxed text-secondary">One clear next step, backed by the latest state of your search.</p>
       </motion.header>
 
-      <motion.section {...rise(0.03)} aria-labelledby="next-action" className={`${CARD} mt-5 overflow-hidden shadow-[var(--shadow-hero)]`}>
-        <div className="h-1 bg-[linear-gradient(90deg,var(--accent),color-mix(in_oklab,var(--accent)_18%,transparent))]" />
+      <motion.section {...rise(0.03)} aria-labelledby="next-action" className={`${CARD} mt-5 overflow-hidden ${urgent ? "shadow-[var(--shadow-hero)]" : "shadow-[var(--shadow-card)]"}`}>
+        <div className={`h-1 ${urgent ? "bg-[linear-gradient(90deg,var(--warning),color-mix(in_oklab,var(--warning)_18%,transparent))]" : "bg-[linear-gradient(90deg,var(--accent),color-mix(in_oklab,var(--accent)_18%,transparent))]"}`} />
         <div className="grid gap-6 p-5 sm:p-7 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-center">
           <div className="min-w-0">
-            <p className="text-[13px] font-semibold uppercase tracking-[0.075em] text-[var(--accent)]">{action.eyebrow}</p>
+            {/* UI-H.1: the calm line only appears for "browse" — the one kind with no positive claim
+             *  of its own to make. "ready"/"match"/"progress" already read as good news on their own
+             *  eyebrow ("Ready to use", "Strongest match", "Tailoring in progress"); stacking "nothing
+             *  needs your attention" in front of a card that then hands you an "Open resume" button
+             *  reads as a contradiction — NEEDS ATTENTION (blocking) and READY FOR YOU (optional, good
+             *  news) are different claims, and only the truly empty state needs the reassurance. */}
+            {action.kind === "browse" && <p className="text-[13px] font-medium text-tertiary">Nothing needs your attention right now.</p>}
+            <p className={`text-[13px] font-semibold uppercase tracking-[0.075em] ${urgent ? "text-[var(--pill-amber-fg)]" : "text-[var(--accent)]"}`}>{action.eyebrow}</p>
             <h2 id="next-action" className="mt-3 text-[22px] font-bold leading-tight tracking-[-0.02em] text-primary sm:text-[25px]">{action.title}</h2>
             <p className="mt-2 max-w-3xl text-[14px] leading-relaxed text-secondary">{action.detail}</p>
+            {overflow > 0 && <p className="mt-3 text-[13px] font-semibold text-[var(--pill-amber-fg)]">+{overflow} more {overflow === 1 ? "item needs" : "items need"} you</p>}
           </div>
           <div className="flex flex-col gap-2.5">
             <Link href={action.href} className="flex min-h-12 items-center justify-center gap-2 rounded-[11px] bg-[var(--accent)] px-5 text-center text-[15px] font-semibold text-[var(--accent-fg)] transition hover:bg-[var(--accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2">{action.cta}<IconArrowUpRight size={17} /></Link>
@@ -191,30 +198,121 @@ export default function HomePage() {
         </div>
       </motion.section>
 
-      <section aria-label="Your job search overview" className="mt-7">
-        <SectionHeading title="Your job search overview" />
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {tiles.map((tile) => <Link key={tile.label} href={tile.href} className={`${CARD} min-h-[150px] p-4 transition hover:-translate-y-0.5 hover:shadow-[var(--lift-1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 sm:p-5`}><span className={`grid h-10 w-10 place-items-center rounded-xl ${tile.tone}`}>{tile.icon}</span><strong className="mt-4 block text-[28px] font-bold tabular-nums tracking-[-0.03em] text-primary">{tile.value}</strong><span className="mt-1 block text-[14px] font-semibold leading-snug text-primary">{tile.label}</span><span className="mt-1 block text-[13px] leading-snug text-tertiary">{tile.detail}</span></Link>)}
-        </div>
-      </section>
-
-      <div className="mt-8 grid gap-7 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <main className="min-w-0 space-y-8">
-          <section aria-label="Recommended for you"><SectionHeading title="Recommended for you" href="/jobs" linkLabel="View all jobs" />
-            {jobs.length === 0 ? <EmptyState>No evaluated matches yet. New recommendations will appear after jobs are scanned.</EmptyState> : <ul className="space-y-3">{jobs.map(({ job, ranking }) => <li key={job.id} className={`${CARD} flex min-h-[116px] items-center gap-3 p-4 sm:gap-4 sm:p-5`}><span aria-hidden="true" className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-[var(--tile-lav-bg)] text-[14px] font-bold text-[var(--tile-lav-fg)]">{initials(job.company_name)}</span><div className="min-w-0 flex-1"><Link href={`/jobs/${job.id}`} className="line-clamp-2 text-[17px] font-bold leading-snug text-primary hover:underline">{job.title}</Link><p className="mt-1 flex flex-wrap gap-x-2 text-[13px] text-secondary"><span className="font-medium">{job.company_name}</span>{job.location ? <span>· {job.location}</span> : null}{freshness(job) ? <span>· {freshness(job)}</span> : null}</p><div className="mt-2 flex flex-wrap items-center gap-2">{ranking.overallScore !== null && !ranking.insufficientJdSignal ? <span className="rounded-full bg-[var(--pill-success-bg)] px-2.5 py-1 text-[13px] font-semibold text-[var(--pill-success-fg)]">Match {Math.round(ranking.overallScore)}</span> : <span className="rounded-full bg-[var(--chip-bg)] px-2.5 py-1 text-[13px] text-[var(--chip-text)]">Match data pending</span>}{sourceLabel(job.source_type) ? <span className="text-[13px] text-tertiary">{sourceLabel(job.source_type)}</span> : null}</div></div><SaveJobButton jobId={job.id} jobTitle={job.title} candidateId={candidateId} initialSaved={job.pinned === 1} /><Link href={`/jobs/${job.id}`} aria-label={`View ${job.title}`} className="hidden min-h-11 items-center rounded-[10px] border border-[var(--border-control)] px-4 text-[14px] font-semibold text-primary hover:bg-[var(--surface-hover)] sm:flex">View job</Link></li>)}</ul>}
+      {!allEmpty && (
+        <div className="mt-8 flex flex-col gap-7 xl:flex-row xl:items-start">
+          {/* UI-H.1: this wrapper is a real box only from xl up (grouping Ready-for-you + Recent
+           *  activity into one independent-height column beside the Jobs rail) and `contents` below
+           *  that — its children become direct flex items of the outer container, so mobile order
+           *  (Ready, Jobs, Activity) comes from plain `order-*` with no row-sharing between columns.
+           *  A CSS Grid row-span for the rail was tried first and rejected: spanning two row tracks
+           *  forces those tracks to grow to fit the taller rail, which stretched an empty gap into
+           *  the shorter main column between Ready-for-you and Recent activity — visible at 1280px
+           *  with a short Ready-for-you and a 3-card rail. Flexbox with independent column heights
+           *  has no such shared-track distortion. */}
+          <div className="contents xl:flex xl:min-w-0 xl:flex-1 xl:flex-col xl:gap-7">
+          <section aria-label="Ready for you" className="order-1">
+            <SectionHeading title="Ready for you" />
+            {/* UI-H.1: saved-answer-memory was reconsidered here and removed — it is a passive,
+             *  always-available resource (nothing to "act on," no pending task tied to it), not a
+             *  completed work product like a ready resume. Keeping it out of this list keeps "Ready
+             *  for you" honestly scoped to things the candidate can act on right now. Answer Memory
+             *  itself is untouched and still reachable from Settings navigation. */}
+            {readyForYouEmpty ? (
+              <div className={`${CARD} p-2`}>
+                <SharedEmptyState title="Nothing ready yet" description="Approved resumes will appear here as your applications progress." icon={<IconCheckCircle size={20} />} />
+              </div>
+            ) : (
+              <ul className="grid gap-3 md:grid-cols-2">
+                {ready.map((row) => (
+                  <li key={row.entry.workflowId}>
+                    <Link href={row.href ?? "/resume"} className={`${CARD} flex min-h-[116px] items-center gap-4 p-5 transition hover:-translate-y-0.5 hover:shadow-[var(--lift-1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2`}>
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--tile-green-bg)] text-[var(--tile-green-fg)]"><IconCheckCircle size={20} /></span>
+                      <span className="min-w-0">
+                        <strong className="line-clamp-2 text-[16px] font-semibold text-primary">{row.entry.title ?? "Tailored resume"}</strong>
+                        <span className="mt-1 block text-[13px] text-secondary">{row.entry.company ?? "Company unavailable"}</span>
+                        <span className="mt-2 inline-flex rounded-full bg-[var(--pill-success-bg)] px-2.5 py-1 text-[13px] font-medium text-[var(--pill-success-fg)]">Ready to use</span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
 
-          {tailoring.length > 0 ? <section aria-label="Tailoring in progress"><SectionHeading title="Tailoring in progress" href="/resume" linkLabel="Resume Studio" /><ul className="grid gap-3 md:grid-cols-2">{tailoring.map((row) => <li key={row.entry.workflowId}><Link href={row.href ?? "/resume"} className={`${CARD} flex min-h-[116px] items-center gap-4 p-5`}><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--tile-blue-bg)] text-[var(--tile-blue-fg)]"><IconTrend size={20} /></span><span className="min-w-0"><strong className="line-clamp-2 text-[16px] font-semibold text-primary">{row.entry.title ?? "Tailored resume"}</strong><span className="mt-1 block text-[13px] text-secondary">{row.entry.company ?? "Company unavailable"}</span><span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[13px] font-medium ${STATUS_TONE.tailoring}`}>{row.presentation.status.label}</span></span></Link></li>)}</ul></section> : null}
+          <section aria-label="Recent activity" className="order-3">
+            {/* UI-H.1: named "Recent activity", not "Recent progress" — the underlying notifications
+             *  mix genuine progress (RESUME_READY) with alerts (HUMAN_REVIEW_REQUIRED, QUALITY_FAILURE,
+             *  application_needs_attention) and an outcome type that can itself be bad news
+             *  (application_outcome covers rejections, not only submissions) — see
+             *  src/lib/notifications/presentation.ts. Calling all of that "progress" would be false for
+             *  roughly half of it; "activity" is the honest, neutral word for a mixed event feed. */}
+            <SectionHeading title="Recent activity" href={summary.activity.length > 0 ? "/activity" : undefined} linkLabel={summary.activity.length > 0 ? "View activity" : undefined} />
+            <div className={`${CARD} p-5`}>
+              {summary.activity.length === 0 ? (
+                <SharedEmptyState title="No activity yet" description="Activity appears as you review jobs, tailor resumes and track applications." />
+              ) : (
+                <ol className="space-y-1">
+                  {summary.activity.slice(0, 5).map((event) => (
+                    <li key={`${event.at}-${event.text}`} className="flex gap-3 py-3">
+                      <span aria-hidden="true" className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--accent)]" />
+                      <span className="min-w-0">
+                        <span className="line-clamp-2 block text-[14px] font-medium leading-snug text-primary">{event.text}</span>
+                        <span className="mt-1 block text-[13px] text-tertiary">{presentActivityAge(event.at)}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          </section>
+          </div>
 
-          {ready.length > 0 ? <section aria-label="Ready to use"><SectionHeading title="Ready to use" href="/resume" linkLabel="View resumes" /><ul className="grid gap-3 md:grid-cols-2">{ready.map((row) => <li key={row.entry.workflowId}><Link href={row.href ?? "/resume"} className={`${CARD} flex min-h-[116px] items-center gap-4 p-5`}><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--tile-green-bg)] text-[var(--tile-green-fg)]"><IconCheckCircle size={20} /></span><span className="min-w-0"><strong className="line-clamp-2 text-[16px] font-semibold text-primary">{row.entry.title ?? "Tailored resume"}</strong><span className="mt-1 block text-[13px] text-secondary">{row.entry.company ?? "Company unavailable"}</span><span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[13px] font-medium ${STATUS_TONE.ready}`}>Ready to use</span></span></Link></li>)}</ul></section> : null}
-        </main>
-
-        <aside className="min-w-0 space-y-4">
-          <section aria-label="Needs attention" className={`${CARD} p-5`}><SectionHeading title="Needs attention" href="/applications" linkLabel="View all" />{attention.length === 0 ? <EmptyState>Nothing needs your attention right now.</EmptyState> : <ul className="divide-y divide-[var(--separator)]">{attention.map((item) => <li key={item.key}><Link href={item.href} className="-mx-2 flex min-h-[76px] items-center gap-3 rounded-xl px-2 py-3 hover:bg-[var(--surface-hover)]"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-[10px] ${item.tone === "danger" ? "bg-[var(--pill-amber-bg)] text-[var(--pill-amber-fg)]" : "bg-[var(--tile-amber-bg)] text-[var(--tile-amber-fg)]"}`}><IconInbox size={17} /></span><span className="min-w-0 flex-1"><strong className="line-clamp-2 block text-[14px] font-semibold leading-snug text-primary">{item.title}</strong><span className="mt-1 line-clamp-2 block text-[13px] leading-snug text-tertiary">{item.detail}</span><span className="mt-1.5 inline-flex rounded-full bg-[var(--pill-amber-bg)] px-2 py-0.5 text-[13px] font-medium text-[var(--pill-amber-fg)]">{item.label}</span></span><IconChevronRight size={16} /></Link></li>)}</ul>}</section>
-
-          <section aria-label="Recent activity" className={`${CARD} p-5`}><SectionHeading title="Recent activity" />{summary.activity.length === 0 ? <EmptyState>Activity appears as you review jobs, tailor resumes and track applications.</EmptyState> : <ol className="space-y-1">{summary.activity.slice(0, 6).map((event) => <li key={`${event.at}-${event.text}`} className="flex gap-3 py-3"><span aria-hidden="true" className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--accent)]" /><span className="min-w-0"><span className="line-clamp-2 block text-[14px] font-medium leading-snug text-primary">{event.text}</span><span className="mt-1 block text-[13px] text-tertiary">{presentActivityAge(event.at)}</span></span></li>)}</ol>}</section>
-        </aside>
-      </div>
+          <section aria-label="Recommended for you" className="order-2 xl:w-[340px] xl:shrink-0">
+            <SectionHeading title="Recommended for you" href="/jobs" linkLabel="View all jobs" />
+            {summary.jobs.newOpportunities > jobs.length && (
+              <p className="-mt-2 mb-3 text-[13px] text-tertiary">{summary.jobs.newOpportunities} matches evaluated in total</p>
+            )}
+            {jobs.length === 0 ? (
+              <div className={`${CARD} p-2`}>
+                <SharedEmptyState
+                  title="No evaluated matches yet"
+                  description="New recommendations appear once jobs are scanned and matched against your profile."
+                  action={<Link href="/jobs" className="text-[13px] font-semibold text-[var(--accent)] hover:underline">Browse jobs</Link>}
+                />
+              </div>
+            ) : (
+              <ul className="space-y-3">
+                {jobs.map(({ job, ranking }) => {
+                  const salary = formatSalary(job);
+                  return (
+                    <li key={job.id} className={`${CARD} flex min-h-[128px] flex-col gap-3 p-4 sm:p-5`}>
+                      <div className="flex items-center gap-3">
+                        <span aria-hidden="true" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--tile-lav-bg)] text-[13px] font-bold text-[var(--tile-lav-fg)]">{initials(job.company_name)}</span>
+                        <div className="min-w-0 flex-1">
+                          <Link href={`/jobs/${job.id}`} className="line-clamp-2 text-[16px] font-bold leading-snug text-primary hover:underline">{job.title}</Link>
+                          <p className="mt-1 flex flex-wrap gap-x-2 text-[13px] text-secondary">
+                            <span className="font-medium">{job.company_name}</span>
+                            {job.location ? <span>· {job.location}</span> : null}
+                            {freshness(job) ? <span>· {freshness(job)}</span> : null}
+                          </p>
+                        </div>
+                        <SaveJobButton jobId={job.id} jobTitle={job.title} candidateId={candidateId} initialSaved={job.pinned === 1} />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {ranking.overallScore !== null && !ranking.insufficientJdSignal ? <span className="rounded-full bg-[var(--pill-success-bg)] px-2.5 py-1 text-[13px] font-semibold text-[var(--pill-success-fg)]">Match {Math.round(ranking.overallScore)}</span> : <span className="rounded-full bg-[var(--chip-bg)] px-2.5 py-1 text-[13px] text-[var(--chip-text)]">Match data pending</span>}
+                        {salary && <span className="rounded-full bg-[var(--z0-bg)] px-2.5 py-1 text-[13px] font-semibold text-primary">{salary}</span>}
+                        {sourceLabel(job.source_type) ? <span className="text-[13px] text-tertiary">{sourceLabel(job.source_type)}</span> : null}
+                      </div>
+                      <SponsorshipRow confidence={job.h1b_combined_confidence} />
+                      <Link href={`/jobs/${job.id}`} className="mt-auto flex min-h-11 items-center justify-center rounded-[10px] border border-[var(--border-control)] text-[14px] font-semibold text-primary hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2">View job</Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
