@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { SetupProgressStrip } from "@/components/SetupProgressStrip";
+import { MobileBottomNav } from "@/components/MobileBottomNav";
 
 /**
  * Chrome that only belongs to a signed-in session.
@@ -48,9 +49,15 @@ export function AppShell({
          *  `tabIndex={-1}` lets a fragment-navigated focus actually land here (not just scroll to
          *  it) without adding this element to the normal Tab order. */}
         <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto outline-none">
-          <div className="mx-auto w-full max-w-[var(--home-max-w)] px-[var(--shell-pad)] py-6 lg:py-7">{children}</div>
+          {/* UI-M — bottom padding below `lg` reserves the fixed MobileBottomNav's own height
+           *  (56px) plus its safe-area inset, so content never disappears underneath it. Unchanged
+           *  at `lg` and up, where no bottom nav renders. */}
+          <div className="mx-auto w-full max-w-[var(--home-max-w)] px-[var(--shell-pad)] pb-[calc(56px+env(safe-area-inset-bottom)+1.5rem)] pt-6 lg:py-7">
+            {children}
+          </div>
         </main>
       </div>
+      {!pathname.startsWith("/admin") && <MobileBottomNav />}
     </>
   );
 }

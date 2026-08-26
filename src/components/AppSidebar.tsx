@@ -43,11 +43,11 @@ import {
  * Each one sits beside its label rather than replacing it: the label is what makes a destination
  * predictable before you click it, and the glyph is what makes it findable at a glance.
  *
- * One component serves both layouts. Below `lg` the same tree reflows into a stacked strip along
- * the top (the items become one scrollable row); at `lg` and above it is the persistent left
- * column. It is built this way rather than as two components so that CandidateSelector mounts
- * exactly once — a second copy hidden by CSS would still run its own fetches and hold its own
- * state, which is a behaviour change, not a layout one.
+ * UI-M — the candidate rail no longer reflows below `lg`; it renders nothing there at all, and
+ * MobileBottomNav (see AppShell.tsx) is the one mobile navigation surface for candidates now. Only
+ * Admin still has two layouts in one component (a hamburger dialog below `lg`, the persistent left
+ * column at `lg` and up) — CandidateSelector still mounts exactly once either way, since only the
+ * desktop candidate tree ever renders.
  */
 
 interface NavItem {
@@ -156,12 +156,12 @@ export function AppSidebar() {
     if ((!adminMenuOpen || !inAdmin) && dialog.open) dialog.close();
   }, [adminMenuOpen, inAdmin]);
 
-  /* Below `lg` this nav is a horizontal strip, not a column, and six destinations do not all fit at
-   * 390px — Resume Studio/Profile/Settings clipped clean off the edge with no sign anything was
-   * off-screen. Same fix as the job workflow stepper: a fade that only appears when there is
-   * genuinely more, plus real arrow controls, so a mouse-only visitor (not just a swipe/keyboard
-   * one) can reach every destination. Both are suppressed at `lg` and up, where this same element
-   * is a vertical column and horizontal overflow does not apply. */
+  /* Pre-UI-M this nav was a horizontal strip below `lg`, and this measured whether it had scrolled
+   * content off either edge to show fade + arrow controls. UI-M hides this whole element below `lg`
+   * (MobileBottomNav replaced it there — see the className above), so this machinery is inert below
+   * `lg` now; left as-is rather than removed, since ripping it out is a separate, unrelated change
+   * from a mobile-shell phase that was scoped to not touch this component beyond the visibility
+   * switch. */
   const navRef = useRef<HTMLElement>(null);
   const [overflow, setOverflow] = useState({ left: false, right: false });
 
@@ -299,7 +299,10 @@ export function AppSidebar() {
        * wider than the mobile viewport and push the workspace off-screen. */
       animate={{ width: desktop ? (open ? 264 : 48) : "100%" }}
       transition={reduced ? { duration: 0 } : { type: "spring", duration: 0.28, bounce: 0 }}
-      className="flex w-full shrink-0 flex-col overflow-hidden border-b border-[var(--rail-border)] bg-[var(--z1-bg)] lg:h-full lg:min-h-dvh lg:border-b-0 lg:border-r lg:pb-[18px] lg:pt-[20px]"
+      /* UI-M — this candidate rail no longer renders at all below `lg`; MobileBottomNav is the one
+       * mobile navigation surface now (see layout.tsx). Admin's own mobile pattern (the hamburger
+       * dialog above) is untouched — Admin isn't part of the five-tab mobile contract. */
+      className="hidden w-full shrink-0 flex-col overflow-hidden border-b border-[var(--rail-border)] bg-[var(--z1-bg)] lg:flex lg:h-full lg:min-h-dvh lg:border-b-0 lg:border-r lg:pb-[18px] lg:pt-[20px]"
     >
       <div className="flex h-12 shrink-0 items-center gap-1 px-4 lg:h-[42px] lg:px-4">
         {!collapsed && (

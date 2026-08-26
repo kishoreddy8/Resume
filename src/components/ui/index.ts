@@ -8,6 +8,7 @@ export { EmptyState } from "./EmptyState";
 export { Disclosure } from "./Disclosure";
 export { Breadcrumb, type BreadcrumbItem } from "./Breadcrumb";
 export { ErrorState } from "./ErrorState";
+export { BottomSheet } from "./BottomSheet";
 export {
   PremiumGradientSurface,
   StatusAccent,

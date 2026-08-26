@@ -15,6 +15,7 @@ export type SettingsCategoryId =
   | "notifications"
   | "applications"
   | "career-copilot"
+  | "appearance"
   | "data-privacy";
 
 export interface SettingsCategory {
@@ -29,6 +30,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   { id: "notifications", label: "Notifications", blurb: "What JobHunt tells you about." },
   { id: "applications", label: "Applications", blurb: "How JobHunt helps you apply, and what it will never do without you." },
   { id: "career-copilot", label: "Career Copilot", blurb: "Guidance grounded in your own evidence." },
+  { id: "appearance", label: "Appearance", blurb: "How Career-Ops looks on this device." },
   { id: "data-privacy", label: "Data & Privacy", blurb: "Your profile's protection and storage." },
 ];
 

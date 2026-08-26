@@ -33,3 +33,11 @@ export const MOTION_STAGGER_MS = 55;
  * needs the same `Transition` object, not just the number.
  */
 export const MOTION_EMPHASIZED: Transition = { type: "spring", duration: 0.32, bounce: 0 };
+
+/**
+ * UI-M — nav selection (a `layoutId`-driven indicator sliding between destinations), matching
+ * `--motion-normal` (200ms) rather than the emphasized 320ms — a tab switch is a smaller event than
+ * a stage change. Same critically-damped shape as `MOTION_EMPHASIZED`, scaled to the shorter
+ * duration; not a new motion system, the one other spring this app's timing scale implies.
+ */
+export const MOTION_NORMAL: Transition = { type: "spring", duration: MOTION_NORMAL_MS / 1000, bounce: 0 };

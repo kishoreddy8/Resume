@@ -127,8 +127,14 @@
   --radius-modal: 20px;
 }
 
+/* UI-M — every dark declaration below is guarded so an explicit Light choice always beats OS dark
+ * (`:not([data-theme="light"])`), and immediately mirrored in a `:root[data-theme="dark"]` block so
+ * an explicit Dark choice applies regardless of OS preference. This is verbatim duplication, not a
+ * new value or an inversion trick — see src/lib/theme/ for the (additive, non-DB) mechanism that
+ * sets the attribute. A user who never opens the theme setting sees byte-identical behaviour to
+ * before this file existed: `prefers-color-scheme` alone, exactly as today. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --app-bg: #09090b;
     --surface-sidebar: #101012;
     --surface: #18181b;
@@ -162,6 +168,39 @@
     --error: #f87171;
     --info: #60a5fa;
   }
+}
+:root[data-theme="dark"] {
+  --app-bg: #09090b;
+  --surface-sidebar: #101012;
+  --surface: #18181b;
+  --surface-elevated: #1f1f23;
+  --surface-hover: rgba(255, 255, 255, 0.05);
+  --surface-active: rgba(255, 255, 255, 0.09);
+
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+
+  --separator: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.14);
+  --tint-match: rgba(99, 102, 241, 0.10);
+  --tint-info: rgba(148, 163, 184, 0.055);
+  --tint-neutral: rgba(148, 163, 184, 0.040);
+  --tint-craft: rgba(139, 92, 246, 0.11);
+  --tint-alert: rgba(251, 191, 36, 0.085);
+  --well-bg: #0d0f14;
+  --well-edge: inset 0 1px 2px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(59, 130, 246, 0.16);
+  --focus-ring: #60a5fa;
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --error: #f87171;
+  --info: #60a5fa;
 }
 
 /* Expose the tokens as Tailwind utilities (bg-surface, text-secondary, …) so
@@ -520,7 +559,7 @@ table {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --z0-bg: #0a0b0f;
     --z1-bg: #101218;
     --z2-bg: #14171f;
@@ -547,30 +586,17 @@ table {
     --accent-tint: rgba(99, 102, 241, 0.16);
     --accent-tint-weak: rgba(99, 102, 241, 0.08);
     --focus-ring: #818cf8;
-    /* UI-1 — dark-mode pressed state. Hover already lightens from --accent; pressed continues in
-     * that direction rather than reversing it, and reuses the tone --tile-lav-fg already validates
-     * on this exact canvas. */
     --accent-pressed: #a5b4fc;
 
-    /* UI-1 — secondary brand family, dark. Light mode is the measured specification; dark keeps
-     * the same roles at tones that clear contrast on a graphite canvas (10.6:1 on --z0-bg, 8.7:1 on
-     * its own tint) rather than inverting the light values, matching this file's own stated
-     * discipline for every other role above. */
     --secondary: #6FCBE0;
     --secondary-hover: #8ED8E8;
     --secondary-soft: rgba(111, 203, 224, 0.18);
     --secondary-tint: rgba(111, 203, 224, 0.16);
     --secondary-tint-weak: rgba(111, 203, 224, 0.08);
 
-    /* UI-1 — attention/safety-stop themselves need no dark override: both are var() aliases to
-     * --pill-amber-fg/-bg and --pill-blue-fg/-bg, which already have their own dark values a few
-     * lines below in this same block, and a var() reference resolves through the cascade at use
-     * time. Only the literal `-border` rgba values need restating for the dark foreground hues. */
     --attention-border: rgba(252, 211, 77, 0.30);
     --safety-stop-border: rgba(147, 197, 253, 0.30);
 
-    /* The approved palette is a light-mode specification. Dark keeps the same ROLES with tones
-     * that belong to a graphite canvas — a #E7F7EE pill would be a lamp on this surface. */
     --border-control: rgba(255, 255, 255, 0.16);
     --rail-border: rgba(255, 255, 255, 0.08);
     --header-border: rgba(255, 255, 255, 0.08);
@@ -597,6 +623,73 @@ table {
     --shadow-card: 0 3px 12px rgba(0, 0, 0, 0.45);
     --shadow-row: 0 2px 8px rgba(0, 0, 0, 0.4);
   }
+}
+/* UI-M — same values as the media-query block above, verbatim, for an explicit Dark choice
+ * regardless of OS preference. UI-1's own new roles (secondary/accent-pressed/attention-border/
+ * safety-stop-border) are included here too — they need the explicit-choice path exactly as much
+ * as the values that predate them. */
+:root[data-theme="dark"] {
+  --z0-bg: #0a0b0f;
+  --z1-bg: #101218;
+  --z2-bg: #14171f;
+  --z3-bg: #191d27;
+  --z4-bg: rgba(28, 33, 45, 0.94);
+  --z5-bg: #1c2030;
+
+  --edge-hi: rgba(255, 255, 255, 0.09);
+  --edge-lo: rgba(0, 0, 0, 0.55);
+  --grid-line: rgba(255, 255, 255, 0.02);
+
+  --lift-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --lift-2: 0 2px 6px rgba(0, 0, 0, 0.5), 0 8px 20px -6px rgba(0, 0, 0, 0.55);
+  --lift-3: 0 4px 12px rgba(0, 0, 0, 0.55), 0 18px 44px -12px rgba(0, 0, 0, 0.65);
+  --lift-4: 0 8px 20px rgba(0, 0, 0, 0.6), 0 32px 70px -20px rgba(0, 0, 0, 0.75);
+
+  --glow-accent: rgba(99, 102, 241, 0.20);
+  --glow-warm: rgba(129, 140, 248, 0.10);
+
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-soft: rgba(99, 102, 241, 0.18);
+  --accent-tint: rgba(99, 102, 241, 0.16);
+  --accent-tint-weak: rgba(99, 102, 241, 0.08);
+  --focus-ring: #818cf8;
+  --accent-pressed: #a5b4fc;
+
+  --secondary: #6FCBE0;
+  --secondary-hover: #8ED8E8;
+  --secondary-soft: rgba(111, 203, 224, 0.18);
+  --secondary-tint: rgba(111, 203, 224, 0.16);
+  --secondary-tint-weak: rgba(111, 203, 224, 0.08);
+
+  --attention-border: rgba(252, 211, 77, 0.30);
+  --safety-stop-border: rgba(147, 197, 253, 0.30);
+
+  --border-control: rgba(255, 255, 255, 0.16);
+  --rail-border: rgba(255, 255, 255, 0.08);
+  --header-border: rgba(255, 255, 255, 0.08);
+  --surface-muted: #14171f;
+  --chip-bg: rgba(255, 255, 255, 0.07);
+  --chip-text: #c3c7d2;
+  --pill-success-bg: rgba(52, 211, 153, 0.14);
+  --pill-success-fg: #6ee7b7;
+  --pill-amber-bg: rgba(251, 191, 36, 0.14);
+  --pill-amber-fg: #fcd34d;
+  --pill-blue-bg: rgba(96, 165, 250, 0.14);
+  --pill-blue-fg: #93c5fd;
+  --pill-red-bg: rgba(248, 113, 113, 0.14);
+  --pill-red-fg: #fca5a5;
+  --tile-lav-bg: rgba(99, 102, 241, 0.16);
+  --tile-lav-fg: #a5b4fc;
+  --tile-green-bg: rgba(52, 211, 153, 0.14);
+  --tile-green-fg: #6ee7b7;
+  --tile-amber-bg: rgba(251, 191, 36, 0.14);
+  --tile-amber-fg: #fcd34d;
+  --tile-blue-bg: rgba(96, 165, 250, 0.14);
+  --tile-blue-fg: #93c5fd;
+  --shadow-hero: 0 6px 20px rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 3px 12px rgba(0, 0, 0, 0.45);
+  --shadow-row: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 /* A raised plane: surface tone + lit top edge + elevation, in one place so no
@@ -800,7 +893,8 @@ table {
 /* Reduced transparency: the one translucent plane becomes solid. */
 @media (prefers-reduced-transparency: reduce) {
   :root { --z4-bg: #ffffff; }
-  @media (prefers-color-scheme: dark) { :root { --z4-bg: #1c2030; } }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --z4-bg: #1c2030; } }
+  :root[data-theme="dark"] { --z4-bg: #1c2030; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -865,11 +959,16 @@ table {
   }
 
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --surface-sidebar: #131316;
       --surface-hover: #27272a;
       --surface-active: #3f3f46;
     }
+  }
+  :root[data-theme="dark"] {
+    --surface-sidebar: #131316;
+    --surface-hover: #27272a;
+    --surface-active: #3f3f46;
   }
 }
 
@@ -883,12 +982,18 @@ table {
   }
 
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --separator: rgba(255, 255, 255, 0.28);
       --border: rgba(255, 255, 255, 0.45);
       --text-secondary: #d4d4d8;
       --text-tertiary: #a1a1aa;
     }
+  }
+  :root[data-theme="dark"] {
+    --separator: rgba(255, 255, 255, 0.28);
+    --border: rgba(255, 255, 255, 0.45);
+    --text-secondary: #d4d4d8;
+    --text-tertiary: #a1a1aa;
   }
 }
 
@@ -1197,11 +1302,15 @@ table {
 .admin-dialog-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 28px; }
 
 @media (prefers-color-scheme: dark) {
-  .admin-status-positive { color: #78ddb8; background: #0d392d; border-color: #185844; }
-  .admin-status-warning { color: #f1c46f; background: #3a2b0d; border-color: #62491a; }
-  .admin-status-critical { color: #ffaaa1; background: #421a17; border-color: #6d2924; }
-  .admin-status-info { color: #a8bbff; background: #1a2850; border-color: #2d427a; }
+  :root:not([data-theme="light"]) .admin-status-positive { color: #78ddb8; background: #0d392d; border-color: #185844; }
+  :root:not([data-theme="light"]) .admin-status-warning { color: #f1c46f; background: #3a2b0d; border-color: #62491a; }
+  :root:not([data-theme="light"]) .admin-status-critical { color: #ffaaa1; background: #421a17; border-color: #6d2924; }
+  :root:not([data-theme="light"]) .admin-status-info { color: #a8bbff; background: #1a2850; border-color: #2d427a; }
 }
+:root[data-theme="dark"] .admin-status-positive { color: #78ddb8; background: #0d392d; border-color: #185844; }
+:root[data-theme="dark"] .admin-status-warning { color: #f1c46f; background: #3a2b0d; border-color: #62491a; }
+:root[data-theme="dark"] .admin-status-critical { color: #ffaaa1; background: #421a17; border-color: #6d2924; }
+:root[data-theme="dark"] .admin-status-info { color: #a8bbff; background: #1a2850; border-color: #2d427a; }
 
 @media (max-width: 767px) {
   .admin-page-header { align-items: flex-start; flex-direction: column; gap: 18px; margin-bottom: 20px; }

@@ -17,6 +17,7 @@ import {
   IconBriefcase,
   IconCheckCircle,
   IconDocument,
+  IconSettings,
   IconShield,
   IconSparkle,
 } from "@/components/icons";
@@ -24,6 +25,11 @@ import {
   NOTIFICATION_PRESENTATION,
   NOTIFICATION_TYPE_ORDER,
 } from "@/lib/notifications/presentation";
+import {
+  readStoredThemePreference,
+  setThemePreference,
+  type ThemePreference,
+} from "@/lib/theme";
 import { SETTINGS_CATEGORIES, type SettingsCategoryId } from "./categories";
 import {
   type CandidateSettingsPayload,
@@ -94,6 +100,7 @@ const CATEGORY_ICONS: Record<SettingsCategoryId, React.ReactNode> = {
   notifications: <IconBell size={20} />,
   applications: <IconDocument size={20} />,
   "career-copilot": <IconSparkle size={20} />,
+  appearance: <IconSettings size={20} />,
   "data-privacy": <IconShield size={20} />,
 };
 
@@ -218,6 +225,7 @@ export default function SettingsPage() {
                 />
               )}
               {category === "career-copilot" && <CareerCopilotPanel blurb={active.blurb} />}
+              {category === "appearance" && <AppearancePanel blurb={active.blurb} />}
               {category === "data-privacy" && (
                 <DataPrivacyPanel blurb={active.blurb} candidate={data.candidate} />
               )}
@@ -395,6 +403,72 @@ function CareerCopilotPanel({ blurb }: { blurb: string }) {
          *  preference, and it would put credentials on a candidate-facing page. */}
         <Pill tone="neutral">Not configurable yet</Pill>
       </div>
+    </Panel>
+  );
+}
+
+/* ── Appearance ─────────────────────────────────────────────────────────────────────────────── */
+
+const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
+/**
+ * The one theme control. A segmented radio group, not an icon-only sun/moon toggle: each option has
+ * a real visible label, and the selected option changes both background AND weight — never color
+ * alone. Read from storage on mount rather than assumed "system", since a returning visitor may
+ * already have an explicit choice; ThemeScript has already applied it before this ever paints.
+ */
+function AppearancePanel({ blurb }: { blurb: string }) {
+  const [preference, setPreference] = useState<ThemePreference>("system");
+
+  useEffect(() => {
+    // Intentional: reads the already-applied client preference once on mount, not a render loop.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPreference(readStoredThemePreference());
+  }, []);
+
+  return (
+    <Panel title="Appearance" description={blurb}>
+      <Field
+        label="Theme"
+        hint="System matches this device's own light/dark setting. Light or Dark overrides it for Career-Ops only."
+      >
+        <div
+          role="radiogroup"
+          aria-label="Theme"
+          className="inline-flex gap-1 rounded-[10px] border border-[var(--border)] bg-[var(--z1-bg)] p-1"
+        >
+          {THEME_OPTIONS.map((opt) => {
+            const checked = preference === opt.value;
+            return (
+              <label
+                key={opt.value}
+                className={`relative flex min-h-11 min-w-[84px] cursor-pointer items-center justify-center rounded-[8px] px-4 text-[14px] transition-colors duration-150 ease-out has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--focus-ring)] ${
+                  checked
+                    ? "bg-[var(--accent)] font-semibold text-[var(--accent-fg)]"
+                    : "font-medium text-secondary hover:text-primary"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="theme-preference"
+                  value={opt.value}
+                  checked={checked}
+                  onChange={() => {
+                    setPreference(opt.value);
+                    setThemePreference(opt.value);
+                  }}
+                  className="sr-only"
+                />
+                {opt.label}
+              </label>
+            );
+          })}
+        </div>
+      </Field>
     </Panel>
   );
 }
